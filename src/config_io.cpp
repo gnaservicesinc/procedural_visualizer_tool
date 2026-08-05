@@ -1,0 +1,1184 @@
+#include "procedural_visualizer_tool.h"
+#include "path_utf8.h"
+
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <charconv>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <map>
+#include <new>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
+#include <utility>
+
+#if defined(_WIN32)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#  include "windows_file_install.h"
+#else
+#  include <fcntl.h>
+#  include <sys/stat.h>
+#  include <sys/types.h>
+#  include <unistd.h>
+#endif
+
+namespace pvt {
+namespace {
+
+// PVT setup format version 1 is deliberately line-oriented and deterministic:
+//
+//   PVT_SETUP<TAB>1
+//   canvas.width<TAB>1920
+//   waves.count<TAB>1
+//   waves.0.name<TAB>Main%20wave
+//
+// Every subsequent line is exactly one key, one tab, and one value. Collection
+// records use zero-based indexes (`waves.N.*`, `swings.N.*`, `effects.N.*`).
+// Strings use RFC 3986-style percent encoding over their exact bytes: only
+// ALPHA / DIGIT / "-._~" remain literal. There are no comments, aliases, or
+// optional records in v1. This keeps parsing unambiguous, safely rejectable,
+// and friendly to source control while still allowing arbitrary string bytes.
+
+constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
+constexpr std::size_t kMaximumKeyBytes = 128U;
+constexpr std::size_t kMaximumDecodedStringBytes = 64U * 1024U;
+constexpr std::size_t kMaximumRecordCount = 16384U;
+
+static_assert(kSetupFormatVersion == 1U,
+              "config_io.cpp implements exactly setup format version 1");
+static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
+              "transactional setup loading requires a non-throwing commit");
+
+using Records = std::map<std::string, std::string>;
+
+void clear_error(std::string* error) {
+    if (error != nullptr) {
+        error->clear();
+    }
+}
+
+bool fail(std::string* error, std::string message) {
+    if (error != nullptr) {
+        *error = std::move(message);
+    }
+    return false;
+}
+
+std::string record_error(std::string_view prefix, std::string_view key) {
+    std::string message;
+    message.reserve(prefix.size() + key.size() + 4U);
+    message.append(prefix);
+    message.push_back(' ');
+    message.push_back('\'');
+    message.append(key);
+    message.push_back('\'');
+    message.push_back('.');
+    return message;
+}
+
+bool valid_key(std::string_view key) {
+    if (key.empty() || key.size() > kMaximumKeyBytes) {
+        return false;
+    }
+    for (const char raw_character : key) {
+        const unsigned char character = static_cast<unsigned char>(raw_character);
+        if ((character >= 'a' && character <= 'z')
+            || (character >= '0' && character <= '9')
+            || character == '.' || character == '_') {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+bool line_is_ascii_text(std::string_view line) {
+    for (const char raw_character : line) {
+        const unsigned char character = static_cast<unsigned char>(raw_character);
+        if (character == '\t') {
+            continue;
+        }
+        if (character < 0x20U || character > 0x7eU) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool parse_records(const std::string& contents, Records& records, std::string* error) {
+    if (contents.empty()) {
+        return fail(error, "Setup file is empty.");
+    }
+
+    std::size_t line_start = 0;
+    std::size_t line_number = 0;
+    while (line_start < contents.size()) {
+        const std::size_t newline = contents.find('\n', line_start);
+        const std::size_t raw_end = newline == std::string::npos ? contents.size() : newline;
+        if (raw_end - line_start > kMaximumLineBytes) {
+            return fail(error, "Setup line " + std::to_string(line_number + 1U)
+                                   + " exceeds the 256 KiB line limit.");
+        }
+
+        std::string_view line(contents.data() + line_start, raw_end - line_start);
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1U);
+        }
+        ++line_number;
+
+        if (line.empty()) {
+            return fail(error, "Setup line " + std::to_string(line_number)
+                                   + " is empty; blank lines are not valid in format v1.");
+        }
+        if (!line_is_ascii_text(line)) {
+            return fail(error, "Setup line " + std::to_string(line_number)
+                                   + " contains a raw control or non-ASCII byte; strings must be percent-encoded.");
+        }
+
+        if (line_number == 1U) {
+            if (line != "PVT_SETUP\t1") {
+                return fail(error, "Unsupported or malformed setup header; expected 'PVT_SETUP\\t1'.");
+            }
+        } else {
+            const std::size_t tab = line.find('\t');
+            if (tab == std::string_view::npos || line.find('\t', tab + 1U) != std::string_view::npos) {
+                return fail(error, "Setup line " + std::to_string(line_number)
+                                       + " must contain exactly one tab delimiter.");
+            }
+
+            const std::string_view key_view = line.substr(0U, tab);
+            const std::string_view value_view = line.substr(tab + 1U);
+            if (!valid_key(key_view)) {
+                return fail(error, "Setup line " + std::to_string(line_number)
+                                       + " has an invalid or overlong key.");
+            }
+            if (records.size() >= kMaximumRecordCount) {
+                return fail(error, "Setup file exceeds the 16384-record limit.");
+            }
+
+            std::string key(key_view);
+            const auto inserted = records.emplace(key, std::string(value_view));
+            if (!inserted.second) {
+                return fail(error, record_error("Duplicate setup key", key));
+            }
+        }
+
+        if (newline == std::string::npos) {
+            break;
+        }
+        line_start = newline + 1U;
+    }
+
+    if (line_number == 0U) {
+        return fail(error, "Setup file is empty.");
+    }
+    return true;
+}
+
+bool read_setup_file(const std::string& path, std::string& contents, std::string* error) {
+    if (path.empty() || path.size() > kMaximumDecodedStringBytes
+        || path.find('\0') != std::string::npos) {
+        return fail(error, "Setup path is empty, contains a NUL byte, or exceeds 64 KiB.");
+    }
+
+    const std::filesystem::path native_path = detail::path_from_utf8(path);
+    std::ifstream input(native_path, std::ios::binary);
+    if (!input) {
+        return fail(error, "Could not open setup file '" + path + "' for reading.");
+    }
+
+    contents.clear();
+    std::array<char, 8192U> buffer{};
+    for (;;) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize count = input.gcount();
+        if (count > 0) {
+            const std::size_t byte_count = static_cast<std::size_t>(count);
+            if (contents.size() > kMaximumSetupBytes - byte_count) {
+                return fail(error, "Setup file exceeds the 4 MiB input limit.");
+            }
+            contents.append(buffer.data(), byte_count);
+        }
+        if (input.eof()) {
+            break;
+        }
+        if (!input) {
+            return fail(error, "I/O error while reading setup file '" + path + "'.");
+        }
+    }
+    return true;
+}
+
+bool take_record(Records& records,
+                 const std::string& key,
+                 std::string& value,
+                 std::string* error) {
+    const auto found = records.find(key);
+    if (found == records.end()) {
+        return fail(error, record_error("Missing required setup key", key));
+    }
+    value = std::move(found->second);
+    records.erase(found);
+    return true;
+}
+
+template <typename Integer>
+bool parse_integer_exact(std::string_view text, Integer& destination) {
+    static_assert(std::is_integral_v<Integer> && !std::is_same_v<Integer, bool>);
+    if (text.empty()) {
+        return false;
+    }
+    Integer parsed{};
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed, 10);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {
+        return false;
+    }
+    destination = parsed;
+    return true;
+}
+
+bool parse_double_exact(std::string_view text, double& destination) {
+    if (text.empty()) {
+        return false;
+    }
+    std::istringstream stream{std::string(text)};
+    stream.imbue(std::locale::classic());
+    stream >> std::noskipws;
+    double parsed = 0.0;
+    if (!(stream >> parsed) || stream.peek() != std::char_traits<char>::eof()
+        || !std::isfinite(parsed)) {
+        return false;
+    }
+    destination = parsed;
+    return true;
+}
+
+bool parse_bool_exact(std::string_view text, bool& destination) {
+    if (text == "0") {
+        destination = false;
+        return true;
+    }
+    if (text == "1") {
+        destination = true;
+        return true;
+    }
+    return false;
+}
+
+int hexadecimal_value(unsigned char character) {
+    if (character >= '0' && character <= '9') {
+        return static_cast<int>(character - '0');
+    }
+    if (character >= 'A' && character <= 'F') {
+        return static_cast<int>(character - 'A') + 10;
+    }
+    if (character >= 'a' && character <= 'f') {
+        return static_cast<int>(character - 'a') + 10;
+    }
+    return -1;
+}
+
+bool is_unreserved(unsigned char character) {
+    return (character >= 'A' && character <= 'Z')
+           || (character >= 'a' && character <= 'z')
+           || (character >= '0' && character <= '9')
+           || character == '-' || character == '.' || character == '_'
+           || character == '~';
+}
+
+bool percent_decode(std::string_view encoded, std::string& decoded) {
+    decoded.clear();
+    decoded.reserve(encoded.size());
+    for (std::size_t index = 0; index < encoded.size();) {
+        const unsigned char character = static_cast<unsigned char>(encoded[index]);
+        if (character == '%') {
+            if (index + 2U >= encoded.size()) {
+                return false;
+            }
+            const int high = hexadecimal_value(static_cast<unsigned char>(encoded[index + 1U]));
+            const int low = hexadecimal_value(static_cast<unsigned char>(encoded[index + 2U]));
+            if (high < 0 || low < 0) {
+                return false;
+            }
+            decoded.push_back(static_cast<char>((high << 4) | low));
+            index += 3U;
+        } else {
+            if (!is_unreserved(character)) {
+                return false;
+            }
+            decoded.push_back(static_cast<char>(character));
+            ++index;
+        }
+        if (decoded.size() > kMaximumDecodedStringBytes) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool percent_encode(std::string_view decoded, std::string& encoded) {
+    if (decoded.size() > kMaximumDecodedStringBytes) {
+        return false;
+    }
+    constexpr char hexadecimal[] = "0123456789ABCDEF";
+    encoded.clear();
+    encoded.reserve(decoded.size() * 3U);
+    for (const char raw_character : decoded) {
+        const unsigned char character = static_cast<unsigned char>(raw_character);
+        if (is_unreserved(character)) {
+            encoded.push_back(static_cast<char>(character));
+        } else {
+            encoded.push_back('%');
+            encoded.push_back(hexadecimal[character >> 4U]);
+            encoded.push_back(hexadecimal[character & 0x0fU]);
+        }
+    }
+    return true;
+}
+
+template <typename Integer>
+bool consume_integer(Records& records,
+                     const std::string& key,
+                     Integer& destination,
+                     std::string* error) {
+    std::string value;
+    if (!take_record(records, key, value, error)) {
+        return false;
+    }
+    if (!parse_integer_exact(value, destination)) {
+        return fail(error, record_error("Invalid integer in setup key", key));
+    }
+    return true;
+}
+
+bool consume_double(Records& records,
+                    const std::string& key,
+                    double& destination,
+                    std::string* error) {
+    std::string value;
+    if (!take_record(records, key, value, error)) {
+        return false;
+    }
+    if (!parse_double_exact(value, destination)) {
+        return fail(error, record_error("Invalid finite number in setup key", key));
+    }
+    return true;
+}
+
+bool consume_bool(Records& records,
+                  const std::string& key,
+                  bool& destination,
+                  std::string* error) {
+    std::string value;
+    if (!take_record(records, key, value, error)) {
+        return false;
+    }
+    if (!parse_bool_exact(value, destination)) {
+        return fail(error, record_error("Invalid boolean (expected 0 or 1) in setup key", key));
+    }
+    return true;
+}
+
+bool consume_string(Records& records,
+                    const std::string& key,
+                    std::string& destination,
+                    std::string* error) {
+    std::string value;
+    if (!take_record(records, key, value, error)) {
+        return false;
+    }
+    std::string decoded;
+    if (!percent_decode(value, decoded)) {
+        return fail(error, record_error("Invalid or overlong percent-encoded string in setup key", key));
+    }
+    destination = std::move(decoded);
+    return true;
+}
+
+template <typename Enum, std::size_t Count>
+bool consume_enum(Records& records,
+                  const std::string& key,
+                  Enum& destination,
+                  const std::array<std::pair<std::string_view, Enum>, Count>& values,
+                  std::string* error) {
+    std::string value;
+    if (!take_record(records, key, value, error)) {
+        return false;
+    }
+    for (const auto& entry : values) {
+        if (value == entry.first) {
+            destination = entry.second;
+            return true;
+        }
+    }
+    return fail(error, record_error("Unknown enum token in setup key", key));
+}
+
+bool consume_count(Records& records,
+                   const std::string& key,
+                   std::size_t maximum,
+                   std::size_t& destination,
+                   std::string* error) {
+    std::uint64_t parsed = 0;
+    if (!consume_integer(records, key, parsed, error)) {
+        return false;
+    }
+    if (parsed > static_cast<std::uint64_t>(maximum)) {
+        return fail(error, record_error("Collection count exceeds its configured maximum in setup key", key));
+    }
+    destination = static_cast<std::size_t>(parsed);
+    return true;
+}
+
+constexpr std::array<std::pair<std::string_view, EdgeMode>, 4U> kEdgeModes{{
+    {"alpha", EdgeMode::Alpha},
+    {"black", EdgeMode::Black},
+    {"white", EdgeMode::White},
+    {"reflect", EdgeMode::Reflect},
+}};
+
+constexpr std::array<std::pair<std::string_view, EffectType>, 5U> kEffectTypes{{
+    {"endless_zoom", EffectType::EndlessZoom},
+    {"ripple", EffectType::Ripple},
+    {"shake", EffectType::Shake},
+    {"flag_wave", EffectType::FlagWave},
+    {"glow", EffectType::Glow},
+}};
+
+constexpr std::array<std::pair<std::string_view, DitherMethod>, 3U> kDitherMethods{{
+    {"blue_noise", DitherMethod::BlueNoise},
+    {"ordered_bayer", DitherMethod::OrderedBayer},
+    {"floyd_steinberg", DitherMethod::FloydSteinberg},
+}};
+
+constexpr std::array<std::pair<std::string_view, SurfaceMapping>, 4U> kSurfaceMappings{{
+    {"plane", SurfaceMapping::Plane},
+    {"cylinder", SurfaceMapping::Cylinder},
+    {"sphere", SurfaceMapping::Sphere},
+    {"cube", SurfaceMapping::Cube},
+}};
+
+constexpr std::array<std::pair<std::string_view, Waveform>, 4U> kWaveforms{{
+    {"sine", Waveform::Sine},
+    {"triangle", Waveform::Triangle},
+    {"smooth_pulse", Waveform::SmoothPulse},
+    {"bounce", Waveform::Bounce},
+}};
+
+constexpr std::array<std::pair<std::string_view, QuantizationMode>, 3U> kQuantizationModes{{
+    {"rgb", QuantizationMode::Rgb},
+    {"luminance", QuantizationMode::Luminance},
+    {"hue", QuantizationMode::Hue},
+}};
+
+std::string indexed_key(std::string_view collection,
+                        std::size_t index,
+                        std::string_view field) {
+    std::string key;
+    const std::string index_text = std::to_string(index);
+    key.reserve(collection.size() + index_text.size() + field.size() + 2U);
+    key.append(collection);
+    key.push_back('.');
+    key.append(index_text);
+    key.push_back('.');
+    key.append(field);
+    return key;
+}
+
+template <typename Enum, std::size_t Count>
+bool enum_token(Enum value,
+                const std::array<std::pair<std::string_view, Enum>, Count>& values,
+                std::string_view& token) {
+    for (const auto& entry : values) {
+        if (entry.second == value) {
+            token = entry.first;
+            return true;
+        }
+    }
+    return false;
+}
+
+class SetupBuilder {
+public:
+    explicit SetupBuilder(std::string* error)
+        : error_(error), contents_("PVT_SETUP\t1\n") {}
+
+    bool add(std::string_view key, std::string_view value) {
+        if (!ok_) {
+            return false;
+        }
+        if (!valid_key(key)) {
+            ok_ = fail(error_, "Internal setup serializer produced an invalid key.");
+            return false;
+        }
+        if (key.size() + value.size() + 1U > kMaximumLineBytes) {
+            ok_ = fail(error_, record_error("Serialized setup line exceeds 256 KiB at key", key));
+            return false;
+        }
+        const std::size_t added = key.size() + value.size() + 2U;
+        if (contents_.size() > kMaximumSetupBytes - added) {
+            ok_ = fail(error_, "Serialized setup exceeds the 4 MiB format limit.");
+            return false;
+        }
+        contents_.append(key);
+        contents_.push_back('\t');
+        contents_.append(value);
+        contents_.push_back('\n');
+        return true;
+    }
+
+    template <typename Integer>
+    bool add_integer(std::string_view key, Integer value) {
+        static_assert(std::is_integral_v<Integer> && !std::is_same_v<Integer, bool>);
+        std::array<char, 64U> buffer{};
+        const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value, 10);
+        if (result.ec != std::errc{}) {
+            ok_ = fail(error_, record_error("Could not serialize integer setup key", key));
+            return false;
+        }
+        return add(key, std::string_view(buffer.data(), static_cast<std::size_t>(result.ptr - buffer.data())));
+    }
+
+    bool add_double(std::string_view key, double value) {
+        if (!std::isfinite(value)) {
+            ok_ = fail(error_, record_error("Cannot serialize non-finite setup value at key", key));
+            return false;
+        }
+        std::ostringstream stream;
+        stream.imbue(std::locale::classic());
+        stream << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+        if (!stream) {
+            ok_ = fail(error_, record_error("Could not serialize numeric setup key", key));
+            return false;
+        }
+        return add(key, stream.str());
+    }
+
+    bool add_bool(std::string_view key, bool value) {
+        return add(key, value ? "1" : "0");
+    }
+
+    bool add_string(std::string_view key, const std::string& value) {
+        std::string encoded;
+        if (!percent_encode(value, encoded)) {
+            ok_ = fail(error_, record_error("String exceeds the 64 KiB setup limit at key", key));
+            return false;
+        }
+        return add(key, encoded);
+    }
+
+    template <typename Enum, std::size_t Count>
+    bool add_enum(std::string_view key,
+                  Enum value,
+                  const std::array<std::pair<std::string_view, Enum>, Count>& values) {
+        std::string_view token;
+        if (!enum_token(value, values, token)) {
+            ok_ = fail(error_, record_error("Cannot serialize unknown enum value at key", key));
+            return false;
+        }
+        return add(key, token);
+    }
+
+    bool ok() const { return ok_; }
+    const std::string& contents() const { return contents_; }
+
+private:
+    std::string* error_ = nullptr;
+    std::string contents_;
+    bool ok_ = true;
+};
+
+bool serialize_setup(const RenderConfig& config,
+                     std::string& serialized,
+                     std::string* error) {
+    const ValidationResult validation = validate(config);
+    if (!validation.ok) {
+        return fail(error, "Cannot save invalid configuration: " + validation.message);
+    }
+    if (config.waves.size() > kMaximumWaves
+        || config.swings.size() > kMaximumSwings
+        || config.effects.size() > kMaximumEffects) {
+        return fail(error, "Cannot save configuration: a collection exceeds its public maximum.");
+    }
+
+    SetupBuilder builder(error);
+    builder.add_integer("canvas.width", config.width);
+    builder.add_integer("canvas.height", config.height);
+    builder.add_integer("canvas.block_size", config.block_size);
+    builder.add_integer("timing.total_frames", config.total_frames);
+    builder.add_double("timing.fps", config.fps);
+
+    builder.add_integer("waves.count", config.waves.size());
+    for (std::size_t index = 0; index < config.waves.size(); ++index) {
+        const WaveConfig& wave = config.waves[index];
+        builder.add_integer(indexed_key("waves", index, "id"), wave.id);
+        builder.add_string(indexed_key("waves", index, "name"), wave.name);
+        builder.add_bool(indexed_key("waves", index, "enabled"), wave.enabled);
+        builder.add_bool(indexed_key("waves", index, "synchronized"), wave.synchronized);
+        builder.add_double(indexed_key("waves", index, "x_percent"), wave.x_percent);
+        builder.add_double(indexed_key("waves", index, "y_percent"), wave.y_percent);
+        builder.add_double(indexed_key("waves", index, "amplitude"), wave.amplitude);
+        builder.add_double(indexed_key("waves", index, "spatial_frequency"), wave.spatial_frequency);
+        builder.add_integer(indexed_key("waves", index, "cycles_per_loop"), wave.cycles_per_loop);
+        builder.add_double(indexed_key("waves", index, "phase_degrees"), wave.phase_degrees);
+        builder.add_double(indexed_key("waves", index, "direction"), wave.direction);
+    }
+
+    builder.add_integer("swings.count", config.swings.size());
+    for (std::size_t index = 0; index < config.swings.size(); ++index) {
+        const SwingConfig& swing = config.swings[index];
+        builder.add_integer(indexed_key("swings", index, "id"), swing.id);
+        builder.add_string(indexed_key("swings", index, "name"), swing.name);
+        builder.add_bool(indexed_key("swings", index, "enabled"), swing.enabled);
+        builder.add_enum(indexed_key("swings", index, "waveform"), swing.waveform, kWaveforms);
+        builder.add_double(indexed_key("swings", index, "amount"), swing.amount);
+        builder.add_integer(indexed_key("swings", index, "cycles_per_loop"), swing.cycles_per_loop);
+        builder.add_double(indexed_key("swings", index, "phase_degrees"), swing.phase_degrees);
+        builder.add_double(indexed_key("swings", index, "shape"), swing.shape);
+    }
+
+    builder.add_integer("effects.count", config.effects.size());
+    for (std::size_t index = 0; index < config.effects.size(); ++index) {
+        const EffectConfig& effect = config.effects[index];
+        builder.add_integer(indexed_key("effects", index, "id"), effect.id);
+        builder.add_string(indexed_key("effects", index, "name"), effect.name);
+        builder.add_enum(indexed_key("effects", index, "type"), effect.type, kEffectTypes);
+        builder.add_bool(indexed_key("effects", index, "enabled"), effect.enabled);
+        builder.add_bool(indexed_key("effects", index, "synchronized"), effect.synchronized);
+        builder.add_integer(indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop);
+        builder.add_double(indexed_key("effects", index, "phase_degrees"), effect.phase_degrees);
+        builder.add_enum(indexed_key("effects", index, "edge_mode"), effect.edge_mode, kEdgeModes);
+        builder.add_double(indexed_key("effects", index, "intensity"), effect.intensity);
+        builder.add_double(indexed_key("effects", index, "magnitude"), effect.magnitude);
+        builder.add_double(indexed_key("effects", index, "frequency"), effect.frequency);
+        builder.add_double(indexed_key("effects", index, "secondary"), effect.secondary);
+        builder.add_double(indexed_key("effects", index, "center_x"), effect.center_x);
+        builder.add_double(indexed_key("effects", index, "center_y"), effect.center_y);
+        builder.add_double(indexed_key("effects", index, "angle_degrees"), effect.angle_degrees);
+        builder.add_double(indexed_key("effects", index, "radius_pixels"), effect.radius_pixels);
+        builder.add_double(indexed_key("effects", index, "threshold"), effect.threshold);
+        builder.add_double(indexed_key("effects", index, "soft_knee"), effect.soft_knee);
+    }
+
+    builder.add_double("rhythm.phrase_warp", config.phrase_warp);
+    builder.add_double("rhythm.ghost_mix", config.ghost_mix);
+    builder.add_double("rhythm.ghost_lag_degrees", config.ghost_lag_degrees);
+
+    builder.add_bool("appearance.displacement_enabled", config.displacement_enabled);
+    builder.add_double("appearance.displacement", config.displacement);
+    builder.add_bool("appearance.lighting_enabled", config.lighting_enabled);
+    builder.add_double("appearance.wave_depth", config.wave_depth);
+    builder.add_bool("appearance.spiral_enabled", config.spiral_enabled);
+    builder.add_double("appearance.spiral_frequency", config.spiral_frequency);
+    builder.add_integer("appearance.spiral_arms", config.spiral_arms);
+    builder.add_bool("appearance.wall_reflection_enabled", config.wall_reflection_enabled);
+    builder.add_double("appearance.wall_frequency", config.wall_frequency);
+    builder.add_double("appearance.wall_mix", config.wall_mix);
+    builder.add_integer("appearance.hue_cycles", config.hue_cycles);
+    builder.add_double("appearance.saturation", config.saturation);
+
+    builder.add_bool("alpha.enabled", config.alpha.enabled);
+    builder.add_double("alpha.minimum", config.alpha.minimum);
+    builder.add_double("alpha.maximum", config.alpha.maximum);
+    builder.add_double("alpha.spatial_frequency", config.alpha.spatial_frequency);
+    builder.add_integer("alpha.cycles_per_loop", config.alpha.cycles_per_loop);
+    builder.add_double("alpha.phase_degrees", config.alpha.phase_degrees);
+
+    builder.add_bool("quantization.enabled", config.quantization.enabled);
+    builder.add_integer("quantization.levels", config.quantization.levels);
+    builder.add_double("quantization.mix", config.quantization.mix);
+    builder.add_enum("quantization.mode", config.quantization.mode, kQuantizationModes);
+
+    builder.add_bool("surface.enabled", config.surface.enabled);
+    builder.add_enum("surface.mapping", config.surface.mapping, kSurfaceMappings);
+    builder.add_integer("surface.rotations_per_loop", config.surface.rotations_per_loop);
+    builder.add_double("surface.phase_degrees", config.surface.phase_degrees);
+    builder.add_double("surface.curvature", config.surface.curvature);
+    builder.add_double("surface.lighting", config.surface.lighting);
+
+    builder.add_integer("output.bit_depth", config.output.bit_depth);
+    builder.add_bool("output.dither_enabled",
+                     config.output.bit_depth != 32 && config.output.dither_enabled);
+    builder.add_enum("output.dither_method", config.output.dither_method, kDitherMethods);
+    builder.add_string("output.output_directory", config.output.output_directory);
+    builder.add_string("output.filename_prefix", config.output.filename_prefix);
+    builder.add_integer("output.first_frame_number", config.output.first_frame_number);
+    builder.add_integer("output.filename_digits", config.output.filename_digits);
+    builder.add_bool("output.overwrite_existing", config.output.overwrite_existing);
+
+    if (!builder.ok()) {
+        return false;
+    }
+    serialized = builder.contents();
+    return true;
+}
+
+bool deserialize_setup(Records& records, RenderConfig& candidate, std::string* error) {
+    if (!consume_integer(records, "canvas.width", candidate.width, error)
+        || !consume_integer(records, "canvas.height", candidate.height, error)
+        || !consume_integer(records, "canvas.block_size", candidate.block_size, error)
+        || !consume_integer(records, "timing.total_frames", candidate.total_frames, error)
+        || !consume_double(records, "timing.fps", candidate.fps, error)) {
+        return false;
+    }
+
+    std::size_t wave_count = 0;
+    if (!consume_count(records, "waves.count", kMaximumWaves, wave_count, error)) {
+        return false;
+    }
+    candidate.waves.clear();
+    candidate.waves.resize(wave_count);
+    for (std::size_t index = 0; index < wave_count; ++index) {
+        WaveConfig& wave = candidate.waves[index];
+        if (!consume_integer(records, indexed_key("waves", index, "id"), wave.id, error)
+            || !consume_string(records, indexed_key("waves", index, "name"), wave.name, error)
+            || !consume_bool(records, indexed_key("waves", index, "enabled"), wave.enabled, error)
+            || !consume_bool(records, indexed_key("waves", index, "synchronized"), wave.synchronized, error)
+            || !consume_double(records, indexed_key("waves", index, "x_percent"), wave.x_percent, error)
+            || !consume_double(records, indexed_key("waves", index, "y_percent"), wave.y_percent, error)
+            || !consume_double(records, indexed_key("waves", index, "amplitude"), wave.amplitude, error)
+            || !consume_double(records, indexed_key("waves", index, "spatial_frequency"), wave.spatial_frequency, error)
+            || !consume_integer(records, indexed_key("waves", index, "cycles_per_loop"), wave.cycles_per_loop, error)
+            || !consume_double(records, indexed_key("waves", index, "phase_degrees"), wave.phase_degrees, error)
+            || !consume_double(records, indexed_key("waves", index, "direction"), wave.direction, error)) {
+            return false;
+        }
+    }
+
+    std::size_t swing_count = 0;
+    if (!consume_count(records, "swings.count", kMaximumSwings, swing_count, error)) {
+        return false;
+    }
+    candidate.swings.clear();
+    candidate.swings.resize(swing_count);
+    for (std::size_t index = 0; index < swing_count; ++index) {
+        SwingConfig& swing = candidate.swings[index];
+        if (!consume_integer(records, indexed_key("swings", index, "id"), swing.id, error)
+            || !consume_string(records, indexed_key("swings", index, "name"), swing.name, error)
+            || !consume_bool(records, indexed_key("swings", index, "enabled"), swing.enabled, error)
+            || !consume_enum(records, indexed_key("swings", index, "waveform"), swing.waveform, kWaveforms, error)
+            || !consume_double(records, indexed_key("swings", index, "amount"), swing.amount, error)
+            || !consume_integer(records, indexed_key("swings", index, "cycles_per_loop"), swing.cycles_per_loop, error)
+            || !consume_double(records, indexed_key("swings", index, "phase_degrees"), swing.phase_degrees, error)
+            || !consume_double(records, indexed_key("swings", index, "shape"), swing.shape, error)) {
+            return false;
+        }
+    }
+
+    std::size_t effect_count = 0;
+    if (!consume_count(records, "effects.count", kMaximumEffects, effect_count, error)) {
+        return false;
+    }
+    candidate.effects.clear();
+    candidate.effects.resize(effect_count);
+    for (std::size_t index = 0; index < effect_count; ++index) {
+        EffectConfig& effect = candidate.effects[index];
+        if (!consume_integer(records, indexed_key("effects", index, "id"), effect.id, error)
+            || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)
+            || !consume_enum(records, indexed_key("effects", index, "type"), effect.type, kEffectTypes, error)
+            || !consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
+            || !consume_bool(records, indexed_key("effects", index, "synchronized"), effect.synchronized, error)
+            || !consume_integer(records, indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop, error)
+            || !consume_double(records, indexed_key("effects", index, "phase_degrees"), effect.phase_degrees, error)
+            || !consume_enum(records, indexed_key("effects", index, "edge_mode"), effect.edge_mode, kEdgeModes, error)
+            || !consume_double(records, indexed_key("effects", index, "intensity"), effect.intensity, error)
+            || !consume_double(records, indexed_key("effects", index, "magnitude"), effect.magnitude, error)
+            || !consume_double(records, indexed_key("effects", index, "frequency"), effect.frequency, error)
+            || !consume_double(records, indexed_key("effects", index, "secondary"), effect.secondary, error)
+            || !consume_double(records, indexed_key("effects", index, "center_x"), effect.center_x, error)
+            || !consume_double(records, indexed_key("effects", index, "center_y"), effect.center_y, error)
+            || !consume_double(records, indexed_key("effects", index, "angle_degrees"), effect.angle_degrees, error)
+            || !consume_double(records, indexed_key("effects", index, "radius_pixels"), effect.radius_pixels, error)
+            || !consume_double(records, indexed_key("effects", index, "threshold"), effect.threshold, error)
+            || !consume_double(records, indexed_key("effects", index, "soft_knee"), effect.soft_knee, error)) {
+            return false;
+        }
+    }
+
+    if (!consume_double(records, "rhythm.phrase_warp", candidate.phrase_warp, error)
+        || !consume_double(records, "rhythm.ghost_mix", candidate.ghost_mix, error)
+        || !consume_double(records, "rhythm.ghost_lag_degrees", candidate.ghost_lag_degrees, error)
+        || !consume_bool(records, "appearance.displacement_enabled", candidate.displacement_enabled, error)
+        || !consume_double(records, "appearance.displacement", candidate.displacement, error)
+        || !consume_bool(records, "appearance.lighting_enabled", candidate.lighting_enabled, error)
+        || !consume_double(records, "appearance.wave_depth", candidate.wave_depth, error)
+        || !consume_bool(records, "appearance.spiral_enabled", candidate.spiral_enabled, error)
+        || !consume_double(records, "appearance.spiral_frequency", candidate.spiral_frequency, error)
+        || !consume_integer(records, "appearance.spiral_arms", candidate.spiral_arms, error)
+        || !consume_bool(records, "appearance.wall_reflection_enabled", candidate.wall_reflection_enabled, error)
+        || !consume_double(records, "appearance.wall_frequency", candidate.wall_frequency, error)
+        || !consume_double(records, "appearance.wall_mix", candidate.wall_mix, error)
+        || !consume_integer(records, "appearance.hue_cycles", candidate.hue_cycles, error)
+        || !consume_double(records, "appearance.saturation", candidate.saturation, error)) {
+        return false;
+    }
+
+    if (!consume_bool(records, "alpha.enabled", candidate.alpha.enabled, error)
+        || !consume_double(records, "alpha.minimum", candidate.alpha.minimum, error)
+        || !consume_double(records, "alpha.maximum", candidate.alpha.maximum, error)
+        || !consume_double(records, "alpha.spatial_frequency", candidate.alpha.spatial_frequency, error)
+        || !consume_integer(records, "alpha.cycles_per_loop", candidate.alpha.cycles_per_loop, error)
+        || !consume_double(records, "alpha.phase_degrees", candidate.alpha.phase_degrees, error)
+        || !consume_bool(records, "quantization.enabled", candidate.quantization.enabled, error)
+        || !consume_integer(records, "quantization.levels", candidate.quantization.levels, error)
+        || !consume_double(records, "quantization.mix", candidate.quantization.mix, error)
+        || !consume_enum(records, "quantization.mode", candidate.quantization.mode, kQuantizationModes, error)
+        || !consume_bool(records, "surface.enabled", candidate.surface.enabled, error)
+        || !consume_enum(records, "surface.mapping", candidate.surface.mapping, kSurfaceMappings, error)
+        || !consume_integer(records, "surface.rotations_per_loop", candidate.surface.rotations_per_loop, error)
+        || !consume_double(records, "surface.phase_degrees", candidate.surface.phase_degrees, error)
+        || !consume_double(records, "surface.curvature", candidate.surface.curvature, error)
+        || !consume_double(records, "surface.lighting", candidate.surface.lighting, error)) {
+        return false;
+    }
+
+    if (!consume_integer(records, "output.bit_depth", candidate.output.bit_depth, error)
+        || !consume_bool(records, "output.dither_enabled", candidate.output.dither_enabled, error)
+        || !consume_enum(records, "output.dither_method", candidate.output.dither_method, kDitherMethods, error)
+        || !consume_string(records, "output.output_directory", candidate.output.output_directory, error)
+        || !consume_string(records, "output.filename_prefix", candidate.output.filename_prefix, error)
+        || !consume_integer(records, "output.first_frame_number", candidate.output.first_frame_number, error)
+        || !consume_integer(records, "output.filename_digits", candidate.output.filename_digits, error)
+        || !consume_bool(records, "output.overwrite_existing", candidate.output.overwrite_existing, error)) {
+        return false;
+    }
+
+    if (!records.empty()) {
+        return fail(error, record_error("Unknown setup key for format v1", records.begin()->first));
+    }
+
+    // Format v1 files written by early builds could retain a now-meaningless
+    // dither toggle while selecting full-float EXR. Accept and normalize those
+    // files; no integer quantization occurs at 32-bit output.
+    if (candidate.output.bit_depth == 32) {
+        candidate.output.dither_enabled = false;
+    }
+
+    const ValidationResult validation = validate(candidate);
+    if (!validation.ok) {
+        return fail(error, "Loaded setup failed validation: " + validation.message);
+    }
+    return true;
+}
+
+#if defined(_WIN32)
+
+std::wstring utf8_to_wide(const std::string& utf8) {
+    if (utf8.empty()) {
+        return {};
+    }
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                              utf8.data(), static_cast<int>(utf8.size()),
+                                              nullptr, 0);
+    if (required <= 0) {
+        return {};
+    }
+    std::wstring wide(static_cast<std::size_t>(required), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            utf8.data(), static_cast<int>(utf8.size()),
+                            wide.data(), required) != required) {
+        return {};
+    }
+    return wide;
+}
+
+std::string windows_error_message(std::string_view operation, DWORD code) {
+    return std::string(operation) + " failed (Windows error " + std::to_string(code) + ").";
+}
+
+bool atomic_write_setup(const std::string& path,
+                        const std::string& contents,
+                        std::string* error) {
+    const std::wstring destination = utf8_to_wide(path);
+    if (destination.empty()) {
+        return fail(error, "Setup path is not valid UTF-8 for Windows.");
+    }
+
+    const std::filesystem::path destination_path(destination);
+    const std::filesystem::path filename = destination_path.filename();
+    if (filename.empty() || filename == L"." || filename == L"..") {
+        return fail(error, "Setup destination must name a file.");
+    }
+    std::filesystem::path directory = destination_path.parent_path();
+    if (directory.empty()) {
+        directory = L".";
+    }
+
+    static std::atomic_uint64_t sequence{0};
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    std::filesystem::path temporary_path;
+    // Reserve a disjoint attempt range for each concurrent save. This avoids
+    // needless CREATE_NEW collisions when stale temporary files are present.
+    const std::uint64_t first = sequence.fetch_add(128U, std::memory_order_relaxed);
+    for (unsigned int attempt = 0; attempt < 128U; ++attempt) {
+        const std::uint64_t serial = first + static_cast<std::uint64_t>(attempt);
+        const std::wstring temporary_name = L".pvt-setup-" + std::to_wstring(GetCurrentProcessId())
+                                            + L"-" + std::to_wstring(serial) + L".tmp";
+        temporary_path = directory / temporary_name;
+        handle = CreateFileW(temporary_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                             FILE_ATTRIBUTE_TEMPORARY, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) {
+            break;
+        }
+        if (GetLastError() != ERROR_FILE_EXISTS && GetLastError() != ERROR_ALREADY_EXISTS) {
+            return fail(error, windows_error_message("Creating sibling temporary setup file", GetLastError()));
+        }
+    }
+    if (handle == INVALID_HANDLE_VALUE) {
+        return fail(error, "Could not allocate a unique sibling temporary setup file.");
+    }
+
+    bool success = true;
+    DWORD failure = ERROR_SUCCESS;
+    std::size_t offset = 0;
+    while (offset < contents.size()) {
+        const DWORD chunk = static_cast<DWORD>((std::min)(
+            contents.size() - offset,
+            static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
+        DWORD written = 0;
+        if (!WriteFile(handle, contents.data() + offset, chunk, &written, nullptr)
+            || written == 0U) {
+            success = false;
+            failure = GetLastError();
+            break;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    if (success && !FlushFileBuffers(handle)) {
+        success = false;
+        failure = GetLastError();
+    }
+    if (!CloseHandle(handle) && success) {
+        success = false;
+        failure = GetLastError();
+    }
+    if (!success) {
+        DeleteFileW(temporary_path.c_str());
+        return fail(error, windows_error_message("Writing temporary setup file", failure));
+    }
+
+    // FILE_ATTRIBUTE_TEMPORARY is useful while writing, but the installed setup
+    // is permanent. Clear the hint before the atomic move so it cannot persist
+    // on the destination and affect caching, indexing, or backup behavior.
+    if (!SetFileAttributesW(temporary_path.c_str(), FILE_ATTRIBUTE_NORMAL)) {
+        failure = GetLastError();
+        DeleteFileW(temporary_path.c_str());
+        return fail(error, windows_error_message(
+                               "Preparing temporary setup file for installation", failure));
+    }
+
+    if (!detail::install_windows_temporary(temporary_path, destination_path,
+                                           true, &failure)) {
+        DeleteFileW(temporary_path.c_str());
+        return fail(error, windows_error_message("Atomically replacing setup file", failure));
+    }
+    return true;
+}
+
+#else
+
+class TemporaryFileGuard {
+public:
+    explicit TemporaryFileGuard(std::string path) : path_(std::move(path)) {}
+    ~TemporaryFileGuard() {
+        if (armed_) {
+            ::unlink(path_.c_str());
+        }
+    }
+    void release() { armed_ = false; }
+
+private:
+    std::string path_;
+    bool armed_ = true;
+};
+
+std::string posix_error_message(std::string_view operation, int code) {
+    return std::string(operation) + ": " + std::generic_category().message(code) + ".";
+}
+
+int fsync_retry(int descriptor) {
+    int result = 0;
+    do {
+        result = ::fsync(descriptor);
+    } while (result != 0 && errno == EINTR);
+    return result;
+}
+
+void sync_directory_best_effort(const std::filesystem::path& directory) {
+#  if defined(O_DIRECTORY)
+    constexpr int directory_flag = O_DIRECTORY;
+#  else
+    constexpr int directory_flag = 0;
+#  endif
+    const std::string native_directory = directory.string();
+    const int descriptor = ::open(native_directory.c_str(), O_RDONLY | directory_flag);
+    if (descriptor >= 0) {
+        (void)fsync_retry(descriptor);
+        (void)::close(descriptor);
+    }
+}
+
+bool atomic_write_setup(const std::string& path,
+                        const std::string& contents,
+                        std::string* error) {
+    const std::filesystem::path destination = detail::path_from_utf8(path);
+    const std::filesystem::path filename = destination.filename();
+    if (filename.empty() || filename == "." || filename == "..") {
+        return fail(error, "Setup destination must name a file.");
+    }
+    std::filesystem::path directory = destination.parent_path();
+    if (directory.empty()) {
+        directory = ".";
+    }
+
+    // mkstemp intentionally creates new files with mode 0600. When replacing
+    // an existing regular file, retain that file's explicit permission bits so
+    // a harmless setup edit does not silently make a shared configuration
+    // private. Symlinks and other special entries are never followed here.
+    mode_t preserved_mode = 0;
+    bool preserve_mode = false;
+    struct stat destination_status {};
+    const std::string native_destination = destination.string();
+    if (::lstat(native_destination.c_str(), &destination_status) == 0) {
+        if (S_ISDIR(destination_status.st_mode)) {
+            return fail(error, "Setup destination is a directory.");
+        }
+        if (S_ISREG(destination_status.st_mode)) {
+            preserved_mode = destination_status.st_mode & 07777;
+            preserve_mode = true;
+        }
+    } else if (errno != ENOENT) {
+        return fail(error, posix_error_message("Could not inspect setup destination", errno));
+    }
+
+    std::filesystem::path template_path = directory / ".pvt-setup-XXXXXX";
+    std::string temporary = template_path.string();
+    std::vector<char> mutable_template(temporary.begin(), temporary.end());
+    mutable_template.push_back('\0');
+
+    const int descriptor = ::mkstemp(mutable_template.data());
+    if (descriptor < 0) {
+        return fail(error, posix_error_message("Could not create sibling temporary setup file", errno));
+    }
+    temporary.assign(mutable_template.data());
+    TemporaryFileGuard cleanup(temporary);
+
+    bool success = true;
+    int failure = 0;
+    std::size_t offset = 0;
+    while (offset < contents.size()) {
+        ssize_t written = 0;
+        do {
+            written = ::write(descriptor, contents.data() + offset,
+                              contents.size() - offset);
+        } while (written < 0 && errno == EINTR);
+        if (written <= 0) {
+            success = false;
+            failure = written < 0 && errno != 0 ? errno : EIO;
+            break;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    // Apply the final mode after writing: POSIX may clear set-user-ID or
+    // set-group-ID bits when file contents change.
+    if (success && preserve_mode && ::fchmod(descriptor, preserved_mode) != 0) {
+        success = false;
+        failure = errno;
+    }
+    if (success && fsync_retry(descriptor) != 0) {
+        success = false;
+        failure = errno;
+    }
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        failure = errno;
+    }
+    if (!success) {
+        return fail(error,
+                    posix_error_message("Could not write and flush temporary setup file",
+                                        failure));
+    }
+
+    if (::rename(temporary.c_str(), destination.string().c_str()) != 0) {
+        return fail(error, posix_error_message("Could not atomically replace setup file", errno));
+    }
+    cleanup.release();
+    sync_directory_best_effort(directory);
+    return true;
+}
+
+#endif
+
+} // namespace
+
+bool save_setup(const RenderConfig& config,
+                const std::string& path,
+                std::string* error) {
+    clear_error(error);
+    try {
+        if (path.empty() || path.size() > kMaximumDecodedStringBytes
+            || path.find('\0') != std::string::npos) {
+            return fail(error, "Setup path is empty, contains a NUL byte, or exceeds 64 KiB.");
+        }
+        std::string serialized;
+        if (!serialize_setup(config, serialized, error)) {
+            return false;
+        }
+        return atomic_write_setup(path, serialized, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to save setup.");
+    } catch (const std::filesystem::filesystem_error& exception) {
+        return fail(error, std::string("Filesystem error while saving setup: ") + exception.what());
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected error while saving setup: ") + exception.what());
+    }
+}
+
+bool load_setup(const std::string& path,
+                RenderConfig& destination,
+                std::string* error) {
+    clear_error(error);
+    try {
+        std::string contents;
+        if (!read_setup_file(path, contents, error)) {
+            return false;
+        }
+
+        Records records;
+        if (!parse_records(contents, records, error)) {
+            return false;
+        }
+
+        RenderConfig candidate;
+        if (!deserialize_setup(records, candidate, error)) {
+            return false;
+        }
+
+        // All potentially failing parsing, allocation, and validation occurs
+        // above. Standard-allocator vector/string moves make this commit step
+        // non-throwing in the supported C++17 implementations.
+        destination = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to load setup; destination was not changed.");
+    } catch (const std::filesystem::filesystem_error& exception) {
+        return fail(error, std::string("Filesystem error while loading setup; destination was not changed: ")
+                           + exception.what());
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected error while loading setup; destination was not changed: ")
+                           + exception.what());
+    }
+}
+
+} // namespace pvt
