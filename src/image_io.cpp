@@ -328,7 +328,7 @@ bool write_png_stream(std::FILE* file,
                  PNG_COMPRESSION_TYPE_BASE,
                  PNG_FILTER_TYPE_BASE);
     png_set_sRGB(png, info, PNG_sRGB_INTENT_PERCEPTUAL);
-    png_set_compression_level(png, 6);
+    png_set_compression_level(png, config.output.png_compression_level);
     png_write_info(png, info);
 
     const std::uint32_t maximum = bit_depth == 16 ? 65535U : 255U;

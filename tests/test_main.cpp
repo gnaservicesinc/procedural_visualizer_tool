@@ -144,7 +144,8 @@ void test_defaults_and_dynamic_collections() {
     make_small(config);
     CHECK(pvt::validate(config).ok);
     CHECK(config.waves.size() == 3);
-    CHECK(config.effects.size() >= 5);
+    CHECK(config.effects.size() >= 6);
+    CHECK(config.output.png_compression_level == 5);
     CHECK(pvt::default_wave().id == 0U);
     CHECK(pvt::default_swing().id == 0U);
     CHECK(pvt::default_effect(pvt::EffectType::Ripple).id == 0U);
@@ -182,7 +183,7 @@ void test_defaults_and_dynamic_collections() {
     }
     config.effects.clear();
     for (std::size_t i = 0; i < 10; ++i) {
-        auto effect = pvt::default_effect(static_cast<pvt::EffectType>(i % 5U));
+        auto effect = pvt::default_effect(static_cast<pvt::EffectType>(i % 6U));
         effect.id = 2000 + i;
         effect.enabled = true;
         effect.synchronized = (i % 2U) != 0U;
@@ -225,7 +226,7 @@ void test_determinism_and_seam_continuity() {
 
     // Every effect type closes its loop with either synchronization mode.
     for (int raw_type = static_cast<int>(pvt::EffectType::EndlessZoom);
-         raw_type <= static_cast<int>(pvt::EffectType::Glow); ++raw_type) {
+         raw_type <= static_cast<int>(pvt::EffectType::BlockScale); ++raw_type) {
         for (const bool synchronized : {false, true}) {
             auto one_effect = pvt::default_config();
             make_small(one_effect);
@@ -249,7 +250,7 @@ void test_determinism_and_seam_continuity() {
     }
 }
 
-void test_direction_alpha_and_surfaces() {
+void test_direction_alpha_and_surfaces(const fs::path& source_root) {
     auto config = pvt::default_config();
     make_small(config);
     config.waves.resize(1);
@@ -365,6 +366,64 @@ void test_direction_alpha_and_surfaces() {
         }
     }
 
+    // A transparent primitive is a shell, not a nearest-hit cardboard mask.
+    // At its center a ray crosses the front and rear surfaces, so two 0.5-alpha
+    // samples must composite to 0.75 coverage for every closed primitive.
+    config.alpha.enabled = true;
+    config.alpha.minimum = 0.5;
+    config.alpha.maximum = 0.5;
+    config.surface.lighting = 0.0;
+    for (const auto mapping : {pvt::SurfaceMapping::Cylinder,
+                               pvt::SurfaceMapping::Sphere,
+                               pvt::SurfaceMapping::Cube}) {
+        config.surface.mapping = mapping;
+        config.alpha.enabled = false;
+        pvt::Image opaque_surface;
+        CHECK(pvt::render_frame(config, 1, opaque_surface, &error));
+        config.alpha.enabled = true;
+        CHECK(pvt::render_frame(config, 1, radial, &error));
+        const float* center = radial.pixel(config.width / 2, config.height / 2);
+        CHECK(center != nullptr);
+        if (center != nullptr) {
+            CHECK(std::abs(center[3] - 0.75F) < 1.0e-5F);
+        }
+        // Alpha alone could be faked by compositing the nearest sample twice.
+        // Requiring an RGB difference from the opaque nearest-hit image proves
+        // that a distinct UV/color from the exit surface was sampled.
+        bool sampled_distinct_rear_color = false;
+        for (std::size_t offset = 0U; offset < radial.pixels.size(); offset += 4U) {
+            if (radial.pixels[offset + 3U] < 0.7F) {
+                continue;
+            }
+            sampled_distinct_rear_color = sampled_distinct_rear_color
+                || std::abs(radial.pixels[offset]
+                            - opaque_surface.pixels[offset]) > 1.0e-4F
+                || std::abs(radial.pixels[offset + 1U]
+                            - opaque_surface.pixels[offset + 1U]) > 1.0e-4F
+                || std::abs(radial.pixels[offset + 2U]
+                            - opaque_surface.pixels[offset + 2U]) > 1.0e-4F;
+        }
+        CHECK(sampled_distinct_rear_color);
+    }
+
+    // Exercise the public RenderConfig dispatch, not only the isolated OBJ
+    // rasterizer. Custom meshes participate in the same transparent-shell
+    // behavior and central validation as built-in surfaces.
+    config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+    config.surface.obj_path =
+        (source_root / "tests" / "assets" / "obj" / "closed_cube.obj").string();
+    CHECK(pvt::validate(config).ok);
+    CHECK(pvt::render_frame(config, 1, radial, &error));
+    const float* obj_center = radial.pixel(config.width / 2, config.height / 2);
+    CHECK(obj_center != nullptr);
+    if (obj_center != nullptr) {
+        CHECK(obj_center[3] > 0.72F && obj_center[3] < 0.78F);
+    }
+    config.surface.obj_path.clear();
+    CHECK(!pvt::validate(config).ok);
+    config.surface.obj_path =
+        (source_root / "tests" / "assets" / "obj" / "closed_cube.obj").string();
+
     // Lighting scales neutral channels uniformly. This protects primitive
     // shading from introducing a channel-specific tint.
     config.saturation = 0.0;
@@ -429,6 +488,117 @@ void test_partial_alpha_glow_composition() {
     }
 }
 
+void test_block_scale_and_default_glow_visibility() {
+    auto glow_config = pvt::default_config();
+    make_small(glow_config);
+    for (auto& effect : glow_config.effects) {
+        effect.enabled = false;
+    }
+    pvt::Image base;
+    pvt::Image glowing;
+    std::string error;
+    CHECK(pvt::render_frame_at_phase(glow_config, 0.25, base, &error));
+    const auto glow = std::find_if(
+        glow_config.effects.begin(), glow_config.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::Glow;
+        });
+    CHECK(glow != glow_config.effects.end());
+    if (glow != glow_config.effects.end()) {
+        glow->enabled = true;
+    }
+    CHECK(pvt::render_frame_at_phase(glow_config, 0.25, glowing, &error));
+    const double default_glow_difference = mean_absolute_difference(base, glowing);
+    CHECK(default_glow_difference > 0.02);
+    CHECK(default_glow_difference < 0.15);
+
+    // Make a static but spatially varied source so any changes across sampled
+    // phases come from BlockScale alone rather than from the underlying waves.
+    auto config = pvt::default_config();
+    make_small(config);
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.hue_cycles = 0;
+    config.alpha.enabled = true;
+    config.alpha.minimum = 0.0;
+    config.alpha.maximum = 1.0;
+    config.alpha.spatial_frequency = 3.0;
+    config.alpha.cycles_per_loop = 0;
+
+    CHECK(pvt::render_frame_at_phase(config, 0.0, base, &error));
+    pvt::Image static_check;
+    CHECK(pvt::render_frame_at_phase(config, 0.37, static_check, &error));
+    CHECK(base.pixels == static_check.pixels);
+
+    auto block_scale = pvt::default_effect(pvt::EffectType::BlockScale);
+    block_scale.id = pvt::allocate_id(config);
+    block_scale.enabled = true;
+    block_scale.synchronized = false;
+    block_scale.intensity = 0.0;
+    block_scale.magnitude = 1.0;
+    block_scale.frequency = 8.0;
+    config.effects.push_back(block_scale);
+    pvt::Image effected;
+    CHECK(pvt::render_frame_at_phase(config, 0.5, effected, &error));
+    CHECK(base.pixels == effected.pixels); // Zero mix is exactly neutral.
+
+    config.effects[0].intensity = 1.0;
+    config.effects[0].frequency = 1.0;
+    CHECK(pvt::render_frame_at_phase(config, 0.5, effected, &error));
+    CHECK(base.pixels == effected.pixels); // A one-pixel group is exactly neutral.
+
+    config.effects[0].frequency = 8.0;
+    CHECK(pvt::render_frame_at_phase(config, 0.5, effected, &error));
+    CHECK(mean_absolute_difference(base, effected) > 0.005);
+    pvt::Image seam;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, effected, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0, seam, &error));
+    CHECK(effected.pixels == seam.pixels);
+
+    config.effects[0].secondary = 2.0;
+    std::set<std::vector<float>> quantized_frames;
+    for (int sample = 0; sample <= 16; ++sample) {
+        CHECK(pvt::render_frame_at_phase(
+            config, static_cast<double>(sample) / 16.0, effected, &error));
+        quantized_frames.insert(effected.pixels);
+    }
+    CHECK(quantized_frames.size() == 3U);
+
+    config.effects[0].secondary = 0.0;
+    std::set<std::vector<float>> smooth_frames;
+    for (int sample = 0; sample <= 16; ++sample) {
+        CHECK(pvt::render_frame_at_phase(
+            config, static_cast<double>(sample) / 16.0, effected, &error));
+        smooth_frames.insert(effected.pixels);
+    }
+    CHECK(smooth_frames.size() > quantized_frames.size());
+
+    // The effect consumes the image at its exact stack position: warping
+    // grouped pixels is observably different from grouping warped pixels.
+    config.effects[0].magnitude = 8.0;
+    config.effects[0].frequency = 8.0;
+    auto ripple = pvt::default_effect(pvt::EffectType::Ripple);
+    ripple.id = config.effects[0].id + 1U;
+    ripple.enabled = true;
+    ripple.synchronized = false;
+    ripple.intensity = 1.0;
+    ripple.magnitude = 0.08;
+    ripple.edge_mode = pvt::EdgeMode::Reflect;
+    config.effects.push_back(ripple);
+    pvt::Image block_then_ripple;
+    pvt::Image ripple_then_block;
+    CHECK(pvt::render_frame_at_phase(config, 0.25, block_then_ripple, &error));
+    std::swap(config.effects[0], config.effects[1]);
+    CHECK(pvt::render_frame_at_phase(config, 0.25, ripple_then_block, &error));
+    CHECK(mean_absolute_difference(block_then_ripple, ripple_then_block) > 0.001);
+}
+
 void test_validation_limits() {
     auto config = pvt::default_config();
     CHECK(pvt::validate(config).ok);
@@ -437,6 +607,33 @@ void test_validation_limits() {
     config = pvt::default_config();
     config.output.bit_depth = 12;
     CHECK(!pvt::validate(config).ok);
+    config = pvt::default_config();
+    config.output.png_compression_level = -1;
+    CHECK(!pvt::validate(config).ok);
+    config.output.png_compression_level = 10;
+    CHECK(!pvt::validate(config).ok);
+
+    config = pvt::default_config();
+    auto& block_scale = config.effects.back();
+    CHECK(block_scale.type == pvt::EffectType::BlockScale);
+    block_scale.enabled = true;
+    block_scale.secondary = 3.0;
+    CHECK(pvt::validate(config).ok);
+    block_scale.intensity = 1.01;
+    CHECK(!pvt::validate(config).ok);
+    block_scale.intensity = 1.0;
+    block_scale.magnitude = 0.0;
+    CHECK(!pvt::validate(config).ok);
+    block_scale.magnitude = 1.0;
+    block_scale.frequency = 0.5;
+    CHECK(!pvt::validate(config).ok);
+    block_scale.frequency = 3.0;
+    block_scale.secondary = 2.5;
+    CHECK(!pvt::validate(config).ok);
+    block_scale.secondary = -1.0;
+    CHECK(!pvt::validate(config).ok);
+
+    config = pvt::default_config();
     make_small(config);
     config.output.output_directory.clear();
     config.output.filename_prefix.clear();
@@ -475,6 +672,16 @@ void test_validation_limits() {
           == two_buffer_result.estimated_peak_bytes);
     config.effects[1].intensity = 1.0;
     CHECK(!pvt::validate(config).ok); // An active effect requires a third buffer.
+
+    config = pvt::default_config();
+    make_small(config);
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+    config.surface.obj_path = "mesh.obj";
+    config.alpha.enabled = true;
+    const auto obj_memory_result = pvt::validate(config);
+    CHECK(obj_memory_result.ok);
+    CHECK(obj_memory_result.estimated_peak_bytes > 350U * 1024U * 1024U);
 
     config = pvt::default_config();
     config.waves[0].direction = std::numeric_limits<double>::quiet_NaN();
@@ -528,7 +735,9 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.quantization.mode = pvt::QuantizationMode::Hue;
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
+    original.surface.obj_path = "mesh folder/test.obj";
     original.output.bit_depth = 16;
+    original.output.png_compression_level = 3;
     original.output.dither_method = pvt::DitherMethod::FloydSteinberg;
     original.output.output_directory = "output folder/%safe";
 
@@ -572,8 +781,39 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     auto loaded = pvt::default_config();
     loaded.width = 777;
     CHECK(pvt::load_setup(first.string(), loaded, &error));
+    CHECK(loaded.output.png_compression_level == 3);
+    CHECK(loaded.surface.obj_path == original.surface.obj_path);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
+
+    // Version 1 predates PNG compression control and custom OBJ paths. It
+    // remains loadable and receives the current defaults for both fields.
+    const auto version_two_bytes = read_bytes(first);
+    std::string version_one(version_two_bytes.begin(), version_two_bytes.end());
+    CHECK(version_one.rfind("PVT_SETUP\t2\n", 0U) == 0U);
+    version_one.replace(0U, std::string("PVT_SETUP\t2").size(), "PVT_SETUP\t1");
+    const std::string compression_record = "output.png_compression_level\t3\n";
+    const std::size_t compression_position = version_one.find(compression_record);
+    CHECK(compression_position != std::string::npos);
+    if (compression_position != std::string::npos) {
+        version_one.erase(compression_position, compression_record.size());
+    }
+    const std::string obj_record = "surface.obj_path\tmesh%20folder%2Ftest.obj\n";
+    const std::size_t obj_position = version_one.find(obj_record);
+    CHECK(obj_position != std::string::npos);
+    if (obj_position != std::string::npos) {
+        version_one.erase(obj_position, obj_record.size());
+    }
+    const fs::path version_one_setup = directory / "version-one.pvt";
+    {
+        std::ofstream output(version_one_setup, std::ios::binary);
+        output.write(version_one.data(), static_cast<std::streamsize>(version_one.size()));
+    }
+    auto loaded_version_one = pvt::default_config();
+    loaded_version_one.output.png_compression_level = 9;
+    CHECK(pvt::load_setup(version_one_setup.string(), loaded_version_one, &error));
+    CHECK(loaded_version_one.output.png_compression_level == 5);
+    CHECK(loaded_version_one.surface.obj_path.empty());
 
     const fs::path unicode_setup =
         directory / pvt::detail::path_from_utf8("setup-\xCE\xB3.pvt");
@@ -803,6 +1043,22 @@ void test_image_formats_and_dither(const fs::path& directory) {
     CHECK(pvt::write_image(undithered.string(), image, config, 999U, &error));
     CHECK(read_bytes(noise_a) != read_bytes(undithered));
 
+    const fs::path compression_off = directory / "compression-off.png";
+    const fs::path compression_max = directory / "compression-max.png";
+    config.output.png_compression_level = 0;
+    CHECK(pvt::write_image(compression_off.string(), image, config, 999U, &error));
+    config.output.png_compression_level = 9;
+    CHECK(pvt::write_image(compression_max.string(), image, config, 999U, &error));
+    png_uint_32 off_width = 0;
+    png_uint_32 off_height = 0;
+    png_uint_32 max_width = 0;
+    png_uint_32 max_height = 0;
+    const auto decoded_off = decode_png_rgba8(compression_off, &off_width, &off_height);
+    const auto decoded_max = decode_png_rgba8(compression_max, &max_width, &max_height);
+    CHECK(off_width == max_width && off_height == max_height);
+    CHECK(decoded_off == decoded_max);
+    CHECK(read_bytes(compression_max).size() < read_bytes(compression_off).size());
+
     config.output.bit_depth = 32;
     config.output.dither_enabled = true; // Must still be ignored for EXR.
     config.alpha.enabled = false;
@@ -944,11 +1200,27 @@ void test_sequence_preflight(const fs::path& directory) {
     std::atomic_bool cancelled {true};
     CHECK(!pvt::render_sequence(config, {}, &cancelled, &error));
     CHECK(!fs::exists(directory / "atomic-cancel" / "loop_0000.png"));
+
+    // A literal dot remains relative to the caller's working directory, and
+    // sibling temporary output must stay there rather than drifting to root.
+    const fs::path previous_working_directory = fs::current_path();
+    const fs::path relative_output_directory = directory / "relative-dot";
+    fs::create_directories(relative_output_directory);
+    fs::current_path(relative_output_directory);
+    config.output.output_directory = ".";
+    config.output.filename_prefix = "relative_";
+    config.total_frames = 2;
+    config.output.overwrite_existing = false;
+    CHECK(pvt::render_sequence(config, {}, nullptr, &error));
+    fs::current_path(previous_working_directory);
+    CHECK(fs::exists(relative_output_directory / "relative_0000.png"));
+    CHECK(fs::exists(relative_output_directory / "relative_0001.png"));
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const fs::path source_root = argc > 1 ? fs::path(argv[1]) : fs::current_path();
     const long process_id =
 #if defined(_WIN32)
         static_cast<long>(::_getpid());
@@ -965,8 +1237,9 @@ int main() {
     test_defaults_and_dynamic_collections();
     test_image_access_and_transactional_render();
     test_determinism_and_seam_continuity();
-    test_direction_alpha_and_surfaces();
+    test_direction_alpha_and_surfaces(source_root);
     test_partial_alpha_glow_composition();
+    test_block_scale_and_default_glow_visibility();
     test_validation_limits();
     test_setup_round_trip_and_transaction(test_directory);
     test_image_formats_and_dither(test_directory);

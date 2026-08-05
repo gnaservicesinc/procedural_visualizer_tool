@@ -1,5 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
+#include "obj_surface.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -146,6 +148,7 @@ bool valid_enum(EffectType value) {
         case EffectType::Shake:
         case EffectType::FlagWave:
         case EffectType::Glow:
+        case EffectType::BlockScale:
             return true;
     }
     return false;
@@ -167,6 +170,7 @@ bool valid_enum(SurfaceMapping value) {
         case SurfaceMapping::Cylinder:
         case SurfaceMapping::Sphere:
         case SurfaceMapping::Cube:
+        case SurfaceMapping::CustomObj:
             return true;
     }
     return false;
@@ -197,8 +201,22 @@ bool effect_has_render_work(const EffectConfig& effect) {
     if (!effect.enabled || effect.intensity <= 0.0) {
         return false;
     }
-    return effect.type == EffectType::Glow ? effect.radius_pixels > 0.0
-                                           : effect.magnitude > 0.0;
+    switch (effect.type) {
+        case EffectType::Glow:
+            return effect.radius_pixels > 0.0;
+        case EffectType::BlockScale:
+            return effect.magnitude > 0.0 && effect.frequency > 0.0;
+        case EffectType::EndlessZoom:
+        case EffectType::Ripple:
+        case EffectType::Shake:
+        case EffectType::FlagWave:
+            return effect.magnitude > 0.0;
+    }
+    return false;
+}
+
+bool effect_uses_edge_mode(EffectType type) {
+    return type != EffectType::Glow && type != EffectType::BlockScale;
 }
 
 bool surface_has_render_work(const SurfaceConfig& surface) {
@@ -500,6 +518,23 @@ Color blend_straight_alpha(const Color& first, const Color& second, double amoun
             first.a * first_weight + second.a * amount};
 }
 
+Color composite_straight_alpha_over(const Color& front, const Color& back) {
+    const double front_alpha = clamp_value(front.a, 0.0, 1.0);
+    const double back_weight = clamp_value(back.a, 0.0, 1.0)
+                               * (1.0 - front_alpha);
+    const double output_alpha = front_alpha + back_weight;
+    if (output_alpha <= 1.0e-12) {
+        // Preserve useful straight RGB even when neither surface contributes
+        // coverage, matching the rest of the renderer's transparent-color
+        // convention.
+        return {front.r, front.g, front.b, 0.0};
+    }
+    return {(front.r * front_alpha + back.r * back_weight) / output_alpha,
+            (front.g * front_alpha + back.g * back_weight) / output_alpha,
+            (front.b * front_alpha + back.b * back_weight) / output_alpha,
+            output_alpha};
+}
+
 bool image_pixel_offset(const Image& image, int x, int y, std::size_t& offset) {
     if (x < 0 || y < 0 || x >= image.width || y >= image.height) {
         return false;
@@ -554,6 +589,7 @@ const char* effect_type_name(EffectType value) {
         case EffectType::Shake: return "Shake";
         case EffectType::FlagWave: return "Flag wave";
         case EffectType::Glow: return "Glow";
+        case EffectType::BlockScale: return "Block scale";
     }
     return "Unknown";
 }
@@ -583,6 +619,7 @@ const char* surface_mapping_name(SurfaceMapping value) {
         case SurfaceMapping::Cylinder: return "Cylinder";
         case SurfaceMapping::Sphere: return "Sphere";
         case SurfaceMapping::Cube: return "Cube";
+        case SurfaceMapping::CustomObj: return "Custom OBJ";
     }
     return "Unknown";
 }
@@ -683,11 +720,17 @@ EffectConfig default_effect(EffectType type) {
             effect.secondary = 0.35;
             break;
         case EffectType::Glow:
-            effect.intensity = 0.8;
+            effect.intensity = 0.7;
             effect.secondary = 0.35;
-            effect.radius_pixels = 12.0;
-            effect.threshold = 0.65;
-            effect.soft_knee = 0.25;
+            effect.radius_pixels = 16.0;
+            effect.threshold = 0.30;
+            effect.soft_knee = 0.40;
+            break;
+        case EffectType::BlockScale:
+            effect.intensity = 1.0;
+            effect.magnitude = 1.0;
+            effect.frequency = 3.0;
+            effect.secondary = 0.0;
             break;
     }
     return effect;
@@ -705,10 +748,10 @@ RenderConfig default_config() {
     config.swings.push_back(default_swing(0));
     config.swings[0].id = 4;
 
-    config.effects.reserve(5);
-    const std::array<EffectType, 5> types = {
+    config.effects.reserve(6);
+    const std::array<EffectType, 6> types = {
         EffectType::EndlessZoom, EffectType::Ripple, EffectType::Shake,
-        EffectType::FlagWave, EffectType::Glow};
+        EffectType::FlagWave, EffectType::Glow, EffectType::BlockScale};
     for (std::size_t index = 0; index < types.size(); ++index) {
         EffectConfig effect = default_effect(types[index]);
         effect.id = static_cast<std::uint64_t>(index) + 5U;
@@ -839,13 +882,24 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
+        if (effect.type == EffectType::BlockScale
+            && (effect.intensity > 1.0
+                || effect.magnitude <= 0.0
+                || effect.frequency < effect.magnitude
+                || effect.secondary < 0.0
+                || std::floor(effect.secondary) != effect.secondary)) {
+            return invalid_result(
+                "Block scale effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, positive ordered multipliers, "
+                  "and whole quantization steps from 0 to 100.");
+        }
         const bool active_effect = effect_has_render_work(effect);
         const bool active_glow = active_effect && effect.type == EffectType::Glow;
         has_enabled_effect = has_enabled_effect || active_effect;
         has_enabled_glow = has_enabled_glow || active_glow;
         has_transparent_edge_effect = has_transparent_edge_effect
                                       || (active_effect
-                                          && effect.type != EffectType::Glow
+                                          && effect_uses_edge_mode(effect.type)
                                           && effect.edge_mode == EdgeMode::Alpha);
         if (active_glow) {
             logarithmic_color_bound += std::log1p(effect.intensity);
@@ -894,6 +948,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
         || !finite_in_range(config.surface.lighting, 0.0, 10.0)) {
         return invalid_result("Surface mapping values are out of range.");
     }
+    if ((!config.surface.obj_path.empty()
+         && !valid_path_text(config.surface.obj_path, kMaximumPathBytes, false))
+        || (surface_has_render_work(config.surface)
+            && config.surface.mapping == SurfaceMapping::CustomObj
+            && config.surface.obj_path.empty())) {
+        return invalid_result(
+            "An active custom OBJ surface requires a valid, non-empty OBJ file path.");
+    }
     if (include_export) {
         const bool has_transparent_surface =
             surface_has_render_work(config.surface)
@@ -907,6 +969,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
         if (config.output.bit_depth != 8 && config.output.bit_depth != 16
             && config.output.bit_depth != 32) {
             return invalid_result("Export bit depth must be 8, 16, or 32.");
+        }
+        if (config.output.png_compression_level < 0
+            || config.output.png_compression_level > 9) {
+            return invalid_result("PNG compression level must be between 0 and 9.");
         }
         if (!valid_enum(config.output.dither_method)
             || !valid_path_text(config.output.output_directory, kMaximumPathBytes, false)
@@ -941,9 +1007,28 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
     if (!checked_multiply(frame_bytes, buffer_count, peak_bytes)) {
         return invalid_result("The renderer's peak memory estimate overflowed.");
     }
+    if (surface_has_render_work(config.surface)
+        && config.surface.mapping == SurfaceMapping::CustomObj) {
+        std::size_t obj_working_bytes = 0;
+        if (!checked_multiply(pixel_count,
+                              detail::kObjSurfaceLayeredBytesPerPixel,
+                              obj_working_bytes)
+            || obj_working_bytes > std::numeric_limits<std::size_t>::max()
+                                       - peak_bytes) {
+            return invalid_result("The custom OBJ peak memory estimate overflowed.");
+        }
+        // Validate against the transparent, multi-layer path. Opaque images
+        // automatically use a smaller nearest-fragment buffer at render time.
+        peak_bytes += obj_working_bytes;
+        if (detail::kObjSurfaceMaximumMeshAndProjectionBytes
+            > std::numeric_limits<std::size_t>::max() - peak_bytes) {
+            return invalid_result("The custom OBJ mesh memory estimate overflowed.");
+        }
+        peak_bytes += detail::kObjSurfaceMaximumMeshAndProjectionBytes;
+    }
     if (peak_bytes > kMaximumPeakBytes) {
         std::ostringstream message;
-        message << "Estimated peak image memory is "
+        message << "Estimated peak rendering memory is "
                 << (peak_bytes / (1024U * 1024U))
                 << " MiB, above the 1024 MiB safety budget.";
         return invalid_result(message.str(), peak_bytes);
@@ -1177,10 +1262,63 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                     break;
                 }
                 case EffectType::Glow:
+                case EffectType::BlockScale:
                     sampled = load_color(source, x, y);
                     break;
             }
             store_color(destination, x, y, sampled);
+        }
+    }
+}
+
+void apply_block_scale(const Image& source, Image& destination,
+                       const EffectConfig& effect, double phase,
+                       int base_block_size) {
+    ensure_image(destination, source.width, source.height);
+
+    double travel = 0.5 - 0.5 * std::cos(phase);
+    const int quantization_steps = static_cast<int>(std::llround(effect.secondary));
+    if (quantization_steps > 0) {
+        travel = std::round(travel * static_cast<double>(quantization_steps))
+                 / static_cast<double>(quantization_steps);
+    }
+    const double multiplier = mix_value(effect.magnitude, effect.frequency, travel);
+    const double requested_size = static_cast<double>(base_block_size) * multiplier;
+    const int maximum_size = std::max(source.width, source.height);
+    const int block_size = std::max(
+        1, std::min(maximum_size,
+                    static_cast<int>(std::llround(std::min(
+                        requested_size, static_cast<double>(maximum_size))))));
+    const double amount = clamp_value(effect.intensity, 0.0, 1.0);
+
+    for (int block_y = 0; block_y < source.height; block_y += block_size) {
+        const int end_y = std::min(block_y + block_size, source.height);
+        for (int block_x = 0; block_x < source.width; block_x += block_size) {
+            const int end_x = std::min(block_x + block_size, source.width);
+            Color average;
+            std::size_t sample_count = 0U;
+            for (int y = block_y; y < end_y; ++y) {
+                for (int x = block_x; x < end_x; ++x) {
+                    const Color sample = load_color(source, x, y);
+                    average.r += sample.r;
+                    average.g += sample.g;
+                    average.b += sample.b;
+                    average.a += sample.a;
+                    ++sample_count;
+                }
+            }
+            const double reciprocal = 1.0 / static_cast<double>(sample_count);
+            average.r *= reciprocal;
+            average.g *= reciprocal;
+            average.b *= reciprocal;
+            average.a *= reciprocal;
+            for (int y = block_y; y < end_y; ++y) {
+                for (int x = block_x; x < end_x; ++x) {
+                    store_color(destination, x, y,
+                                blend_straight_alpha(load_color(source, x, y),
+                                                     average, amount));
+                }
+            }
         }
     }
 }
@@ -1298,6 +1436,10 @@ double dot(Vec3 first, Vec3 second) {
     return first.x * second.x + first.y * second.y + first.z * second.z;
 }
 
+Vec3 face_forward(Vec3 normal, Vec3 ray_direction) {
+    return dot(normal, ray_direction) > 0.0 ? multiply(normal, -1.0) : normal;
+}
+
 Vec3 normalize(Vec3 value) {
     const double length = std::sqrt(dot(value, value));
     return length > 1.0e-12 ? multiply(value, 1.0 / length) : Vec3{};
@@ -1328,8 +1470,32 @@ Color shade_surface(Color color, Vec3 normal, double lighting) {
     return color;
 }
 
-bool intersect_cube(Vec3 origin, Vec3 direction, double& distance, Vec3& point,
-                    Vec3& normal) {
+struct CubeHit {
+    double distance = 0.0;
+    Vec3 point;
+    Vec3 normal;
+};
+
+struct CubeIntersections {
+    CubeHit front;
+    CubeHit back;
+    bool has_back = false;
+};
+
+Vec3 cube_normal(Vec3 point) {
+    const double absolute_x = std::fabs(point.x);
+    const double absolute_y = std::fabs(point.y);
+    const double absolute_z = std::fabs(point.z);
+    if (absolute_x >= absolute_y && absolute_x >= absolute_z) {
+        return {point.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0};
+    }
+    if (absolute_y >= absolute_x && absolute_y >= absolute_z) {
+        return {0.0, point.y >= 0.0 ? 1.0 : -1.0, 0.0};
+    }
+    return {0.0, 0.0, point.z >= 0.0 ? 1.0 : -1.0};
+}
+
+bool intersect_cube(Vec3 origin, Vec3 direction, CubeIntersections& intersections) {
     double near_distance = -std::numeric_limits<double>::infinity();
     double far_distance = std::numeric_limits<double>::infinity();
     const std::array<double, 3> origins = {origin.x, origin.y, origin.z};
@@ -1355,17 +1521,19 @@ bool intersect_cube(Vec3 origin, Vec3 direction, double& distance, Vec3& point,
     if (far_distance < 0.0) {
         return false;
     }
-    distance = near_distance >= 0.0 ? near_distance : far_distance;
-    point = add(origin, multiply(direction, distance));
-    const double absolute_x = std::fabs(point.x);
-    const double absolute_y = std::fabs(point.y);
-    const double absolute_z = std::fabs(point.z);
-    if (absolute_x >= absolute_y && absolute_x >= absolute_z) {
-        normal = {point.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0};
-    } else if (absolute_y >= absolute_x && absolute_y >= absolute_z) {
-        normal = {0.0, point.y >= 0.0 ? 1.0 : -1.0, 0.0};
-    } else {
-        normal = {0.0, 0.0, point.z >= 0.0 ? 1.0 : -1.0};
+
+    intersections = {};
+    intersections.front.distance = near_distance >= 0.0
+                                       ? near_distance
+                                       : far_distance;
+    intersections.front.point = add(
+        origin, multiply(direction, intersections.front.distance));
+    intersections.front.normal = cube_normal(intersections.front.point);
+    if (near_distance >= 0.0 && far_distance - near_distance > 1.0e-10) {
+        intersections.back.distance = far_distance;
+        intersections.back.point = add(origin, multiply(direction, far_distance));
+        intersections.back.normal = cube_normal(intersections.back.point);
+        intersections.has_back = true;
     }
     return true;
 }
@@ -1386,8 +1554,15 @@ std::pair<double, double> cube_uv(Vec3 point, Vec3 normal) {
     return {clamp_value(u, 0.0, 1.0), clamp_value(v, 0.0, 1.0)};
 }
 
-void apply_surface_mapping(const Image& source, Image& destination,
-                           const SurfaceConfig& surface, double loop_phase) {
+bool apply_surface_mapping(const Image& source, Image& destination,
+                           const SurfaceConfig& surface, double loop_phase,
+                           std::string* error) {
+    if (surface.mapping == SurfaceMapping::CustomObj) {
+        return detail::apply_obj_surface_mapping(
+            source, destination, surface.obj_path, surface.rotations_per_loop,
+            surface.phase_degrees, surface.curvature, surface.lighting,
+            loop_phase, error);
+    }
     ensure_image(destination, source.width, source.height);
     const double phase = static_cast<double>(surface.rotations_per_loop) * loop_phase
                          + radians(surface.phase_degrees);
@@ -1430,18 +1605,30 @@ void apply_surface_mapping(const Image& source, Image& destination,
                         break;
                     }
                     const double longitude = std::asin(clamp_value(normalized_x, -1.0, 1.0));
-                    const double wrapped_u = wrap_unit(
-                        0.5 + longitude / kTau - phase / kTau);
                     const double surface_v = 0.5 + 0.5 * normalized_y;
-                    Color wrapped = sample_bilinear_wrapped_x(
-                        source, wrapped_u * source.width,
-                        surface_v * (source.height - 1));
-                    wrapped = shade_surface(
-                        wrapped,
-                        {normalized_x, 0.0,
-                         std::sqrt(std::max(0.0,
-                             1.0 - normalized_x * normalized_x))},
-                        surface.lighting);
+                    const double normalized_z = std::sqrt(std::max(
+                        0.0, 1.0 - normalized_x * normalized_x));
+                    const auto sample_side = [&](double side_longitude,
+                                                 double normal_z) {
+                        const double wrapped_u = wrap_unit(
+                            0.5 + side_longitude / kTau - phase / kTau);
+                        Color sampled = sample_bilinear_wrapped_x(
+                            source, wrapped_u * source.width,
+                            surface_v * (source.height - 1));
+                        const Vec3 outward_normal = {normalized_x, 0.0, normal_z};
+                        return shade_surface(sampled,
+                                             face_forward(outward_normal,
+                                                          {0.0, 0.0, -1.0}),
+                                             surface.lighting);
+                    };
+                    Color wrapped = sample_side(longitude, normalized_z);
+                    if (normalized_z > 1.0e-10) {
+                        const double rear_longitude = normalized_x >= 0.0
+                                                          ? kPi - longitude
+                                                          : -kPi - longitude;
+                        const Color rear = sample_side(rear_longitude, -normalized_z);
+                        wrapped = composite_straight_alpha_over(wrapped, rear);
+                    }
                     const Color planar = load_color(source, x, y);
                     output = blend_straight_alpha(planar, wrapped, curvature);
                     break;
@@ -1458,20 +1645,27 @@ void apply_surface_mapping(const Image& source, Image& destination,
                     }
                     const double normalized_z = std::sqrt(std::max(0.0,
                         1.0 - radius_squared));
-                    const Vec3 texture_normal = rotate_y(
-                        {normalized_x, normalized_y, normalized_z}, -phase);
-                    const double longitude = std::atan2(texture_normal.x,
-                                                        texture_normal.z);
-                    const double latitude = std::asin(
-                        clamp_value(texture_normal.y, -1.0, 1.0));
-                    const double wrapped_u = wrap_unit(0.5 + longitude / kTau);
-                    const double sphere_v = 0.5 - latitude / kPi;
-                    Color wrapped = sample_bilinear_wrapped_x(
-                        source, wrapped_u * source.width,
-                        sphere_v * (source.height - 1));
-                    wrapped = shade_surface(
-                        wrapped, {normalized_x, normalized_y, normalized_z},
-                        surface.lighting);
+                    const auto sample_side = [&](double normal_z) {
+                        const Vec3 normal = {normalized_x, normalized_y, normal_z};
+                        const Vec3 texture_normal = rotate_y(normal, -phase);
+                        const double longitude = std::atan2(texture_normal.x,
+                                                            texture_normal.z);
+                        const double latitude = std::asin(
+                            clamp_value(texture_normal.y, -1.0, 1.0));
+                        const double wrapped_u = wrap_unit(0.5 + longitude / kTau);
+                        const double sphere_v = 0.5 - latitude / kPi;
+                        Color sampled = sample_bilinear_wrapped_x(
+                            source, wrapped_u * source.width,
+                            sphere_v * (source.height - 1));
+                        return shade_surface(sampled,
+                                             face_forward(normal, {0.0, 0.0, -1.0}),
+                                             surface.lighting);
+                    };
+                    Color wrapped = sample_side(normalized_z);
+                    if (normalized_z > 1.0e-10) {
+                        const Color rear = sample_side(-normalized_z);
+                        wrapped = composite_straight_alpha_over(wrapped, rear);
+                    }
                     const Color planar = load_color(source, x, y);
                     output = blend_straight_alpha(planar, wrapped, curvature);
                     break;
@@ -1488,26 +1682,39 @@ void apply_surface_mapping(const Image& source, Image& destination,
                                       -fixed_x_rotation);
                     direction = rotate_x(rotate_y(direction, -y_rotation),
                                          -fixed_x_rotation);
-                    double distance = 0.0;
-                    Vec3 point;
-                    Vec3 normal;
-                    if (!intersect_cube(origin, direction, distance, point, normal)) {
+                    CubeIntersections intersections;
+                    if (!intersect_cube(origin, direction, intersections)) {
                         visible = false;
                         break;
                     }
-                    const auto uv = cube_uv(point, normal);
-                    const double mapped_u = mix_value(screen_u, uv.first, curvature);
-                    const double mapped_v = mix_value(screen_v, uv.second, curvature);
-                    output = sample_bilinear(source,
-                                             mapped_u * (source.width - 1),
-                                             mapped_v * (source.height - 1),
-                                             EdgeMode::Reflect);
-                    const Vec3 world_normal = rotate_y(
-                        rotate_x(normal, fixed_x_rotation), y_rotation);
-                    output = shade_surface(output, world_normal,
-                                           surface.lighting * curvature);
+                    const auto sample_hit = [&](const CubeHit& hit) {
+                        const auto uv = cube_uv(hit.point, hit.normal);
+                        const double mapped_u = mix_value(screen_u, uv.first, curvature);
+                        const double mapped_v = mix_value(screen_v, uv.second, curvature);
+                        Color sampled = sample_bilinear(
+                            source, mapped_u * (source.width - 1),
+                            mapped_v * (source.height - 1), EdgeMode::Reflect);
+                        const Vec3 lighting_normal = face_forward(hit.normal, direction);
+                        const Vec3 world_normal = rotate_y(
+                            rotate_x(lighting_normal, fixed_x_rotation), y_rotation);
+                        return shade_surface(sampled, world_normal,
+                                             surface.lighting * curvature);
+                    };
+                    const Color front = sample_hit(intersections.front);
+                    output = front;
+                    if (intersections.has_back) {
+                        const Color back = sample_hit(intersections.back);
+                        const Color layered = composite_straight_alpha_over(front, back);
+                        // Cube curvature already morphs UVs and lighting. Fade
+                        // rear-face coverage in separately so curvature zero
+                        // remains exactly planar instead of doubling alpha.
+                        output = blend_straight_alpha(front, layered, curvature);
+                    }
                     break;
                 }
+                case SurfaceMapping::CustomObj:
+                    // Dispatched before the analytic per-pixel mapper above.
+                    break;
             }
 
             if (!visible) {
@@ -1521,6 +1728,7 @@ void apply_surface_mapping(const Image& source, Image& destination,
             store_color(destination, x, y, output);
         }
     }
+    return true;
 }
 
 double quantize_value(double value, int levels) {
@@ -1657,18 +1865,32 @@ bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
             const double phase = effect_phase(effect, loop_phase, motion_phase);
             if (effect.type == EffectType::Glow) {
                 apply_glow(current, scratch, auxiliary, effect, phase);
+            } else if (effect.type == EffectType::BlockScale) {
+                apply_block_scale(current, scratch, effect, phase,
+                                  config.block_size);
+                current.pixels.swap(scratch.pixels);
             } else {
                 apply_coordinate_effect(current, scratch, effect, phase);
                 current.pixels.swap(scratch.pixels);
             }
         }
 
-        // Curvature zero is the neutral setting for 3D primitive mappings. The
-        // primitive's visibility mask and lighting must not crop or shade the
+        // Curvature zero is the neutral setting for 3D surface mappings. The
+        // surface's visibility mask and lighting must not crop or shade the
         // planar source in that state. Plane mapping remains active whenever its
         // configured phase or per-loop rotation can produce a 2D rotation.
         if (surface_has_render_work(config.surface)) {
-            apply_surface_mapping(current, scratch, config.surface, loop_phase);
+            if (config.surface.mapping == SurfaceMapping::CustomObj) {
+                // OBJ mapping builds its transactional mapped image locally.
+                // Release the no-longer-needed effect scratch allocation so
+                // that local image occupies the surface-work buffer already
+                // included by central peak-memory validation.
+                scratch = Image{};
+            }
+            if (!apply_surface_mapping(current, scratch, config.surface,
+                                       loop_phase, error)) {
+                return false;
+            }
             current.pixels.swap(scratch.pixels);
         }
         apply_quantization(current, config.quantization);
@@ -1679,7 +1901,7 @@ bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
         set_error(error, std::string{});
         return true;
     } catch (const std::bad_alloc&) {
-        set_error(error, "The renderer could not allocate its validated image buffers.");
+        set_error(error, "The renderer could not allocate its validated working buffers.");
         return false;
     } catch (const std::exception& exception) {
         set_error(error, std::string("Rendering failed: ") + exception.what());

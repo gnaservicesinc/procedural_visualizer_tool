@@ -3,6 +3,7 @@ BUILD_DIR ?= build
 BUILD_TYPE ?= Release
 QT_PREFIX ?=
 PVT_BUILD_QT_GUI ?= OFF
+PVT_LAUNCH_DIR ?= $(CURDIR)
 INSTALL_PREFIX ?=
 CMAKE_CONFIGURE_ARGS ?=
 
@@ -49,20 +50,20 @@ render: all
 
 gui:
 	$(MAKE) PVT_BUILD_QT_GUI=ON all
-	@if [ -d "$(BUILD_DIR)/Procedural Visualizer Tool.app" ]; then \
-		open "$(BUILD_DIR)/Procedural Visualizer Tool.app"; \
-	elif [ -d "$(BUILD_DIR)/$(BUILD_TYPE)/Procedural Visualizer Tool.app" ]; then \
-		open "$(BUILD_DIR)/$(BUILD_TYPE)/Procedural Visualizer Tool.app"; \
+	@if [ -x "$(BUILD_DIR)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" ]; then \
+		"$(BUILD_DIR)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
+	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" ]; then \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/procedural-visualizer-tool" ]; then \
-		"$(BUILD_DIR)/procedural-visualizer-tool"; \
+		"$(BUILD_DIR)/procedural-visualizer-tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/procedural-visualizer-tool" ]; then \
-		"$(BUILD_DIR)/$(BUILD_TYPE)/procedural-visualizer-tool"; \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/procedural-visualizer-tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/procedural-visualizer-tool.exe" ]; then \
-		"$(BUILD_DIR)/procedural-visualizer-tool.exe"; \
+		"$(BUILD_DIR)/procedural-visualizer-tool.exe" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/procedural-visualizer-tool.exe" ]; then \
-		"$(BUILD_DIR)/$(BUILD_TYPE)/procedural-visualizer-tool.exe"; \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/procedural-visualizer-tool.exe" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/Procedural Visualizer Tool" ]; then \
-		"$(BUILD_DIR)/Procedural Visualizer Tool"; \
+		"$(BUILD_DIR)/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	else \
 		echo "Could not locate the built GUI executable in $(BUILD_DIR)." >&2; exit 1; \
 	fi

@@ -35,6 +35,20 @@ symlink entries without following them, and retain atomic no-clobber behavior un
 concurrent renders. POSIX setup output uses direct partial-write/EINTR handling,
 followed by permission restoration, `fsync`, and atomic replacement.
 
+This pass added selectable PNG compression (`0` off through `9` maximum, default
+`5`), stable relative-path handling, home/last-location file dialogs, and a
+playback pipeline that presents completed frames continuously even when rendering
+is slower than the playback timer. The GUI now has separate randomizers for
+existing stack values and for wave/swing/effect composition. Glow defaults were
+tuned to produce a visible restrained bloom, and the new Block Scale effect
+animates smooth or quantized pixel grouping in the ordered effect stack.
+
+Surface wrapping now includes bounded custom Wavefront OBJ loading, cached mesh
+parsing, perspective-correct CPU rasterization, authored or automatic UVs, and
+two-sided lighting. Built-in closed primitives and OBJ meshes composite rear/exit
+surface samples through partially transparent front surfaces instead of using an
+opaque nearest-hit mask.
+
 ## Requested work
 
 | # | Request | Status | Result |
@@ -43,22 +57,27 @@ followed by permission restoration, `fsync`, and atomic replacement.
 | 2 | Optional synchronization per wave/effect | Complete | Each wave and effect has a `synchronized` toggle; free clocks are independent but still periodic. |
 | 3 | Toggle/add/remove/reorder any quantity | Complete | Bounded dynamic wave, swing, and effect collections support zero through their safety limits in the API, CLI, and GUI. |
 | 4 | Direction from horizontal through radial to vertical | Complete | Continuous `0.0` horizontal, `0.5` radial/default, `1.0` vertical control. |
-| 4a-e | Endless zoom, ripple, shake, flag wave, glow | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses straight-alpha-safe HDR composition. |
-| 5 | 8/16-bit PNG and 32-bit float EXR | Complete | RGB/RGBA PNG at 8 or 16 bits per channel; RGB/RGBA uncompressed scanline EXR with FLOAT channels. |
+| 4a-f | Endless zoom, ripple, shake, flag wave, glow, block scale | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses visible straight-alpha-safe HDR bloom; Block Scale animates smooth or stepped pixel grouping at its stack position. |
+| 5 | 8/16-bit PNG and 32-bit float EXR | Complete | RGB/RGBA PNG at 8 or 16 bits per channel with compression levels 0-9 (default 5); RGB/RGBA uncompressed scanline EXR with FLOAT channels. |
 | 6 | Optional alpha throughout | Complete | Internal images are straight float RGBA, including meaningful RGB at zero alpha; RGB export drops only the fourth channel. |
 | 7 | Float processing and lower-depth dithering | Complete | Linear float image pipeline; sRGB conversion plus blue-noise-like, Bayer, or Floyd-Steinberg dithering for PNG; dither is off/ignored for EXR. |
 | 8 | Safe setup save/load | Complete | Versioned deterministic `.pvt` files, bounded strict parser, complete validation, transactional load, atomic/durable save, UTF-8 paths, and no NUL truncation. |
 | 9 | Library-only build and useful Qt-facing API | Complete | `libProceduralVisualizerTool`, public header, installable CMake package, example consumer, and build switches that omit every `main`. |
 | 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave handles, dynamic stack editors, all configuration fields, timeline, setup I/O, and background export. |
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
-| 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Partial | Plane, periodic cylinder, periodic sphere, and ray-cast cube mappings are complete. Custom OBJ remains deferred. |
+| 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
+| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
+| 14 | Randomize stack values or composition | Complete | Separate GUI actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items. |
+| 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, and completed previews advance during Play even under timer/render overlap. |
 
 ## Important implementation map
 
 - `include/procedural_visualizer_tool.h`: public C++ API and complete owned config model.
 - `src/core.cpp`: validation, periodic phases, float RGBA renderer, effects,
   quantization, alpha, and analytic surface mappings.
-- `src/image_io.cpp`: PNG/EXR encoding, dithering, collision preflight,
+- `src/obj_mesh.cpp` / `src/obj_surface.cpp`: bounded Wavefront parsing/cache and
+  perspective, two-sided, layered custom-mesh rasterization.
+- `src/image_io.cpp`: PNG/EXR encoding, PNG compression, dithering, collision preflight,
   atomic installation, progress, and cancellation checks.
 - `src/config_io.cpp`: `.pvt` serializer/parser and transactional file I/O.
 - `app/cli_main.cpp`: menu and command-line client.
@@ -73,25 +92,29 @@ followed by permission restoration, `fsync`, and atomic replacement.
 - IDs are stable, nonzero, and unique after insertion; factory objects start at
   ID zero and must receive `allocate_id(config)`.
 - Collection counts, values, decoded strings, file sizes, image dimensions, and
-  an estimated 1 GiB peak working set are bounded before large allocations.
+  an estimated 1 GiB peak working set are bounded before large allocations;
+  custom OBJ estimates conservatively include the maximum cached mesh and its
+  projected position/normal arrays.
 - Existing output frames are protected unless overwrite is explicit, including
   an all-frame preflight and atomic no-clobber installation.
-- Transparent effect edges and curved primitive exteriors require RGBA export;
+- Transparent effect edges and curved 3D-surface exteriors require RGBA export;
   validation rejects configurations that would silently discard their alpha.
+- Transparent closed surfaces composite distinct front and rear samples. OBJ
+  rasterization never culls by winding and peels at most eight distinct depths.
 - The core library has no Qt dependency.
 
 ## Validation record
 
 Passed on 2026-08-05:
 
-- Release C++17 library/CLI build, CTest 6/6, and `render9 --self-test`.
-- Release C++20 compatibility build and CTest 6/6.
-- Qt-enabled Release build with an explicit Qt prefix, CTest 7/7, offscreen
-  smoke launch, setup round-trip, precision, UTF-8 validator, and automatic
-  alpha verification.
+- Release C++17 library/CLI build, CTest 10/10, and `render9 --self-test`.
+- Release C++20 compatibility build and CTest 10/10.
+- Qt-enabled Release build with an explicit Qt prefix, CTest 11/11, offscreen
+  smoke launch, setup round-trip, precision, UTF-8 validator, automatic alpha,
+  randomization invariants, and slow-preview playback-race verification.
 - Release library-only build with CLI/GUI/examples/tests disabled, installation,
   symbol check showing no `main`, and an external `find_package` consumer.
-- AddressSanitizer plus UndefinedBehaviorSanitizer build and CTest 6/6.
+- AddressSanitizer plus UndefinedBehaviorSanitizer build and CTest 10/10.
 - Independent FFmpeg decoding of 8/16-bit PNG and FLOAT EXR, plus Blender EXR
   loading; RGB/RGBA channel layouts and varying alpha were confirmed.
 - Setup round-trip, malformed-input transactionality, permission preservation,
@@ -111,16 +134,13 @@ target.
 
 ## Remaining work for later passes
 
-1. Implement custom OBJ support: bounded parser, path policy, normals/UVs,
-   perspective-correct rasterization, z-buffer, material policy, and malformed
-   mesh tests. Extend `SurfaceConfig`, setup format, CLI, and GUI together.
-2. Thread cancellation into per-frame rendering and encoding. Cancellation is
+1. Thread cancellation into per-frame rendering and encoding. Cancellation is
    currently checked during preflight and between frames, so one exceptionally
    expensive frame cannot be interrupted midway.
-3. For distributable GUI bundles, deploy the matching Qt runtime. On macOS also
+2. For distributable GUI bundles, deploy the matching Qt runtime. On macOS also
    resolve the deployment-target mismatch by packaging an appropriately built
    libpng and exercise the oldest supported macOS version. Until that deployment
    workflow exists, the GUI intentionally remains a build-tree application and is
    not installed by `cmake --install`.
-4. Expand GUI automation beyond launch and setup round-trip checks to exercise
-   editing/reordering, bit-depth state transitions, progress, and cancellation.
+3. Expand GUI automation beyond launch/setup/playback/randomization checks to
+   exercise editing/reordering, bit-depth transitions, progress, and cancellation.

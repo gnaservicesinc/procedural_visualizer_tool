@@ -22,7 +22,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 1;
+constexpr std::uint32_t kSetupFormatVersion = 2;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
@@ -40,7 +40,8 @@ enum class EffectType : std::uint8_t {
     Ripple,
     Shake,
     FlagWave,
-    Glow
+    Glow,
+    BlockScale
 };
 
 enum class DitherMethod : std::uint8_t {
@@ -53,7 +54,8 @@ enum class SurfaceMapping : std::uint8_t {
     Plane = 0,
     Cylinder,
     Sphere,
-    Cube
+    Cube,
+    CustomObj
 };
 
 enum class Waveform : std::uint8_t {
@@ -100,7 +102,7 @@ struct SwingConfig {
 // Effects share a compact parameter block so clients can edit and reorder a
 // heterogeneous stack without unsafe unions. Parameters that do not apply to a
 // given type are ignored. Coordinate-effect `magnitude` is normalized to the
-// shorter image edge; Glow uses `radius_pixels` instead.
+// shorter image edge; Glow and BlockScale use type-specific fields instead.
 //
 // EndlessZoom: intensity, magnitude, frequency, center, edge mode.
 // Ripple:      intensity, magnitude, frequency, secondary (falloff), center,
@@ -112,6 +114,10 @@ struct SwingConfig {
 // Glow:        intensity, secondary (pulse depth), radius_pixels, threshold,
 //              soft_knee. Glow expands alpha coverage using straight-alpha
 //              compositing.
+// BlockScale:  intensity (mix), magnitude (minimum block-size multiplier),
+//              frequency (maximum multiplier), secondary (whole quantization
+//              steps, where 0 is smooth). The animated multiplier is applied
+//              to RenderConfig::block_size at this position in the stack.
 //
 // All types use enabled, synchronized, cycles_per_loop, and phase_degrees.
 // Synchronized effects use the swung master clock; otherwise they use their
@@ -163,15 +169,21 @@ struct SurfaceConfig {
     SurfaceMapping mapping = SurfaceMapping::Plane;
     int rotations_per_loop = 0;
     double phase_degrees = 0.0;
-    // For Cylinder/Sphere/Cube, values continuously interpolate from the planar
-    // source at 0.0 to the full mapped, lit, and masked primitive at 1.0. Plane
-    // uses phase/rotation but not curvature.
+    // For Cylinder/Sphere/Cube/CustomObj, values continuously interpolate from
+    // the planar source at 0.0 to the full mapped, lit, and masked surface at
+    // 1.0. Plane uses phase/rotation but not curvature.
     double curvature = 1.0;
     double lighting = 0.35;
+    // Used when mapping is CustomObj. Relative paths are resolved against the
+    // process working directory; GUI launches anchor that directory explicitly.
+    std::string obj_path;
 };
 
 struct ExportConfig {
     int bit_depth = 8; // 8/16 write PNG; 32 writes full-float EXR.
+    // libpng/zlib compression level: 0 stores without deflate compression and
+    // 9 spends the most CPU for the smallest output. Ignored for EXR.
+    int png_compression_level = 5;
     bool dither_enabled = true;
     DitherMethod dither_method = DitherMethod::BlueNoise;
     std::string output_directory = ".";

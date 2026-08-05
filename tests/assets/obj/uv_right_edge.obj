@@ -1,0 +1,10 @@
+# Canonical u=1 must sample the right edge, not wrap to u=0.
+v -1 -1 0
+v  1 -1 0
+v  1  1 0
+v -1  1 0
+vt 1 0
+vt 1 0
+vt 1 1
+vt 1 1
+f 1/1 2/2 3/3 4/4

@@ -42,9 +42,10 @@ bundle and native non-macOS executable names.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
   cycles per loop, and propagation direction.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
-  and glow. Every effect can be enabled, synchronized, duplicated, removed, and
-  reordered. Both clients expose each type-specific center, edge, frequency,
-  harmonic/attenuation, glow pulse, radius, threshold, and soft-knee control.
+  glow, and animated block scaling. Every effect can be enabled, synchronized,
+  duplicated, removed, and reordered. Controls include type-specific centers,
+  edges, frequencies, harmonics/attenuation, glow bloom parameters, and block
+  scale range/mix/quantization steps.
 - Transparent, black, white, or reflected out-of-frame handling for coordinate
   effects.
 - Multiple dynamic swing modulators with sine, triangle, smooth-pulse, and
@@ -52,17 +53,24 @@ bundle and native non-macOS executable names.
 - Independent feature toggles for displacement, slope lighting, spiral, and
   wall reflection.
 - RGB, luminance, or hue quantization with 2-65,536 levels and adjustable mix.
-- Plane, cylinder, sphere, and ray-cast cube mappings.
+- Plane, cylinder, sphere, ray-cast cube, and custom Wavefront OBJ mappings.
+  OBJ files may provide texture coordinates and normals; automatic box UVs and
+  geometric normals cover meshes that omit them.
 - Independent procedural alpha modulation with minimum/maximum alpha, spatial
   frequency, phase, and cycles per loop.
 - 8/16-bit RGB or RGBA PNG and 32-bit FLOAT RGB or RGBA EXR output.
+- PNG compression from 0 (off/fastest) through 9 (maximum), with a balanced
+  default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
 
 The GUI includes draggable wave handles, ordered wave/swing/effect editors,
-type-aware effect controls, a live checkerboard alpha preview, a loop timeline,
-background preview rendering, setup load/save, and between-frame cancellation
-for background sequence export.
+type-aware effect controls, a live checkerboard alpha preview, a continuously
+updating loop timeline, background preview rendering, setup load/save, and
+between-frame cancellation for background sequence export. **Randomize values**
+keeps the current stack structure and types while varying their settings;
+**Randomize mix** creates new bounded wave, swing, and effect selections. File
+dialogs remember their last usable folder and otherwise begin in the home folder.
 
 ## Synchronization and seamless loops
 
@@ -94,16 +102,33 @@ Internal images always contain four 32-bit floating-point channels. RGB is
 linear-light and straight/unassociated alpha is retained independently, including
 meaningful RGB values at alpha zero for compositors such as Blender.
 
-Enable the alpha channel before using transparent effect edges or a curved
-cylinder, sphere, or cube surface. Export validation rejects those combinations
-as RGB because dropping their generated transparency would not match the preview.
+Enable the alpha channel before using transparent effect edges or a curved 3D
+surface. Export validation rejects those combinations as RGB because dropping
+their generated transparency would not match the preview.
 Enabling RGBA is neutral by default (minimum and maximum alpha are both `1.0`);
 lower either value to add procedural alpha modulation.
+
+Built-in closed primitives and custom meshes are two-sided. With partial alpha,
+the renderer samples the rear/exit surface and composites it behind the front;
+it does not treat a translucent front as an opaque nearest-hit mask. Custom OBJ
+rendering depth-peels up to eight distinct layers per pixel, stops early when no
+deeper surface remains, and uses a faster nearest-surface path for fully opaque
+input. Triangle winding never causes backface culling.
 
 PNG export converts linear RGB to sRGB immediately before dithering and integer
 quantization. PNG bit depth is per channel: 8-bit produces standard RGB/RGBA PNG;
 16-bit produces RGB/RGBA PNG with 16-bit samples. EXR stores the original linear
 RGB(A) values in FLOAT channels, including values above `1.0` created by glow.
+
+Glow thresholds are measured in linear luminance. The default threshold is low
+enough to create a visible, restrained bloom when Glow is enabled; raise it to
+restrict the halo to only the brightest regions.
+
+Block Scale groups the image into animated pixel blocks at its exact position in
+the ordered effect stack. Its minimum and maximum multipliers are relative to the
+canvas block size. The multiplier eases from minimum to maximum and back over a
+seamless cycle; zero quantization steps is smooth, while a positive whole step
+count produces deliberately stepped size changes.
 
 ## Setup files
 
@@ -115,6 +140,8 @@ Use **Save setup** and **Load setup** in either UI, or use the CLI:
 ```
 
 The `.pvt` format is deterministic, versioned, line-oriented, and human-readable.
+Current saves use format version 2; version 1 setups remain loadable and receive
+the default PNG compression level of 5 and an empty custom OBJ path.
 Loading is transactional: bounded parsing, duplicate/unknown-key rejection, exact
 type and enum checks, complete central validation, and commit only after the whole
 file succeeds. A failed load leaves the active setup unchanged. Saving uses a
@@ -129,8 +156,15 @@ Common CLI overrides can be layered on defaults or on a loaded setup:
 ./build/render9 --load setup.pvt --render \
   --width 640 --height 360 --block-size 4 \
   --frames 120 --fps 30 --waves 10 \
-  --alpha --bit-depth 16 --dither blue \
+  --alpha --bit-depth 16 --png-compression 5 --dither blue \
   --output-dir preview --prefix ripple_
+```
+
+To wrap the generated image around a mesh from the command line:
+
+```sh
+./build/render9 --render --obj meshes/model.obj --alpha \
+  --frames 120 --png-compression 5 --output-dir preview
 ```
 
 Run `./build/render9 --help` for all options. Existing matching output files are
@@ -138,6 +172,34 @@ protected unless `--overwrite` is explicit. A full sequence collision preflight
 runs before frame zero, and each frame is installed atomically. Overwriting a
 regular file preserves its explicit permission mode; overwriting a symlink replaces
 the link entry rather than modifying its target.
+
+Relative output directories are resolved against the process working directory.
+On macOS, `make gui` runs the app-bundle executable directly so it inherits the
+make working directory. If a desktop launcher supplies `/` (the source of the
+old `.` export failure), the GUI rejects that unusable launch directory, anchors
+relative paths in the user's home folder, and never treats `.` as filesystem root.
+
+## Custom OBJ surfaces
+
+The bounded OBJ loader accepts ASCII/UTF-8 `v`, `vt`, `vn`, and `f` records,
+including positive or negative indices and the standard `v`, `v/vt`, `v//vn`,
+and `v/vt/vn` face-corner forms. Simple polygon faces are validated and
+triangulated while preserving winding and per-corner attributes. Object/group,
+smoothing, and material metadata is ignored: the procedural frame is the sole
+surface image, and no `.mtl` or sibling file is opened.
+
+Meshes are uniformly normalized from their referenced bounds and rendered with
+perspective-correct texture/normal interpolation. A triangle uses its authored
+texture coordinates only when all three corners provide them; otherwise it uses
+dominant-axis box projection. Missing normals fall back to the geometric face
+normal. The loader limits file, line, collection, polygon, triangle, and expanded
+mesh sizes; malformed loads are transactional. The last successfully loaded
+mesh is cached across preview/export frames and reloaded when its path, size, or
+modification time changes.
+
+Relative OBJ paths use the same stable process working directory as relative
+output paths. In the GUI, **Browse…** stores the selected absolute path and also
+updates the remembered file-dialog folder.
 
 Options are processed from left to right, so put `--load` before overrides that
 should replace setup values. `--defaults` remains a compatibility alias for
@@ -215,20 +277,25 @@ make check
 The suite covers dynamic zero/one/ten-item configurations, deterministic frames,
 exact and near-seam continuity for every effect in both synchronization modes,
 direction modes, alpha range and straight-alpha/glow composition, primitive
-mappings, memory and value limits, setup round trips and transactional failure,
-8/16-bit RGB/RGBA PNG data, FLOAT RGB/RGBA EXR channels, deterministic dithering,
+mappings, rear-surface alpha/color compositing, bounded OBJ parsing/caching and
+two-sided perspective rendering, animated smooth/stepped block grouping and
+effect ordering, default glow visibility, memory and value limits, setup round
+trips and transactional failure,
+8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
+deterministic dithering,
 callback/cancel behavior, sequence collision preflight, Unicode paths, and the
 public library API. It also exercises CLI help, option rejection, and the CLI
 self-test. With the GUI enabled, CTest launches it through Qt's offscreen
-platform and round-trips a setup through the live GUI state.
+platform, round-trips a setup through the live GUI state, and verifies that Play
+installs advancing completed preview frames.
 
 ## Current boundary
 
-Plane, cylinder, sphere, and cube mappings are implemented as analytic CPU
-mappings. Custom OBJ loading needs a bounded mesh parser, UV-aware rasterizer,
-depth buffer, perspective-correct interpolation, and path policy; it remains the
-main visual feature deferred to a later pass. Cancellation currently takes effect
-between frames rather than inside an individual expensive frame. See
+Plane, cylinder, sphere, and cube mappings use analytic CPU intersections;
+custom OBJ mapping uses a bounded cached parser and CPU rasterizer. OBJ materials
+and textures are intentionally not loaded because the procedural frame supplies
+the surface image. Cancellation currently takes effect between frames rather
+than inside an individual expensive frame. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 
 This project is licensed under GPLv3. Applications distributed with the library

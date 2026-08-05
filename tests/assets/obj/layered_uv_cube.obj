@@ -1,0 +1,25 @@
+# Closed cube whose front and rear faces sample different horizontal regions.
+v -1 -1 -1
+v  1 -1 -1
+v  1  1 -1
+v -1  1 -1
+v -1 -1  1
+v  1 -1  1
+v  1  1  1
+v -1  1  1
+# Front (left patch).
+vt 0.05 0.05
+vt 0.30 0.05
+vt 0.30 0.95
+vt 0.05 0.95
+# Rear (right patch).
+vt 0.65 0.05
+vt 0.90 0.05
+vt 0.90 0.95
+vt 0.65 0.95
+f 5/1 6/2 7/3 8/4
+f 1/5 4/8 3/7 2/6
+f 1/1 5/2 8/3 4/4
+f 2/1 3/4 7/3 6/2
+f 4/1 8/2 7/3 3/4
+f 1/1 2/2 6/3 5/4

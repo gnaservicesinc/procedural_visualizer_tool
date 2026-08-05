@@ -36,7 +36,7 @@
 namespace pvt {
 namespace {
 
-// PVT setup format version 1 is deliberately line-oriented and deterministic:
+// PVT setup files are deliberately line-oriented and deterministic:
 //
 //   PVT_SETUP<TAB>1
 //   canvas.width<TAB>1920
@@ -47,16 +47,18 @@ namespace {
 // records use zero-based indexes (`waves.N.*`, `swings.N.*`, `effects.N.*`).
 // Strings use RFC 3986-style percent encoding over their exact bytes: only
 // ALPHA / DIGIT / "-._~" remain literal. There are no comments, aliases, or
-// optional records in v1. This keeps parsing unambiguous, safely rejectable,
-// and friendly to source control while still allowing arbitrary string bytes.
+// optional records within a given version. This keeps parsing unambiguous,
+// safely rejectable, and friendly to source control while still allowing
+// arbitrary string bytes. Version 2 adds PNG compression and custom-OBJ path
+// fields; version 1 is still accepted and receives their defaults.
 
 constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
 constexpr std::size_t kMaximumKeyBytes = 128U;
 constexpr std::size_t kMaximumDecodedStringBytes = 64U * 1024U;
 constexpr std::size_t kMaximumRecordCount = 16384U;
 
-static_assert(kSetupFormatVersion == 1U,
-              "config_io.cpp implements exactly setup format version 1");
+static_assert(kSetupFormatVersion == 2U,
+              "config_io.cpp implements setup format version 2");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -116,7 +118,10 @@ bool line_is_ascii_text(std::string_view line) {
     return true;
 }
 
-bool parse_records(const std::string& contents, Records& records, std::string* error) {
+bool parse_records(const std::string& contents,
+                   Records& records,
+                   std::uint32_t& setup_version,
+                   std::string* error) {
     if (contents.empty()) {
         return fail(error, "Setup file is empty.");
     }
@@ -139,7 +144,7 @@ bool parse_records(const std::string& contents, Records& records, std::string* e
 
         if (line.empty()) {
             return fail(error, "Setup line " + std::to_string(line_number)
-                                   + " is empty; blank lines are not valid in format v1.");
+                                   + " is empty; blank lines are not valid in setup files.");
         }
         if (!line_is_ascii_text(line)) {
             return fail(error, "Setup line " + std::to_string(line_number)
@@ -147,8 +152,14 @@ bool parse_records(const std::string& contents, Records& records, std::string* e
         }
 
         if (line_number == 1U) {
-            if (line != "PVT_SETUP\t1") {
-                return fail(error, "Unsupported or malformed setup header; expected 'PVT_SETUP\\t1'.");
+            if (line == "PVT_SETUP\t1") {
+                setup_version = 1U;
+            } else if (line == "PVT_SETUP\t2") {
+                setup_version = 2U;
+            } else {
+                return fail(error,
+                            "Unsupported or malformed setup header; expected "
+                            "'PVT_SETUP\\t1' or 'PVT_SETUP\\t2'.");
             }
         } else {
             const std::size_t tab = line.find('\t');
@@ -448,12 +459,13 @@ constexpr std::array<std::pair<std::string_view, EdgeMode>, 4U> kEdgeModes{{
     {"reflect", EdgeMode::Reflect},
 }};
 
-constexpr std::array<std::pair<std::string_view, EffectType>, 5U> kEffectTypes{{
+constexpr std::array<std::pair<std::string_view, EffectType>, 6U> kEffectTypes{{
     {"endless_zoom", EffectType::EndlessZoom},
     {"ripple", EffectType::Ripple},
     {"shake", EffectType::Shake},
     {"flag_wave", EffectType::FlagWave},
     {"glow", EffectType::Glow},
+    {"block_scale", EffectType::BlockScale},
 }};
 
 constexpr std::array<std::pair<std::string_view, DitherMethod>, 3U> kDitherMethods{{
@@ -462,11 +474,12 @@ constexpr std::array<std::pair<std::string_view, DitherMethod>, 3U> kDitherMetho
     {"floyd_steinberg", DitherMethod::FloydSteinberg},
 }};
 
-constexpr std::array<std::pair<std::string_view, SurfaceMapping>, 4U> kSurfaceMappings{{
+constexpr std::array<std::pair<std::string_view, SurfaceMapping>, 5U> kSurfaceMappings{{
     {"plane", SurfaceMapping::Plane},
     {"cylinder", SurfaceMapping::Cylinder},
     {"sphere", SurfaceMapping::Sphere},
     {"cube", SurfaceMapping::Cube},
+    {"custom_obj", SurfaceMapping::CustomObj},
 }};
 
 constexpr std::array<std::pair<std::string_view, Waveform>, 4U> kWaveforms{{
@@ -512,7 +525,8 @@ bool enum_token(Enum value,
 class SetupBuilder {
 public:
     explicit SetupBuilder(std::string* error)
-        : error_(error), contents_("PVT_SETUP\t1\n") {}
+        : error_(error),
+          contents_("PVT_SETUP\t" + std::to_string(kSetupFormatVersion) + "\n") {}
 
     bool add(std::string_view key, std::string_view value) {
         if (!ok_) {
@@ -706,8 +720,11 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("surface.phase_degrees", config.surface.phase_degrees);
     builder.add_double("surface.curvature", config.surface.curvature);
     builder.add_double("surface.lighting", config.surface.lighting);
+    builder.add_string("surface.obj_path", config.surface.obj_path);
 
     builder.add_integer("output.bit_depth", config.output.bit_depth);
+    builder.add_integer("output.png_compression_level",
+                        config.output.png_compression_level);
     builder.add_bool("output.dither_enabled",
                      config.output.bit_depth != 32 && config.output.dither_enabled);
     builder.add_enum("output.dither_method", config.output.dither_method, kDitherMethods);
@@ -724,7 +741,10 @@ bool serialize_setup(const RenderConfig& config,
     return true;
 }
 
-bool deserialize_setup(Records& records, RenderConfig& candidate, std::string* error) {
+bool deserialize_setup(Records& records,
+                       std::uint32_t setup_version,
+                       RenderConfig& candidate,
+                       std::string* error) {
     if (!consume_integer(records, "canvas.width", candidate.width, error)
         || !consume_integer(records, "canvas.height", candidate.height, error)
         || !consume_integer(records, "canvas.block_size", candidate.block_size, error)
@@ -842,9 +862,21 @@ bool deserialize_setup(Records& records, RenderConfig& candidate, std::string* e
         || !consume_double(records, "surface.lighting", candidate.surface.lighting, error)) {
         return false;
     }
+    if (setup_version >= 2U
+        && !consume_string(records, "surface.obj_path",
+                           candidate.surface.obj_path, error)) {
+        return false;
+    }
 
-    if (!consume_integer(records, "output.bit_depth", candidate.output.bit_depth, error)
-        || !consume_bool(records, "output.dither_enabled", candidate.output.dither_enabled, error)
+    if (!consume_integer(records, "output.bit_depth", candidate.output.bit_depth, error)) {
+        return false;
+    }
+    if (setup_version >= 2U
+        && !consume_integer(records, "output.png_compression_level",
+                            candidate.output.png_compression_level, error)) {
+        return false;
+    }
+    if (!consume_bool(records, "output.dither_enabled", candidate.output.dither_enabled, error)
         || !consume_enum(records, "output.dither_method", candidate.output.dither_method, kDitherMethods, error)
         || !consume_string(records, "output.output_directory", candidate.output.output_directory, error)
         || !consume_string(records, "output.filename_prefix", candidate.output.filename_prefix, error)
@@ -855,7 +887,9 @@ bool deserialize_setup(Records& records, RenderConfig& candidate, std::string* e
     }
 
     if (!records.empty()) {
-        return fail(error, record_error("Unknown setup key for format v1", records.begin()->first));
+        return fail(error, record_error("Unknown setup key for format v"
+                                        + std::to_string(setup_version),
+                                        records.begin()->first));
     }
 
     // Format v1 files written by early builds could retain a now-meaningless
@@ -1156,12 +1190,13 @@ bool load_setup(const std::string& path,
         }
 
         Records records;
-        if (!parse_records(contents, records, error)) {
+        std::uint32_t setup_version = 0U;
+        if (!parse_records(contents, records, setup_version, error)) {
             return false;
         }
 
         RenderConfig candidate;
-        if (!deserialize_setup(records, candidate, error)) {
+        if (!deserialize_setup(records, setup_version, candidate, error)) {
             return false;
         }
 

@@ -42,6 +42,7 @@ private:
     struct PreviewResult {
         QImage image;
         QString error;
+        int frame = 0;
         std::uint64_t generation = 0;
     };
 
@@ -90,7 +91,13 @@ private:
     void schedulePreview();
     void startPreview();
     static PreviewResult generatePreview(pvt::RenderConfig config, int frame,
-                                         std::uint64_t generation);
+                                         std::uint64_t generation,
+                                         int test_delay_ms);
+    void randomizeExistingStackSettings();
+    void randomizeStackComposition();
+    QString resolvedOutputDirectory(const QString& path) const;
+    QString usableDialogDirectory(const QString& preferred = {}) const;
+    void rememberDialogLocation(const QString& selectedPath);
     bool startExport();
     void saveSetup();
     void loadSetup();
@@ -102,8 +109,13 @@ private:
     bool integer_dither_preference_ = true;
     bool export_active_ = false;
     bool close_after_export_ = false;
+    bool playback_preview_advanced_ = false;
+    int last_previewed_frame_ = -1;
+    int preview_test_delay_ms_ = 0;
     std::uint64_t preview_generation_ = 0;
     std::atomic_bool cancel_export_{false};
+    QString startup_working_directory_;
+    QString last_dialog_directory_;
 
     PreviewWidget* preview_ = nullptr;
     QTabWidget* tabs_ = nullptr;
@@ -180,6 +192,7 @@ private:
     QDoubleSpinBox* saturation_ = nullptr;
     QCheckBox* surface_enabled_ = nullptr;
     QComboBox* surface_mapping_ = nullptr;
+    QLineEdit* surface_obj_path_ = nullptr;
     QSpinBox* surface_rotations_ = nullptr;
     QDoubleSpinBox* surface_phase_ = nullptr;
     QDoubleSpinBox* surface_curvature_ = nullptr;
@@ -195,6 +208,7 @@ private:
     QSpinBox* alpha_cycles_ = nullptr;
     QDoubleSpinBox* alpha_phase_ = nullptr;
     QComboBox* bit_depth_ = nullptr;
+    QSpinBox* png_compression_ = nullptr;
     QCheckBox* dither_enabled_ = nullptr;
     QComboBox* dither_method_ = nullptr;
     QLineEdit* output_directory_ = nullptr;

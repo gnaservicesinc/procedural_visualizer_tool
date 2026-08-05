@@ -20,11 +20,16 @@ function(pvt_enable_warnings target)
 endfunction()
 
 find_package(PNG REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(ProceduralVisualizerTool
     src/config_io.cpp
     src/core.cpp
     src/image_io.cpp
+    src/obj_mesh.cpp
+    src/obj_mesh.h
+    src/obj_surface.cpp
+    src/obj_surface.h
     src/path_utf8.h
     src/windows_file_install.h
 )
@@ -38,7 +43,7 @@ target_include_directories(ProceduralVisualizerTool
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(ProceduralVisualizerTool PRIVATE PNG::PNG)
+target_link_libraries(ProceduralVisualizerTool PRIVATE PNG::PNG Threads::Threads)
 set_target_properties(ProceduralVisualizerTool PROPERTIES
     CXX_EXTENSIONS NO
     CXX_VISIBILITY_PRESET hidden
@@ -122,7 +127,27 @@ if(BUILD_TESTING)
         ProceduralVisualizerTool::ProceduralVisualizerTool
         PNG::PNG)
     pvt_enable_warnings(pvt_tests)
-    add_test(NAME pvt_core COMMAND pvt_tests)
+    add_test(NAME pvt_core COMMAND pvt_tests ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(pvt_obj_mesh_tests
+        tests/obj_mesh_isolated_test.cpp
+        src/obj_mesh.cpp
+        src/obj_mesh.h)
+    target_compile_features(pvt_obj_mesh_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_obj_mesh_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_obj_mesh_tests PRIVATE Threads::Threads)
+    pvt_enable_warnings(pvt_obj_mesh_tests)
+    add_test(NAME pvt_obj_mesh
+        COMMAND pvt_obj_mesh_tests ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(pvt_obj_surface_tests tests/obj_surface_isolated_test.cpp)
+    target_compile_features(pvt_obj_surface_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_obj_surface_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_obj_surface_tests PRIVATE
+        ProceduralVisualizerTool::ProceduralVisualizerTool)
+    pvt_enable_warnings(pvt_obj_surface_tests)
+    add_test(NAME pvt_obj_surface
+        COMMAND pvt_obj_surface_tests ${CMAKE_CURRENT_SOURCE_DIR})
 
     if(PVT_BUILD_CLI)
         add_test(NAME pvt_cli_self_test COMMAND render9 --self-test)
@@ -137,11 +162,23 @@ if(BUILD_TESTING)
                 -DPROGRAM=$<TARGET_FILE:render9>
                 -DTEST_CASE=self-test-conflict
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
+        add_test(NAME pvt_cli_rejects_bad_png_compression
+            COMMAND ${CMAKE_COMMAND}
+                -DPROGRAM=$<TARGET_FILE:render9>
+                -DTEST_CASE=invalid-compression
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_eof_aborts_save
             COMMAND ${CMAKE_COMMAND}
                 -DPROGRAM=$<TARGET_FILE:render9>
                 -DTEST_CASE=eof-save
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
+        add_test(NAME pvt_cli_custom_obj_render
+            COMMAND render9 --render
+                --width 32 --height 32 --block-size 2 --frames 2
+                --obj ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/obj/closed_cube.obj
+                --png-compression 0
+                --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-custom-obj
+                --prefix obj_ --overwrite)
     endif()
 
     if(PVT_BUILD_QT_GUI)

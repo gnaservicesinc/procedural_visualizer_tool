@@ -7,8 +7,13 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCoreApplication>
+#include <QDir>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QFuture>
 #include <QGroupBox>
@@ -18,6 +23,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -26,6 +32,7 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QToolBar>
 #include <QValidator>
@@ -33,9 +40,11 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <exception>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -47,6 +56,7 @@ constexpr std::size_t kMaximumPrefixBytes = 127;
 enum class TextRule {
     Name,
     OutputDirectory,
+    OptionalPath,
     FilenamePrefix
 };
 
@@ -54,12 +64,14 @@ bool valid_text(const QString& value, TextRule rule) {
     const QByteArray utf8 = value.toUtf8();
     const std::size_t size = static_cast<std::size_t>(utf8.size());
     const bool is_name = rule == TextRule::Name;
+    const bool is_optional_path = rule == TextRule::OptionalPath;
     const std::size_t maximum = is_name
                                     ? kMaximumNameBytes
                                     : (rule == TextRule::OutputDirectory
+                                           || is_optional_path
                                            ? kMaximumPathBytes
                                            : kMaximumPrefixBytes);
-    if ((!is_name && utf8.isEmpty()) || size > maximum) {
+    if ((!is_name && !is_optional_path && utf8.isEmpty()) || size > maximum) {
         return false;
     }
     for (const char raw_character : utf8) {
@@ -97,7 +109,8 @@ public:
         if (valid_text(input, rule_)) {
             return Acceptable;
         }
-        if (input.isEmpty() && rule_ != TextRule::Name) {
+        if (input.isEmpty() && rule_ != TextRule::Name
+            && rule_ != TextRule::OptionalPath) {
             return Intermediate;
         }
         return Invalid;
@@ -186,6 +199,7 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
     return std::any_of(config.effects.begin(), config.effects.end(), [](const auto& effect) {
         return effect.enabled && effect.intensity > 0.0 && effect.magnitude > 0.0
                && effect.type != pvt::EffectType::Glow
+               && effect.type != pvt::EffectType::BlockScale
                && effect.edge_mode == pvt::EdgeMode::Alpha;
     });
 }
@@ -196,10 +210,184 @@ void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
     }
 }
 
+QString existing_writable_directory(const QString& path, bool allow_root = false) {
+    if (path.isEmpty()) {
+        return {};
+    }
+    const QFileInfo information(path);
+    if (!information.exists() || !information.isDir() || !information.isWritable()) {
+        return {};
+    }
+    const QDir directory(information.absoluteFilePath());
+    if (!allow_root && directory.isRoot()) {
+        return {};
+    }
+    return QDir::cleanPath(directory.absolutePath());
+}
+
+QString requested_working_directory() {
+    const QStringList arguments = QCoreApplication::arguments();
+    for (qsizetype index = 1; index < arguments.size(); ++index) {
+        const QString& argument = arguments.at(index);
+        QString candidate;
+        if (argument == QStringLiteral("--working-directory")
+            && index + 1 < arguments.size()) {
+            candidate = arguments.at(index + 1);
+        } else if (argument.startsWith(QStringLiteral("--working-directory="))) {
+            candidate = argument.mid(QStringLiteral("--working-directory=").size());
+        }
+        if (!candidate.isEmpty()) {
+            const QString absolute = QDir::isAbsolutePath(candidate)
+                                         ? candidate
+                                         : QDir::current().absoluteFilePath(candidate);
+            if (const QString usable = existing_writable_directory(absolute);
+                !usable.isEmpty()) {
+                return usable;
+            }
+        }
+    }
+    return {};
+}
+
+QString stable_startup_directory() {
+    if (const QString requested = requested_working_directory(); !requested.isEmpty()) {
+        return requested;
+    }
+    if (const QString current = existing_writable_directory(QDir::currentPath());
+        !current.isEmpty()) {
+        return current;
+    }
+    const QString environment_working_directory = qEnvironmentVariable("PWD");
+    if (const QString inherited =
+            existing_writable_directory(environment_working_directory);
+        !inherited.isEmpty()) {
+        return inherited;
+    }
+    if (const QString home = existing_writable_directory(QDir::homePath(), true);
+        !home.isEmpty()) {
+        return home;
+    }
+    return QDir::homePath();
+}
+
+double random_real(QRandomGenerator& random, double minimum, double maximum) {
+    return minimum + (maximum - minimum) * random.generateDouble();
+}
+
+int random_integer(QRandomGenerator& random, int minimum, int maximum) {
+    return minimum
+           + static_cast<int>(random.bounded(
+               static_cast<quint32>(maximum - minimum + 1)));
+}
+
+bool random_chance(QRandomGenerator& random, double probability) {
+    return random.generateDouble() < probability;
+}
+
+int random_nonzero_cycles(QRandomGenerator& random, int maximum_magnitude) {
+    const int magnitude = random_integer(random, 1, maximum_magnitude);
+    return random_chance(random, 0.25) ? -magnitude : magnitude;
+}
+
+void randomize_wave_settings(pvt::WaveConfig& wave, QRandomGenerator& random) {
+    wave.synchronized = random_chance(random, 0.7);
+    wave.x_percent = random_real(random, 8.0, 92.0);
+    wave.y_percent = random_real(random, 8.0, 92.0);
+    wave.amplitude = random_real(random, 0.12, 0.8);
+    wave.spatial_frequency = random_real(random, 2.0, 14.0);
+    wave.cycles_per_loop = random_nonzero_cycles(random, 5);
+    wave.phase_degrees = random_real(random, 0.0, 360.0);
+    wave.direction = random_real(random, 0.0, 1.0);
+}
+
+void randomize_swing_settings(pvt::SwingConfig& swing, QRandomGenerator& random) {
+    const double amount = random_real(random, 0.08, 0.42);
+    swing.amount = random_chance(random, 0.2) ? -amount : amount;
+    swing.cycles_per_loop = random_integer(random, 2, 16);
+    swing.phase_degrees = random_real(random, 0.0, 360.0);
+    swing.shape = random_real(random, 0.15, 0.85);
+}
+
+void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& random) {
+    const auto id = effect.id;
+    const auto name = effect.name;
+    const auto type = effect.type;
+    const bool enabled = effect.enabled;
+    effect = pvt::default_effect(type);
+    effect.id = id;
+    effect.name = name;
+    effect.enabled = enabled;
+    effect.synchronized = random_chance(random, 0.7);
+    effect.cycles_per_loop = random_nonzero_cycles(random, 4);
+    effect.phase_degrees = random_real(random, 0.0, 360.0);
+    const int edge = random_integer(random, 0, 5);
+    effect.edge_mode = edge < 3
+                           ? pvt::EdgeMode::Reflect
+                           : static_cast<pvt::EdgeMode>(edge - 3);
+
+    switch (type) {
+        case pvt::EffectType::EndlessZoom:
+            effect.intensity = random_real(random, 0.3, 0.85);
+            effect.magnitude = random_real(random, 0.2, 0.9);
+            effect.frequency = random_real(random, 0.8, 2.5);
+            effect.center_x = random_real(random, 0.35, 0.65);
+            effect.center_y = random_real(random, 0.35, 0.65);
+            break;
+        case pvt::EffectType::Ripple:
+            effect.intensity = random_real(random, 0.35, 0.9);
+            effect.magnitude = random_real(random, 0.01, 0.055);
+            effect.frequency = random_real(random, 2.0, 10.0);
+            effect.secondary = random_real(random, 1.0, 4.0);
+            effect.center_x = random_real(random, 0.2, 0.8);
+            effect.center_y = random_real(random, 0.2, 0.8);
+            break;
+        case pvt::EffectType::Shake:
+            effect.intensity = random_real(random, 0.25, 0.7);
+            effect.magnitude = random_real(random, 0.006, 0.035);
+            effect.frequency = static_cast<double>(random_integer(random, 1, 7));
+            effect.secondary = random_real(random, 0.35, 1.0);
+            effect.angle_degrees = random_real(random, 0.0, 360.0);
+            break;
+        case pvt::EffectType::FlagWave:
+            effect.intensity = random_real(random, 0.3, 0.85);
+            effect.magnitude = random_real(random, 0.01, 0.055);
+            effect.frequency = random_real(random, 1.5, 7.0);
+            effect.secondary = random_real(random, 0.1, 0.8);
+            effect.center_x = random_real(random, 0.25, 0.75);
+            effect.center_y = random_real(random, 0.25, 0.75);
+            effect.angle_degrees = random_real(random, 0.0, 360.0);
+            break;
+        case pvt::EffectType::Glow:
+            effect.intensity = random_real(random, 0.55, 1.35);
+            effect.secondary = random_real(random, 0.15, 0.8);
+            effect.radius_pixels = random_real(random, 8.0, 56.0);
+            effect.threshold = random_real(random, 0.2, 0.65);
+            effect.soft_knee = random_real(random, 0.15, 0.6);
+            break;
+        case pvt::EffectType::BlockScale:
+            effect.intensity = random_real(random, 0.65, 1.0);
+            effect.magnitude = random_real(random, 0.5, 1.25);
+            effect.frequency = effect.magnitude + random_real(random, 0.75, 5.0);
+            effect.secondary = random_chance(random, 0.5)
+                                   ? 0.0
+                                   : static_cast<double>(random_integer(random, 1, 6));
+            break;
+    }
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent), config_(pvt::default_config()) {
+    : QMainWindow(parent), config_(pvt::default_config()),
+      startup_working_directory_(stable_startup_directory()),
+      last_dialog_directory_(existing_writable_directory(QDir::homePath(), true)) {
+    if (last_dialog_directory_.isEmpty()) {
+        last_dialog_directory_ = startup_working_directory_;
+    }
+    // Keep every relative resource path (output, setup references, and custom
+    // meshes) anchored to the launch location even when a desktop launcher
+    // originally assigned the process an unusable root working directory.
+    (void)QDir::setCurrent(startup_working_directory_);
     setWindowTitle(tr("Procedural Visualizer Tool"));
     resize(1420, 860);
 
@@ -207,6 +395,7 @@ MainWindow::MainWindow(QWidget* parent)
     preview_timer_->setSingleShot(true);
     preview_timer_->setInterval(70);
     playback_timer_ = new QTimer(this);
+    playback_timer_->setTimerType(Qt::PreciseTimer);
     preview_watcher_ = new QFutureWatcher<PreviewResult>(this);
     export_watcher_ = new QFutureWatcher<ExportResult>(this);
 
@@ -242,11 +431,16 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(preview_watcher_, &QFutureWatcher<PreviewResult>::finished, this, [this] {
         const PreviewResult result = preview_watcher_->result();
-        if (result.generation == preview_generation_) {
+        if (result.generation == preview_generation_ || playback_timer_->isActive()) {
             if (result.error.isEmpty()) {
+                if (playback_timer_->isActive() && last_previewed_frame_ >= 0
+                    && result.frame != last_previewed_frame_) {
+                    playback_preview_advanced_ = true;
+                }
+                last_previewed_frame_ = result.frame;
                 preview_->setPreview(result.image);
                 status_->setText(tr("Preview frame %1/%2")
-                                     .arg(timeline_->value() + 1)
+                                     .arg(result.frame + 1)
                                      .arg(config_.total_frames));
             } else {
                 status_->setText(result.error);
@@ -254,7 +448,11 @@ MainWindow::MainWindow(QWidget* parent)
         }
         if (preview_deferred_) {
             preview_deferred_ = false;
-            preview_timer_->start();
+            if (playback_timer_->isActive()) {
+                QTimer::singleShot(0, this, &MainWindow::startPreview);
+            } else {
+                preview_timer_->start();
+            }
         }
     });
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this, [this] {
@@ -500,7 +698,7 @@ QWidget* MainWindow::createEffectPage() {
     add_effect_type_ = new QComboBox;
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
-                            pvt::EffectType::Glow}) {
+                            pvt::EffectType::Glow, pvt::EffectType::BlockScale}) {
         add_enum_item(add_effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
     }
     auto* add = new QPushButton(tr("Add"));
@@ -526,7 +724,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_type_ = new QComboBox;
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
-                            pvt::EffectType::Glow}) {
+                            pvt::EffectType::Glow, pvt::EffectType::BlockScale}) {
         add_enum_item(effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
     }
     effect_cycles_ = integer_editor(-1000, 1000);
@@ -671,7 +869,7 @@ QWidget* MainWindow::createSettingsPage() {
     pattern->addRow(tr("Saturation"), saturation_);
     layout->addWidget(pattern_group);
 
-    auto* surface_group = new QGroupBox(tr("3D primitive wrapping"));
+    auto* surface_group = new QGroupBox(tr("3D surface wrapping"));
     auto* surface = new QFormLayout(surface_group);
     surface_enabled_ = new QCheckBox(tr("Surface mapping enabled"));
     surface_mapping_ = new QComboBox;
@@ -679,12 +877,29 @@ QWidget* MainWindow::createSettingsPage() {
     add_enum_item(surface_mapping_, tr("Cylinder"), pvt::SurfaceMapping::Cylinder);
     add_enum_item(surface_mapping_, tr("Sphere"), pvt::SurfaceMapping::Sphere);
     add_enum_item(surface_mapping_, tr("Cube"), pvt::SurfaceMapping::Cube);
+    add_enum_item(surface_mapping_, tr("Custom OBJ"), pvt::SurfaceMapping::CustomObj);
+    auto* obj_path_row = new QWidget;
+    auto* obj_path_layout = new QHBoxLayout(obj_path_row);
+    obj_path_layout->setContentsMargins(0, 0, 0, 0);
+    surface_obj_path_ = new QLineEdit;
+    surface_obj_path_->setMaxLength(static_cast<int>(kMaximumPathBytes));
+    surface_obj_path_->setValidator(
+        new Utf8TextValidator(TextRule::OptionalPath, surface_obj_path_));
+    surface_obj_path_->setPlaceholderText(tr("Path to a Wavefront .obj file"));
+    surface_obj_path_->setToolTip(
+        tr("Custom OBJ surfaces use authored texture coordinates when present, "
+           "or automatic box projection otherwise. Relative paths start from "
+           "the application's working directory."));
+    auto* obj_browse = new QPushButton(tr("Browse…"));
+    obj_path_layout->addWidget(surface_obj_path_, 1);
+    obj_path_layout->addWidget(obj_browse);
     surface_rotations_ = integer_editor(-1000, 1000);
     surface_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     surface_curvature_ = real_editor(0.0, 1.0);
     surface_lighting_ = real_editor(0.0, 10.0);
     surface->addRow(surface_enabled_);
-    surface->addRow(tr("Primitive"), surface_mapping_);
+    surface->addRow(tr("Surface"), surface_mapping_);
+    surface->addRow(tr("OBJ file"), obj_path_row);
     surface->addRow(tr("Rotations per loop"), surface_rotations_);
     surface->addRow(tr("Starting phase (degrees)"), surface_phase_);
     surface->addRow(tr("Curvature"), surface_curvature_);
@@ -731,6 +946,12 @@ QWidget* MainWindow::createSettingsPage() {
     bit_depth_->addItem(tr("8-bit PNG"), 8);
     bit_depth_->addItem(tr("16-bit PNG"), 16);
     bit_depth_->addItem(tr("32-bit float EXR"), 32);
+    png_compression_ = integer_editor(0, 9);
+    png_compression_->setSpecialValueText(tr("Off (0)"));
+    png_compression_->setToolTip(
+        tr("PNG compression from 0 (fastest, no deflate compression) to 9 "
+           "(slowest, smallest files). Level 5 is a fast balanced default. "
+           "This setting does not apply to EXR."));
     dither_enabled_ = new QCheckBox(tr("Dither integer output"));
     dither_enabled_->setToolTip(
         tr("Float EXR never uses dithering. The integer-output preference is preserved."));
@@ -757,6 +978,7 @@ QWidget* MainWindow::createSettingsPage() {
     filename_digits_ = integer_editor(1, 12);
     overwrite_ = new QCheckBox(tr("Overwrite matching frames"));
     output->addRow(tr("Bit depth"), bit_depth_);
+    output->addRow(tr("PNG compression (0 off, 9 max)"), png_compression_);
     output->addRow(dither_enabled_);
     output->addRow(tr("Dither method"), dither_method_);
     output->addRow(tr("Directory"), directory_row);
@@ -768,10 +990,31 @@ QWidget* MainWindow::createSettingsPage() {
     layout->addStretch();
     scroll->setWidget(contents);
 
+    connect(obj_browse, &QPushButton::clicked, this, [this] {
+        QString preferred;
+        if (!surface_obj_path_->text().isEmpty()) {
+            const QString absolute = QDir::isAbsolutePath(surface_obj_path_->text())
+                                         ? surface_obj_path_->text()
+                                         : QDir(startup_working_directory_)
+                                               .absoluteFilePath(surface_obj_path_->text());
+            preferred = QFileInfo(absolute).absolutePath();
+        }
+        const QString selected = QFileDialog::getOpenFileName(
+            this, tr("Choose custom OBJ mesh"), usableDialogDirectory(preferred),
+            tr("Wavefront OBJ (*.obj);;All files (*)"));
+        if (!selected.isEmpty()) {
+            rememberDialogLocation(selected);
+            surface_obj_path_->setText(selected);
+            applyGlobalEditor(surface_obj_path_);
+        }
+    });
+
     connect(browse, &QPushButton::clicked, this, [this] {
         const QString selected = QFileDialog::getExistingDirectory(
-            this, tr("Choose export directory"), output_directory_->text());
+            this, tr("Choose export directory"),
+            usableDialogDirectory(resolvedOutputDirectory(output_directory_->text())));
         if (!selected.isEmpty()) {
+            rememberDialogLocation(selected);
             output_directory_->setText(selected);
             updateOutputEditorValidity();
             applyGlobalEditor(output_directory_);
@@ -799,9 +1042,11 @@ QWidget* MainWindow::createTimeline() {
             playback_timer_->stop();
             play_button_->setText(tr("Play"));
         } else {
+            playback_preview_advanced_ = false;
             playback_timer_->start(std::max(1, static_cast<int>(std::lround(1000.0 / config_.fps))));
             play_button_->setText(tr("Pause"));
         }
+        schedulePreview();
     });
     connect(timeline_, &QSlider::valueChanged, this, [this](int frame) {
         frame_label_->setText(tr("%1 / %2").arg(frame + 1).arg(config_.total_frames));
@@ -818,6 +1063,15 @@ void MainWindow::createToolbar() {
     auto* open_action = toolbar->addAction(tr("Load…"));
     auto* save_action = toolbar->addAction(tr("Save…"));
     toolbar->addSeparator();
+    auto* randomize_values_action = toolbar->addAction(tr("Randomize values"));
+    randomize_values_action->setToolTip(
+        tr("Randomize bounded, loop-safe parameters while preserving each item's "
+           "name, type, enabled state, and position in its stack."));
+    auto* randomize_mix_action = toolbar->addAction(tr("Randomize mix"));
+    randomize_mix_action->setToolTip(
+        tr("Create a new bounded mix of waves, swing waveforms, effect types, and "
+           "enabled items."));
+    toolbar->addSeparator();
     auto* export_action = toolbar->addAction(tr("Export sequence"));
     auto* cancel_action = toolbar->addAction(tr("Cancel export"));
     cancel_action->setEnabled(false);
@@ -830,6 +1084,10 @@ void MainWindow::createToolbar() {
     });
     connect(open_action, &QAction::triggered, this, &MainWindow::loadSetup);
     connect(save_action, &QAction::triggered, this, &MainWindow::saveSetup);
+    connect(randomize_values_action, &QAction::triggered, this,
+            &MainWindow::randomizeExistingStackSettings);
+    connect(randomize_mix_action, &QAction::triggered, this,
+            &MainWindow::randomizeStackComposition);
     connect(export_action, &QAction::triggered, this, [this, export_action, cancel_action] {
         if (export_watcher_->isRunning()) {
             return;
@@ -941,7 +1199,7 @@ void MainWindow::connectEditors() {
 
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
-                         filename_digits_}) {
+                         filename_digits_, png_compression_}) {
         connect(editor, &QSpinBox::valueChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -973,6 +1231,11 @@ void MainWindow::connectEditors() {
         updateOutputEditorValidity();
         if (prefix_->hasAcceptableInput()) {
             applyGlobalEditor(prefix_);
+        }
+    });
+    connect(surface_obj_path_, &QLineEdit::textEdited, this, [this] {
+        if (surface_obj_path_->hasAcceptableInput()) {
+            applyGlobalEditor(surface_obj_path_);
         }
     });
 
@@ -1222,12 +1485,13 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_shake = type == pvt::EffectType::Shake;
     const bool is_flag = type == pvt::EffectType::FlagWave;
     const bool is_glow = type == pvt::EffectType::Glow;
-    const bool coordinate_effect = !is_glow;
+    const bool is_block_scale = type == pvt::EffectType::BlockScale;
+    const bool coordinate_effect = !is_glow && !is_block_scale;
     const bool has_center = is_zoom || is_ripple || is_flag;
 
     effect_form_->setRowVisible(effect_edge_, coordinate_effect);
-    effect_form_->setRowVisible(effect_magnitude_, coordinate_effect);
-    effect_form_->setRowVisible(effect_frequency_, coordinate_effect);
+    effect_form_->setRowVisible(effect_magnitude_, coordinate_effect || is_block_scale);
+    effect_form_->setRowVisible(effect_frequency_, coordinate_effect || is_block_scale);
     effect_form_->setRowVisible(effect_secondary_, !is_zoom);
     effect_form_->setRowVisible(effect_center_x_, has_center);
     effect_form_->setRowVisible(effect_center_y_, has_center);
@@ -1243,6 +1507,22 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_radius_->setToolTip(tr("Glow blur radius in full-resolution output pixels."));
     effect_threshold_->setToolTip(tr("Linear-light brightness where glow begins."));
     effect_knee_->setToolTip(tr("Soft transition width around the glow threshold."));
+
+    if (is_block_scale) {
+        effect_intensity_->setRange(0.0, 1.0);
+        effect_magnitude_->setRange(0.00001, 10.0);
+        effect_frequency_->setRange(effect_magnitude_->value(), 1000.0);
+        effect_secondary_->setRange(0.0, 100.0);
+        effect_secondary_->setDecimals(0);
+        effect_secondary_->setSingleStep(1.0);
+    } else {
+        effect_intensity_->setRange(0.0, 100.0);
+        effect_magnitude_->setRange(0.0, 10.0);
+        effect_frequency_->setRange(0.0, 1000.0);
+        effect_secondary_->setRange(-100.0, 100.0);
+        effect_secondary_->setDecimals(4);
+        effect_secondary_->setSingleStep(0.01);
+    }
 
     if (is_zoom) {
         set_form_label(effect_form_, effect_intensity_, tr("Mix / intensity"));
@@ -1286,11 +1566,24 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_magnitude_->setToolTip(tr("Peak displacement as a fraction of the shorter image edge."));
         effect_frequency_->setToolTip(tr("Number of flag-wave oscillations across the image."));
         effect_secondary_->setToolTip(tr("Adds a half-frequency secondary fold to the flag wave."));
-    } else {
+    } else if (is_glow) {
         set_form_label(effect_form_, effect_intensity_, tr("Glow intensity"));
         set_form_label(effect_form_, effect_secondary_, tr("Pulse depth"));
         effect_intensity_->setToolTip(tr("Brightness added by the blurred highlight layer."));
         effect_secondary_->setToolTip(tr("How strongly the synchronized clock pulses glow intensity."));
+    } else {
+        set_form_label(effect_form_, effect_intensity_, tr("Pixel-block mix"));
+        set_form_label(effect_form_, effect_magnitude_, tr("Minimum size multiplier"));
+        set_form_label(effect_form_, effect_frequency_, tr("Maximum size multiplier"));
+        set_form_label(effect_form_, effect_secondary_, tr("Quantization steps (0 smooth)"));
+        effect_intensity_->setToolTip(
+            tr("Blend between the incoming image and the animated block grouping."));
+        effect_magnitude_->setToolTip(
+            tr("Smallest multiplier applied to the canvas block-size setting."));
+        effect_frequency_->setToolTip(
+            tr("Largest multiplier applied to the canvas block-size setting."));
+        effect_secondary_->setToolTip(
+            tr("Zero changes smoothly; a whole value snaps the motion into that many intervals."));
     }
 }
 
@@ -1314,11 +1607,16 @@ void MainWindow::loadSelectedEffect() {
         effect_enabled_->setChecked(effect.enabled);
         effect_sync_->setChecked(effect.synchronized);
         select_enum(effect_type_, effect.type);
+        updateEffectEditorVisibility();
         effect_cycles_->setValue(effect.cycles_per_loop);
         effect_phase_->setValue(effect.phase_degrees);
         select_enum(effect_edge_, effect.edge_mode);
         effect_intensity_->setValue(effect.intensity);
         effect_magnitude_->setValue(effect.magnitude);
+        // Block Scale's maximum editor has a dynamic lower bound equal to the
+        // loaded minimum. Refresh it here so the previously selected effect
+        // cannot clamp this effect's otherwise valid maximum.
+        updateEffectEditorVisibility();
         effect_frequency_->setValue(effect.frequency);
         effect_secondary_->setValue(effect.secondary);
         effect_center_x_->setValue(effect.center_x);
@@ -1356,6 +1654,7 @@ void MainWindow::loadGlobalEditors() {
     saturation_->setValue(config_.saturation);
     surface_enabled_->setChecked(config_.surface.enabled);
     select_enum(surface_mapping_, config_.surface.mapping);
+    surface_obj_path_->setText(QString::fromStdString(config_.surface.obj_path));
     surface_rotations_->setValue(config_.surface.rotations_per_loop);
     surface_phase_->setValue(config_.surface.phase_degrees);
     surface_curvature_->setValue(config_.surface.curvature);
@@ -1372,6 +1671,8 @@ void MainWindow::loadGlobalEditors() {
     alpha_phase_->setValue(config_.alpha.phase_degrees);
     bit_depth_->setCurrentIndex(std::max(0, bit_depth_->findData(config_.output.bit_depth)));
     const bool float_output = config_.output.bit_depth == 32;
+    png_compression_->setValue(config_.output.png_compression_level);
+    png_compression_->setEnabled(!float_output);
     if (!float_output) {
         integer_dither_preference_ = config_.output.dither_enabled;
     } else {
@@ -1467,7 +1768,29 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_sync_) {
         effect.synchronized = effect_sync_->isChecked();
     } else if (changed_editor == effect_type_) {
-        effect.type = static_cast<pvt::EffectType>(effect_type_->currentData().toInt());
+        const auto old_type = effect.type;
+        const auto new_type =
+            static_cast<pvt::EffectType>(effect_type_->currentData().toInt());
+        if (new_type != old_type) {
+            const auto id = effect.id;
+            const bool enabled = effect.enabled;
+            const bool synchronized = effect.synchronized;
+            const int cycles = effect.cycles_per_loop;
+            const double phase = effect.phase_degrees;
+            const std::string old_default_name = pvt::effect_type_name(old_type);
+            const bool used_default_name = effect.name == old_default_name;
+            const std::string custom_name = effect.name;
+            effect = pvt::default_effect(new_type);
+            effect.id = id;
+            effect.enabled = enabled;
+            effect.synchronized = synchronized;
+            effect.cycles_per_loop = cycles;
+            effect.phase_degrees = phase;
+            if (!used_default_name) {
+                effect.name = custom_name;
+            }
+            loadSelectedEffect();
+        }
     } else if (changed_editor == effect_cycles_) {
         effect.cycles_per_loop = effect_cycles_->value();
     } else if (changed_editor == effect_phase_) {
@@ -1478,6 +1801,12 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.intensity = effect_intensity_->value();
     } else if (changed_editor == effect_magnitude_) {
         effect.magnitude = effect_magnitude_->value();
+        if (effect.type == pvt::EffectType::BlockScale
+            && effect.frequency < effect.magnitude) {
+            effect.frequency = effect.magnitude;
+            const QSignalBlocker blocker(effect_frequency_);
+            effect_frequency_->setValue(effect.frequency);
+        }
     } else if (changed_editor == effect_frequency_) {
         effect.frequency = effect_frequency_->value();
     } else if (changed_editor == effect_secondary_) {
@@ -1554,6 +1883,11 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_mapping_) {
         config_.surface.mapping =
             static_cast<pvt::SurfaceMapping>(surface_mapping_->currentData().toInt());
+    } else if (changed_editor == surface_obj_path_) {
+        if (!surface_obj_path_->hasAcceptableInput()) {
+            return;
+        }
+        config_.surface.obj_path = surface_obj_path_->text().toStdString();
     } else if (changed_editor == surface_rotations_) {
         config_.surface.rotations_per_loop = surface_rotations_->value();
     } else if (changed_editor == surface_phase_) {
@@ -1591,6 +1925,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.output.dither_enabled = config_.output.bit_depth == 32
                                             ? false
                                             : integer_dither_preference_;
+        affects_preview = false;
+    } else if (changed_editor == png_compression_) {
+        config_.output.png_compression_level = png_compression_->value();
         affects_preview = false;
     } else if (changed_editor == dither_enabled_) {
         if (config_.output.bit_depth != 32) {
@@ -1637,6 +1974,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     dither_enabled_->setEnabled(config_.output.bit_depth != 32);
     dither_method_->setEnabled(config_.output.bit_depth != 32
                                && config_.output.dither_enabled);
+    png_compression_->setEnabled(config_.output.bit_depth != 32);
     if (changed_editor == frames_ || changed_editor == fps_) {
         updateTimelineState();
     }
@@ -1741,6 +2079,148 @@ void MainWindow::moveSelectedEffect(int direction) {
     schedulePreview();
 }
 
+void MainWindow::randomizeExistingStackSettings() {
+    auto& random = *QRandomGenerator::global();
+    for (auto& wave : config_.waves) {
+        randomize_wave_settings(wave, random);
+    }
+    for (auto& swing : config_.swings) {
+        randomize_swing_settings(swing, random);
+    }
+    for (auto& effect : config_.effects) {
+        randomize_effect_settings(effect, random);
+    }
+    ensureAlphaForTransparency();
+    refreshAll();
+    schedulePreview();
+    status_->setText(
+        tr("Randomized values for %1 waves, %2 swings, and %3 effects; "
+           "counts, types, names, and enabled states were preserved.")
+            .arg(config_.waves.size())
+            .arg(config_.swings.size())
+            .arg(config_.effects.size()));
+}
+
+void MainWindow::randomizeStackComposition() {
+    auto& random = *QRandomGenerator::global();
+    config_.waves.clear();
+    config_.swings.clear();
+    config_.effects.clear();
+
+    const int wave_count = random_integer(random, 2, 6);
+    bool has_enabled_wave = false;
+    for (int index = 0; index < wave_count; ++index) {
+        auto wave = pvt::default_wave(static_cast<std::size_t>(index));
+        wave.id = pvt::allocate_id(config_);
+        wave.enabled = random_chance(random, 0.82);
+        has_enabled_wave = has_enabled_wave || wave.enabled;
+        randomize_wave_settings(wave, random);
+        config_.waves.push_back(std::move(wave));
+    }
+    if (!has_enabled_wave) {
+        config_.waves.front().enabled = true;
+    }
+
+    const int swing_count = random_integer(random, 0, 3);
+    bool has_enabled_swing = false;
+    for (int index = 0; index < swing_count; ++index) {
+        auto swing = pvt::default_swing(static_cast<std::size_t>(index));
+        swing.id = pvt::allocate_id(config_);
+        swing.enabled = random_chance(random, 0.75);
+        swing.waveform = static_cast<pvt::Waveform>(random_integer(random, 0, 3));
+        has_enabled_swing = has_enabled_swing || swing.enabled;
+        randomize_swing_settings(swing, random);
+        config_.swings.push_back(std::move(swing));
+    }
+    if (!has_enabled_swing && !config_.swings.empty()) {
+        config_.swings.front().enabled = true;
+    }
+
+    std::array<pvt::EffectType, 6> effect_types = {
+        pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
+        pvt::EffectType::Shake, pvt::EffectType::FlagWave, pvt::EffectType::Glow,
+        pvt::EffectType::BlockScale};
+    const int effect_count = random_integer(random, 1, static_cast<int>(effect_types.size()));
+    bool has_enabled_effect = false;
+    for (int index = 0; index < effect_count; ++index) {
+        const int selected = random_integer(
+            random, index, static_cast<int>(effect_types.size()) - 1);
+        std::swap(effect_types[static_cast<std::size_t>(index)],
+                  effect_types[static_cast<std::size_t>(selected)]);
+        auto effect = pvt::default_effect(effect_types[static_cast<std::size_t>(index)]);
+        effect.id = pvt::allocate_id(config_);
+        effect.enabled = random_chance(random, 0.65);
+        has_enabled_effect = has_enabled_effect || effect.enabled;
+        randomize_effect_settings(effect, random);
+        config_.effects.push_back(std::move(effect));
+    }
+    if (!has_enabled_effect) {
+        config_.effects.front().enabled = true;
+    }
+
+    ensureAlphaForTransparency();
+    refreshAll();
+    schedulePreview();
+    status_->setText(
+        tr("Created a new mix with %1 waves, %2 swings, and %3 effects.")
+            .arg(config_.waves.size())
+            .arg(config_.swings.size())
+            .arg(config_.effects.size()));
+}
+
+QString MainWindow::resolvedOutputDirectory(const QString& path) const {
+    if (QDir::isAbsolutePath(path)) {
+        return QDir::cleanPath(path);
+    }
+    return QDir::cleanPath(QDir(startup_working_directory_).absoluteFilePath(path));
+}
+
+QString MainWindow::usableDialogDirectory(const QString& preferred) const {
+    const auto nearest_existing_directory = [this](QString candidate) {
+        if (candidate.isEmpty()) {
+            return QString{};
+        }
+        if (!QDir::isAbsolutePath(candidate)) {
+            candidate = resolvedOutputDirectory(candidate);
+        }
+        QDir directory(candidate);
+        while (true) {
+            const QFileInfo information(directory.absolutePath());
+            if (information.exists() && information.isDir() && !directory.isRoot()) {
+                return QDir::cleanPath(directory.absolutePath());
+            }
+            if (directory.isRoot() || !directory.cdUp()) {
+                return QString{};
+            }
+        }
+    };
+
+    for (const QString& candidate : {preferred, last_dialog_directory_,
+                                     QDir::homePath(), startup_working_directory_}) {
+        if (const QString usable = nearest_existing_directory(candidate);
+            !usable.isEmpty()) {
+            return usable;
+        }
+    }
+    return QDir::homePath();
+}
+
+void MainWindow::rememberDialogLocation(const QString& selectedPath) {
+    if (selectedPath.isEmpty()) {
+        return;
+    }
+    const QFileInfo information(selectedPath);
+    const QString candidate = information.exists() && information.isDir()
+                                  ? information.absoluteFilePath()
+                                  : information.absolutePath();
+    const QFileInfo directory_information(candidate);
+    const QDir directory(candidate);
+    if (directory_information.exists() && directory_information.isDir()
+        && !directory.isRoot()) {
+        last_dialog_directory_ = QDir::cleanPath(directory.absolutePath());
+    }
+}
+
 void MainWindow::schedulePreview() {
     ++preview_generation_;
     if (preview_watcher_ && preview_watcher_->isRunning()) {
@@ -1748,7 +2228,12 @@ void MainWindow::schedulePreview() {
         return;
     }
     if (preview_timer_) {
-        preview_timer_->start();
+        if (playback_timer_ && playback_timer_->isActive()) {
+            preview_timer_->stop();
+            startPreview();
+        } else {
+            preview_timer_->start();
+        }
     }
 }
 
@@ -1763,7 +2248,9 @@ void MainWindow::startPreview() {
     const std::uint64_t generation = preview_generation_;
     try {
         preview_watcher_->setFuture(QtConcurrent::run(
-            [config, frame, generation] { return generatePreview(config, frame, generation); }));
+            [config, frame, generation, test_delay_ms = preview_test_delay_ms_] {
+                return generatePreview(config, frame, generation, test_delay_ms);
+            }));
     } catch (const std::exception& exception) {
         status_->setText(
             tr("Preview could not start: %1").arg(QString::fromUtf8(exception.what())));
@@ -1773,10 +2260,15 @@ void MainWindow::startPreview() {
 }
 
 MainWindow::PreviewResult MainWindow::generatePreview(pvt::RenderConfig config, int frame,
-                                                       std::uint64_t generation) {
+                                                       std::uint64_t generation,
+                                                       int test_delay_ms) {
     PreviewResult result;
+    result.frame = frame;
     result.generation = generation;
     try {
+        if (test_delay_ms > 0) {
+            QThread::msleep(static_cast<unsigned long>(test_delay_ms));
+        }
         const int source_short_edge = std::max(1, std::min(config.width, config.height));
         const double scale = std::min({1.0, 720.0 / static_cast<double>(config.width),
                                        480.0 / static_cast<double>(config.height)});
@@ -1839,7 +2331,10 @@ bool MainWindow::startExport() {
     cancel_export_.store(false);
     export_active_ = true;
     status_->setText(tr("Exporting sequence…"));
-    const auto config = config_;
+    auto config = config_;
+    config.output.output_directory =
+        resolvedOutputDirectory(QString::fromStdString(config.output.output_directory))
+            .toStdString();
     try {
         export_watcher_->setFuture(QtConcurrent::run([this, config] {
             ExportResult result;
@@ -1906,11 +2401,29 @@ bool MainWindow::loadSetupFile(const QString& path, QString* error) {
 }
 
 bool MainWindow::runSmokeChecks(QString* error) {
+    const QString home_directory =
+        existing_writable_directory(QDir::homePath(), true);
+    if (!home_directory.isEmpty() && !QDir(home_directory).isRoot()
+        && usableDialogDirectory() != QDir::cleanPath(home_directory)) {
+        if (error != nullptr) {
+            *error = tr("The first file dialog did not fall back to the home folder.");
+        }
+        return false;
+    }
+    if (QDir(resolvedOutputDirectory(QStringLiteral("."))).isRoot()) {
+        if (error != nullptr) {
+            *error = tr("A relative dot output directory resolved to filesystem root.");
+        }
+        return false;
+    }
+
     const auto original = config_;
     auto expected = original;
     expected.surface.rotations_per_loop = 900;
     expected.surface.lighting = 9.0;
+    expected.surface.obj_path = "meshes/smoke test.obj";
     expected.ghost_lag_degrees = 5.729612345678;
+    expected.output.png_compression_level = 9;
     if (!expected.waves.empty()) {
         expected.waves.front().x_percent = 29.166712345678;
     }
@@ -1972,6 +2485,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     if (surface_rotations_->value() != expected.surface.rotations_per_loop
         || surface_lighting_->value() != expected.surface.lighting
+        || surface_obj_path_->text().toStdString() != expected.surface.obj_path
+        || png_compression_->value() != expected.output.png_compression_level
         || (!expected.effects.empty()
             && (effect_center_x_->value() != expected.effects.front().center_x
                 || effect_center_y_->value() != expected.effects.front().center_y))) {
@@ -2067,6 +2582,105 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
+    // Exercise the asynchronous path that originally displayed one stale
+    // frame until Pause. Success requires two different completed frames to be
+    // installed while the playback timer is still active. The smoke-only delay
+    // makes every render span several 240 FPS ticks, reproducing the stale
+    // generation race deterministically.
+    fps_->setValue(240.0);
+    preview_test_delay_ms_ = 25;
+    playback_preview_advanced_ = false;
+    play_button_->click();
+    QElapsedTimer playback_wait;
+    playback_wait.start();
+    while (!playback_preview_advanced_ && playback_wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        QThread::msleep(1);
+    }
+    if (playback_timer_->isActive()) {
+        play_button_->click();
+    }
+    preview_test_delay_ms_ = 0;
+    if (!playback_preview_advanced_) {
+        if (error != nullptr) {
+            *error = tr("Playback did not install advancing preview frames.");
+        }
+        return false;
+    }
+
+    const auto before_value_randomization = config_;
+    randomizeExistingStackSettings();
+    const auto same_structure = [](const auto& before, const auto& after,
+                                   const auto& same_item) {
+        if (before.size() != after.size()) {
+            return false;
+        }
+        for (std::size_t index = 0U; index < before.size(); ++index) {
+            if (!same_item(before[index], after[index])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const bool waves_preserved = same_structure(
+        before_value_randomization.waves, config_.waves,
+        [](const pvt::WaveConfig& before, const pvt::WaveConfig& after) {
+            return before.id == after.id && before.name == after.name
+                   && before.enabled == after.enabled;
+        });
+    const bool swings_preserved = same_structure(
+        before_value_randomization.swings, config_.swings,
+        [](const pvt::SwingConfig& before, const pvt::SwingConfig& after) {
+            return before.id == after.id && before.name == after.name
+                   && before.enabled == after.enabled
+                   && before.waveform == after.waveform;
+        });
+    const bool effects_preserved = same_structure(
+        before_value_randomization.effects, config_.effects,
+        [](const pvt::EffectConfig& before, const pvt::EffectConfig& after) {
+            return before.id == after.id && before.name == after.name
+                   && before.enabled == after.enabled && before.type == after.type;
+        });
+    if (!waves_preserved || !swings_preserved || !effects_preserved
+        || !pvt::validate(config_).ok) {
+        if (error != nullptr) {
+            *error = tr("Randomize values changed stack identity or made it invalid.");
+        }
+        return false;
+    }
+
+    randomizeStackComposition();
+    std::unordered_set<std::uint64_t> randomized_ids;
+    std::unordered_set<int> randomized_effect_types;
+    bool unique_randomized_items = true;
+    const auto remember_id = [&randomized_ids, &unique_randomized_items](auto id) {
+        unique_randomized_items = unique_randomized_items
+                                  && id != 0U && randomized_ids.insert(id).second;
+    };
+    for (const auto& wave : config_.waves) remember_id(wave.id);
+    for (const auto& swing : config_.swings) remember_id(swing.id);
+    for (const auto& effect : config_.effects) {
+        remember_id(effect.id);
+        unique_randomized_items = unique_randomized_items
+            && randomized_effect_types.insert(static_cast<int>(effect.type)).second;
+    }
+    const bool enabled_wave = std::any_of(
+        config_.waves.begin(), config_.waves.end(),
+        [](const auto& wave) { return wave.enabled; });
+    const bool enabled_effect = std::any_of(
+        config_.effects.begin(), config_.effects.end(),
+        [](const auto& effect) { return effect.enabled; });
+    if (config_.waves.size() < 2U || config_.waves.size() > 6U
+        || config_.swings.size() > 3U
+        || config_.effects.empty() || config_.effects.size() > 6U
+        || !enabled_wave || !enabled_effect || !unique_randomized_items
+        || !pvt::validate(config_).ok) {
+        if (error != nullptr) {
+            *error = tr("Randomize mix produced an invalid stack composition.");
+        }
+        return false;
+    }
+
     config_ = original;
     refreshAll();
     schedulePreview();
@@ -2079,12 +2693,15 @@ void MainWindow::saveSetup() {
         QMessageBox::warning(this, tr("Invalid output text"), editor_error);
         return;
     }
-    const QString path = QFileDialog::getSaveFileName(this, tr("Save setup"),
-                                                       QStringLiteral("setup.pvt"),
-                                                       tr("PVT setup (*.pvt);;All files (*)"));
+    const QString initial_path =
+        QDir(usableDialogDirectory()).filePath(QStringLiteral("setup.pvt"));
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Save setup"), initial_path,
+        tr("PVT setup (*.pvt);;All files (*)"));
     if (path.isEmpty()) {
         return;
     }
+    rememberDialogLocation(path);
     std::string error;
     if (!pvt::save_setup(config_, path.toStdString(), &error)) {
         QMessageBox::critical(this, tr("Save failed"), QString::fromStdString(error));
@@ -2094,11 +2711,13 @@ void MainWindow::saveSetup() {
 }
 
 void MainWindow::loadSetup() {
-    const QString path = QFileDialog::getOpenFileName(this, tr("Load setup"), {},
-                                                       tr("PVT setup (*.pvt);;All files (*)"));
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Load setup"), usableDialogDirectory(),
+        tr("PVT setup (*.pvt);;All files (*)"));
     if (path.isEmpty()) {
         return;
     }
+    rememberDialogLocation(path);
     QString error;
     if (!loadSetupFile(path, &error)) {
         QMessageBox::critical(this, tr("Load failed"),

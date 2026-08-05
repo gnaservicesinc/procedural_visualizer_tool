@@ -330,7 +330,8 @@ EffectType choose_effect_type() {
                  {EffectType::Ripple, "Ripple"},
                  {EffectType::Shake, "Shake"},
                  {EffectType::FlagWave, "Flag wave"},
-                 {EffectType::Glow, "Glow"}});
+                 {EffectType::Glow, "Glow"},
+                 {EffectType::BlockScale, "Block scale"}});
     return type;
 }
 
@@ -385,11 +386,27 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                    && prompt_real("Wave angle (degrees)", effect.angle_degrees, -36000.0, 36000.0)
                    && configure_edge_mode(effect.edge_mode);
         case EffectType::Glow:
-            return prompt_real("Glow intensity", effect.intensity, 0.0, 100.0)
+            return prompt_real("Bloom/glow strength", effect.intensity, 0.0, 100.0)
                    && prompt_real("Pulse depth", effect.secondary, -100.0, 100.0)
                    && prompt_real("Radius (pixels)", effect.radius_pixels, 0.0, 16384.0)
-                   && prompt_real("Threshold", effect.threshold, 0.0, 64.0)
+                   && prompt_real("Linear-luminance threshold (lower affects more)",
+                                  effect.threshold, 0.0, 64.0)
                    && prompt_real("Soft knee", effect.soft_knee, 0.0, 1.0);
+        case EffectType::BlockScale: {
+            if (!prompt_real("Mix", effect.intensity, 0.0, 1.0)
+                || !prompt_real("Minimum block-size multiplier",
+                                effect.magnitude, 0.001, 10.0)
+                || !prompt_real("Maximum block-size multiplier",
+                                effect.frequency, 0.001, 1000.0)) {
+                return false;
+            }
+            int steps = static_cast<int>(std::llround(effect.secondary));
+            if (!prompt_int("Quantization steps (0 is smooth)", steps, 0, 100)) {
+                return false;
+            }
+            effect.secondary = static_cast<double>(steps);
+            return true;
+        }
     }
     return true;
 }
@@ -561,12 +578,25 @@ void configure_surface(RenderConfig& config) {
                 {{pvt::SurfaceMapping::Plane, "Plane"},
                  {pvt::SurfaceMapping::Cylinder, "Cylinder"},
                  {pvt::SurfaceMapping::Sphere, "Sphere"},
-                 {pvt::SurfaceMapping::Cube, "Cube"}});
+                 {pvt::SurfaceMapping::Cube, "Cube"},
+                 {pvt::SurfaceMapping::CustomObj, "Custom OBJ"}});
+    if (config.surface.mapping == pvt::SurfaceMapping::CustomObj) {
+        if (!prompt_text("OBJ file path", config.surface.obj_path,
+                         kMaximumPathBytes)) {
+            return;
+        }
+    }
     prompt_int("Surface rotations per loop", config.surface.rotations_per_loop, -1000, 1000);
     prompt_real("Surface starting phase (degrees)", config.surface.phase_degrees,
                 -36000.0, 36000.0);
     prompt_real("Surface curvature", config.surface.curvature, 0.0, 1.0);
     prompt_real("Surface lighting", config.surface.lighting, 0.0, 10.0);
+    if (config.surface.enabled
+        && config.surface.mapping != pvt::SurfaceMapping::Plane
+        && config.surface.curvature > 0.0) {
+        config.alpha.enabled = true;
+        std::cout << "Alpha output enabled for the 3D surface exterior.\n";
+    }
 }
 
 void configure_alpha(RenderConfig& config) {
@@ -602,8 +632,10 @@ void configure_export(RenderConfig& config) {
     }
     if (config.output.bit_depth == 32) {
         config.output.dither_enabled = false;
-        std::cout << "Dithering is disabled for full-float EXR.\n";
+        std::cout << "PNG compression and dithering are ignored for full-float EXR.\n";
     } else {
+        prompt_int("PNG compression (0 off, 9 maximum)",
+                   config.output.png_compression_level, 0, 9);
         prompt_bool("Dither before integer quantization", config.output.dither_enabled);
         prompt_enum("Dither method", config.output.dither_method,
                     {{pvt::DitherMethod::BlueNoise, "Deterministic blue-noise-like"},
@@ -633,6 +665,10 @@ void print_summary(const RenderConfig& config) {
               << " | " << (config.output.dither_enabled && config.output.bit_depth != 32
                                  ? pvt::dither_method_name(config.output.dither_method)
                                  : "dither off")
+              << (config.output.bit_depth == 32
+                      ? ""
+                      : " | PNG compression "
+                            + std::to_string(config.output.png_compression_level))
               << "\nPeak working-memory estimate: " << std::fixed << std::setprecision(1)
               << static_cast<double>(validation.estimated_peak_bytes) / (1024.0 * 1024.0)
               << " MiB\n";
@@ -645,7 +681,7 @@ void print_summary(const RenderConfig& config) {
               << "4) Surface and procedural feature toggles\n"
               << "5) Rhythm, swings, color, and visual quantization\n"
               << "6) Alpha channel\n"
-              << "7) Export format, dithering, and filenames\n"
+              << "7) Export format, PNG compression, dithering, and filenames\n"
               << "8) Save setup\n"
               << "9) Load setup\n"
               << "10) Restore defaults\n"
@@ -753,18 +789,24 @@ void print_help(const char* program) {
         << "Options:\n"
         << "  --render (or --defaults)\n"
         << "  --width N --height N --block-size N --frames N --fps N\n"
-        << "  --waves N --bit-depth 8|16|32 --alpha --no-alpha\n"
+        << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
+        << "  --obj FILE  (enable two-sided custom OBJ wrapping and alpha)\n"
+        << "  --alpha --no-alpha\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
         << "  --output-dir PATH --prefix TEXT --start-frame N --digits N\n"
         << "  --overwrite --save FILE --help\n\n"
         << "Options are processed from left to right. Put --load before overrides.\n"
-        << "Float EXR output ignores dithering. Unspecified values keep their defaults.\n";
+        << "PNG compression defaults to 5 (0 is off, 9 is maximum).\n"
+        << "Float EXR output ignores PNG compression and dithering. "
+           "Unspecified values keep their defaults.\n";
 }
 
 bool option_takes_value(const std::string& option) {
     return option == "--load" || option == "--save" || option == "--width"
            || option == "--height" || option == "--block-size" || option == "--frames"
            || option == "--fps" || option == "--waves" || option == "--bit-depth"
+           || option == "--png-compression"
+           || option == "--obj"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
            || option == "--start-frame" || option == "--digits";
 }
@@ -900,6 +942,14 @@ int main(int argc, char** argv) {
             if (integer == 32) {
                 config.output.dither_enabled = false;
             }
+        } else if (option == "--png-compression"
+                   && parse_integer(value, 0, 9, integer)) {
+            config.output.png_compression_level = static_cast<int>(integer);
+        } else if (option == "--obj" && valid_output_directory(value)) {
+            config.surface.enabled = true;
+            config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+            config.surface.obj_path = value;
+            config.alpha.enabled = true;
         } else if (option == "--dither") {
             config.output.dither_enabled = true;
             if (value == "blue") {
