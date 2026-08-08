@@ -1,4 +1,5 @@
 #include "procedural_visualizer_tool.h"
+#include "config_codec.h"
 #include "path_utf8.h"
 
 #include <algorithm>
@@ -50,15 +51,16 @@ namespace {
 // optional records within a given version. This keeps parsing unambiguous,
 // safely rejectable, and friendly to source control while still allowing
 // arbitrary string bytes. Version 2 adds PNG compression and custom-OBJ path
-// fields; version 1 is still accepted and receives their defaults.
+// fields. Version 3 separates final output alpha from procedural layer alpha;
+// versions 1 and 2 remain accepted and derive that new field from alpha.enabled.
 
 constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
 constexpr std::size_t kMaximumKeyBytes = 128U;
 constexpr std::size_t kMaximumDecodedStringBytes = 64U * 1024U;
 constexpr std::size_t kMaximumRecordCount = 16384U;
 
-static_assert(kSetupFormatVersion == 2U,
-              "config_io.cpp implements setup format version 2");
+static_assert(kSetupFormatVersion == 3U,
+              "config_io.cpp implements setup format version 3");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -156,10 +158,12 @@ bool parse_records(const std::string& contents,
                 setup_version = 1U;
             } else if (line == "PVT_SETUP\t2") {
                 setup_version = 2U;
+            } else if (line == "PVT_SETUP\t3") {
+                setup_version = 3U;
             } else {
                 return fail(error,
                             "Unsupported or malformed setup header; expected "
-                            "'PVT_SETUP\\t1' or 'PVT_SETUP\\t2'.");
+                            "'PVT_SETUP\\t1', 'PVT_SETUP\\t2', or 'PVT_SETUP\\t3'.");
             }
         } else {
             const std::size_t tab = line.find('\t');
@@ -728,6 +732,7 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_bool("output.dither_enabled",
                      config.output.bit_depth != 32 && config.output.dither_enabled);
     builder.add_enum("output.dither_method", config.output.dither_method, kDitherMethods);
+    builder.add_bool("output.write_alpha", config.output.write_alpha);
     builder.add_string("output.output_directory", config.output.output_directory);
     builder.add_string("output.filename_prefix", config.output.filename_prefix);
     builder.add_integer("output.first_frame_number", config.output.first_frame_number);
@@ -877,8 +882,18 @@ bool deserialize_setup(Records& records,
         return false;
     }
     if (!consume_bool(records, "output.dither_enabled", candidate.output.dither_enabled, error)
-        || !consume_enum(records, "output.dither_method", candidate.output.dither_method, kDitherMethods, error)
-        || !consume_string(records, "output.output_directory", candidate.output.output_directory, error)
+        || !consume_enum(records, "output.dither_method", candidate.output.dither_method, kDitherMethods, error)) {
+        return false;
+    }
+    if (setup_version >= 3U) {
+        if (!consume_bool(records, "output.write_alpha",
+                          candidate.output.write_alpha, error)) {
+            return false;
+        }
+    } else {
+        candidate.output.write_alpha = candidate.alpha.enabled;
+    }
+    if (!consume_string(records, "output.output_directory", candidate.output.output_directory, error)
         || !consume_string(records, "output.filename_prefix", candidate.output.filename_prefix, error)
         || !consume_integer(records, "output.first_frame_number", candidate.output.first_frame_number, error)
         || !consume_integer(records, "output.filename_digits", candidate.output.filename_digits, error)
@@ -1156,6 +1171,53 @@ bool atomic_write_setup(const std::string& path,
 
 } // namespace
 
+namespace detail {
+
+bool serialize_setup_config(const RenderConfig& config,
+                            std::string& serialized,
+                            std::string* error) {
+    clear_error(error);
+    try {
+        return serialize_setup(config, serialized, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to serialize setup.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected error while serializing setup: ")
+                               + exception.what());
+    }
+}
+
+bool deserialize_setup_config(const std::string& serialized,
+                              RenderConfig& destination,
+                              std::string* error) {
+    clear_error(error);
+    try {
+        if (serialized.size() > kMaximumSetupBytes) {
+            return fail(error, "Setup data exceeds the 4 MiB input limit.");
+        }
+        Records records;
+        std::uint32_t setup_version = 0U;
+        if (!parse_records(serialized, records, setup_version, error)) {
+            return false;
+        }
+        RenderConfig candidate;
+        if (!deserialize_setup(records, setup_version, candidate, error)) {
+            return false;
+        }
+        destination = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to load setup; destination was not changed.");
+    } catch (const std::exception& exception) {
+        return fail(error,
+                    std::string("Unexpected error while loading setup; destination was not changed: ")
+                        + exception.what());
+    }
+}
+
+} // namespace detail
+
 bool save_setup(const RenderConfig& config,
                 const std::string& path,
                 std::string* error) {
@@ -1166,7 +1228,7 @@ bool save_setup(const RenderConfig& config,
             return fail(error, "Setup path is empty, contains a NUL byte, or exceeds 64 KiB.");
         }
         std::string serialized;
-        if (!serialize_setup(config, serialized, error)) {
+        if (!detail::serialize_setup_config(config, serialized, error)) {
             return false;
         }
         return atomic_write_setup(path, serialized, error);
@@ -1189,14 +1251,8 @@ bool load_setup(const std::string& path,
             return false;
         }
 
-        Records records;
-        std::uint32_t setup_version = 0U;
-        if (!parse_records(contents, records, setup_version, error)) {
-            return false;
-        }
-
         RenderConfig candidate;
-        if (!deserialize_setup(records, setup_version, candidate, error)) {
+        if (!detail::deserialize_setup_config(contents, candidate, error)) {
             return false;
         }
 

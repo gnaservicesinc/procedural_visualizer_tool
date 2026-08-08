@@ -4,6 +4,8 @@
 #include <png.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -15,6 +17,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -137,6 +140,66 @@ void test_image_access_and_transactional_render() {
     CHECK(error.empty());
     CHECK(pvt::render_frame(config, config.total_frames - 1, final, &error));
     CHECK(negative.pixels == final.pixels);
+}
+
+void test_cancellable_single_layer_render() {
+    pvt::RenderConfig config = pvt::default_config();
+    config.width = 1024;
+    config.height = 1024;
+    config.block_size = 1;
+    config.waves.reserve(pvt::kMaximumWaves);
+    for (std::size_t index = config.waves.size();
+        index < pvt::kMaximumWaves; ++index) {
+        pvt::WaveConfig wave = pvt::default_wave(index);
+        wave.id = static_cast<std::uint64_t>(1000U + index);
+        config.waves.push_back(std::move(wave));
+    }
+    CHECK(pvt::validate(config).ok);
+
+    pvt::Image destination;
+    destination.width = 1;
+    destination.height = 1;
+    destination.pixels = {0.25F, 0.5F, 0.75F, 1.0F};
+    const pvt::Image preserved = destination;
+    std::atomic_bool cancel {false};
+    std::atomic_bool entered {false};
+    std::atomic_bool finished {false};
+    bool rendered = true;
+    std::string error;
+
+    std::thread worker([&] {
+        entered.store(true, std::memory_order_release);
+        rendered = pvt::render_frame_at_phase_cancellable(
+            config, 0.25, destination, &cancel, &error);
+        finished.store(true, std::memory_order_release);
+    });
+    while (!entered.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    // This valid maximum-wave render cannot finish in this interval. Flip the
+    // token only after the render thread has begun, exercising an in-flight
+    // row/chunk checkpoint instead of only the entry guard.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(!finished.load(std::memory_order_acquire));
+    cancel.store(true, std::memory_order_relaxed);
+    worker.join();
+
+    CHECK(!rendered);
+    CHECK(error.find("cancelled") != std::string::npos);
+    CHECK(destination.width == preserved.width);
+    CHECK(destination.height == preserved.height);
+    CHECK(destination.pixels == preserved.pixels);
+
+    make_small(config);
+    config.waves.resize(3U);
+    cancel.store(false, std::memory_order_relaxed);
+    pvt::Image cancellable_result;
+    pvt::Image legacy_result;
+    CHECK(pvt::render_frame_cancellable(config, -1, cancellable_result,
+                                        &cancel, &error));
+    CHECK(error.empty());
+    CHECK(pvt::render_frame(config, -1, legacy_result, &error));
+    CHECK(cancellable_result.pixels == legacy_result.pixels);
 }
 
 void test_defaults_and_dynamic_collections() {
@@ -782,15 +845,35 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     loaded.width = 777;
     CHECK(pvt::load_setup(first.string(), loaded, &error));
     CHECK(loaded.output.png_compression_level == 3);
+    CHECK(!loaded.output.write_alpha);
     CHECK(loaded.surface.obj_path == original.surface.obj_path);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
 
-    // Version 1 predates PNG compression control and custom OBJ paths. It
+    // Version 2 predates the independent export-alpha flag. Legacy files map
+    // it from the render alpha setting instead of silently losing that state.
+    const auto version_three_bytes = read_bytes(first);
+    std::string version_two(version_three_bytes.begin(), version_three_bytes.end());
+    CHECK(version_two.rfind("PVT_SETUP\t3\n", 0U) == 0U);
+    version_two.replace(0U, std::string("PVT_SETUP\t3").size(), "PVT_SETUP\t2");
+    const std::string write_alpha_record = "output.write_alpha\t0\n";
+    const std::size_t write_alpha_position = version_two.find(write_alpha_record);
+    CHECK(write_alpha_position != std::string::npos);
+    if (write_alpha_position != std::string::npos) {
+        version_two.erase(write_alpha_position, write_alpha_record.size());
+    }
+    const fs::path version_two_setup = directory / "version-two.pvt";
+    {
+        std::ofstream output(version_two_setup, std::ios::binary);
+        output.write(version_two.data(), static_cast<std::streamsize>(version_two.size()));
+    }
+    auto loaded_version_two = pvt::default_config();
+    CHECK(pvt::load_setup(version_two_setup.string(), loaded_version_two, &error));
+    CHECK(loaded_version_two.output.write_alpha);
+
+    // Version 1 also predates PNG compression control and custom OBJ paths. It
     // remains loadable and receives the current defaults for both fields.
-    const auto version_two_bytes = read_bytes(first);
-    std::string version_one(version_two_bytes.begin(), version_two_bytes.end());
-    CHECK(version_one.rfind("PVT_SETUP\t2\n", 0U) == 0U);
+    std::string version_one = version_two;
     version_one.replace(0U, std::string("PVT_SETUP\t2").size(), "PVT_SETUP\t1");
     const std::string compression_record = "output.png_compression_level\t3\n";
     const std::size_t compression_position = version_one.find(compression_record);
@@ -813,6 +896,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     loaded_version_one.output.png_compression_level = 9;
     CHECK(pvt::load_setup(version_one_setup.string(), loaded_version_one, &error));
     CHECK(loaded_version_one.output.png_compression_level == 5);
+    CHECK(loaded_version_one.output.write_alpha);
     CHECK(loaded_version_one.surface.obj_path.empty());
 
     const fs::path unicode_setup =
@@ -1201,6 +1285,44 @@ void test_sequence_preflight(const fs::path& directory) {
     CHECK(!pvt::render_sequence(config, {}, &cancelled, &error));
     CHECK(!fs::exists(directory / "atomic-cancel" / "loop_0000.png"));
 
+    // A sequence must pass its cancellation token into the active frame, not
+    // wait until a potentially expensive frame has completed. Use the same
+    // valid maximum-wave workload as the direct in-flight cancellation test.
+    auto heavy = pvt::default_config();
+    heavy.width = 1024;
+    heavy.height = 1024;
+    heavy.block_size = 1;
+    heavy.total_frames = 2;
+    heavy.output.output_directory = (directory / "in-frame-cancel").string();
+    heavy.output.filename_prefix = "heavy_";
+    heavy.waves.reserve(pvt::kMaximumWaves);
+    for (std::size_t index = heavy.waves.size();
+         index < pvt::kMaximumWaves; ++index) {
+        auto wave = pvt::default_wave(index);
+        wave.id = static_cast<std::uint64_t>(2000U + index);
+        heavy.waves.push_back(std::move(wave));
+    }
+    CHECK(pvt::validate(heavy).ok);
+    cancelled.store(false, std::memory_order_relaxed);
+    std::atomic_bool sequence_entered {false};
+    std::atomic_bool sequence_finished {false};
+    bool sequence_result = true;
+    std::thread sequence_worker([&] {
+        sequence_entered.store(true, std::memory_order_release);
+        sequence_result = pvt::render_sequence(heavy, {}, &cancelled, &error);
+        sequence_finished.store(true, std::memory_order_release);
+    });
+    while (!sequence_entered.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(!sequence_finished.load(std::memory_order_acquire));
+    cancelled.store(true, std::memory_order_relaxed);
+    sequence_worker.join();
+    CHECK(!sequence_result);
+    CHECK(error.find("cancelled") != std::string::npos);
+    CHECK(!fs::exists(directory / "in-frame-cancel" / "heavy_0000.png"));
+
     // A literal dot remains relative to the caller's working directory, and
     // sibling temporary output must stay there rather than drifting to root.
     const fs::path previous_working_directory = fs::current_path();
@@ -1236,6 +1358,7 @@ int main(int argc, char** argv) {
 
     test_defaults_and_dynamic_collections();
     test_image_access_and_transactional_render();
+    test_cancellable_single_layer_render();
     test_determinism_and_seam_continuity();
     test_direction_alpha_and_surfaces(source_root);
     test_partial_alpha_glow_composition();

@@ -4,6 +4,7 @@
 #include "obj_mesh.h"
 #include "procedural_visualizer_tool.h"
 
+#include <atomic>
 #include <cstddef>
 #include <string>
 
@@ -41,7 +42,8 @@ bool apply_obj_surface_mapping(const Image& source,
                                double curvature,
                                double lighting,
                                double loop_phase,
-                               std::string* error);
+                               std::string* error,
+                               const std::atomic_bool* cancel = nullptr);
 
 } // namespace detail
 } // namespace pvt

@@ -10,22 +10,29 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
+#include <memory>
 #include <optional>
 
 class QCheckBox;
 class QCloseEvent;
 class QComboBox;
+class QDockWidget;
 class QDoubleSpinBox;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QPlainTextEdit;
 class QSlider;
 class QSpinBox;
 class QTabWidget;
 class QTimer;
+class QUndoStack;
 class PreviewWidget;
+
+namespace pvt { struct ProjectDocument; }
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -44,6 +51,7 @@ private:
         QString error;
         int frame = 0;
         std::uint64_t generation = 0;
+        std::uint64_t document_revision = 0;
     };
 
     struct ExportResult {
@@ -55,8 +63,11 @@ private:
     QWidget* createWavePage();
     QWidget* createSwingPage();
     QWidget* createEffectPage();
-    QWidget* createSettingsPage();
+    QWidget* createLayerSettingsPage();
+    QWidget* createOutputPage();
+    QWidget* createVersionsPage();
     QWidget* createTimeline();
+    void createLayerDock();
     void createToolbar();
     void connectEditors();
 
@@ -81,6 +92,58 @@ private:
     void updateEffectListItem(std::size_t index);
     void updateEffectEditorVisibility();
 
+    pvt::LayerConfig* activeLayer();
+    const pvt::LayerConfig* activeLayer() const;
+    pvt::LayerConfig* findLayer(const std::string& uuid);
+    const pvt::LayerConfig* findLayer(const std::string& uuid) const;
+    void selectLayer(const std::string& uuid);
+    void loadActiveConfiguration();
+    void syncActiveRender();
+    void syncProjectGlobals();
+    void refreshLayerList();
+    void loadLayerEditors();
+    void addLayer();
+    void duplicateLayer();
+    void removeLayer();
+    void moveActiveLayer(int direction);
+    void updateWindowTitle();
+    void updateCompatibilityWarning();
+    void noteDocumentChange();
+    bool hasUnsavedChanges() const;
+    bool confirmDiscardChanges();
+    void restoreUserSettings();
+    void saveUserSettings();
+    void editUndoLimit();
+    bool documentReplacementAllowed(QString* error = nullptr);
+    void refreshVersionsPage();
+    void refreshVersionDiff();
+    void makeSelectedVersionCurrent();
+    void revertSelectedVersion();
+    bool loadProjectPath(const QString& path, QString* error = nullptr);
+
+    struct ActiveDocumentState {
+        pvt::RenderData render;
+        pvt::CanvasLoopConfig canvas;
+        pvt::ExportConfig output;
+    };
+    ActiveDocumentState captureActiveState() const;
+    void restoreActiveState(const std::string& layerUuid,
+                            const ActiveDocumentState& state);
+    void recordActiveStateChange(const QString& text,
+                                 ActiveDocumentState before,
+                                 const QString& mergeKey = {});
+    void restoreProjectState(const pvt::ProjectConfig& state,
+                             const std::string& activeLayerUuid);
+    void recordProjectStateChange(const QString& text,
+                                  pvt::ProjectConfig before,
+                                  const std::string& beforeActiveLayerUuid);
+    void recordUndo(const QString& text,
+                    std::function<void()> undo,
+                    std::function<void()> redo,
+                    const QString& mergeKey = {},
+                    std::size_t estimatedPayloadBytes = 0U);
+    void clearUndoHistory(bool preserveDirtyState);
+
     std::optional<std::size_t> selectedWaveIndex() const;
     std::optional<std::size_t> selectedSwingIndex() const;
     std::optional<std::size_t> selectedEffectIndex() const;
@@ -90,9 +153,12 @@ private:
 
     void schedulePreview();
     void startPreview();
-    static PreviewResult generatePreview(pvt::RenderConfig config, int frame,
+    pvt::ProjectConfig previewProjectSnapshot() const;
+    static PreviewResult generatePreview(pvt::ProjectConfig project, int frame,
                                          std::uint64_t generation,
-                                         int test_delay_ms);
+                                         std::uint64_t documentRevision,
+                                         int test_delay_ms,
+                                         const std::shared_ptr<std::atomic_bool>& cancel);
     void randomizeExistingStackSettings();
     void randomizeStackComposition();
     QString resolvedOutputDirectory(const QString& path) const;
@@ -100,11 +166,21 @@ private:
     void rememberDialogLocation(const QString& selectedPath);
     bool startExport();
     void saveSetup();
+    void saveSetupAs();
+    bool saveProjectPath(const QString& path);
     void loadSetup();
     bool loadSetupFile(const QString& path, QString* error = nullptr);
 
+    pvt::ProjectConfig project_;
+    std::unique_ptr<pvt::ProjectDocument> document_;
+    // Materialized active-layer view retained to keep the existing editors and
+    // draggable-wave overlay independent from project-global storage.
     pvt::RenderConfig config_;
+    std::string active_layer_uuid_;
+    std::optional<std::string> solo_layer_uuid_;
     bool populating_ = false;
+    bool restoring_undo_ = false;
+    bool baseline_dirty_ = false;
     bool preview_deferred_ = false;
     bool integer_dither_preference_ = true;
     bool export_active_ = false;
@@ -113,9 +189,22 @@ private:
     int last_previewed_frame_ = -1;
     int preview_test_delay_ms_ = 0;
     std::uint64_t preview_generation_ = 0;
+    std::uint64_t document_revision_ = 1;
+    struct WaveDragState {
+        std::string layer_uuid;
+        std::uint64_t wave_id = 0;
+        ActiveDocumentState before;
+        bool moved = false;
+    };
+    std::optional<WaveDragState> wave_drag_state_;
+    std::size_t undo_history_estimated_bytes_ = 0U;
+    std::shared_ptr<std::atomic_bool> preview_cancel_;
     std::atomic_bool cancel_export_{false};
     QString startup_working_directory_;
     QString last_dialog_directory_;
+    QString current_project_path_;
+    QString imported_legacy_path_;
+    QString compatibility_warning_;
 
     PreviewWidget* preview_ = nullptr;
     QTabWidget* tabs_ = nullptr;
@@ -127,6 +216,25 @@ private:
     QTimer* playback_timer_ = nullptr;
     QFutureWatcher<PreviewResult>* preview_watcher_ = nullptr;
     QFutureWatcher<ExportResult>* export_watcher_ = nullptr;
+    QUndoStack* undo_stack_ = nullptr;
+
+    QDockWidget* layers_dock_ = nullptr;
+    QListWidget* layer_list_ = nullptr;
+    QLineEdit* project_name_ = nullptr;
+    QLabel* compatibility_warning_label_ = nullptr;
+    QLineEdit* layer_name_ = nullptr;
+    QCheckBox* layer_enabled_ = nullptr;
+    QCheckBox* layer_solo_ = nullptr;
+    QComboBox* layer_blend_ = nullptr;
+    QDoubleSpinBox* layer_opacity_ = nullptr;
+
+    QListWidget* version_list_ = nullptr;
+    QComboBox* version_before_ = nullptr;
+    QComboBox* version_after_ = nullptr;
+    QPlainTextEdit* version_diff_ = nullptr;
+    QLabel* version_summary_ = nullptr;
+    QPushButton* version_make_current_ = nullptr;
+    QPushButton* version_revert_ = nullptr;
 
     QListWidget* wave_list_ = nullptr;
     QLineEdit* wave_name_ = nullptr;
@@ -211,6 +319,7 @@ private:
     QSpinBox* png_compression_ = nullptr;
     QCheckBox* dither_enabled_ = nullptr;
     QComboBox* dither_method_ = nullptr;
+    QCheckBox* write_alpha_ = nullptr;
     QLineEdit* output_directory_ = nullptr;
     QLineEdit* prefix_ = nullptr;
     QSpinBox* first_frame_ = nullptr;

@@ -37,6 +37,19 @@ inline std::string path_to_utf8(const std::filesystem::path& path) {
 #endif
 }
 
+inline std::string path_to_generic_utf8(const std::filesystem::path& path) {
+    const auto converted = path.generic_u8string();
+#if defined(__cpp_lib_char8_t) && __cpp_lib_char8_t >= 201907L
+    std::string utf8(converted.size(), '\0');
+    if (!converted.empty()) {
+        std::memcpy(utf8.data(), converted.data(), converted.size());
+    }
+    return utf8;
+#else
+    return converted;
+#endif
+}
+
 } // namespace detail
 } // namespace pvt
 

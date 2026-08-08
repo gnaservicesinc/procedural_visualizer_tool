@@ -136,7 +136,7 @@ void PreviewWidget::mousePressEvent(QMouseEvent* event) {
         selected_wave_ = dragged_wave_;
         setCursor(Qt::ClosedHandCursor);
         emit waveSelected(*dragged_wave_);
-        moveWave(event->position());
+        emit waveDragStarted(*dragged_wave_);
         event->accept();
         return;
     }
@@ -154,9 +154,10 @@ void PreviewWidget::mouseMoveEvent(QMouseEvent* event) {
 
 void PreviewWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && dragged_wave_) {
-        moveWave(event->position());
+        const std::size_t finished_index = *dragged_wave_;
         dragged_wave_.reset();
         setCursor(Qt::OpenHandCursor);
+        emit waveDragFinished(finished_index);
         event->accept();
         return;
     }

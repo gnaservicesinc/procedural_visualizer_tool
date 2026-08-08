@@ -27,6 +27,14 @@ constexpr double kMinimumCameraDepth = 1.0e-6;
 constexpr double kOpaqueThreshold = 1.0 - 1.0e-7;
 constexpr double kDepthRelativeEpsilon = 1.0e-6;
 
+struct ObjSurfaceCancelled final {};
+
+void throw_if_cancelled(const std::atomic_bool* cancel) {
+    if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+        throw ObjSurfaceCancelled{};
+    }
+}
+
 struct Color {
     double r = 0.0;
     double g = 0.0;
@@ -270,8 +278,13 @@ void rasterize_mesh(const ObjMesh& mesh,
                     int width,
                     int height,
                     double lighting,
+                    const std::atomic_bool* cancel,
                     FragmentCallback&& fragment) {
+    std::size_t triangle_index = 0U;
     for (const ObjTriangle& triangle : mesh.triangles) {
+        if ((triangle_index++ & 63U) == 0U) {
+            throw_if_cancelled(cancel);
+        }
         std::array<RasterVertex, 3U> vertices{};
         bool valid = true;
         bool authored_uv = true;
@@ -355,6 +368,7 @@ void rasterize_mesh(const ObjMesh& mesh,
         const bool owns_2 = top_left(vertices[0].projected->screen,
                                      vertices[1].projected->screen);
         for (int y = first_y; y <= last_y; ++y) {
+            throw_if_cancelled(cancel);
             for (int x = first_x; x <= last_x; ++x) {
                 const ScreenPoint sample{static_cast<double>(x) + 0.5,
                                          static_cast<double>(y) + 0.5};
@@ -428,8 +442,10 @@ bool validate_source(const Image& source, std::size_t& pixel_count,
     return true;
 }
 
-bool source_is_opaque(const Image& source, std::size_t pixel_count) {
+bool source_is_opaque(const Image& source, std::size_t pixel_count,
+                      const std::atomic_bool* cancel) {
     for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
+        if ((pixel & 4095U) == 0U) throw_if_cancelled(cancel);
         const float alpha = source.pixels[pixel * 4U + 3U];
         if (!std::isfinite(alpha) || alpha < kOpaqueThreshold) {
             return false;
@@ -441,13 +457,15 @@ bool source_is_opaque(const Image& source, std::size_t pixel_count) {
 std::vector<ProjectedVertex> project_positions(const ObjMesh& mesh,
                                                int width,
                                                int height,
-                                               double y_rotation) {
+                                               double y_rotation,
+                                               const std::atomic_bool* cancel) {
     std::vector<ProjectedVertex> result(mesh.positions.size());
     const double short_side = static_cast<double>(std::min(width, height));
     const double screen_scale = 0.52 * short_side;
     const double center_x = 0.5 * static_cast<double>(width - 1);
     const double center_y = 0.5 * static_cast<double>(height - 1);
     for (std::size_t index = 0U; index < mesh.positions.size(); ++index) {
+        if ((index & 4095U) == 0U) throw_if_cancelled(cancel);
         ProjectedVertex& projected = result[index];
         projected.object = multiply(subtract(mesh.positions[index],
                                               mesh.normalization_center),
@@ -472,10 +490,13 @@ std::vector<ProjectedVertex> project_positions(const ObjMesh& mesh,
 }
 
 std::vector<ObjVec3> transform_normals(const ObjMesh& mesh,
-                                       double y_rotation) {
+                                       double y_rotation,
+                                       const std::atomic_bool* cancel) {
     std::vector<ObjVec3> result;
     result.reserve(mesh.normals.size());
+    std::size_t index = 0U;
     for (const ObjVec3 normal : mesh.normals) {
+        if ((index++ & 4095U) == 0U) throw_if_cancelled(cancel);
         result.push_back(normalize(rotate_y(rotate_x(normal, kFixedXRotation),
                                             y_rotation)));
     }
@@ -483,8 +504,10 @@ std::vector<ObjVec3> transform_normals(const ObjMesh& mesh,
 }
 
 void blend_with_planar(const Image& source, Image& mapped,
-                       std::size_t pixel_count, double curvature) {
+                       std::size_t pixel_count, double curvature,
+                       const std::atomic_bool* cancel) {
     for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
+        if ((pixel & 4095U) == 0U) throw_if_cancelled(cancel);
         store_color(mapped, pixel,
                     mix_color(load_color(source, pixel), load_color(mapped, pixel),
                               curvature));
@@ -537,8 +560,13 @@ bool apply_obj_surface_mapping(const Image& source,
                                double curvature,
                                double lighting,
                                double loop_phase,
-                               std::string* error) {
+                               std::string* error,
+                               const std::atomic_bool* cancel) {
     clear_error(error);
+    if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+        return fail(error,
+                    "OBJ surface rendering was cancelled; destination was unchanged.");
+    }
     std::size_t pixel_count = 0U;
     if (!validate_source(source, pixel_count, error)) {
         return false;
@@ -559,10 +587,12 @@ bool apply_obj_surface_mapping(const Image& source,
     }
 
     try {
+        throw_if_cancelled(cancel);
         std::shared_ptr<const ObjMesh> mesh;
         if (!load_obj_mesh_cached(utf8_obj_path, mesh, error)) {
             return false;
         }
+        throw_if_cancelled(cancel);
         double wrapped_loop_phase = std::fmod(loop_phase, kTau);
         if (wrapped_loop_phase < 0.0) {
             wrapped_loop_phase += kTau;
@@ -572,9 +602,10 @@ bool apply_obj_surface_mapping(const Image& source,
                              + phase_degrees * kPi / 180.0;
         const double y_rotation = kInitialYRotation + phase;
         const std::vector<ProjectedVertex> projected =
-            project_positions(*mesh, source.width, source.height, y_rotation);
+            project_positions(*mesh, source.width, source.height, y_rotation,
+                              cancel);
         const std::vector<ObjVec3> world_normals =
-            transform_normals(*mesh, y_rotation);
+            transform_normals(*mesh, y_rotation, cancel);
 
         Image mapped;
         mapped.width = source.width;
@@ -582,12 +613,13 @@ bool apply_obj_surface_mapping(const Image& source,
         mapped.pixels.assign(pixel_count * 4U, 0.0F);
         const double mapped_lighting = clamp_value(lighting, 0.0, 10.0) * curvature;
 
-        if (source_is_opaque(source, pixel_count)) {
+        if (source_is_opaque(source, pixel_count, cancel)) {
             std::vector<float> depth(pixel_count,
                                      std::numeric_limits<float>::infinity());
             OpaqueFragments fragments{depth, mapped};
             rasterize_mesh(*mesh, projected, world_normals, source,
-                           source.width, source.height, mapped_lighting, fragments);
+                           source.width, source.height, mapped_lighting, cancel,
+                           fragments);
         } else {
             std::vector<float> previous_depth(
                 pixel_count, -std::numeric_limits<float>::infinity());
@@ -599,13 +631,16 @@ bool apply_obj_surface_mapping(const Image& source,
             layer.pixels.resize(pixel_count * 4U);
 
             for (std::size_t peel = 0U; peel < kObjSurfaceMaximumLayers; ++peel) {
+                throw_if_cancelled(cancel);
                 LayerFragments fragments{previous_depth, next_depth, layer};
                 rasterize_mesh(*mesh, projected, world_normals, source,
-                               source.width, source.height, mapped_lighting, fragments);
+                               source.width, source.height, mapped_lighting, cancel,
+                               fragments);
 
                 std::size_t hit_count = 0U;
                 std::size_t transparent_count = 0U;
                 for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
+                    if ((pixel & 4095U) == 0U) throw_if_cancelled(cancel);
                     if (!std::isfinite(next_depth[pixel])) {
                         previous_depth[pixel] = std::numeric_limits<float>::infinity();
                         continue;
@@ -629,11 +664,15 @@ bool apply_obj_surface_mapping(const Image& source,
             }
         }
 
-        blend_with_planar(source, mapped, pixel_count, curvature);
+        blend_with_planar(source, mapped, pixel_count, curvature, cancel);
+        throw_if_cancelled(cancel);
         destination.width = mapped.width;
         destination.height = mapped.height;
         destination.pixels.swap(mapped.pixels);
         return true;
+    } catch (const ObjSurfaceCancelled&) {
+        return fail(error,
+                    "OBJ surface rendering was cancelled; destination was unchanged.");
     } catch (const std::bad_alloc&) {
         return fail(error, "Not enough memory to render the OBJ surface; destination was unchanged.");
     } catch (const std::exception& exception) {

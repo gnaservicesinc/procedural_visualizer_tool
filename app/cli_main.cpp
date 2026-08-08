@@ -1,4 +1,5 @@
 #include "procedural_visualizer_tool.h"
+#include "project_bundle.h"
 
 #include <algorithm>
 #include <cctype>
@@ -7,17 +8,29 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 
 namespace {
 
 using pvt::EffectType;
+using pvt::ProjectDocument;
 using pvt::RenderConfig;
 
 constexpr std::size_t kMaximumNameBytes = 256;
 constexpr std::size_t kMaximumPathBytes = 4095;
 constexpr std::size_t kMaximumPrefixBytes = 127;
+
+// The interactive editor uses this to distinguish visiting an editor from
+// actually changing a value. That preserves the bundle invariant that a
+// no-change Save validates the project without manufacturing a new version.
+bool g_prompt_changed = false;
+
+struct CliState {
+    ProjectDocument document = pvt::default_project_document();
+    std::size_t active_layer = 0;
+};
 
 std::string trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
@@ -68,6 +81,64 @@ bool parse_real(const std::string& text, double minimum, double maximum, double&
     return true;
 }
 
+bool valid_utf8_without_controls(const std::string& value, bool allow_tab) {
+    for (std::size_t index = 0U; index < value.size();) {
+        const auto first = static_cast<unsigned char>(value[index]);
+        std::uint32_t code_point = 0U;
+        std::size_t length = 0U;
+        if (first <= 0x7fU) {
+            code_point = first;
+            length = 1U;
+        } else if (first >= 0xc2U && first <= 0xdfU) {
+            code_point = first & 0x1fU;
+            length = 2U;
+        } else if (first >= 0xe0U && first <= 0xefU) {
+            code_point = first & 0x0fU;
+            length = 3U;
+        } else if (first >= 0xf0U && first <= 0xf4U) {
+            code_point = first & 0x07U;
+            length = 4U;
+        } else {
+            return false;
+        }
+        if (index + length > value.size()) {
+            return false;
+        }
+        for (std::size_t continuation_index = 1U;
+             continuation_index < length; ++continuation_index) {
+            const auto continuation =
+                static_cast<unsigned char>(value[index + continuation_index]);
+            if ((continuation & 0xc0U) != 0x80U) {
+                return false;
+            }
+            code_point = (code_point << 6U) | (continuation & 0x3fU);
+        }
+        if ((length == 3U && code_point < 0x800U)
+            || (length == 4U && code_point < 0x10000U)
+            || code_point > 0x10ffffU
+            || (code_point >= 0xd800U && code_point <= 0xdfffU)
+            || (code_point < 0x20U
+                && !(allow_tab && code_point == static_cast<std::uint32_t>('\t')))
+            || (code_point >= 0x7fU && code_point <= 0x9fU)) {
+            return false;
+        }
+        index += length;
+    }
+    return true;
+}
+
+bool valid_project_name_text(const std::string& value) {
+    return !value.empty() && value.size() <= kMaximumNameBytes
+           && valid_utf8_without_controls(value, false)
+           && value.find('/') == std::string::npos
+           && value.find('\\') == std::string::npos;
+}
+
+bool valid_layer_name_text(const std::string& value) {
+    return value.size() <= kMaximumNameBytes
+           && valid_utf8_without_controls(value, true);
+}
+
 bool prompt_int(const std::string& label, int& value, int minimum, int maximum) {
     for (;;) {
         std::string input;
@@ -79,7 +150,9 @@ bool prompt_int(const std::string& label, int& value, int minimum, int maximum) 
         }
         long long parsed = 0;
         if (parse_integer(input, minimum, maximum, parsed)) {
-            value = static_cast<int>(parsed);
+            const int next = static_cast<int>(parsed);
+            g_prompt_changed = g_prompt_changed || value != next;
+            value = next;
             return true;
         }
         std::cout << "Enter a whole number from " << minimum << " to " << maximum
@@ -101,6 +174,7 @@ bool prompt_real(const std::string& label, double& value, double minimum,
         }
         double parsed = 0.0;
         if (parse_real(input, minimum, maximum, parsed)) {
+            g_prompt_changed = g_prompt_changed || value != parsed;
             value = parsed;
             return true;
         }
@@ -121,10 +195,12 @@ bool prompt_bool(const std::string& label, bool& value) {
         std::transform(input.begin(), input.end(), input.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (input == "y" || input == "yes" || input == "true" || input == "1") {
+            g_prompt_changed = g_prompt_changed || !value;
             value = true;
             return true;
         }
         if (input == "n" || input == "no" || input == "false" || input == "0") {
+            g_prompt_changed = g_prompt_changed || value;
             value = false;
             return true;
         }
@@ -145,11 +221,51 @@ bool prompt_text(const std::string& label, std::string& value, std::size_t maxim
             && std::none_of(input.begin(), input.end(), [](unsigned char c) {
                    return c < 0x20U || c == 0x7fU;
                })) {
+            g_prompt_changed = g_prompt_changed || value != input;
             value = std::move(input);
             return true;
         }
         std::cout << "Text must contain at most " << maximum
                   << " bytes of printable text.\n";
+    }
+}
+
+bool prompt_project_name(std::string& value) {
+    for (;;) {
+        std::string input;
+        if (!read_line("Project name [" + value + "]: ", input)) {
+            return false;
+        }
+        if (input.empty()) {
+            return true;
+        }
+        if (valid_project_name_text(input)) {
+            g_prompt_changed = g_prompt_changed || value != input;
+            value = std::move(input);
+            return true;
+        }
+        std::cout << "Use 1 to " << kMaximumNameBytes
+                  << " bytes of well-formed UTF-8 without controls or path "
+                     "separators (/ and backslash).\n";
+    }
+}
+
+bool prompt_layer_name(std::string& value) {
+    for (;;) {
+        std::string input;
+        if (!read_line("Layer name [" + value + "]: ", input)) {
+            return false;
+        }
+        if (input.empty()) {
+            return true;
+        }
+        if (valid_layer_name_text(input)) {
+            g_prompt_changed = g_prompt_changed || value != input;
+            value = std::move(input);
+            return true;
+        }
+        std::cout << "Use at most " << kMaximumNameBytes
+                  << " bytes of well-formed UTF-8 without controls other than tab.\n";
     }
 }
 
@@ -195,6 +311,7 @@ bool prompt_filename_prefix(std::string& value) {
             return true;
         }
         if (valid_filename_prefix(input)) {
+            g_prompt_changed = g_prompt_changed || value != input;
             value = std::move(input);
             return true;
         }
@@ -224,7 +341,9 @@ bool prompt_enum(const std::string& heading, Enum& value,
         }
         long long parsed = 0;
         if (parse_integer(input, 1, static_cast<long long>(choices.size()), parsed)) {
-            value = choices[static_cast<std::size_t>(parsed - 1)].first;
+            const Enum next = choices[static_cast<std::size_t>(parsed - 1)].first;
+            g_prompt_changed = g_prompt_changed || value != next;
+            value = next;
             return true;
         }
         std::cout << "Choose one of the listed numbers.\n";
@@ -292,6 +411,7 @@ void configure_waves(RenderConfig& config) {
             auto wave = pvt::default_wave(config.waves.size());
             wave.id = pvt::allocate_id(config);
             config.waves.push_back(std::move(wave));
+            g_prompt_changed = true;
             configure_wave(config, config.waves.size() - 1);
             continue;
         }
@@ -300,6 +420,7 @@ void configure_waves(RenderConfig& config) {
             if (parse_integer(trim(input.substr(1)), 1,
                               static_cast<long long>(config.waves.size()), selected)) {
                 config.waves.erase(config.waves.begin() + (selected - 1));
+                g_prompt_changed = true;
             } else {
                 std::cout << "Use d followed by an existing wave number.\n";
             }
@@ -312,6 +433,7 @@ void configure_waves(RenderConfig& config) {
             config.waves.erase(config.waves.begin() + static_cast<std::ptrdiff_t>(from));
             config.waves.insert(config.waves.begin() + static_cast<std::ptrdiff_t>(to),
                                 std::move(item));
+            g_prompt_changed = true;
             continue;
         }
         long long selected = 0;
@@ -436,6 +558,7 @@ void configure_effects(RenderConfig& config) {
             auto effect = pvt::default_effect(choose_effect_type());
             effect.id = pvt::allocate_id(config);
             config.effects.push_back(std::move(effect));
+            g_prompt_changed = true;
             configure_effect(config, config.effects.size() - 1);
             continue;
         }
@@ -444,6 +567,7 @@ void configure_effects(RenderConfig& config) {
             if (parse_integer(trim(input.substr(1)), 1,
                               static_cast<long long>(config.effects.size()), selected)) {
                 config.effects.erase(config.effects.begin() + (selected - 1));
+                g_prompt_changed = true;
             } else {
                 std::cout << "Use d followed by an existing effect number.\n";
             }
@@ -456,6 +580,7 @@ void configure_effects(RenderConfig& config) {
             config.effects.erase(config.effects.begin() + static_cast<std::ptrdiff_t>(from));
             config.effects.insert(config.effects.begin() + static_cast<std::ptrdiff_t>(to),
                                   std::move(item));
+            g_prompt_changed = true;
             continue;
         }
         long long selected = 0;
@@ -521,6 +646,7 @@ void configure_rhythm(RenderConfig& config) {
             auto swing = pvt::default_swing(config.swings.size());
             swing.id = pvt::allocate_id(config);
             config.swings.push_back(std::move(swing));
+            g_prompt_changed = true;
             configure_swing(config, config.swings.size() - 1);
             continue;
         }
@@ -529,6 +655,7 @@ void configure_rhythm(RenderConfig& config) {
             if (parse_integer(trim(input.substr(1)), 1,
                               static_cast<long long>(config.swings.size()), selected)) {
                 config.swings.erase(config.swings.begin() + (selected - 1));
+                g_prompt_changed = true;
             } else {
                 std::cout << "Use d followed by an existing swing number.\n";
             }
@@ -541,6 +668,7 @@ void configure_rhythm(RenderConfig& config) {
             config.swings.erase(config.swings.begin() + static_cast<std::ptrdiff_t>(from));
             config.swings.insert(config.swings.begin() + static_cast<std::ptrdiff_t>(to),
                                  std::move(item));
+            g_prompt_changed = true;
             continue;
         }
         long long selected = 0;
@@ -594,15 +722,16 @@ void configure_surface(RenderConfig& config) {
     if (config.surface.enabled
         && config.surface.mapping != pvt::SurfaceMapping::Plane
         && config.surface.curvature > 0.0) {
-        config.alpha.enabled = true;
-        std::cout << "Alpha output enabled for the 3D surface exterior.\n";
+        g_prompt_changed = g_prompt_changed || !config.output.write_alpha;
+        config.output.write_alpha = true;
+        std::cout << "Final RGBA output enabled for the 3D surface exterior.\n";
     }
 }
 
 void configure_alpha(RenderConfig& config) {
-    std::cout << "\n-- Alpha channel --\n"
+    std::cout << "\n-- Per-layer alpha modulation --\n"
               << "RGB remains present even where alpha is zero (straight/unassociated alpha).\n";
-    prompt_bool("Use alpha channel", config.alpha.enabled);
+    prompt_bool("Enable procedural alpha modulation", config.alpha.enabled);
     prompt_real("Minimum alpha", config.alpha.minimum, 0.0, 1.0);
     prompt_real("Maximum alpha", config.alpha.maximum, 0.0, 1.0);
     prompt_real("Alpha spatial frequency", config.alpha.spatial_frequency, 0.0, 1000.0);
@@ -613,6 +742,7 @@ void configure_alpha(RenderConfig& config) {
 
 void configure_export(RenderConfig& config) {
     std::cout << "\n-- Export --\n";
+    prompt_bool("Write final alpha channel (RGBA)", config.output.write_alpha);
     prompt_text("Output directory", config.output.output_directory, kMaximumPathBytes);
     prompt_filename_prefix(config.output.filename_prefix);
     prompt_int("First frame number", config.output.first_frame_number, 0, 1000000000);
@@ -644,137 +774,596 @@ void configure_export(RenderConfig& config) {
     }
 }
 
-std::string output_extension(const RenderConfig& config) {
-    return config.output.bit_depth == 32 ? ".exr" : ".png";
+std::string lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
 }
 
-void print_summary(const RenderConfig& config) {
-    const auto validation = pvt::validate(config);
+bool parse_numeric_version(const std::string& text,
+                           std::vector<std::uint64_t>& components) {
+    if (text.empty() || text.size() > 64U) {
+        return false;
+    }
+    std::vector<std::uint64_t> parsed;
+    std::size_t cursor = 0U;
+    while (cursor < text.size() && parsed.size() < 8U) {
+        if (!std::isdigit(static_cast<unsigned char>(text[cursor]))) {
+            return false;
+        }
+        std::uint64_t value = 0U;
+        while (cursor < text.size()
+               && std::isdigit(static_cast<unsigned char>(text[cursor]))) {
+            const unsigned digit = static_cast<unsigned>(text[cursor] - '0');
+            if (value > (1000000000ULL - digit) / 10ULL) {
+                return false;
+            }
+            value = value * 10ULL + digit;
+            ++cursor;
+        }
+        parsed.push_back(value);
+        if (cursor == text.size() || text[cursor] == '-' || text[cursor] == '+') {
+            break;
+        }
+        if (text[cursor] != '.') {
+            return false;
+        }
+        ++cursor;
+        if (cursor == text.size()) {
+            return false;
+        }
+    }
+    if (parsed.empty() || parsed.size() > 8U
+        || (cursor < text.size() && text[cursor] != '-' && text[cursor] != '+')) {
+        return false;
+    }
+    components = std::move(parsed);
+    return true;
+}
+
+bool version_is_newer(const std::string& candidate, const std::string& current) {
+    std::vector<std::uint64_t> candidate_parts;
+    std::vector<std::uint64_t> current_parts;
+    if (!parse_numeric_version(candidate, candidate_parts)
+        || !parse_numeric_version(current, current_parts)) {
+        return false;
+    }
+    const std::size_t count = std::max(candidate_parts.size(), current_parts.size());
+    candidate_parts.resize(count, 0U);
+    current_parts.resize(count, 0U);
+    return std::lexicographical_compare(current_parts.begin(), current_parts.end(),
+                                        candidate_parts.begin(), candidate_parts.end());
+}
+
+void warn_if_created_by_newer_version(const ProjectDocument& document) {
+#ifdef PVT_PROGRAM_VERSION
+    const std::string current = PVT_PROGRAM_VERSION;
+#else
+    const std::string current = "3.0.0";
+#endif
+    const bool newer_created = version_is_newer(document.created_with_version, current);
+    const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
+    if (document.newer_program_version || newer_created || newer_changed) {
+        std::cerr << "Warning: this project records creating version "
+                  << document.created_with_version << " and last-changing version "
+                  << document.last_changed_with_version << ", newer than this "
+                  << current << " build. Loading did not modify it; review it before saving.\n";
+    }
+}
+
+bool has_case_insensitive_suffix(const std::string& value, const std::string& suffix) {
+    return value.size() >= suffix.size()
+           && lower_ascii(value.substr(value.size() - suffix.size())) == lower_ascii(suffix);
+}
+
+std::string output_extension(const pvt::ExportConfig& output) {
+    return output.bit_depth == 32 ? ".exr" : ".png";
+}
+
+RenderConfig active_render_config(const CliState& state) {
+    const auto& project = state.document.project;
+    return pvt::apply_global_config(project.canvas, project.output,
+                                    project.layers.at(state.active_layer).render);
+}
+
+void commit_active_render(CliState& state, const RenderConfig& config, bool changed) {
+    auto& project = state.document.project;
+    project.canvas.width = config.width;
+    project.canvas.height = config.height;
+    project.canvas.block_size = config.block_size;
+    project.canvas.total_frames = config.total_frames;
+    project.canvas.fps = config.fps;
+    project.output = config.output;
+    project.layers.at(state.active_layer).render =
+        static_cast<const pvt::RenderData&>(config);
+    state.document.dirty = state.document.dirty || changed;
+}
+
+std::size_t display_to_internal(std::size_t display_index, std::size_t count) {
+    return count - display_index - 1;
+}
+
+bool prompt_blend_mode(pvt::BlendMode& mode) {
+    return prompt_enum("Blend mode (Normal is saved as 'none')", mode,
+                       {{pvt::BlendMode::Normal, "Normal / none"},
+                        {pvt::BlendMode::SoftLight, "Soft light"},
+                        {pvt::BlendMode::GrainMerge, "Grain merge"},
+                        {pvt::BlendMode::Overlay, "Overlay"},
+                        {pvt::BlendMode::ColorDodge, "Color dodge"},
+                        {pvt::BlendMode::LinearBurn, "Linear burn"},
+                        {pvt::BlendMode::ColorBurn, "Color burn"},
+                        {pvt::BlendMode::Difference, "Difference"},
+                        {pvt::BlendMode::Subtract, "Subtract"},
+                        {pvt::BlendMode::Multiply, "Multiply"},
+                        {pvt::BlendMode::Add, "Add"}});
+}
+
+void configure_project_and_layers(CliState& state) {
+    for (;;) {
+        auto& project = state.document.project;
+        const std::size_t count = project.layers.size();
+        std::cout << "\n-- Project and layers --\n"
+                  << "Project: " << project.name << "\n"
+                  << "Rows are top-to-bottom paint order; the first row is topmost.\n";
+        for (std::size_t row = 0; row < count; ++row) {
+            const std::size_t index = display_to_internal(row, count);
+            const auto& layer = project.layers[index];
+            std::cout << (index == state.active_layer ? " *" : "  ") << (row + 1)
+                      << ") " << (layer.enabled ? "on  " : "off ") << layer.name
+                      << " | " << pvt::blend_mode_name(layer.blend_mode)
+                      << " | opacity " << layer.opacity << '\n';
+        }
+        std::cout << "e N edit/select, a add, c N duplicate, d N delete, "
+                     "m FROM TO move, p rename project, b back.\n";
+        std::string input;
+        if (!read_line("Layer action [b]: ", input) || input.empty()
+            || input == "b" || input == "B") {
+            return;
+        }
+        if (input == "p" || input == "P") {
+            g_prompt_changed = false;
+            prompt_project_name(project.name);
+            state.document.dirty = state.document.dirty || g_prompt_changed;
+            continue;
+        }
+        if (input == "a" || input == "A") {
+            if (count >= pvt::kMaximumLayers) {
+                std::cout << "The safety limit of " << pvt::kMaximumLayers
+                          << " layers has been reached.\n";
+                continue;
+            }
+            auto layer = pvt::default_layer(count);
+            layer.file_id = pvt::allocate_layer_file_id(project);
+            project.layers.push_back(std::move(layer));
+            state.active_layer = project.layers.size() - 1;
+            if (project.layers.size() > 1) {
+                project.output.write_alpha = true;
+            }
+            state.document.dirty = true;
+            continue;
+        }
+
+        std::istringstream command(input);
+        char action = '\0';
+        long long first = 0;
+        long long second = 0;
+        std::string extra;
+        if (!(command >> action >> first) || first < 1
+            || first > static_cast<long long>(count)) {
+            std::cout << "Use one of the listed layer commands and row numbers.\n";
+            continue;
+        }
+        const std::size_t first_index =
+            display_to_internal(static_cast<std::size_t>(first - 1), count);
+        if (action == 'e' || action == 'E') {
+            if (command >> extra) {
+                std::cout << "Edit accepts one row number.\n";
+                continue;
+            }
+            state.active_layer = first_index;
+            auto& layer = project.layers[first_index];
+            g_prompt_changed = false;
+            prompt_layer_name(layer.name);
+            prompt_bool("Enabled", layer.enabled);
+            prompt_blend_mode(layer.blend_mode);
+            prompt_real("Opacity", layer.opacity, 0.0, 1.0);
+            state.document.dirty = state.document.dirty || g_prompt_changed;
+        } else if (action == 'c' || action == 'C') {
+            if (command >> extra || count >= pvt::kMaximumLayers) {
+                std::cout << (count >= pvt::kMaximumLayers
+                                  ? "The layer safety limit has been reached.\n"
+                                  : "Duplicate accepts one row number.\n");
+                continue;
+            }
+            auto copy = project.layers[first_index];
+            copy.uuid = pvt::generate_uuid();
+            copy.file_id = pvt::allocate_layer_file_id(project);
+            if (copy.name.size() <= kMaximumNameBytes - 5U) {
+                copy.name += " Copy";
+            }
+            project.layers.insert(project.layers.begin()
+                                      + static_cast<std::ptrdiff_t>(first_index + 1),
+                                  std::move(copy));
+            state.active_layer = first_index + 1;
+            project.output.write_alpha = true;
+            state.document.dirty = true;
+        } else if (action == 'd' || action == 'D') {
+            if (command >> extra || count == 1) {
+                std::cout << (count == 1 ? "A project must retain one layer.\n"
+                                         : "Delete accepts one row number.\n");
+                continue;
+            }
+            project.layers.erase(project.layers.begin()
+                                 + static_cast<std::ptrdiff_t>(first_index));
+            if (state.active_layer == first_index) {
+                state.active_layer = std::min(first_index, project.layers.size() - 1);
+            } else if (state.active_layer > first_index) {
+                --state.active_layer;
+            }
+            state.document.dirty = true;
+        } else if (action == 'm' || action == 'M') {
+            if (!(command >> second) || (command >> extra) || second < 1
+                || second > static_cast<long long>(count)) {
+                std::cout << "Move requires two existing row numbers.\n";
+                continue;
+            }
+            const std::size_t second_index =
+                display_to_internal(static_cast<std::size_t>(second - 1), count);
+            if (first_index != second_index) {
+                const std::string active_uuid = project.layers[state.active_layer].uuid;
+                auto layer = std::move(project.layers[first_index]);
+                project.layers.erase(project.layers.begin()
+                                     + static_cast<std::ptrdiff_t>(first_index));
+                project.layers.insert(project.layers.begin()
+                                          + static_cast<std::ptrdiff_t>(second_index),
+                                      std::move(layer));
+                const auto active = std::find_if(
+                    project.layers.begin(), project.layers.end(),
+                    [&](const pvt::LayerConfig& candidate) {
+                        return candidate.uuid == active_uuid;
+                    });
+                state.active_layer = static_cast<std::size_t>(
+                    std::distance(project.layers.begin(), active));
+                state.document.dirty = true;
+            }
+        } else {
+            std::cout << "Unrecognized layer action.\n";
+        }
+    }
+}
+
+void print_version_list(const ProjectDocument& document) {
+    std::cout << "\nVersions for " << document.source_path << ":\n";
+    if (document.externally_modified) {
+        std::cout << "  Bundle state has an external change/integrity mismatch; "
+                     "an explicit Save will preserve it as a new version.\n";
+    }
+    for (const auto& version : document.versions) {
+        std::cout << (version.number == document.current_version ? " * " : "   ")
+                  << version.number << " | " << version.saved_utc << " | "
+                  << version.layer_count << " layer(s) | " << version.reason;
+        if (!version.indexed) {
+            std::cout << " | not indexed by root metadata";
+        }
+        if (!version.valid) {
+            std::cout << " | invalid";
+        }
+        if (version.externally_modified) {
+            std::cout << " | integrity mismatch / external change";
+        }
+        if (!version.integrity_message.empty()) {
+            std::cout << " | " << version.integrity_message;
+        }
+        std::cout << '\n';
+    }
+}
+
+void manage_versions(CliState& state) {
+    if (state.document.source_path.empty() || state.document.legacy_import) {
+        std::cout << "Save this project as a bundle before managing versions.\n";
+        return;
+    }
+    for (;;) {
+        print_version_list(state.document);
+        std::cout << "d BEFORE AFTER diff, c N make current, r N revert as new, "
+                     "v validate bundle, b back.\n";
+        std::string input;
+        if (!read_line("Version action [b]: ", input) || input.empty()
+            || input == "b" || input == "B") {
+            return;
+        }
+        if (input == "v" || input == "V") {
+            std::vector<pvt::BundleVersionInfo> versions;
+            std::string error;
+            if (pvt::validate_project_bundle(state.document.source_path, &versions, &error)) {
+                std::cout << "Validated all " << versions.size() << " version(s).\n";
+            } else {
+                std::cout << "Validation failed: " << error << '\n';
+            }
+            continue;
+        }
+        std::istringstream command(input);
+        char action = '\0';
+        unsigned long long first = 0;
+        unsigned long long second = 0;
+        std::string extra;
+        if (!(command >> action >> first)) {
+            std::cout << "Use one of the listed version commands.\n";
+            continue;
+        }
+        std::string error;
+        if (action == 'd' || action == 'D') {
+            if (!(command >> second) || (command >> extra)) {
+                std::cout << "Diff requires two version numbers.\n";
+                continue;
+            }
+            std::vector<pvt::BundleDiffEntry> diffs;
+            if (!pvt::diff_project_versions(state.document, first, second, diffs, &error)) {
+                std::cout << "Could not compare versions: " << error << '\n';
+                continue;
+            }
+            if (diffs.empty()) {
+                std::cout << "The snapshots are semantically identical.\n";
+            }
+            for (const auto& diff : diffs) {
+                std::cout << diff.field << ": " << diff.before << " -> " << diff.after << '\n';
+            }
+        } else if (action == 'c' || action == 'C' || action == 'r' || action == 'R') {
+            if (command >> extra) {
+                std::cout << "This command accepts one version number.\n";
+                continue;
+            }
+            if (state.document.dirty) {
+                bool discard = false;
+                g_prompt_changed = false;
+                if (!prompt_bool("Discard unsaved session changes", discard) || !discard) {
+                    continue;
+                }
+            }
+            pvt::BundleSaveReport report;
+            const bool ok = (action == 'c' || action == 'C')
+                                ? pvt::make_project_version_current(
+                                      state.document, first, &report, &error)
+                                : pvt::revert_project_as_new(
+                                      state.document, first, &report, &error);
+            if (!ok) {
+                std::cout << "Version operation failed: " << error << '\n';
+            } else {
+                state.active_layer = 0;
+                std::cout << ((action == 'c' || action == 'C')
+                                  ? "Changed the current pointer.\n"
+                                  : "Created a reversible rollback as version "
+                                        + std::to_string(report.version) + ".\n");
+            }
+        } else {
+            std::cout << "Unrecognized version action.\n";
+        }
+    }
+}
+
+bool save_project_interactive(CliState& state) {
+    std::string path = state.document.source_path.empty()
+                           ? pvt::portable_project_filename(state.document.project.name)
+                           : state.document.source_path;
+    g_prompt_changed = false;
+    if (!prompt_text("Bundle ZIP or directory", path, kMaximumPathBytes)) {
+        return false;
+    }
+    if (has_case_insensitive_suffix(path, ".pvt")) {
+        std::cout << "Normal saves are versioned bundles, not .pvt files. "
+                     "Choose a .zip filename or bundle directory.\n";
+        return true;
+    }
+    pvt::BundleSaveReport report;
+    std::string error;
+    if (!pvt::save_project_document(state.document, path, &report, &error)) {
+        std::cout << "Could not save project: " << error << '\n';
+        return true;
+    }
+    if (report.validated_only) {
+        std::cout << "No changes; validated the complete bundle.\n";
+    } else {
+        std::cout << "Saved version " << report.version << " to " << report.path << ".\n";
+    }
+    return true;
+}
+
+bool resolve_unsaved_changes(CliState& state, const std::string& action) {
+    if (!state.document.dirty) {
+        return true;
+    }
+    for (;;) {
+        std::string input;
+        if (!read_line("Unsaved changes: s save, d discard and " + action
+                           + ", c cancel [c]: ",
+                       input)) {
+            std::cerr << "Input ended; the unsaved project was not written.\n";
+            return false;
+        }
+        if (input.empty() || input == "c" || input == "C") {
+            return false;
+        }
+        if (input == "d" || input == "D") {
+            return true;
+        }
+        if (input == "s" || input == "S") {
+            if (!save_project_interactive(state)) {
+                return false;
+            }
+            if (!state.document.dirty) {
+                return true;
+            }
+            std::cout << "The project is still unsaved. Choose another action.\n";
+            continue;
+        }
+        std::cout << "Choose s, d, or c.\n";
+    }
+}
+
+void print_summary(const CliState& state) {
+    const auto& project = state.document.project;
+    const auto& layer = project.layers.at(state.active_layer);
+    const auto validation = pvt::validate(project);
     std::cout << "\n============================================================\n"
-              << " Procedural Visualizer Tool\n"
+              << " " << project.name << " — Procedural Visualizer Tool\n"
               << "============================================================\n"
-              << "Canvas: " << config.width << 'x' << config.height << " | block "
-              << config.block_size << " | " << config.total_frames << " frames at "
-              << config.fps << " fps\n"
-              << "Stack: " << config.waves.size() << " wave(s), "
-              << config.swings.size() << " swing(s), " << config.effects.size()
-              << " effect(s)\n"
-              << "Output: " << config.output.bit_depth
-              << (config.output.bit_depth == 32 ? "-bit float " : "-bit ")
-              << (config.alpha.enabled ? "RGBA" : "RGB") << output_extension(config)
-              << " | " << (config.output.dither_enabled && config.output.bit_depth != 32
-                                 ? pvt::dither_method_name(config.output.dither_method)
-                                 : "dither off")
-              << (config.output.bit_depth == 32
+              << "Canvas: " << project.canvas.width << 'x' << project.canvas.height
+              << " | block " << project.canvas.block_size << " | "
+              << project.canvas.total_frames << " frames at " << project.canvas.fps
+              << " fps\n"
+              << "Layers: " << project.layers.size() << " | editing " << layer.name
+              << " (" << (layer.enabled ? "on" : "off") << ", "
+              << pvt::blend_mode_name(layer.blend_mode) << ", opacity "
+              << layer.opacity << ")\n"
+              << "Active stack: " << layer.render.waves.size() << " wave(s), "
+              << layer.render.swings.size() << " swing(s), "
+              << layer.render.effects.size() << " effect(s) | alpha modulation "
+              << (layer.render.alpha.enabled ? "on" : "off") << "\n"
+              << "Output: " << project.output.bit_depth
+              << (project.output.bit_depth == 32 ? "-bit float " : "-bit ")
+              << (project.output.write_alpha ? "RGBA" : "RGB")
+              << output_extension(project.output) << " | "
+              << (project.output.dither_enabled && project.output.bit_depth != 32
+                      ? pvt::dither_method_name(project.output.dither_method)
+                      : "dither off")
+              << (project.output.bit_depth == 32
                       ? ""
                       : " | PNG compression "
-                            + std::to_string(config.output.png_compression_level))
+                            + std::to_string(project.output.png_compression_level))
+              << "\nBundle: "
+              << (state.document.source_path.empty() ? "not yet saved"
+                                                     : state.document.source_path)
+              << (state.document.dirty ? " | modified" : " | clean")
+              << (state.document.externally_modified
+                      ? " | external change/integrity mismatch" : "")
               << "\nPeak working-memory estimate: " << std::fixed << std::setprecision(1)
               << static_cast<double>(validation.estimated_peak_bytes) / (1024.0 * 1024.0)
               << " MiB\n";
     if (!validation.ok) {
-        std::cout << "Configuration needs attention: " << validation.message << "\n";
+        std::cout << "Project needs attention: " << validation.message << "\n";
     }
-    std::cout << "\n1) Canvas and timing\n"
-              << "2) Waves: add/remove/move/configure\n"
-              << "3) Effects: add/remove/move/configure\n"
-              << "4) Surface and procedural feature toggles\n"
-              << "5) Rhythm, swings, color, and visual quantization\n"
-              << "6) Alpha channel\n"
-              << "7) Export format, PNG compression, dithering, and filenames\n"
-              << "8) Save setup\n"
-              << "9) Load setup\n"
-              << "10) Restore defaults\n"
-              << "11) Render sequence (press Enter)\n"
+    std::cout << "\n1) Project name and layers\n"
+              << "2) Canvas and timing (global)\n"
+              << "3) Waves for active layer\n"
+              << "4) Effects for active layer\n"
+              << "5) Surface and procedural features for active layer\n"
+              << "6) Rhythm, swings, color, and quantization for active layer\n"
+              << "7) Procedural alpha modulation for active layer\n"
+              << "8) Export settings (global)\n"
+              << "9) Save project bundle\n"
+              << "10) Open bundle, directory, or legacy .pvt\n"
+              << "11) Version history\n"
+              << "12) Restore new-project defaults\n"
+              << "13) Render composite sequence (press Enter)\n"
               << "0) Quit\n";
 }
 
-bool interactive_menu(RenderConfig& config) {
+bool interactive_menu(CliState& state) {
     for (;;) {
-        print_summary(config);
+        print_summary(state);
         std::string input;
-        if (!read_line("Choice [11]: ", input)) {
+        if (!read_line("Choice [13]: ", input)) {
+            if (state.document.dirty) {
+                std::cerr << "Input ended; the unsaved project was not written.\n";
+            }
             return true;
         }
         if (input.empty()) {
-            input = "11";
+            input = "13";
         }
         long long choice = 0;
-        if (!parse_integer(input, 0, 11, choice)) {
-            std::cout << "Choose a menu number from 0 through 11.\n";
+        if (!parse_integer(input, 0, 13, choice)) {
+            std::cout << "Choose a menu number from 0 through 13.\n";
+            continue;
+        }
+        if (choice == 0) {
+            if (resolve_unsaved_changes(state, "quit")) {
+                return true;
+            }
+            continue;
+        }
+        if (choice == 1) {
+            configure_project_and_layers(state);
+            continue;
+        }
+        if (choice >= 2 && choice <= 8) {
+            RenderConfig config = active_render_config(state);
+            g_prompt_changed = false;
+            switch (choice) {
+                case 2: configure_canvas(config); break;
+                case 3: configure_waves(config); break;
+                case 4: configure_effects(config); break;
+                case 5: configure_surface(config); break;
+                case 6: configure_rhythm(config); break;
+                case 7: configure_alpha(config); break;
+                case 8: configure_export(config); break;
+                default: break;
+            }
+            commit_active_render(state, config, g_prompt_changed);
             continue;
         }
         switch (choice) {
-            case 0:
-                return true;
-            case 1:
-                configure_canvas(config);
-                break;
-            case 2:
-                configure_waves(config);
-                break;
-            case 3:
-                configure_effects(config);
-                break;
-            case 4:
-                configure_surface(config);
-                break;
-            case 5:
-                configure_rhythm(config);
-                break;
-            case 6:
-                configure_alpha(config);
-                break;
-            case 7:
-                configure_export(config);
-                break;
-            case 8: {
-                std::string path = "setup.pvt";
-                std::string error;
-                if (!prompt_text("Setup file", path, kMaximumPathBytes)) {
+            case 9:
+                if (!save_project_interactive(state)) {
                     return true;
                 }
-                if (pvt::save_setup(config, path, &error)) {
-                    std::cout << "Saved setup to " << path << ".\n";
-                } else {
-                    std::cout << "Could not save setup: " << error << '\n';
-                }
                 break;
-            }
-            case 9: {
-                std::string path = "setup.pvt";
-                std::string error;
-                if (!prompt_text("Setup file", path, kMaximumPathBytes)) {
+            case 10: {
+                if (!resolve_unsaved_changes(state, "open another project")) {
+                    break;
+                }
+                std::string path = pvt::portable_project_filename(state.document.project.name);
+                g_prompt_changed = false;
+                if (!prompt_text("Bundle ZIP, directory, or legacy .pvt", path,
+                                 kMaximumPathBytes)) {
                     return true;
                 }
-                if (pvt::load_setup(path, config, &error)) {
-                    std::cout << "Loaded setup from " << path << ".\n";
+                ProjectDocument loaded;
+                std::string error;
+                if (pvt::load_project_document(path, loaded, &error)) {
+                    state.document = std::move(loaded);
+                    state.active_layer = 0;
+                    warn_if_created_by_newer_version(state.document);
+                    std::cout << (state.document.legacy_import
+                                      ? "Imported legacy setup. Its .pvt source will never "
+                                        "be overwritten by a normal save.\n"
+                                      : "Opened project bundle.\n");
                 } else {
-                    std::cout << "Could not load setup; current settings are unchanged: "
+                    std::cout << "Could not open project; current state is unchanged: "
                               << error << '\n';
                 }
                 break;
             }
-            case 10:
-                config = pvt::default_config();
-                std::cout << "Restored defaults.\n";
+            case 11:
+                manage_versions(state);
                 break;
-            case 11: {
+            case 12:
+                if (!resolve_unsaved_changes(state, "start a new project")) {
+                    break;
+                }
+                state.document = pvt::default_project_document();
+                state.active_layer = 0;
+                std::cout << "Started a new project with default fire settings.\n";
+                break;
+            case 13: {
                 std::string error;
-                if (pvt::render_sequence(
-                        config,
+                if (pvt::render_project_sequence(
+                        state.document.project,
                         [](int completed, int total) {
                             std::cout << '\r' << "Rendered " << completed << '/' << total
                                       << std::flush;
                             return true;
                         },
                         nullptr, &error)) {
-                    std::cout << "\nDone. The sequence loops without a duplicated endpoint.\n";
-                    return true;
+                    std::cout << "\nDone. The composite loops without a duplicated endpoint.\n";
+                    break;
                 }
                 std::cout << "\nRender did not complete: " << error << '\n';
                 break;
             }
+            default:
+                break;
         }
     }
 }
@@ -783,32 +1372,79 @@ void print_help(const char* program) {
     std::cout
         << "Usage:\n"
         << "  " << program << "                         Interactive menu\n"
-        << "  " << program << " --render [options]      Render a sequence\n"
-        << "  " << program << " --load FILE [--render]  Load a setup transactionally\n"
+        << "  " << program << " --render [options]      Render a composite sequence\n"
+        << "  " << program << " --load FILE [--render]  Open a bundle/directory/.pvt\n"
         << "  " << program << " --self-test             Quick library smoke test (use alone)\n\n"
-        << "Options:\n"
+        << "Project and layer options:\n"
+        << "  --project-name TEXT --layer N (1 is bottom) --add-layer NAME\n"
+        << "  --blend none|softlight|grain-merge|overlay|color-dodge|linear-burn|\n"
+        << "          burn|difference|subtract|multiply|add\n"
+        << "  --layer-opacity N --enable-layer --disable-layer\n"
+        << "  --alpha --no-alpha                 Final RGB/RGBA channel selection\n"
+        << "  --alpha-modulation --no-alpha-modulation  Active-layer artwork\n\n"
+        << "Render and output options:\n"
         << "  --render (or --defaults)\n"
         << "  --width N --height N --block-size N --frames N --fps N\n"
         << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
-        << "  --obj FILE  (enable two-sided custom OBJ wrapping and alpha)\n"
-        << "  --alpha --no-alpha\n"
+        << "  --obj FILE  (enable two-sided custom OBJ wrapping and final alpha)\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
         << "  --output-dir PATH --prefix TEXT --start-frame N --digits N\n"
-        << "  --overwrite --save FILE --help\n\n"
+        << "  --overwrite\n\n"
+        << "Persistence options:\n"
+        << "  --load FILE                         ZIP, unpacked bundle, or legacy .pvt\n"
+        << "  --save FILE                         Save a versioned bundle\n"
+        << "  --save-default                      Save to <portable project name>.zip\n"
+        << "  --save-legacy FILE                  Explicit one-layer .pvt export\n"
+        << "  --list-versions --help\n\n"
         << "Options are processed from left to right. Put --load before overrides.\n"
+        << "Normal saves never overwrite an imported legacy .pvt. The explicit\n"
+        << "--save-legacy escape hatch is rejected for multi-layer projects.\n"
         << "PNG compression defaults to 5 (0 is off, 9 is maximum).\n"
         << "Float EXR output ignores PNG compression and dithering. "
            "Unspecified values keep their defaults.\n";
 }
 
 bool option_takes_value(const std::string& option) {
-    return option == "--load" || option == "--save" || option == "--width"
+    return option == "--load" || option == "--save" || option == "--save-legacy"
+           || option == "--project-name" || option == "--layer"
+           || option == "--add-layer" || option == "--blend"
+           || option == "--layer-opacity" || option == "--width"
            || option == "--height" || option == "--block-size" || option == "--frames"
            || option == "--fps" || option == "--waves" || option == "--bit-depth"
            || option == "--png-compression"
            || option == "--obj"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
            || option == "--start-frame" || option == "--digits";
+}
+
+bool parse_blend_mode(const std::string& text, pvt::BlendMode& mode) {
+    const std::string value = lower_ascii(text);
+    if (value == "none" || value == "normal") {
+        mode = pvt::BlendMode::Normal;
+    } else if (value == "softlight" || value == "soft-light") {
+        mode = pvt::BlendMode::SoftLight;
+    } else if (value == "grain-merge" || value == "grain_merge") {
+        mode = pvt::BlendMode::GrainMerge;
+    } else if (value == "overlay") {
+        mode = pvt::BlendMode::Overlay;
+    } else if (value == "color-dodge" || value == "color_dodge") {
+        mode = pvt::BlendMode::ColorDodge;
+    } else if (value == "linear-burn" || value == "linear_burn") {
+        mode = pvt::BlendMode::LinearBurn;
+    } else if (value == "burn" || value == "color-burn" || value == "color_burn") {
+        mode = pvt::BlendMode::ColorBurn;
+    } else if (value == "difference") {
+        mode = pvt::BlendMode::Difference;
+    } else if (value == "subtract") {
+        mode = pvt::BlendMode::Subtract;
+    } else if (value == "multiply") {
+        mode = pvt::BlendMode::Multiply;
+    } else if (value == "add") {
+        mode = pvt::BlendMode::Add;
+    } else {
+        return false;
+    }
+    return true;
 }
 
 bool require_value(int argc, char** argv, int& index, const char*& value) {
@@ -834,40 +1470,65 @@ bool resize_waves(RenderConfig& config, std::size_t count) {
 }
 
 int quick_self_test() {
-    RenderConfig config = pvt::default_config();
-    config.width = 97;
-    config.height = 65;
-    config.block_size = 8;
-    config.total_frames = 12;
-    for (auto& effect : config.effects) {
+    pvt::ProjectConfig project = pvt::default_project();
+    project.canvas.width = 97;
+    project.canvas.height = 65;
+    project.canvas.block_size = 8;
+    project.canvas.total_frames = 12;
+    project.output.write_alpha = true;
+    for (auto& effect : project.layers.front().render.effects) {
         effect.enabled = true;
     }
-    config.alpha.enabled = true;
+    auto upper = pvt::default_layer(1);
+    upper.file_id = pvt::allocate_layer_file_id(project);
+    upper.name = "Self-test overlay";
+    upper.blend_mode = pvt::BlendMode::SoftLight;
+    upper.opacity = 0.35;
+    project.layers.push_back(std::move(upper));
     pvt::Image first;
     pvt::Image repeated;
     std::string error;
-    if (!pvt::render_frame_at_phase(config, 0.0, first, &error)
-        || !pvt::render_frame_at_phase(config, 0.0, repeated, &error)
+    if (!pvt::render_project_frame_at_phase(project, 0.0, first, nullptr, &error)
+        || !pvt::render_project_frame_at_phase(project, 0.0, repeated, nullptr, &error)
         || first.pixels != repeated.pixels) {
-        std::cerr << "Self-test failed: " << (error.empty() ? "non-deterministic frame" : error)
+        std::cerr << "Self-test failed: "
+                  << (error.empty() ? "non-deterministic composite frame" : error)
                   << '\n';
         return EXIT_FAILURE;
     }
-    std::cout << "Self-test passed: float RGBA rendering and the full effect stack are deterministic.\n";
+    std::cout << "Self-test passed: float RGBA layer rendering, blending, and the full "
+                 "effect stack are deterministic.\n";
     return EXIT_SUCCESS;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    RenderConfig config = pvt::default_config();
+    CliState state;
     bool render_now = false;
-    bool loaded_setup = false;
-    std::string setup_to_save;
+    bool loaded_document = false;
+    bool save_default = false;
+    bool list_versions = false;
+    std::string bundle_to_save;
+    std::string legacy_to_save;
 
     if (argc == 1) {
-        return interactive_menu(config) ? EXIT_SUCCESS : EXIT_FAILURE;
+        return interactive_menu(state) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
+
+    const auto mark_changed = [&](auto& destination, const auto& next) {
+        if (destination == next) {
+            return false;
+        }
+        destination = next;
+        state.document.dirty = true;
+        return true;
+    };
+    const auto mutate_active = [&](auto&& mutation) {
+        RenderConfig config = active_render_config(state);
+        const bool changed = mutation(config);
+        commit_active_render(state, config, changed);
+    };
 
     for (int index = 1; index < argc; ++index) {
         const std::string option = argv[index];
@@ -887,20 +1548,46 @@ int main(int argc, char** argv) {
             render_now = true;
             continue;
         }
+        if (option == "--save-default") {
+            save_default = true;
+            continue;
+        }
+        if (option == "--list-versions") {
+            list_versions = true;
+            continue;
+        }
         if (option == "--overwrite") {
-            config.output.overwrite_existing = true;
+            mark_changed(state.document.project.output.overwrite_existing, true);
             continue;
         }
         if (option == "--alpha") {
-            config.alpha.enabled = true;
+            mark_changed(state.document.project.output.write_alpha, true);
             continue;
         }
         if (option == "--no-alpha") {
-            config.alpha.enabled = false;
+            mark_changed(state.document.project.output.write_alpha, false);
+            continue;
+        }
+        if (option == "--alpha-modulation") {
+            mark_changed(state.document.project.layers.at(state.active_layer).render.alpha.enabled,
+                         true);
+            continue;
+        }
+        if (option == "--no-alpha-modulation") {
+            mark_changed(state.document.project.layers.at(state.active_layer).render.alpha.enabled,
+                         false);
+            continue;
+        }
+        if (option == "--enable-layer") {
+            mark_changed(state.document.project.layers.at(state.active_layer).enabled, true);
+            continue;
+        }
+        if (option == "--disable-layer") {
+            mark_changed(state.document.project.layers.at(state.active_layer).enabled, false);
             continue;
         }
         if (option == "--no-dither") {
-            config.output.dither_enabled = false;
+            mark_changed(state.document.project.output.dither_enabled, false);
             continue;
         }
         if (!option_takes_value(option)) {
@@ -915,62 +1602,133 @@ int main(int argc, char** argv) {
         double real = 0.0;
 
         if (option == "--load") {
+            ProjectDocument loaded;
             std::string error;
-            if (!pvt::load_setup(value, config, &error)) {
-                std::cerr << "Could not load setup: " << error << '\n';
+            if (!pvt::load_project_document(value, loaded, &error)) {
+                std::cerr << "Could not open project: " << error << '\n';
                 return EXIT_FAILURE;
             }
-            loaded_setup = true;
+            state.document = std::move(loaded);
+            state.active_layer = 0;
+            loaded_document = true;
+            warn_if_created_by_newer_version(state.document);
         } else if (option == "--save") {
-            setup_to_save = value;
+            bundle_to_save = value;
+        } else if (option == "--save-legacy") {
+            legacy_to_save = value;
+        } else if (option == "--project-name" && valid_project_name_text(value)) {
+            mark_changed(state.document.project.name, value);
+        } else if (option == "--layer"
+                   && parse_integer(value, 1,
+                                    static_cast<long long>(
+                                        state.document.project.layers.size()),
+                                    integer)) {
+            state.active_layer = static_cast<std::size_t>(integer - 1);
+        } else if (option == "--add-layer" && valid_layer_name_text(value)
+                   && state.document.project.layers.size() < pvt::kMaximumLayers) {
+            auto layer = pvt::default_layer(state.document.project.layers.size());
+            layer.file_id = pvt::allocate_layer_file_id(state.document.project);
+            layer.name = value;
+            state.document.project.layers.push_back(std::move(layer));
+            state.active_layer = state.document.project.layers.size() - 1;
+            state.document.project.output.write_alpha = true;
+            state.document.dirty = true;
+        } else if (option == "--blend") {
+            pvt::BlendMode mode;
+            if (!parse_blend_mode(value, mode)) {
+                std::cerr << "Unknown blend mode '" << value << "'. Use --help for names.\n";
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.layers.at(state.active_layer).blend_mode,
+                         mode);
+        } else if (option == "--layer-opacity"
+                   && parse_real(value, 0.0, 1.0, real)) {
+            mark_changed(state.document.project.layers.at(state.active_layer).opacity, real);
         } else if (option == "--width" && parse_integer(value, 16, 16384, integer)) {
-            config.width = static_cast<int>(integer);
+            mutate_active([&](RenderConfig& config) {
+                if (config.width == integer) return false;
+                config.width = static_cast<int>(integer);
+                return true;
+            });
         } else if (option == "--height" && parse_integer(value, 16, 16384, integer)) {
-            config.height = static_cast<int>(integer);
+            mutate_active([&](RenderConfig& config) {
+                if (config.height == integer) return false;
+                config.height = static_cast<int>(integer);
+                return true;
+            });
         } else if (option == "--block-size" && parse_integer(value, 1, 16384, integer)) {
-            config.block_size = static_cast<int>(integer);
+            mutate_active([&](RenderConfig& config) {
+                if (config.block_size == integer) return false;
+                config.block_size = static_cast<int>(integer);
+                return true;
+            });
         } else if (option == "--frames" && parse_integer(value, 2, 1000000, integer)) {
-            config.total_frames = static_cast<int>(integer);
+            mutate_active([&](RenderConfig& config) {
+                if (config.total_frames == integer) return false;
+                config.total_frames = static_cast<int>(integer);
+                return true;
+            });
         } else if (option == "--fps" && parse_real(value, 1.0, 240.0, real)) {
-            config.fps = real;
+            mutate_active([&](RenderConfig& config) {
+                if (config.fps == real) return false;
+                config.fps = real;
+                return true;
+            });
         } else if (option == "--waves" && parse_integer(value, 0,
-                                                          pvt::kMaximumWaves, integer)
-                   && resize_waves(config, static_cast<std::size_t>(integer))) {
+                                                          pvt::kMaximumWaves, integer)) {
+            mutate_active([&](RenderConfig& config) {
+                if (config.waves.size() == static_cast<std::size_t>(integer)) return false;
+                return resize_waves(config, static_cast<std::size_t>(integer));
+            });
         } else if (option == "--bit-depth" && parse_integer(value, 8, 32, integer)
                    && (integer == 8 || integer == 16 || integer == 32)) {
-            config.output.bit_depth = static_cast<int>(integer);
+            mark_changed(state.document.project.output.bit_depth,
+                         static_cast<int>(integer));
             if (integer == 32) {
-                config.output.dither_enabled = false;
+                mark_changed(state.document.project.output.dither_enabled, false);
             }
         } else if (option == "--png-compression"
                    && parse_integer(value, 0, 9, integer)) {
-            config.output.png_compression_level = static_cast<int>(integer);
+            mark_changed(state.document.project.output.png_compression_level,
+                         static_cast<int>(integer));
         } else if (option == "--obj" && valid_output_directory(value)) {
-            config.surface.enabled = true;
-            config.surface.mapping = pvt::SurfaceMapping::CustomObj;
-            config.surface.obj_path = value;
-            config.alpha.enabled = true;
+            mutate_active([&](RenderConfig& config) {
+                const bool changed = !config.surface.enabled
+                                     || config.surface.mapping
+                                            != pvt::SurfaceMapping::CustomObj
+                                     || config.surface.obj_path != value
+                                     || !config.output.write_alpha;
+                config.surface.enabled = true;
+                config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+                config.surface.obj_path = value;
+                config.output.write_alpha = true;
+                return changed;
+            });
         } else if (option == "--dither") {
-            config.output.dither_enabled = true;
+            pvt::DitherMethod method;
             if (value == "blue") {
-                config.output.dither_method = pvt::DitherMethod::BlueNoise;
+                method = pvt::DitherMethod::BlueNoise;
             } else if (value == "bayer") {
-                config.output.dither_method = pvt::DitherMethod::OrderedBayer;
+                method = pvt::DitherMethod::OrderedBayer;
             } else if (value == "floyd") {
-                config.output.dither_method = pvt::DitherMethod::FloydSteinberg;
+                method = pvt::DitherMethod::FloydSteinberg;
             } else {
                 std::cerr << "Dither method must be blue, bayer, or floyd.\n";
                 return EXIT_FAILURE;
             }
+            mark_changed(state.document.project.output.dither_enabled, true);
+            mark_changed(state.document.project.output.dither_method, method);
         } else if (option == "--output-dir" && valid_output_directory(value)) {
-            config.output.output_directory = value;
+            mark_changed(state.document.project.output.output_directory, value);
         } else if (option == "--prefix" && valid_filename_prefix(value)) {
-            config.output.filename_prefix = value;
+            mark_changed(state.document.project.output.filename_prefix, value);
         } else if (option == "--start-frame"
                    && parse_integer(value, 0, 1000000000, integer)) {
-            config.output.first_frame_number = static_cast<int>(integer);
+            mark_changed(state.document.project.output.first_frame_number,
+                         static_cast<int>(integer));
         } else if (option == "--digits" && parse_integer(value, 1, 12, integer)) {
-            config.output.filename_digits = static_cast<int>(integer);
+            mark_changed(state.document.project.output.filename_digits,
+                         static_cast<int>(integer));
         } else {
             std::cerr << "Invalid option or value near '" << option
                       << "'. Use --help for usage.\n";
@@ -980,28 +1738,79 @@ int main(int argc, char** argv) {
 
     // Float EXR never crosses an integer quantization boundary, regardless of
     // command-line option order. Keep saved state consistent with that fact.
-    if (config.output.bit_depth == 32) {
-        config.output.dither_enabled = false;
+    if (state.document.project.output.bit_depth == 32) {
+        mark_changed(state.document.project.output.dither_enabled, false);
     }
 
     std::string error;
-    if (!setup_to_save.empty() && !pvt::save_setup(config, setup_to_save, &error)) {
-        std::cerr << "Could not save setup: " << error << '\n';
+    if (save_default && !bundle_to_save.empty()) {
+        std::cerr << "Use either --save FILE or --save-default, not both.\n";
         return EXIT_FAILURE;
     }
+    if ((save_default || !bundle_to_save.empty()) && !legacy_to_save.empty()) {
+        std::cerr << "Use either a normal bundle save or --save-legacy, not both.\n";
+        return EXIT_FAILURE;
+    }
+    if (save_default) {
+        bundle_to_save = pvt::portable_project_filename(state.document.project.name);
+    }
+    if (!bundle_to_save.empty()) {
+        if (has_case_insensitive_suffix(bundle_to_save, ".pvt")) {
+            std::cerr << "Normal saves produce bundles. Use a .zip path or matching "
+                         "bundle directory; --save-legacy is the explicit .pvt escape hatch.\n";
+            return EXIT_FAILURE;
+        }
+        pvt::BundleSaveReport report;
+        if (!pvt::save_project_document(state.document, bundle_to_save, &report, &error)) {
+            std::cerr << "Could not save project bundle: " << error << '\n';
+            return EXIT_FAILURE;
+        }
+        if (report.validated_only) {
+            std::cout << "No changes; validated the complete bundle.\n";
+        } else {
+            std::cout << "Saved project version " << report.version << " to "
+                      << report.path << ".\n";
+        }
+    }
+    if (!legacy_to_save.empty()) {
+        if (!has_case_insensitive_suffix(legacy_to_save, ".pvt")) {
+            std::cerr << "--save-legacy requires a .pvt destination.\n";
+            return EXIT_FAILURE;
+        }
+        if (state.document.project.layers.size() != 1) {
+            std::cerr << "Legacy .pvt export is intentionally limited to one-layer projects; "
+                         "use a bundle to preserve every layer.\n";
+            return EXIT_FAILURE;
+        }
+        const RenderConfig legacy = pvt::apply_global_config(
+            state.document.project.canvas, state.document.project.output,
+            state.document.project.layers.front().render);
+        if (!pvt::save_setup(legacy, legacy_to_save, &error)) {
+            std::cerr << "Could not save legacy setup: " << error << '\n';
+            return EXIT_FAILURE;
+        }
+        std::cout << "Exported explicit legacy setup to " << legacy_to_save << ".\n";
+    }
+    if (list_versions) {
+        if (state.document.legacy_import || state.document.source_path.empty()) {
+            std::cout << "This project has no bundle version history yet.\n";
+        } else {
+            print_version_list(state.document);
+        }
+    }
     if (!render_now) {
-        if (!setup_to_save.empty()) {
+        if (!bundle_to_save.empty() || !legacy_to_save.empty() || list_versions) {
             return EXIT_SUCCESS;
         }
-        if (loaded_setup) {
-            return interactive_menu(config) ? EXIT_SUCCESS : EXIT_FAILURE;
+        if (loaded_document) {
+            return interactive_menu(state) ? EXIT_SUCCESS : EXIT_FAILURE;
         }
         std::cerr << "No action selected. Add --render, --save FILE, or use --help.\n";
         return EXIT_FAILURE;
     }
 
-    if (!pvt::render_sequence(
-            config,
+    if (!pvt::render_project_sequence(
+            state.document.project,
             [](int completed, int total) {
                 std::cout << '\r' << "Rendered " << completed << '/' << total << std::flush;
                 return true;

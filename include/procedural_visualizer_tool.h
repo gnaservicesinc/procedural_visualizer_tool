@@ -22,10 +22,11 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 2;
+constexpr std::uint32_t kSetupFormatVersion = 3;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
+constexpr std::size_t kMaximumLayers = 64;
 constexpr std::size_t kMaximumSetupBytes = 4U * 1024U * 1024U;
 
 enum class EdgeMode : std::uint8_t {
@@ -69,6 +70,22 @@ enum class QuantizationMode : std::uint8_t {
     Rgb = 0,
     Luminance,
     Hue
+};
+
+enum class BlendMode : std::uint8_t {
+    // Normal is the requested "none" mode: ordinary straight-alpha
+    // source-over compositing with no special RGB blend function.
+    Normal = 0,
+    SoftLight,
+    GrainMerge,
+    Overlay,
+    ColorDodge,
+    LinearBurn,
+    ColorBurn,
+    Difference,
+    Subtract,
+    Multiply,
+    Add
 };
 
 struct WaveConfig {
@@ -145,8 +162,10 @@ struct EffectConfig {
 };
 
 struct AlphaConfig {
-    // Enables RGBA export and procedural alpha modulation. It must be enabled
-    // when active effects or surface mappings can create transparent pixels.
+    // Enables procedural alpha modulation for this render/layer. Legacy
+    // RenderConfig exports also treat this flag as an RGBA request; projects
+    // select their final RGB/RGBA output independently with
+    // ExportConfig::write_alpha.
     bool enabled = false;
     // Opaque defaults make enabling RGBA output neutral until modulation is
     // requested explicitly by lowering minimum or maximum.
@@ -186,6 +205,9 @@ struct ExportConfig {
     int png_compression_level = 5;
     bool dither_enabled = true;
     DitherMethod dither_method = DitherMethod::BlueNoise;
+    // Project-global final image channel selection. Legacy RenderConfig APIs
+    // continue to honor AlphaConfig::enabled as well.
+    bool write_alpha = false;
     std::string output_directory = ".";
     std::string filename_prefix = "frame_";
     int first_frame_number = 0;
@@ -193,13 +215,17 @@ struct ExportConfig {
     bool overwrite_existing = false;
 };
 
-struct RenderConfig {
+struct CanvasLoopConfig {
     int width = 1920;
     int height = 1080;
     int block_size = 16;
     int total_frames = 480;
     double fps = 60.0;
+};
 
+// Per-layer render data. Canvas/loop and export settings deliberately live
+// outside this type so switching layers cannot overwrite project-global data.
+struct RenderData {
     std::vector<WaveConfig> waves;
     std::vector<SwingConfig> swings;
     std::vector<EffectConfig> effects;
@@ -224,7 +250,42 @@ struct RenderConfig {
     AlphaConfig alpha;
     QuantizationConfig quantization;
     SurfaceConfig surface;
+};
+
+// Backward-compatible single-render configuration. Public field access such
+// as config.waves remains source-compatible through the public RenderData base.
+struct RenderConfig : RenderData {
+    int width = 1920;
+    int height = 1080;
+    int block_size = 16;
+    int total_frames = 480;
+    double fps = 60.0;
+
     ExportConfig output;
+};
+
+struct LayerConfig {
+    // Canonical lower-case RFC 4122 UUID text. UUIDs identify layers across
+    // renames and reordering; they must be unique within a project.
+    std::string uuid;
+    // Stable bundle filename identity (for example 0 -> 0.pvt). Reordering
+    // never changes it and deletion may deliberately leave gaps.
+    std::uint64_t file_id = 0;
+    std::string name = "Layer 1";
+    bool enabled = true;
+    BlendMode blend_mode = BlendMode::Normal;
+    double opacity = 1.0;
+    RenderData render;
+};
+
+struct ProjectConfig {
+    std::string uuid;
+    std::string name = "Untitled Fire";
+    CanvasLoopConfig canvas;
+    ExportConfig output;
+    // Paint order is back-to-front: index 0 is the bottom layer and the last
+    // enabled entry is composited on top.
+    std::vector<LayerConfig> layers;
 };
 
 struct PVT_API Image {
@@ -248,15 +309,27 @@ struct ValidationResult {
 using ProgressCallback = std::function<bool(int completed_frames, int total_frames)>;
 
 PVT_API RenderConfig default_config();
+PVT_API LayerConfig default_layer(std::size_t index = 0);
+PVT_API ProjectConfig default_project();
+PVT_API std::string generate_uuid();
 // Item factories intentionally return id == 0 because they cannot see the
 // destination configuration. Before inserting an item, assign
 // `item.id = allocate_id(config)`; default_config() assigns all built-in IDs.
 PVT_API WaveConfig default_wave(std::size_t index = 0);
 PVT_API SwingConfig default_swing(std::size_t index = 0);
 PVT_API EffectConfig default_effect(EffectType type);
+PVT_API std::uint64_t allocate_id(const RenderData& render);
 PVT_API std::uint64_t allocate_id(const RenderConfig& config);
+PVT_API std::uint64_t allocate_layer_file_id(const ProjectConfig& project);
+
+// Materializes a legacy RenderConfig for one layer without retaining stale
+// per-layer copies of project-global canvas or export settings.
+PVT_API RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
+                                         const ExportConfig& output,
+                                         const RenderData& render);
 
 PVT_API ValidationResult validate(const RenderConfig& config);
+PVT_API ValidationResult validate(const ProjectConfig& project);
 PVT_API bool render_frame_at_phase(const RenderConfig& config,
                                    double normalized_phase,
                                    Image& destination,
@@ -265,6 +338,42 @@ PVT_API bool render_frame(const RenderConfig& config,
                           int frame_index,
                           Image& destination,
                           std::string* error = nullptr);
+
+// Cancellable counterparts for a single layer. The legacy entry points above
+// remain source-compatible and behave as if `cancel` were null. Cancellation
+// is cooperative, checked throughout the expensive render passes, and
+// transactional: `destination` is unchanged when cancellation is observed.
+PVT_API bool render_frame_at_phase_cancellable(
+    const RenderConfig& config,
+    double normalized_phase,
+    Image& destination,
+    const std::atomic_bool* cancel,
+    std::string* error = nullptr);
+PVT_API bool render_frame_cancellable(const RenderConfig& config,
+                                      int frame_index,
+                                      Image& destination,
+                                      const std::atomic_bool* cancel,
+                                      std::string* error = nullptr);
+
+// Composites source over destination in linear-light, straight-alpha space.
+// On failure destination is unchanged. Images must have matching positive
+// dimensions and exactly four finite float components per pixel.
+PVT_API bool composite_over(const Image& source,
+                            Image& destination,
+                            BlendMode mode = BlendMode::Normal,
+                            double opacity = 1.0,
+                            std::string* error = nullptr);
+PVT_API bool render_project_frame_at_phase(
+    const ProjectConfig& project,
+    double normalized_phase,
+    Image& destination,
+    const std::atomic_bool* cancel = nullptr,
+    std::string* error = nullptr);
+PVT_API bool render_project_frame(const ProjectConfig& project,
+                                  int frame_index,
+                                  Image& destination,
+                                  const std::atomic_bool* cancel = nullptr,
+                                  std::string* error = nullptr);
 
 PVT_API bool write_image(const std::string& path,
                          const Image& image,
@@ -275,6 +384,10 @@ PVT_API bool render_sequence(const RenderConfig& config,
                              const ProgressCallback& progress = {},
                              const std::atomic_bool* cancel = nullptr,
                              std::string* error = nullptr);
+PVT_API bool render_project_sequence(const ProjectConfig& project,
+                                     const ProgressCallback& progress = {},
+                                     const std::atomic_bool* cancel = nullptr,
+                                     std::string* error = nullptr);
 
 // Save is atomic within the destination directory. Load is transactional: on
 // any parse or validation error, `destination` is unchanged.
@@ -291,6 +404,7 @@ PVT_API const char* dither_method_name(DitherMethod value);
 PVT_API const char* surface_mapping_name(SurfaceMapping value);
 PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
+PVT_API const char* blend_mode_name(BlendMode value);
 
 } // namespace pvt
 

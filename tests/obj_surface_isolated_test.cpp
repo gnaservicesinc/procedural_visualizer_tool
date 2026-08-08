@@ -1,6 +1,7 @@
 #include "../src/obj_surface.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -210,6 +211,16 @@ int main(int argc, char** argv) {
                                                &error)
         || unchanged.pixels != nearest.pixels) {
         return fail(7, "OBJ render failure changed the destination");
+    }
+
+    std::atomic_bool cancelled {true};
+    unchanged = nearest;
+    if (pvt::detail::apply_obj_surface_mapping(
+            opaque, unchanged, cube, 0, 0.0, 1.0, 0.0, 0.0, &error,
+            &cancelled)
+        || error.find("cancelled") == std::string::npos
+        || unchanged.pixels != nearest.pixels) {
+        return fail(14, "OBJ cancellation was not transactional");
     }
 
     std::cout << "OBJ surface isolated tests passed\n";

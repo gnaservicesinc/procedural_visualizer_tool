@@ -91,6 +91,12 @@ bool valid_dither_method(DitherMethod method) {
     return false;
 }
 
+bool writes_alpha_channel(const RenderConfig& config) {
+    // AlphaConfig::enabled remains an RGBA request for legacy single-render
+    // callers. Project rendering uses the independent global export flag.
+    return config.alpha.enabled || config.output.write_alpha;
+}
+
 bool valid_prefix(const std::string& prefix) {
     if (prefix.empty()) {
         return false;
@@ -245,7 +251,7 @@ bool write_png_stream(std::FILE* file,
                       const RenderConfig& config,
                       std::uint32_t seed,
                       std::string* error) {
-    const int channels = config.alpha.enabled ? 4 : 3;
+    const int channels = writes_alpha_channel(config) ? 4 : 3;
     const int bit_depth = config.output.bit_depth;
     if (image.width <= 0 || image.height <= 0) {
         return fail(error, "PNG dimensions must be positive.");
@@ -473,10 +479,11 @@ bool write_exr_stream(std::FILE* file,
     const std::array<ExrChannel, 3> rgb_channels = {{
         {"B", 2}, {"G", 1}, {"R", 0}
     }};
-    const ExrChannel* channels = config.alpha.enabled ? rgba_channels.data()
-                                                       : rgb_channels.data();
-    const std::size_t channel_count = config.alpha.enabled ? rgba_channels.size()
-                                                            : rgb_channels.size();
+    const bool include_alpha = writes_alpha_channel(config);
+    const ExrChannel* channels = include_alpha ? rgba_channels.data()
+                                               : rgb_channels.data();
+    const std::size_t channel_count = include_alpha ? rgba_channels.size()
+                                                    : rgb_channels.size();
 
     std::vector<unsigned char> header;
     header.reserve(384U);
@@ -1073,7 +1080,8 @@ bool render_sequence_impl(const RenderConfig& config,
         }
 
         std::string frame_error;
-        if (!render_frame(config, frame_index, image, &frame_error)) {
+        if (!render_frame_cancellable(config, frame_index, image, cancel,
+                                      &frame_error)) {
             return fail(error, "Could not render frame " + std::to_string(frame_index)
                                + ": " + frame_error);
         }
@@ -1087,6 +1095,100 @@ bool render_sequence_impl(const RenderConfig& config,
                                + ": " + frame_error);
         }
         if (!report_progress(progress, frame_index + 1, config.total_frames, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool render_project_sequence_impl(const ProjectConfig& project,
+                                  const ProgressCallback& progress,
+                                  const std::atomic_bool* cancel,
+                                  std::string* error) {
+    const ValidationResult validation = validate(project);
+    if (!validation.ok) {
+        return fail(error, validation.message.empty()
+                               ? "The project configuration is invalid."
+                               : validation.message);
+    }
+    if (cancelled(cancel)) {
+        return fail(error, "Project rendering was cancelled.");
+    }
+
+    // Image encoding and naming remain centralized in the legacy-safe export
+    // path, but the final alpha channel comes from project-global output.
+    const RenderConfig defaults = default_config();
+    RenderConfig output_config = apply_global_config(
+        project.canvas, project.output,
+        static_cast<const RenderData&>(defaults));
+    output_config.alpha.enabled = false;
+
+    const fs::path directory =
+        detail::path_from_utf8(project.output.output_directory);
+    if (!ensure_directory(directory, error)) {
+        return false;
+    }
+
+    // Preflight every destination before rendering so a late collision cannot
+    // leave an unintentionally partial sequence.
+    for (int frame_index = 0; frame_index < project.canvas.total_frames;
+         ++frame_index) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Project rendering was cancelled during output preflight.");
+        }
+        fs::path path;
+        if (!build_frame_path(output_config, frame_index, &path, error)) {
+            return false;
+        }
+        bool exists = false;
+        if (!path_entry_exists(path, &exists, error)) {
+            return false;
+        }
+        if (exists && !project.output.overwrite_existing) {
+            return fail(error, "Output file already exists: '" + path.string()
+                                   + "'. No frames were rendered.");
+        }
+        if (exists) {
+            std::error_code code;
+            if (fs::is_directory(fs::symlink_status(path, code))) {
+                return fail(error, "Output destination is a directory: '"
+                                       + path.string()
+                                       + "'. No frames were rendered.");
+            }
+            if (code) {
+                return fail(error, "Could not inspect output destination '"
+                                       + path.string() + "': " + code.message());
+            }
+        }
+    }
+
+    Image image;
+    for (int frame_index = 0; frame_index < project.canvas.total_frames;
+         ++frame_index) {
+        if (cancelled(cancel)) {
+            return fail(error, "Project rendering was cancelled.");
+        }
+
+        std::string frame_error;
+        if (!render_project_frame(project, frame_index, image, cancel,
+                                  &frame_error)) {
+            return fail(error, "Could not render project frame "
+                                   + std::to_string(frame_index) + ": "
+                                   + frame_error);
+        }
+        fs::path path;
+        if (!build_frame_path(output_config, frame_index, &path, error)) {
+            return false;
+        }
+        if (!write_image(detail::path_to_utf8(path), image, output_config,
+                         kSequenceDitherSeed, &frame_error)) {
+            return fail(error, "Could not export project frame "
+                                   + std::to_string(frame_index) + ": "
+                                   + frame_error);
+        }
+        if (!report_progress(progress, frame_index + 1,
+                             project.canvas.total_frames, error)) {
             return false;
         }
     }
@@ -1130,6 +1232,27 @@ bool render_sequence(const RenderConfig& config,
         return fail(error, "Sequence rendering failed: " + std::string(exception.what()));
     } catch (...) {
         return fail(error, "Sequence rendering failed with an unknown exception.");
+    }
+}
+
+bool render_project_sequence(const ProjectConfig& project,
+                             const ProgressCallback& progress,
+                             const std::atomic_bool* cancel,
+                             std::string* error) {
+    clear_error(error);
+    try {
+        return render_project_sequence_impl(project, progress, cancel, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Project sequence rendering ran out of memory.");
+    } catch (const std::filesystem::filesystem_error& exception) {
+        return fail(error, "Project sequence rendering filesystem error: "
+                           + std::string(exception.what()));
+    } catch (const std::exception& exception) {
+        return fail(error, "Project sequence rendering failed: "
+                           + std::string(exception.what()));
+    } catch (...) {
+        return fail(error,
+                    "Project sequence rendering failed with an unknown exception.");
     }
 }
 

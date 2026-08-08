@@ -1,0 +1,787 @@
+#include "bundle_archive.h"
+#include "path_utf8.h"
+#include "project_bundle.h"
+
+#include "mz.h"
+#include "mz_os.h"
+#include "mz_strm.h"
+#include "mz_zip.h"
+#include "mz_zip_rw.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
+#if defined(_WIN32)
+#  include <process.h>
+#else
+#  include <fcntl.h>
+#  include <sys/file.h>
+#  include <unistd.h>
+#endif
+
+namespace {
+
+namespace fs = std::filesystem;
+int failures = 0;
+
+#define CHECK(expression)                                                        \
+    do {                                                                         \
+        if (!(expression)) {                                                     \
+            std::cerr << __FILE__ << ':' << __LINE__                             \
+                      << ": check failed: " #expression << '\n';                \
+            ++failures;                                                          \
+        }                                                                        \
+    } while (false)
+
+std::string as_utf8(const fs::path& path) {
+    return pvt::detail::path_to_utf8(path);
+}
+
+class TemporaryDirectory {
+public:
+    TemporaryDirectory() {
+        const auto ticks = std::chrono::high_resolution_clock::now()
+                               .time_since_epoch().count();
+#if defined(_WIN32)
+        const int process = _getpid();
+#else
+        const int process = static_cast<int>(::getpid());
+#endif
+        path_ = fs::temp_directory_path()
+                / pvt::detail::path_from_utf8(
+                    "pvt-bundle-tests-" + std::to_string(process) + "-"
+                    + std::to_string(ticks));
+        std::error_code error;
+        CHECK(fs::create_directory(path_, error));
+        CHECK(!error);
+    }
+
+    ~TemporaryDirectory() {
+        std::error_code error;
+        const fs::path temporary = fs::temp_directory_path();
+        const std::string name = as_utf8(path_.filename());
+        const fs::file_status status = fs::symlink_status(path_, error);
+        if (!error && path_.parent_path() == temporary
+            && name.rfind("pvt-bundle-tests-", 0U) == 0U
+            && fs::is_directory(status) && !fs::is_symlink(status)) {
+            fs::remove_all(path_, error);
+        }
+    }
+
+    const fs::path& path() const { return path_; }
+
+private:
+    fs::path path_;
+};
+
+std::string read_bytes(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
+
+bool write_bytes(const fs::path& path, const std::string& bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return static_cast<bool>(output);
+}
+
+bool replace_once(std::string& bytes, const std::string& before,
+                  const std::string& after) {
+    const std::size_t position = bytes.find(before);
+    if (position == std::string::npos) return false;
+    bytes.replace(position, before.size(), after);
+    return true;
+}
+
+const pvt::BundleVersionInfo* version_info(const pvt::ProjectDocument& document,
+                                           std::uint64_t number) {
+    const auto found = std::find_if(
+        document.versions.begin(), document.versions.end(),
+        [number](const pvt::BundleVersionInfo& value) {
+            return value.number == number;
+        });
+    return found == document.versions.end() ? nullptr : &*found;
+}
+
+std::string portable_root(const std::string& name) {
+    std::string filename = pvt::portable_project_filename(name);
+    CHECK(filename.size() >= 4U && filename.substr(filename.size() - 4U) == ".zip");
+    filename.resize(filename.size() - 4U);
+    return filename;
+}
+
+bool rewrite_root_checksum(const fs::path& bundle) {
+    const std::string metadata = read_bytes(bundle / "metadata.txt");
+    std::string digest;
+    std::string error;
+    if (!pvt::detail::sha256_hex(metadata, digest, &error)) return false;
+    return write_bytes(bundle / "metadata.sha256",
+                       "PVT_SHA256\t1\nmetadata.sha256\t" + digest + "\n");
+}
+
+bool write_test_zip(const fs::path& path,
+                    const std::vector<std::string>& names,
+                    bool symlink_entry = false) {
+    void* writer = mz_zip_writer_create();
+    if (writer == nullptr) return false;
+    bool ok = mz_zip_writer_open_file(writer, as_utf8(path).c_str(), 0, 0) == MZ_OK;
+    if (ok) {
+        mz_zip_writer_set_compress_method(writer, MZ_COMPRESS_METHOD_STORE);
+        for (const std::string& name : names) {
+            mz_zip_file info{};
+            info.version_madeby = MZ_VERSION_MADEBY;
+            info.compression_method = MZ_COMPRESS_METHOD_STORE;
+            info.external_fa = (symlink_entry ? 0120777U : 0100644U) << 16U;
+            info.filename = name.c_str();
+            info.filename_size = static_cast<std::uint16_t>(name.size());
+            const std::string value = "x";
+            if (mz_zip_writer_add_buffer(writer, value.data(), 1, &info) != MZ_OK) {
+                ok = false;
+                break;
+            }
+        }
+    }
+    if (ok) ok = mz_zip_writer_close(writer) == MZ_OK;
+    else (void)mz_zip_writer_close(writer);
+    mz_zip_writer_delete(&writer);
+    return ok;
+}
+
+void test_sha_and_archive_guards(const fs::path& directory) {
+    std::string digest;
+    std::string error;
+    CHECK(pvt::detail::sha256_hex("", digest, &error));
+    CHECK(digest == "e3b0c44298fc1c149afbf4c8996fb924"
+                    "27ae41e4649b934ca495991b7852b855");
+    CHECK(pvt::detail::sha256_hex("abc", digest, &error));
+    CHECK(digest == "ba7816bf8f01cfea414140de5dae2223"
+                    "b00361a396177a9cb410ff61f20015ad");
+
+    pvt::detail::BundleFileSet oversized;
+    oversized.root_name = "Guard";
+    oversized.files["metadata.txt"] = std::string(4U * 1024U * 1024U + 1U, 'x');
+    const fs::path rejected = directory / "oversized.zip";
+    CHECK(!pvt::detail::write_bundle_file_set(as_utf8(rejected), oversized, &error));
+    CHECK(!fs::exists(rejected));
+
+    pvt::detail::BundleFileSet colliding;
+    colliding.root_name = "Guard";
+    colliding.files["A.txt"] = "a";
+    colliding.files["a.txt"] = "b";
+    CHECK(!pvt::detail::write_bundle_file_set(
+        as_utf8(directory / "colliding.zip"), colliding, &error));
+
+    const fs::path traversal = directory / "traversal.zip";
+    CHECK(write_test_zip(traversal, {"Root/../outside"}));
+    pvt::detail::BundleFileSet loaded;
+    CHECK(!pvt::detail::read_bundle_file_set(as_utf8(traversal), loaded, &error));
+
+    const fs::path backslash = directory / "backslash.zip";
+    CHECK(write_test_zip(backslash, {"Root\\metadata.txt"}));
+    CHECK(!pvt::detail::read_bundle_file_set(as_utf8(backslash), loaded, &error));
+
+    const fs::path duplicate = directory / "duplicate.zip";
+    CHECK(write_test_zip(duplicate, {"Root/A.txt", "Root/a.txt"}));
+    CHECK(!pvt::detail::read_bundle_file_set(as_utf8(duplicate), loaded, &error));
+
+    const fs::path symlink = directory / "symlink.zip";
+    CHECK(write_test_zip(symlink, {"Root/link"}, true));
+    CHECK(!pvt::detail::read_bundle_file_set(as_utf8(symlink), loaded, &error));
+}
+
+void test_archive_compare_and_swap(const fs::path& directory) {
+    for (const bool zip : {false, true}) {
+        const fs::path path = directory / (zip ? "cas.zip" : "cas-directory");
+        pvt::detail::BundleFileSet state_a;
+        state_a.root_name = zip ? "cas" : "cas-directory";
+        state_a.files["metadata.txt"] = "state-a";
+        state_a.files["metadata.sha256"] = "digest-a";
+        state_a.files["current"] = "current-a";
+        std::string error;
+        CHECK(pvt::detail::write_bundle_file_set(as_utf8(path), state_a, &error));
+
+        pvt::detail::BundleFileSet observed_a;
+        std::string digest_a;
+        CHECK(pvt::detail::read_bundle_file_set(as_utf8(path), observed_a, &error));
+        CHECK(pvt::detail::bundle_file_set_digest(observed_a, digest_a, &error));
+
+        pvt::detail::BundleFileSet state_b = state_a;
+        state_b.files["metadata.txt"] = "state-b";
+        state_b.files["metadata.sha256"] = "digest-b";
+        state_b.files["current"] = "current-b";
+        const bool wrote_b =
+            pvt::detail::write_bundle_file_set(as_utf8(path), state_b, &error);
+        if (!wrote_b) std::cerr << "CAS setup failed: " << error << '\n';
+        CHECK(wrote_b);
+
+        pvt::detail::BundleFileSet stale_write = state_a;
+        stale_write.files["metadata.txt"] = "stale-overwrite";
+        CHECK(!pvt::detail::write_bundle_file_set_if_unchanged(
+            as_utf8(path), stale_write, true, digest_a, &error));
+
+        pvt::detail::BundleFileSet final_state;
+        CHECK(pvt::detail::read_bundle_file_set(as_utf8(path), final_state, &error));
+        CHECK(final_state.files == state_b.files);
+    }
+
+#if !defined(_WIN32)
+    pvt::detail::BundleFileSet lock_state;
+    lock_state.root_name = "locked";
+    lock_state.files["metadata.txt"] = "lock-test";
+    const fs::path locked_path = directory / "locked.zip";
+    const fs::path lock_path = directory / ".locked.zip.pvt-save.lock";
+    const int lock_descriptor = ::open(lock_path.c_str(), O_RDWR | O_CREAT, 0600);
+    CHECK(lock_descriptor >= 0);
+    if (lock_descriptor >= 0) {
+        CHECK(::flock(lock_descriptor, LOCK_EX | LOCK_NB) == 0);
+        std::string error;
+        CHECK(!pvt::detail::write_bundle_file_set(
+            as_utf8(locked_path), lock_state, &error));
+        CHECK(error.find("already saving") != std::string::npos);
+        CHECK(!fs::exists(locked_path));
+        CHECK(::flock(lock_descriptor, LOCK_UN) == 0);
+        CHECK(::close(lock_descriptor) == 0);
+        CHECK(pvt::detail::write_bundle_file_set(
+            as_utf8(locked_path), lock_state, &error));
+    }
+
+    const fs::path victim = directory / "lock-victim.txt";
+    const fs::path hostile_path = directory / "hostile-lock.zip";
+    const fs::path hostile_lock =
+        directory / ".hostile-lock.zip.pvt-save.lock";
+    CHECK(write_bytes(victim, "do not touch"));
+    std::error_code symlink_error;
+    fs::create_symlink(victim, hostile_lock, symlink_error);
+    if (!symlink_error) {
+        std::string error;
+        CHECK(!pvt::detail::write_bundle_file_set(
+            as_utf8(hostile_path), lock_state, &error));
+        CHECK(read_bytes(victim) == "do not touch");
+        CHECK(!fs::exists(hostile_path));
+    }
+#endif
+}
+
+void test_directory_versions_and_names(const fs::path& directory) {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Fire: Night";
+    const std::string opened = document.last_opened_utc;
+    const fs::path bundle = directory
+                            / pvt::detail::path_from_utf8(
+                                portable_root(document.project.name));
+    std::string error;
+    pvt::BundleSaveReport report;
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+    CHECK(document.last_opened_utc == opened);
+    CHECK(!document.last_saved_utc.empty());
+    CHECK(fs::is_regular_file(fs::symlink_status(bundle / "current")));
+    CHECK(fs::exists(bundle / "0" / "metadata.txt"));
+    CHECK(fs::exists(bundle / "0" / "render_output.txt"));
+    CHECK(fs::exists(bundle / "0" / "0.pvt"));
+
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    CHECK(loaded.project.name == "Fire: Night");
+    loaded.project.layers[0].name = "Brighter base";
+    loaded.project.output.filename_prefix = "ember % glow_";
+    loaded.project.layers[0].render.waves[0].name = "Warm % core";
+    CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 1U);
+
+    std::vector<pvt::BundleDiffEntry> readable_differences;
+    CHECK(pvt::diff_project_versions(loaded, 0U, 1U,
+                                     readable_differences, &error));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field == "global.output.filename_prefix"
+                                 && value.after == "ember % glow_";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field.find("render.waves.0.name")
+                                     != std::string::npos
+                                 && value.after == "Warm % core";
+                      }));
+
+    loaded.project.name = "Renamed: Flame";
+    CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.version == 2U);
+    CHECK(as_utf8(bundle.filename()) == portable_root("Fire: Night"));
+    std::vector<pvt::BundleDiffEntry> differences;
+    CHECK(pvt::diff_project_versions(loaded, 1U, 2U, differences, &error));
+    CHECK(std::any_of(differences.begin(), differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field == "project.name";
+                      }));
+    pvt::ProjectConfig old_project;
+    CHECK(pvt::load_project_version(loaded, 0U, old_project, &error));
+    CHECK(old_project.name == "Fire: Night");
+
+    CHECK(pvt::make_project_version_current(loaded, 0U, &report, &error));
+    CHECK(loaded.current_version == 0U);
+    CHECK(loaded.project.name == "Fire: Night");
+    CHECK(pvt::revert_project_as_new(loaded, 0U, &report, &error));
+    CHECK(report.created_version && report.version == 3U);
+    CHECK(loaded.current_version == 3U);
+
+    CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.validated_only && !report.created_version);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    const fs::path copied = directory / "Copied Bundle";
+    std::error_code copy_error;
+    fs::copy(bundle, copied, fs::copy_options::recursive, copy_error);
+    CHECK(!copy_error);
+    loaded.project.name = "Copied Display Name";
+    CHECK(pvt::save_project_document(loaded, as_utf8(copied), &report, &error));
+    CHECK(report.created_version && report.version == 4U);
+    pvt::ProjectDocument copied_document;
+    CHECK(pvt::load_project_document(as_utf8(copied), copied_document, &error));
+    CHECK(copied_document.project.name == "Copied Display Name");
+}
+
+void test_zip_unicode_and_legacy(const fs::path& directory) {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Flame \xCE\xB3";
+    document.project.output.write_alpha = true;
+    pvt::LayerConfig second = pvt::default_layer(1U);
+    second.name = "Glow \xE2\x9C\xA8";
+    second.blend_mode = pvt::BlendMode::Add;
+    document.project.layers.push_back(std::move(second));
+    const fs::path zip = directory / pvt::detail::path_from_utf8(
+                                         pvt::portable_project_filename(
+                                             document.project.name));
+    std::string error;
+    pvt::BundleSaveReport report;
+    CHECK(pvt::save_project_document(document, as_utf8(zip), &report, &error));
+    CHECK(report.wrote_zip);
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(zip), loaded, &error));
+    CHECK(loaded.project.name == document.project.name);
+    CHECK(loaded.project.layers.size() == 2U);
+    CHECK(loaded.project.layers[1].name == "Glow \xE2\x9C\xA8");
+    CHECK(loaded.project.layers[1].blend_mode == pvt::BlendMode::Add);
+
+    CHECK(pvt::portable_project_filename("CON.txt").rfind("_CON.txt", 0U) == 0U);
+    CHECK(pvt::portable_project_filename("Fire. ") == "Fire.zip");
+    CHECK(pvt::portable_project_filename("Fire: Night") == "Fire_ Night.zip");
+    std::string long_unicode;
+    for (std::size_t index = 0U; index < 128U; ++index) {
+        long_unicode += "\xC3\xA9";
+    }
+    const std::string portable = pvt::portable_project_filename(long_unicode);
+    CHECK(portable.size() <= 244U);
+    CHECK(pvt::detail::valid_utf8(portable.substr(0U, portable.size() - 4U)));
+    pvt::ProjectDocument long_name_document = pvt::default_project_document();
+    long_name_document.project.name = long_unicode;
+    const fs::path long_bundle = directory
+                                 / pvt::detail::path_from_utf8(
+                                     portable.substr(0U, portable.size() - 4U));
+    CHECK(pvt::save_project_document(long_name_document, as_utf8(long_bundle),
+                                     &report, &error));
+    long_name_document.project.layers[0].name = "Second save";
+    CHECK(pvt::save_project_document(long_name_document, as_utf8(long_bundle),
+                                     &report, &error));
+    CHECK(report.created_version && report.version == 1U);
+
+    pvt::RenderConfig legacy = pvt::default_config();
+    legacy.width = 64;
+    legacy.height = 64;
+    const fs::path legacy_path = directory / "LEGACY.PVT";
+    CHECK(pvt::save_setup(legacy, as_utf8(legacy_path), &error));
+    const std::string original = read_bytes(legacy_path);
+    pvt::ProjectDocument imported;
+    CHECK(pvt::load_project_document(as_utf8(legacy_path), imported, &error));
+    CHECK(imported.legacy_import && imported.source_path.empty());
+    const fs::path promoted = directory / "legacy-import.zip";
+    CHECK(pvt::save_project_document(imported, as_utf8(promoted), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+    CHECK(read_bytes(legacy_path) == original);
+}
+
+void test_external_change_lifecycle(const fs::path& directory) {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "External Change";
+    const fs::path bundle = directory / portable_root(document.project.name);
+    std::string error;
+    pvt::BundleSaveReport report;
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    const fs::path raw_layer = bundle / "0" / "0.pvt";
+    std::string edited = read_bytes(raw_layer);
+    CHECK(replace_once(edited, "appearance.hue_cycles\t2\n",
+                       "appearance.hue_cycles\t3\n"));
+    CHECK(write_bytes(raw_layer, edited));
+
+    pvt::ProjectDocument external;
+    CHECK(pvt::load_project_document(as_utf8(bundle), external, &error));
+    CHECK(external.externally_modified && external.dirty);
+    const pvt::BundleVersionInfo* zero = version_info(external, 0U);
+    CHECK(zero != nullptr && zero->valid && zero->externally_modified
+          && zero->changed_since_recorded);
+    CHECK(pvt::save_project_document(external, as_utf8(bundle), &report, &error));
+    CHECK(report.promoted_external_change && report.version == 1U);
+    CHECK(read_bytes(raw_layer) == edited);
+    zero = version_info(external, 0U);
+    CHECK(zero != nullptr && zero->externally_modified
+          && !zero->changed_since_recorded);
+    CHECK(pvt::save_project_document(external, as_utf8(bundle), &report, &error));
+    CHECK(report.validated_only);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    std::string edited_again = read_bytes(raw_layer);
+    CHECK(replace_once(edited_again, "appearance.hue_cycles\t3\n",
+                       "appearance.hue_cycles\t4\n"));
+    CHECK(write_bytes(raw_layer, edited_again));
+    pvt::ProjectDocument changed_again;
+    CHECK(pvt::load_project_document(as_utf8(bundle), changed_again, &error));
+    zero = version_info(changed_again, 0U);
+    CHECK(changed_again.externally_modified && zero != nullptr
+          && zero->changed_since_recorded);
+    CHECK(pvt::save_project_document(changed_again, as_utf8(bundle), &report, &error));
+    CHECK(report.promoted_external_change && report.version == 2U);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    // Editing an old manifest after it already has children preserves both its
+    // recorded digest as a lineage alias and its exact newly observed raw tree.
+    const fs::path old_metadata = bundle / "0" / "metadata.txt";
+    std::string changed_manifest = read_bytes(old_metadata);
+    CHECK(replace_once(changed_manifest, "version.reason\tsave\n",
+                       "version.reason\texternal_origin\n"));
+    CHECK(write_bytes(old_metadata, changed_manifest));
+    pvt::ProjectDocument manifest_change;
+    CHECK(pvt::load_project_document(as_utf8(bundle), manifest_change, &error));
+    zero = version_info(manifest_change, 0U);
+    CHECK(manifest_change.externally_modified && zero != nullptr
+          && zero->changed_since_recorded);
+    CHECK(pvt::save_project_document(manifest_change, as_utf8(bundle),
+                                     &report, &error));
+    CHECK(report.promoted_external_change && report.version == 3U);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+}
+
+void test_fallback_orphan_and_stale(const fs::path& directory) {
+    std::string error;
+    pvt::BundleSaveReport report;
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Orphan Recovery";
+    const fs::path bundle = directory / portable_root(document.project.name);
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    const std::string root0 = read_bytes(bundle / "metadata.txt");
+    const std::string checksum0 = read_bytes(bundle / "metadata.sha256");
+    document.project.layers[0].name = "Version one";
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    CHECK(report.version == 1U);
+    CHECK(write_bytes(bundle / "metadata.txt", root0));
+    CHECK(write_bytes(bundle / "metadata.sha256", checksum0));
+    CHECK(write_bytes(bundle / "current", "broken current\n"));
+
+    pvt::ProjectDocument recovered;
+    CHECK(pvt::load_project_document(as_utf8(bundle), recovered, &error));
+    CHECK(recovered.current_version == 1U && recovered.externally_modified);
+    const pvt::BundleVersionInfo* orphan = version_info(recovered, 1U);
+    CHECK(orphan != nullptr && orphan->valid && !orphan->indexed);
+    CHECK(pvt::save_project_document(recovered, as_utf8(bundle), &report, &error));
+    CHECK(report.version == 2U && report.promoted_external_change);
+    orphan = version_info(recovered, 1U);
+    CHECK(orphan != nullptr && orphan->indexed);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    pvt::ProjectDocument first;
+    pvt::ProjectDocument second;
+    CHECK(pvt::load_project_document(as_utf8(bundle), first, &error));
+    CHECK(pvt::load_project_document(as_utf8(bundle), second, &error));
+    second.project.layers[0].name = "Second writer";
+    CHECK(pvt::save_project_document(second, as_utf8(bundle), &report, &error));
+    const std::string first_last_saved = first.last_saved_utc;
+    const std::uint64_t first_version = first.current_version;
+    first.project.layers[0].name = "Stale writer";
+    pvt::BundleSaveReport untouched;
+    untouched.path = "sentinel";
+    CHECK(!pvt::save_project_document(first, as_utf8(bundle), &untouched, &error));
+    CHECK(first.last_saved_utc == first_last_saved
+          && first.current_version == first_version);
+    CHECK(untouched.path == "sentinel");
+
+    pvt::ProjectDocument fallback = pvt::default_project_document();
+    fallback.project.name = "Malformed Current";
+    const fs::path fallback_bundle = directory / portable_root(fallback.project.name);
+    CHECK(pvt::save_project_document(fallback, as_utf8(fallback_bundle),
+                                     &report, &error));
+    fallback.project.layers[0].name = "Bad head";
+    CHECK(pvt::save_project_document(fallback, as_utf8(fallback_bundle),
+                                     &report, &error));
+    CHECK(write_bytes(fallback_bundle / "1" / "metadata.txt", "malformed\n"));
+    pvt::ProjectDocument fallback_loaded;
+    CHECK(pvt::load_project_document(as_utf8(fallback_bundle), fallback_loaded,
+                                     &error));
+    CHECK(fallback_loaded.current_version == 0U
+          && fallback_loaded.externally_modified);
+    CHECK(pvt::save_project_document(fallback_loaded, as_utf8(fallback_bundle),
+                                     &report, &error));
+    CHECK(report.created_version && report.version == 2U);
+    const pvt::BundleVersionInfo* bad = version_info(fallback_loaded, 1U);
+    CHECK(bad != nullptr && !bad->valid && !bad->indexed);
+    CHECK(pvt::save_project_document(fallback_loaded, as_utf8(fallback_bundle),
+                                     &report, &error));
+    CHECK(report.validated_only);
+    CHECK(pvt::validate_project_bundle(as_utf8(fallback_bundle), nullptr, &error));
+}
+
+void test_complete_history_accounting(const fs::path& directory) {
+    std::string error;
+    pvt::BundleSaveReport report;
+
+    // A valid crash-orphan that is unrelated to the intact current pointer is
+    // surfaced on load, then retained as byte-exact noncanonical history when
+    // Save appends the explicit external-change version.
+    pvt::ProjectDocument orphan_document = pvt::default_project_document();
+    orphan_document.project.name = "Unrelated Orphan";
+    const fs::path orphan_bundle =
+        directory / portable_root(orphan_document.project.name);
+    CHECK(pvt::save_project_document(orphan_document, as_utf8(orphan_bundle),
+                                     &report, &error));
+    const std::string root_zero = read_bytes(orphan_bundle / "metadata.txt");
+    const std::string checksum_zero =
+        read_bytes(orphan_bundle / "metadata.sha256");
+    const std::string current_zero = read_bytes(orphan_bundle / "current");
+    orphan_document.project.layers[0].name = "Unindexed but valid";
+    CHECK(pvt::save_project_document(orphan_document, as_utf8(orphan_bundle),
+                                     &report, &error));
+    CHECK(write_bytes(orphan_bundle / "metadata.txt", root_zero));
+    CHECK(write_bytes(orphan_bundle / "metadata.sha256", checksum_zero));
+    CHECK(write_bytes(orphan_bundle / "current", current_zero));
+    CHECK(!pvt::validate_project_bundle(as_utf8(orphan_bundle), nullptr, &error));
+
+    pvt::ProjectDocument recovered_orphan;
+    CHECK(pvt::load_project_document(as_utf8(orphan_bundle), recovered_orphan,
+                                     &error));
+    CHECK(recovered_orphan.current_version == 0U
+          && recovered_orphan.externally_modified && recovered_orphan.dirty);
+    const pvt::BundleVersionInfo* orphan = version_info(recovered_orphan, 1U);
+    CHECK(orphan != nullptr && orphan->valid && !orphan->indexed
+          && orphan->changed_since_recorded);
+    CHECK(pvt::save_project_document(recovered_orphan, as_utf8(orphan_bundle),
+                                     &report, &error));
+    CHECK(report.promoted_external_change && report.version == 2U);
+    orphan = version_info(recovered_orphan, 1U);
+    CHECK(orphan != nullptr && orphan->valid && !orphan->indexed
+          && !orphan->changed_since_recorded);
+    CHECK(pvt::validate_project_bundle(as_utf8(orphan_bundle), nullptr, &error));
+    CHECK(pvt::save_project_document(recovered_orphan, as_utf8(orphan_bundle),
+                                     &report, &error));
+    CHECK(report.validated_only && !report.created_version);
+
+    // A malformed unrelated numeric directory follows the same lifecycle. It
+    // remains recoverable raw data, but its exact tree is explicitly recorded
+    // rather than disappearing from validation.
+    pvt::ProjectDocument malformed_document = pvt::default_project_document();
+    malformed_document.project.name = "Unrelated Malformed";
+    const fs::path malformed_bundle =
+        directory / portable_root(malformed_document.project.name);
+    CHECK(pvt::save_project_document(malformed_document,
+                                     as_utf8(malformed_bundle), &report, &error));
+    std::error_code directory_error;
+    CHECK(fs::create_directory(malformed_bundle / "7", directory_error));
+    CHECK(!directory_error);
+    CHECK(write_bytes(malformed_bundle / "7" / "metadata.txt", "malformed\n"));
+    CHECK(!pvt::validate_project_bundle(as_utf8(malformed_bundle), nullptr,
+                                        &error));
+    pvt::ProjectDocument recovered_malformed;
+    CHECK(pvt::load_project_document(as_utf8(malformed_bundle),
+                                     recovered_malformed, &error));
+    const pvt::BundleVersionInfo* malformed =
+        version_info(recovered_malformed, 7U);
+    CHECK(recovered_malformed.externally_modified && recovered_malformed.dirty);
+    CHECK(malformed != nullptr && !malformed->valid && !malformed->indexed
+          && malformed->changed_since_recorded);
+    CHECK(pvt::save_project_document(recovered_malformed,
+                                     as_utf8(malformed_bundle), &report, &error));
+    CHECK(report.promoted_external_change && report.version == 8U);
+    malformed = version_info(recovered_malformed, 7U);
+    CHECK(malformed != nullptr && !malformed->valid && !malformed->indexed
+          && !malformed->changed_since_recorded);
+    CHECK(pvt::validate_project_bundle(as_utf8(malformed_bundle), nullptr,
+                                       &error));
+    CHECK(pvt::save_project_document(recovered_malformed,
+                                     as_utf8(malformed_bundle), &report, &error));
+    CHECK(report.validated_only && !report.created_version);
+
+    // Deleting a previously recorded preserved directory is also surfaced as
+    // an external history change. Repair Save records the deletion as a new
+    // version instead of allowing load to appear clean and fail only later.
+    std::error_code remove_error;
+    CHECK(fs::remove_all(malformed_bundle / "7", remove_error) > 0U);
+    CHECK(!remove_error);
+    pvt::ProjectDocument deleted_preserved;
+    CHECK(pvt::load_project_document(as_utf8(malformed_bundle),
+                                     deleted_preserved, &error));
+    CHECK(deleted_preserved.current_version == 8U
+          && deleted_preserved.externally_modified && deleted_preserved.dirty);
+    CHECK(!pvt::validate_project_bundle(as_utf8(malformed_bundle), nullptr,
+                                        &error));
+    CHECK(pvt::save_project_document(deleted_preserved,
+                                     as_utf8(malformed_bundle), &report, &error));
+    CHECK(report.promoted_external_change && report.version == 9U);
+    CHECK(pvt::validate_project_bundle(as_utf8(malformed_bundle), nullptr,
+                                       &error));
+
+    // Moving a corrupted indexed ancestor into preserved history retains its
+    // former metadata digest as a lineage alias for valid descendants.
+    pvt::ProjectDocument lineage_document = pvt::default_project_document();
+    lineage_document.project.name = "Preserved Lineage";
+    const fs::path lineage_bundle =
+        directory / portable_root(lineage_document.project.name);
+    CHECK(pvt::save_project_document(lineage_document, as_utf8(lineage_bundle),
+                                     &report, &error));
+    lineage_document.project.layers[0].name = "Valid child";
+    CHECK(pvt::save_project_document(lineage_document, as_utf8(lineage_bundle),
+                                     &report, &error));
+    CHECK(report.version == 1U);
+    CHECK(write_bytes(lineage_bundle / "0" / "metadata.txt", "corrupt\n"));
+    pvt::ProjectDocument repaired_lineage;
+    CHECK(pvt::load_project_document(as_utf8(lineage_bundle), repaired_lineage,
+                                     &error));
+    CHECK(repaired_lineage.current_version == 1U
+          && repaired_lineage.externally_modified);
+    repaired_lineage.project.layers[0].name = "Valid grandchild";
+    CHECK(pvt::save_project_document(repaired_lineage, as_utf8(lineage_bundle),
+                                     &report, &error));
+    CHECK(report.created_version && report.version == 2U);
+    CHECK(pvt::validate_project_bundle(as_utf8(lineage_bundle), nullptr, &error));
+    const pvt::BundleVersionInfo* ancestor =
+        version_info(repaired_lineage, 0U);
+    CHECK(ancestor != nullptr && !ancestor->valid && !ancestor->indexed
+          && !ancestor->changed_since_recorded);
+
+    // A deleted indexed ancestor must not prevent a valid current child from
+    // loading. Repair retains the vanished digest as a lineage alias and
+    // appends a new snapshot without inventing replacement raw data.
+    pvt::ProjectDocument missing_indexed = pvt::default_project_document();
+    missing_indexed.project.name = "Missing Indexed Ancestor";
+    const fs::path missing_indexed_bundle =
+        directory / portable_root(missing_indexed.project.name);
+    CHECK(pvt::save_project_document(missing_indexed,
+                                     as_utf8(missing_indexed_bundle),
+                                     &report, &error));
+    missing_indexed.project.layers[0].name = "Surviving child";
+    CHECK(pvt::save_project_document(missing_indexed,
+                                     as_utf8(missing_indexed_bundle),
+                                     &report, &error));
+    remove_error.clear();
+    CHECK(fs::remove_all(missing_indexed_bundle / "0", remove_error) > 0U);
+    CHECK(!remove_error);
+    pvt::ProjectDocument missing_indexed_loaded;
+    CHECK(pvt::load_project_document(as_utf8(missing_indexed_bundle),
+                                     missing_indexed_loaded, &error));
+    CHECK(missing_indexed_loaded.current_version == 1U
+          && missing_indexed_loaded.externally_modified
+          && missing_indexed_loaded.dirty);
+    ancestor = version_info(missing_indexed_loaded, 0U);
+    CHECK(ancestor != nullptr && !ancestor->valid && ancestor->indexed
+          && ancestor->changed_since_recorded);
+    CHECK(pvt::save_project_document(missing_indexed_loaded,
+                                     as_utf8(missing_indexed_bundle),
+                                     &report, &error));
+    CHECK(report.created_version && report.version == 2U);
+    CHECK(pvt::validate_project_bundle(as_utf8(missing_indexed_bundle),
+                                       nullptr, &error));
+}
+
+void test_corrupt_history_and_root_metadata(const fs::path& directory) {
+    std::string error;
+    pvt::BundleSaveReport report;
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Corrupt History";
+    const fs::path bundle = directory / portable_root(document.project.name);
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    document.project.layers[0].name = "Current valid";
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    CHECK(write_bytes(bundle / "0" / "metadata.txt", "not metadata\n"));
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    CHECK(loaded.current_version == 1U);
+    const pvt::BundleVersionInfo* invalid = version_info(loaded, 0U);
+    CHECK(invalid != nullptr && !invalid->valid);
+    CHECK(!pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    pvt::ProjectDocument checksum_document = pvt::default_project_document();
+    checksum_document.project.name = "Root Checksum";
+    const fs::path checksum_bundle = directory
+                                     / portable_root(checksum_document.project.name);
+    CHECK(pvt::save_project_document(checksum_document, as_utf8(checksum_bundle),
+                                     &report, &error));
+    std::error_code remove_error;
+    CHECK(fs::remove(checksum_bundle / "metadata.sha256", remove_error));
+    CHECK(!remove_error);
+    CHECK(pvt::load_project_document(as_utf8(checksum_bundle), checksum_document,
+                                     &error));
+    CHECK(checksum_document.externally_modified);
+    CHECK(pvt::save_project_document(checksum_document, as_utf8(checksum_bundle),
+                                     &report, &error));
+    CHECK(report.promoted_external_change);
+    CHECK(pvt::validate_project_bundle(as_utf8(checksum_bundle), nullptr, &error));
+
+    std::string root = read_bytes(checksum_bundle / "metadata.txt");
+    CHECK(replace_once(root, "project.last_changed_with_version\t3.0.0\n",
+                       "project.last_changed_with_version\t99.0.0\n"));
+    CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
+    CHECK(rewrite_root_checksum(checksum_bundle));
+    pvt::ProjectDocument newer;
+    CHECK(pvt::load_project_document(as_utf8(checksum_bundle), newer, &error));
+    CHECK(newer.newer_program_version);
+
+    // Unicode C1 controls are rejected even when the root checksum is updated.
+    const std::string newer_root = root;
+    std::string control_name_root = newer_root;
+    CHECK(replace_once(control_name_root, "project.name\tRoot%20Checksum\n",
+                       "project.name\tBad%C2%80Name\n"));
+    CHECK(write_bytes(checksum_bundle / "metadata.txt", control_name_root));
+    CHECK(rewrite_root_checksum(checksum_bundle));
+    pvt::ProjectDocument control_rejected;
+    CHECK(!pvt::load_project_document(as_utf8(checksum_bundle), control_rejected,
+                                      &error));
+
+    root = newer_root;
+    const std::string key = "project.first_created_utc\t";
+    const std::size_t at = root.find(key);
+    CHECK(at != std::string::npos);
+    if (at != std::string::npos) {
+        root.replace(at + key.size() + 5U, 2U, "99");
+    }
+    CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
+    CHECK(rewrite_root_checksum(checksum_bundle));
+    pvt::ProjectDocument rejected = pvt::default_project_document();
+    const std::string original_uuid = rejected.project.uuid;
+    CHECK(!pvt::load_project_document(as_utf8(checksum_bundle), rejected, &error));
+    CHECK(rejected.project.uuid == original_uuid);
+}
+
+} // namespace
+
+int main() {
+    TemporaryDirectory temporary;
+    test_sha_and_archive_guards(temporary.path());
+    test_archive_compare_and_swap(temporary.path());
+    test_directory_versions_and_names(temporary.path());
+    test_zip_unicode_and_legacy(temporary.path());
+    test_external_change_lifecycle(temporary.path());
+    test_fallback_orphan_and_stale(temporary.path());
+    test_complete_history_accounting(temporary.path());
+    test_corrupt_history_and_root_metadata(temporary.path());
+    if (failures != 0) {
+        std::cerr << failures << " bundle test(s) failed.\n";
+        return 1;
+    }
+    std::cout << "All project bundle tests passed.\n";
+    return 0;
+}

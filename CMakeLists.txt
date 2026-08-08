@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(ProceduralVisualizerTool VERSION 2.0.0 LANGUAGES CXX)
+project(ProceduralVisualizerTool VERSION 3.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -23,6 +23,7 @@ find_package(PNG REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(ProceduralVisualizerTool
+    src/composite.cpp
     src/config_io.cpp
     src/core.cpp
     src/image_io.cpp
@@ -60,6 +61,85 @@ endif()
 
 pvt_enable_warnings(ProceduralVisualizerTool)
 
+# Project bundles are an application/test feature rather than part of the
+# installed rendering library ABI. Keeping this helper non-installed prevents
+# static consumers from inheriting minizip package requirements. A
+# core-only configure with CLI, GUI, and tests disabled does not search for or
+# fetch these dependencies.
+set(PVT_NEEDS_BUNDLE_SUPPORT OFF)
+if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI OR BUILD_TESTING)
+    set(PVT_NEEDS_BUNDLE_SUPPORT ON)
+endif()
+
+if(PVT_NEEDS_BUNDLE_SUPPORT)
+    find_package(minizip 4.2 CONFIG QUIET)
+    if(NOT TARGET MINIZIP::minizip)
+        include(FetchContent)
+        set(MZ_COMPAT OFF CACHE BOOL "" FORCE)
+        set(MZ_ZLIB ON CACHE BOOL "" FORCE)
+        set(MZ_ZLIB_FLAVOR zlib CACHE STRING "" FORCE)
+        set(MZ_BZIP2 OFF CACHE BOOL "" FORCE)
+        set(MZ_LZMA OFF CACHE BOOL "" FORCE)
+        set(MZ_PPMD OFF CACHE BOOL "" FORCE)
+        set(MZ_ZSTD OFF CACHE BOOL "" FORCE)
+        set(MZ_LIBCOMP OFF CACHE BOOL "" FORCE)
+        set(MZ_FETCH_LIBS OFF CACHE BOOL "" FORCE)
+        set(MZ_FORCE_FETCH_LIBS OFF CACHE BOOL "" FORCE)
+        set(MZ_PKCRYPT OFF CACHE BOOL "" FORCE)
+        set(MZ_WZAES OFF CACHE BOOL "" FORCE)
+        set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
+        set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
+        set(MZ_ICONV OFF CACHE BOOL "" FORCE)
+        set(MZ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(MZ_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+        set(MZ_BUILD_FUZZ_TESTS OFF CACHE BOOL "" FORCE)
+        if(DEFINED SKIP_INSTALL_ALL)
+            set(_pvt_had_skip_install_all ON)
+            set(_pvt_saved_skip_install_all "${SKIP_INSTALL_ALL}")
+        else()
+            set(_pvt_had_skip_install_all OFF)
+        endif()
+        set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+        set(_pvt_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+        set(BUILD_SHARED_LIBS OFF)
+        FetchContent_Declare(minizip_ng
+            GIT_REPOSITORY https://github.com/zlib-ng/minizip-ng.git
+            GIT_TAG 7b2387161c542fa9f427352dcdef76097d0d692b)
+        FetchContent_MakeAvailable(minizip_ng)
+        set(BUILD_SHARED_LIBS "${_pvt_saved_build_shared_libs}")
+        unset(_pvt_saved_build_shared_libs)
+        if(_pvt_had_skip_install_all)
+            set(SKIP_INSTALL_ALL "${_pvt_saved_skip_install_all}"
+                CACHE BOOL "" FORCE)
+        else()
+            unset(SKIP_INSTALL_ALL CACHE)
+        endif()
+        unset(_pvt_had_skip_install_all)
+        unset(_pvt_saved_skip_install_all)
+    endif()
+
+    add_library(ProceduralVisualizerBundle STATIC
+        src/bundle_archive.cpp
+        src/bundle_archive.h
+        src/config_codec.cpp
+        src/config_codec.h
+        src/project_bundle.cpp
+        src/project_bundle.h)
+    add_library(ProceduralVisualizerTool::Bundle ALIAS ProceduralVisualizerBundle)
+    target_compile_features(ProceduralVisualizerBundle PUBLIC cxx_std_17)
+    set_target_properties(ProceduralVisualizerBundle PROPERTIES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON)
+    target_compile_definitions(ProceduralVisualizerBundle PRIVATE
+        PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
+    target_include_directories(ProceduralVisualizerBundle PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+    target_link_libraries(ProceduralVisualizerBundle
+        PUBLIC ProceduralVisualizerTool::ProceduralVisualizerTool
+        PRIVATE MINIZIP::minizip)
+    pvt_enable_warnings(ProceduralVisualizerBundle)
+endif()
+
 if(PVT_BUILD_CLI)
     add_executable(render9 app/cli_main.cpp)
     target_compile_features(render9 PRIVATE cxx_std_17)
@@ -75,8 +155,9 @@ if(PVT_BUILD_CLI)
         set_target_properties(render9 PROPERTIES
             INSTALL_RPATH "\$ORIGIN/${pvt_cli_install_library_path}")
     endif()
-    target_link_libraries(render9 PRIVATE
-        ProceduralVisualizerTool::ProceduralVisualizerTool)
+    target_link_libraries(render9 PRIVATE ProceduralVisualizerTool::Bundle)
+    target_compile_definitions(render9 PRIVATE
+        PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
     pvt_enable_warnings(render9)
 endif()
 
@@ -112,10 +193,12 @@ if(PVT_BUILD_QT_GUI)
             OUTPUT_NAME "procedural-visualizer-tool")
     endif()
     target_link_libraries(ProceduralVisualizerToolGui PRIVATE
-        ProceduralVisualizerTool::ProceduralVisualizerTool
+        ProceduralVisualizerTool::Bundle
         Qt6::Concurrent
         Qt6::Widgets
     )
+    target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
+        PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
     pvt_enable_warnings(ProceduralVisualizerToolGui)
 endif()
 
@@ -128,6 +211,24 @@ if(BUILD_TESTING)
         PNG::PNG)
     pvt_enable_warnings(pvt_tests)
     add_test(NAME pvt_core COMMAND pvt_tests ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(pvt_project_composite_tests
+        tests/project_composite_test.cpp)
+    target_compile_features(pvt_project_composite_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_project_composite_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_project_composite_tests PRIVATE
+        ProceduralVisualizerTool::ProceduralVisualizerTool)
+    pvt_enable_warnings(pvt_project_composite_tests)
+    add_test(NAME pvt_project_composite COMMAND pvt_project_composite_tests)
+
+    add_executable(pvt_bundle_tests tests/bundle_test.cpp)
+    target_compile_features(pvt_bundle_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_bundle_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_bundle_tests PRIVATE
+        ProceduralVisualizerTool::Bundle
+        MINIZIP::minizip)
+    pvt_enable_warnings(pvt_bundle_tests)
+    add_test(NAME pvt_bundle COMMAND pvt_bundle_tests)
 
     add_executable(pvt_obj_mesh_tests
         tests/obj_mesh_isolated_test.cpp
@@ -179,6 +280,10 @@ if(BUILD_TESTING)
                 --png-compression 0
                 --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-custom-obj
                 --prefix obj_ --overwrite)
+        add_test(NAME pvt_cli_project_bundle
+            COMMAND ${CMAKE_COMMAND}
+                -DPROGRAM=$<TARGET_FILE:render9>
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestCliBundle.cmake)
     endif()
 
     if(PVT_BUILD_QT_GUI)

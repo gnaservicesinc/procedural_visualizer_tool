@@ -19,7 +19,9 @@ public:
     void setSelectedWave(std::optional<std::size_t> index);
 
 signals:
+    void waveDragStarted(std::size_t index);
     void waveMoved(std::size_t index, double xPercent, double yPercent);
+    void waveDragFinished(std::size_t index);
     void waveSelected(std::size_t index);
 
 protected:
@@ -41,4 +43,3 @@ private:
 };
 
 #endif
-

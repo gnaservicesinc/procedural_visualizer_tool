@@ -760,9 +760,47 @@ RenderConfig default_config() {
     return config;
 }
 
-std::uint64_t allocate_id(const RenderConfig& config) {
+LayerConfig default_layer(std::size_t index) {
+    const RenderConfig legacy = default_config();
+    LayerConfig layer;
+    layer.uuid = generate_uuid();
+    layer.file_id = static_cast<std::uint64_t>(index);
+    layer.name = "Layer " + std::to_string(index + 1U);
+    layer.render = static_cast<const RenderData&>(legacy);
+    return layer;
+}
+
+ProjectConfig default_project() {
+    const RenderConfig legacy = default_config();
+    ProjectConfig project;
+    project.uuid = generate_uuid();
+    project.canvas.width = legacy.width;
+    project.canvas.height = legacy.height;
+    project.canvas.block_size = legacy.block_size;
+    project.canvas.total_frames = legacy.total_frames;
+    project.canvas.fps = legacy.fps;
+    project.output = legacy.output;
+    project.layers.push_back(default_layer(0));
+    return project;
+}
+
+RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
+                                 const ExportConfig& output,
+                                 const RenderData& render) {
+    RenderConfig config;
+    static_cast<RenderData&>(config) = render;
+    config.width = canvas.width;
+    config.height = canvas.height;
+    config.block_size = canvas.block_size;
+    config.total_frames = canvas.total_frames;
+    config.fps = canvas.fps;
+    config.output = output;
+    return config;
+}
+
+std::uint64_t allocate_id(const RenderData& render) {
     std::unordered_set<std::uint64_t> used;
-    used.reserve(config.waves.size() + config.swings.size() + config.effects.size());
+    used.reserve(render.waves.size() + render.swings.size() + render.effects.size());
     std::uint64_t maximum = 0;
     const auto remember = [&](std::uint64_t id) {
         if (id != 0) {
@@ -770,9 +808,9 @@ std::uint64_t allocate_id(const RenderConfig& config) {
             maximum = std::max(maximum, id);
         }
     };
-    for (const WaveConfig& wave : config.waves) remember(wave.id);
-    for (const SwingConfig& swing : config.swings) remember(swing.id);
-    for (const EffectConfig& effect : config.effects) remember(effect.id);
+    for (const WaveConfig& wave : render.waves) remember(wave.id);
+    for (const SwingConfig& swing : render.swings) remember(swing.id);
+    for (const EffectConfig& effect : render.effects) remember(effect.id);
 
     if (maximum != std::numeric_limits<std::uint64_t>::max()) {
         return maximum + 1U;
@@ -783,6 +821,31 @@ std::uint64_t allocate_id(const RenderConfig& config) {
         }
     }
     return 0;
+}
+
+std::uint64_t allocate_id(const RenderConfig& config) {
+    return allocate_id(static_cast<const RenderData&>(config));
+}
+
+std::uint64_t allocate_layer_file_id(const ProjectConfig& project) {
+    std::unordered_set<std::uint64_t> used;
+    used.reserve(project.layers.size());
+    std::uint64_t maximum = 0;
+    for (const LayerConfig& layer : project.layers) {
+        used.insert(layer.file_id);
+        maximum = std::max(maximum, layer.file_id);
+    }
+    if (project.layers.empty()) {
+        return 0;
+    }
+    if (maximum != std::numeric_limits<std::uint64_t>::max()) {
+        return maximum + 1U;
+    }
+    for (std::uint64_t candidate = 0;; ++candidate) {
+        if (used.find(candidate) == used.end()) {
+            return candidate;
+        }
+    }
 }
 
 ValidationResult validate_impl(const RenderConfig& config, bool include_export) {
@@ -960,7 +1023,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
         const bool has_transparent_surface =
             surface_has_render_work(config.surface)
             && config.surface.mapping != SurfaceMapping::Plane;
-        if (!config.alpha.enabled
+        if (!config.alpha.enabled && !config.output.write_alpha
             && (has_transparent_edge_effect || has_transparent_surface)) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
@@ -1047,6 +1110,14 @@ ValidationResult validate(const RenderConfig& config) {
 
 namespace {
 
+struct RenderCancelled final {};
+
+void throw_if_cancelled(const std::atomic_bool* cancel) {
+    if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+        throw RenderCancelled{};
+    }
+}
+
 double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
     if (!config.alpha.enabled) {
         return 1.0;
@@ -1066,8 +1137,11 @@ double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
 }
 
 void generate_base_image(const RenderConfig& config, double loop_phase,
-                         double motion_phase, Image& image) {
+                         double motion_phase, Image& image,
+                         const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     ensure_image(image, config.width, config.height);
+    throw_if_cancelled(cancel);
     const double short_side = static_cast<double>(std::min(config.width, config.height));
     double center_x = 0.5 * static_cast<double>(config.width);
     double center_y = 0.5 * static_cast<double>(config.height);
@@ -1082,8 +1156,13 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     const double ghost_phase = motion_phase - radians(config.ghost_lag_degrees);
     const double breath = 0.85 + 0.35 * std::sin(loop_phase);
 
+    std::size_t block_counter = 0U;
     for (int block_y = 0; block_y < config.height; block_y += config.block_size) {
+        throw_if_cancelled(cancel);
         for (int block_x = 0; block_x < config.width; block_x += config.block_size) {
+            if ((block_counter++ & 63U) == 0U) {
+                throw_if_cancelled(cancel);
+            }
             const double height_here = wave_height(config, block_x, block_y,
                                                    loop_phase, motion_phase);
             const double height_right = wave_height(config,
@@ -1147,6 +1226,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             const int end_x = std::min(block_x + config.block_size, config.width);
             const int end_y = std::min(block_y + config.block_size, config.height);
             for (int y = block_y; y < end_y; ++y) {
+                throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
                     Color output = base;
                     output.a = alpha_at(config, x, y, loop_phase);
@@ -1165,8 +1245,11 @@ double effect_phase(const EffectConfig& effect, double loop_phase,
 }
 
 void apply_coordinate_effect(const Image& source, Image& destination,
-                             const EffectConfig& effect, double phase) {
+                             const EffectConfig& effect, double phase,
+                             const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     ensure_image(destination, source.width, source.height);
+    throw_if_cancelled(cancel);
     const double short_side = static_cast<double>(std::min(source.width, source.height));
     const double center_x = effect.center_x * static_cast<double>(source.width - 1);
     const double center_y = effect.center_y * static_cast<double>(source.height - 1);
@@ -1202,6 +1285,7 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                                     : zoom_scale_a;
 
     for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
         for (int x = 0; x < source.width; ++x) {
             double sample_x = static_cast<double>(x);
             double sample_y = static_cast<double>(y);
@@ -1273,8 +1357,10 @@ void apply_coordinate_effect(const Image& source, Image& destination,
 
 void apply_block_scale(const Image& source, Image& destination,
                        const EffectConfig& effect, double phase,
-                       int base_block_size) {
+                       int base_block_size, const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     ensure_image(destination, source.width, source.height);
+    throw_if_cancelled(cancel);
 
     double travel = 0.5 - 0.5 * std::cos(phase);
     const int quantization_steps = static_cast<int>(std::llround(effect.secondary));
@@ -1291,13 +1377,19 @@ void apply_block_scale(const Image& source, Image& destination,
                         requested_size, static_cast<double>(maximum_size))))));
     const double amount = clamp_value(effect.intensity, 0.0, 1.0);
 
+    std::size_t block_counter = 0U;
     for (int block_y = 0; block_y < source.height; block_y += block_size) {
+        throw_if_cancelled(cancel);
         const int end_y = std::min(block_y + block_size, source.height);
         for (int block_x = 0; block_x < source.width; block_x += block_size) {
+            if ((block_counter++ & 63U) == 0U) {
+                throw_if_cancelled(cancel);
+            }
             const int end_x = std::min(block_x + block_size, source.width);
             Color average;
             std::size_t sample_count = 0U;
             for (int y = block_y; y < end_y; ++y) {
+                throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
                     const Color sample = load_color(source, x, y);
                     average.r += sample.r;
@@ -1313,6 +1405,7 @@ void apply_block_scale(const Image& source, Image& destination,
             average.b *= reciprocal;
             average.a *= reciprocal;
             for (int y = block_y; y < end_y; ++y) {
+                throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
                     store_color(destination, x, y,
                                 blend_straight_alpha(load_color(source, x, y),
@@ -1332,9 +1425,13 @@ double bloom_weight(double luminance, double threshold, double soft_knee) {
 }
 
 void extract_bright(const Image& source, Image& bright,
-                    double threshold, double soft_knee) {
+                    double threshold, double soft_knee,
+                    const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     ensure_image(bright, source.width, source.height);
+    throw_if_cancelled(cancel);
     for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
         for (int x = 0; x < source.width; ++x) {
             const Color input = load_color(source, x, y);
             const double luminance = 0.2126 * input.r + 0.7152 * input.g + 0.0722 * input.b;
@@ -1346,13 +1443,17 @@ void extract_bright(const Image& source, Image& bright,
 }
 
 void blur_nine_tap(const Image& source, Image& destination,
-                   double radius, bool horizontal) {
+                   double radius, bool horizontal,
+                   const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     ensure_image(destination, source.width, source.height);
+    throw_if_cancelled(cancel);
     constexpr std::array<double, 9> weights = {
         0.02763055, 0.06628225, 0.12383154, 0.18017382, 0.20416369,
         0.18017382, 0.12383154, 0.06628225, 0.02763055};
     const double spacing = radius / 4.0;
     for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
         for (int x = 0; x < source.width; ++x) {
             Color accumulated;
             for (int tap = -4; tap <= 4; ++tap) {
@@ -1385,7 +1486,9 @@ void blur_nine_tap(const Image& source, Image& destination,
 }
 
 void apply_glow(Image& image, Image& scratch, Image& auxiliary,
-                const EffectConfig& effect, double phase) {
+                const EffectConfig& effect, double phase,
+                const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     const double pulse_depth = clamp_value(std::fabs(effect.secondary), 0.0, 1.0);
     const double pulse = 0.5 + 0.5 * std::sin(phase);
     const double animated_intensity = effect.intensity
@@ -1393,10 +1496,11 @@ void apply_glow(Image& image, Image& scratch, Image& auxiliary,
     if (animated_intensity <= 1.0e-12 || effect.radius_pixels <= 1.0e-12) {
         return;
     }
-    extract_bright(image, scratch, effect.threshold, effect.soft_knee);
-    blur_nine_tap(scratch, auxiliary, effect.radius_pixels, true);
-    blur_nine_tap(auxiliary, scratch, effect.radius_pixels, false);
+    extract_bright(image, scratch, effect.threshold, effect.soft_knee, cancel);
+    blur_nine_tap(scratch, auxiliary, effect.radius_pixels, true, cancel);
+    blur_nine_tap(auxiliary, scratch, effect.radius_pixels, false, cancel);
     for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
         for (int x = 0; x < image.width; ++x) {
             Color original = load_color(image, x, y);
             const Color glow = load_color(scratch, x, y);
@@ -1556,14 +1660,19 @@ std::pair<double, double> cube_uv(Vec3 point, Vec3 normal) {
 
 bool apply_surface_mapping(const Image& source, Image& destination,
                            const SurfaceConfig& surface, double loop_phase,
-                           std::string* error) {
+                           std::string* error,
+                           const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     if (surface.mapping == SurfaceMapping::CustomObj) {
-        return detail::apply_obj_surface_mapping(
+        const bool rendered = detail::apply_obj_surface_mapping(
             source, destination, surface.obj_path, surface.rotations_per_loop,
             surface.phase_degrees, surface.curvature, surface.lighting,
-            loop_phase, error);
+            loop_phase, error, cancel);
+        throw_if_cancelled(cancel);
+        return rendered;
     }
     ensure_image(destination, source.width, source.height);
+    throw_if_cancelled(cancel);
     const double phase = static_cast<double>(surface.rotations_per_loop) * loop_phase
                          + radians(surface.phase_degrees);
     const double curvature = clamp_value(surface.curvature, 0.0, 1.0);
@@ -1572,6 +1681,7 @@ bool apply_surface_mapping(const Image& source, Image& destination,
     const double center_y = 0.5 * static_cast<double>(source.height - 1);
 
     for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
         for (int x = 0; x < source.width; ++x) {
             const double screen_u = source.width > 1
                                       ? static_cast<double>(x) / (source.width - 1)
@@ -1785,12 +1895,15 @@ std::array<double, 3> hsv_to_rgb(double hue, double saturation, double value) {
     return {red + match, green + match, blue + match};
 }
 
-void apply_quantization(Image& image, const QuantizationConfig& quantization) {
+void apply_quantization(Image& image, const QuantizationConfig& quantization,
+                        const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
     if (!quantization.enabled || quantization.mix <= 0.0) {
         return;
     }
     const double amount = quantization.mix;
     for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
         for (int x = 0; x < image.width; ++x) {
             Color color = load_color(image, x, y);
             Color quantized = color;
@@ -1838,9 +1951,13 @@ void apply_quantization(Image& image, const QuantizationConfig& quantization) {
 
 } // namespace
 
-bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
-                           Image& destination, std::string* error) {
+bool render_frame_at_phase_cancellable(const RenderConfig& config,
+                                       double normalized_phase,
+                                       Image& destination,
+                                       const std::atomic_bool* cancel,
+                                       std::string* error) {
     try {
+        throw_if_cancelled(cancel);
         const ValidationResult validation = validate_impl(config, false);
         if (!validation.ok) {
             set_error(error, validation.message);
@@ -1856,21 +1973,22 @@ bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
         Image current;
         Image scratch;
         Image auxiliary;
-        generate_base_image(config, loop_phase, motion_phase, current);
+        generate_base_image(config, loop_phase, motion_phase, current, cancel);
 
         for (const EffectConfig& effect : config.effects) {
+            throw_if_cancelled(cancel);
             if (!effect_has_render_work(effect)) {
                 continue;
             }
             const double phase = effect_phase(effect, loop_phase, motion_phase);
             if (effect.type == EffectType::Glow) {
-                apply_glow(current, scratch, auxiliary, effect, phase);
+                apply_glow(current, scratch, auxiliary, effect, phase, cancel);
             } else if (effect.type == EffectType::BlockScale) {
                 apply_block_scale(current, scratch, effect, phase,
-                                  config.block_size);
+                                  config.block_size, cancel);
                 current.pixels.swap(scratch.pixels);
             } else {
-                apply_coordinate_effect(current, scratch, effect, phase);
+                apply_coordinate_effect(current, scratch, effect, phase, cancel);
                 current.pixels.swap(scratch.pixels);
             }
         }
@@ -1888,18 +2006,22 @@ bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
                 scratch = Image{};
             }
             if (!apply_surface_mapping(current, scratch, config.surface,
-                                       loop_phase, error)) {
+                                       loop_phase, error, cancel)) {
                 return false;
             }
             current.pixels.swap(scratch.pixels);
         }
-        apply_quantization(current, config.quantization);
+        apply_quantization(current, config.quantization, cancel);
+        throw_if_cancelled(cancel);
 
         destination.width = current.width;
         destination.height = current.height;
         destination.pixels.swap(current.pixels);
         set_error(error, std::string{});
         return true;
+    } catch (const RenderCancelled&) {
+        set_error(error, "Rendering was cancelled; destination was unchanged.");
+        return false;
     } catch (const std::bad_alloc&) {
         set_error(error, "The renderer could not allocate its validated working buffers.");
         return false;
@@ -1912,8 +2034,20 @@ bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
     }
 }
 
-bool render_frame(const RenderConfig& config, int frame_index,
-                  Image& destination, std::string* error) {
+bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
+                           Image& destination, std::string* error) {
+    return render_frame_at_phase_cancellable(config, normalized_phase,
+                                             destination, nullptr, error);
+}
+
+bool render_frame_cancellable(const RenderConfig& config, int frame_index,
+                              Image& destination,
+                              const std::atomic_bool* cancel,
+                              std::string* error) {
+    if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+        set_error(error, "Rendering was cancelled; destination was unchanged.");
+        return false;
+    }
     if (config.total_frames <= 0) {
         set_error(error, "Frame count must be positive.");
         return false;
@@ -1922,10 +2056,17 @@ bool render_frame(const RenderConfig& config, int frame_index,
     if (wrapped_frame < 0) {
         wrapped_frame += config.total_frames;
     }
-    return render_frame_at_phase(config,
-                                 static_cast<double>(wrapped_frame)
-                                     / static_cast<double>(config.total_frames),
-                                 destination, error);
+    return render_frame_at_phase_cancellable(
+        config,
+        static_cast<double>(wrapped_frame)
+            / static_cast<double>(config.total_frames),
+        destination, cancel, error);
+}
+
+bool render_frame(const RenderConfig& config, int frame_index,
+                  Image& destination, std::string* error) {
+    return render_frame_cancellable(config, frame_index, destination, nullptr,
+                                    error);
 }
 
 } // namespace pvt
