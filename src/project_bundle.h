@@ -70,6 +70,15 @@ struct ProjectDocument {
 
 ProjectDocument default_project_document();
 
+// Builds a detached, independent document from one current project snapshot.
+// The project and every layer receive fresh UUIDs; bundle history, source
+// association, stale-write tokens, and compatibility provenance are not
+// copied. Saving the result therefore creates a new version-0 bundle and
+// cannot overwrite the source project through an inherited identity.
+bool make_independent_project_copy(const ProjectConfig& project,
+                                   ProjectDocument& destination,
+                                   std::string* error = nullptr);
+
 // Legacy imports never associate the returned document with the .pvt path, so
 // a later project save cannot overwrite the imported setup.
 bool import_legacy_setup(const std::string& path,

@@ -22,12 +22,17 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 3;
+constexpr std::uint32_t kSetupFormatVersion = 4;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
 constexpr std::size_t kMaximumLayers = 64;
+constexpr std::size_t kMaximumPaletteColors = 256;
+constexpr std::size_t kBuiltInPaletteCount = 6;
 constexpr std::size_t kMaximumSetupBytes = 4U * 1024U * 1024U;
+constexpr std::size_t kMaximumSequenceWorkers = 256;
+constexpr std::size_t kDefaultSequenceMemoryBudgetBytes =
+    std::size_t{2} << 30U;
 
 enum class EdgeMode : std::uint8_t {
     Alpha = 0,
@@ -43,6 +48,14 @@ enum class EffectType : std::uint8_t {
     FlagWave,
     Glow,
     BlockScale
+};
+
+// Texture-space effects run before surface wrapping. Surface-space effects run
+// after wrapping, so coordinate effects move/deform the rendered primitive and
+// its silhouette instead of merely changing the texture painted on it.
+enum class EffectSpace : std::uint8_t {
+    Texture = 0,
+    Surface
 };
 
 enum class DitherMethod : std::uint8_t {
@@ -70,6 +83,15 @@ enum class QuantizationMode : std::uint8_t {
     Rgb = 0,
     Luminance,
     Hue
+};
+
+enum class MirrorMode : std::uint8_t {
+    None = 0,
+    LeftToRight,
+    RightToLeft,
+    TopToBottom,
+    BottomToTop,
+    FourWay
 };
 
 enum class BlendMode : std::uint8_t {
@@ -114,6 +136,13 @@ struct SwingConfig {
     int cycles_per_loop = 4;
     double phase_degrees = 0.0;
     double shape = 0.5;
+
+    // A zero radius preserves the original whole-layer clock modulation.
+    // Positive values localize the swing around this normalized center; the
+    // radius is expressed as a fraction of the shorter canvas edge.
+    double center_x = 0.5;
+    double center_y = 0.5;
+    double radius = 0.0;
 };
 
 // Effects share a compact parameter block so clients can edit and reorder a
@@ -143,6 +172,7 @@ struct EffectConfig {
     std::uint64_t id = 0;
     std::string name;
     EffectType type = EffectType::Ripple;
+    EffectSpace space = EffectSpace::Texture;
     bool enabled = false;
     bool synchronized = true;
     int cycles_per_loop = 1;
@@ -159,6 +189,32 @@ struct EffectConfig {
     double radius_pixels = 12.0;
     double threshold = 0.65;
     double soft_knee = 0.25;
+
+    // A zero area radius applies the effect to the full layer, preserving the
+    // legacy behavior. Positive values use a smoothly feathered circular area
+    // around center_x/center_y, measured against the shorter canvas edge.
+    double area_radius = 0.0;
+};
+
+// Palette component values are authored in display/sRGB space. Rendering
+// converts them to linear light before choosing the nearest color. Alpha is
+// deliberately independent so palette changes never rewrite layer opacity.
+struct PaletteColor {
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+};
+
+struct PaletteConfig {
+    bool enabled = false;
+    std::string name = "Custom";
+    std::vector<PaletteColor> colors;
+};
+
+struct LayerTransformConfig {
+    bool flip_horizontal = false;
+    bool flip_vertical = false;
+    MirrorMode mirror = MirrorMode::None;
 };
 
 struct AlphaConfig {
@@ -250,6 +306,8 @@ struct RenderData {
     AlphaConfig alpha;
     QuantizationConfig quantization;
     SurfaceConfig surface;
+    PaletteConfig palette;
+    LayerTransformConfig transform;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -308,6 +366,23 @@ struct ValidationResult {
 
 using ProgressCallback = std::function<bool(int completed_frames, int total_frames)>;
 
+// Sequence rendering execution policy. `worker_count == 0` selects the host's
+// reported hardware concurrency; a positive value is an upper bound rather
+// than a promise to oversubscribe memory. The renderer also limits workers by
+// the frame count, kMaximumSequenceWorkers, and the validated per-frame peak
+// estimate. `memory_budget_bytes == 0` selects the conservative 2 GiB default.
+// A valid render always receives at least one worker even when its single-frame
+// estimate exceeds the aggregate budget.
+//
+// Workers render and encode independently. Final output names are installed
+// atomically in ascending frame order, and progress callbacks are serialized on
+// the calling thread after each installation. This preserves legacy callback
+// cancellation and visible output-order semantics.
+struct SequenceRenderOptions {
+    std::size_t worker_count = 0;
+    std::size_t memory_budget_bytes = 0;
+};
+
 PVT_API RenderConfig default_config();
 PVT_API LayerConfig default_layer(std::size_t index = 0);
 PVT_API ProjectConfig default_project();
@@ -318,6 +393,8 @@ PVT_API std::string generate_uuid();
 PVT_API WaveConfig default_wave(std::size_t index = 0);
 PVT_API SwingConfig default_swing(std::size_t index = 0);
 PVT_API EffectConfig default_effect(EffectType type);
+// Built-in palette indexes beyond the final preset wrap.
+PVT_API PaletteConfig default_palette(std::size_t index = 0);
 PVT_API std::uint64_t allocate_id(const RenderData& render);
 PVT_API std::uint64_t allocate_id(const RenderConfig& config);
 PVT_API std::uint64_t allocate_layer_file_id(const ProjectConfig& project);
@@ -384,9 +461,19 @@ PVT_API bool render_sequence(const RenderConfig& config,
                              const ProgressCallback& progress = {},
                              const std::atomic_bool* cancel = nullptr,
                              std::string* error = nullptr);
+PVT_API bool render_sequence(const RenderConfig& config,
+                             const SequenceRenderOptions& options,
+                             const ProgressCallback& progress,
+                             const std::atomic_bool* cancel,
+                             std::string* error = nullptr);
 PVT_API bool render_project_sequence(const ProjectConfig& project,
                                      const ProgressCallback& progress = {},
                                      const std::atomic_bool* cancel = nullptr,
+                                     std::string* error = nullptr);
+PVT_API bool render_project_sequence(const ProjectConfig& project,
+                                     const SequenceRenderOptions& options,
+                                     const ProgressCallback& progress,
+                                     const std::atomic_bool* cancel,
                                      std::string* error = nullptr);
 
 // Save is atomic within the destination directory. Load is transactional: on
@@ -399,11 +486,13 @@ PVT_API bool load_setup(const std::string& path,
                         std::string* error = nullptr);
 
 PVT_API const char* effect_type_name(EffectType value);
+PVT_API const char* effect_space_name(EffectSpace value);
 PVT_API const char* edge_mode_name(EdgeMode value);
 PVT_API const char* dither_method_name(DitherMethod value);
 PVT_API const char* surface_mapping_name(SurfaceMapping value);
 PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
+PVT_API const char* mirror_mode_name(MirrorMode value);
 PVT_API const char* blend_mode_name(BlendMode value);
 
 } // namespace pvt

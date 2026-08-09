@@ -10,7 +10,7 @@
 namespace pvt::detail {
 namespace {
 
-constexpr std::uint32_t kLayerFormatVersion = 1U;
+constexpr std::uint32_t kLayerFormatVersion = 2U;
 constexpr std::uint32_t kRenderOutputFormatVersion = 1U;
 constexpr std::size_t kMaximumCodecLineBytes = 256U * 1024U;
 
@@ -33,9 +33,9 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 8U> prefixes{{
+    constexpr std::array<std::string_view, 10U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
-        "alpha.", "quantization.", "surface.",
+        "alpha.", "quantization.", "surface.", "palette.", "transform.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -154,6 +154,7 @@ bool filter_setup(const std::string& setup,
 bool synthesize_setup(const std::string& partial,
                       std::string_view expected_header,
                       bool partial_is_render,
+                      std::uint32_t setup_version,
                       std::string& destination,
                       std::string* error) {
     std::vector<std::string_view> partial_records;
@@ -184,8 +185,11 @@ bool synthesize_setup(const std::string& partial,
 
     std::vector<std::string_view> default_records;
     const std::string setup_header =
+        "PVT_SETUP\t" + std::to_string(setup_version);
+    const std::string current_setup_header =
         "PVT_SETUP\t" + std::to_string(kSetupFormatVersion);
-    if (!split_document(default_setup, setup_header, default_records, error)) {
+    if (!split_document(default_setup, current_setup_header,
+                        default_records, error)) {
         return false;
     }
 
@@ -251,10 +255,14 @@ bool deserialize_layer_config(const std::string& serialized,
                               std::string* error) {
     clear_error(error);
     try {
+        const bool legacy_layer = starts_with(serialized, "PVT_LAYER\t1\n")
+                                  || starts_with(serialized, "PVT_LAYER\t1\r\n");
+        const std::uint32_t layer_version = legacy_layer ? 1U : kLayerFormatVersion;
+        const std::uint32_t setup_version = legacy_layer ? 3U : kSetupFormatVersion;
         std::string setup;
         if (!synthesize_setup(serialized,
-                              "PVT_LAYER\t" + std::to_string(kLayerFormatVersion),
-                              true, setup, error)) {
+                              "PVT_LAYER\t" + std::to_string(layer_version),
+                              true, setup_version, setup, error)) {
             return false;
         }
         RenderConfig loaded;
@@ -309,7 +317,7 @@ bool deserialize_render_output_config(const std::string& serialized,
         if (!synthesize_setup(
                 serialized,
                 "PVT_RENDER_OUTPUT\t" + std::to_string(kRenderOutputFormatVersion),
-                false, setup, error)) {
+                false, kSetupFormatVersion, setup, error)) {
             return false;
         }
         RenderConfig loaded;

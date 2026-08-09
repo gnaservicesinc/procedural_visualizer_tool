@@ -7,15 +7,21 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <new>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -851,11 +857,22 @@ bool install_temporary(const fs::path& temporary,
     return true;
 }
 
-bool write_image_impl(const std::string& path,
-                      const Image& image,
-                      const RenderConfig& config,
-                      std::uint32_t deterministic_seed,
-                      std::string* error) {
+struct PreparedOutput {
+    TemporaryOutput temporary;
+    fs::path destination;
+    fs::path parent;
+    bool overwrite = false;
+};
+
+bool prepare_image_output(const std::string& path,
+                          const Image& image,
+                          const RenderConfig& config,
+                          std::uint32_t deterministic_seed,
+                          PreparedOutput* prepared,
+                          std::string* error) {
+    if (prepared == nullptr) {
+        return fail(error, "The prepared output destination is missing.");
+    }
     const ValidationResult validation = validate(config);
     if (!validation.ok) {
         return fail(error, validation.message.empty()
@@ -920,14 +937,17 @@ bool write_image_impl(const std::string& path,
 #endif
     }
 
-    TemporaryOutput temporary;
-    if (!temporary.open_next_to(destination, error)) {
+    prepared->destination = destination;
+    prepared->parent = parent;
+    prepared->overwrite = config.output.overwrite_existing;
+    if (!prepared->temporary.open_next_to(destination, error)) {
         return false;
     }
 
     const bool encoded = config.output.bit_depth == 32
-                             ? write_exr_stream(temporary.file(), image, config, error)
-                             : write_png_stream(temporary.file(), image, config,
+                             ? write_exr_stream(prepared->temporary.file(), image,
+                                                config, error)
+                             : write_png_stream(prepared->temporary.file(), image, config,
                                                 deterministic_seed, error);
     if (!encoded) {
         return false;
@@ -936,24 +956,39 @@ bool write_image_impl(const std::string& path,
     // Apply the final mode after encoding: on some POSIX systems, writing a
     // file can clear its set-user-ID or set-group-ID bits.
     if (preserve_permissions
-        && !temporary.set_permissions(preserved_permissions, error)) {
+        && !prepared->temporary.set_permissions(preserved_permissions, error)) {
         return false;
     }
 #endif
-    if (!temporary.close_and_sync(error)) {
+    if (!prepared->temporary.close_and_sync(error)) {
         return false;
     }
-    if (!install_temporary(temporary.path(), destination,
-                           config.output.overwrite_existing, error)) {
+    return true;
+}
+
+bool install_prepared_output(PreparedOutput& prepared, std::string* error) {
+    if (!install_temporary(prepared.temporary.path(), prepared.destination,
+                           prepared.overwrite, error)) {
         return false;
     }
-    temporary.dismiss();
+    prepared.temporary.dismiss();
 #if !defined(_WIN32)
     // The file data was synced before installation. Sync the containing
     // directory as well so the new or replaced name is durable across a crash.
-    sync_directory_best_effort(parent);
+    sync_directory_best_effort(prepared.parent);
 #endif
     return true;
+}
+
+bool write_image_impl(const std::string& path,
+                      const Image& image,
+                      const RenderConfig& config,
+                      std::uint32_t deterministic_seed,
+                      std::string* error) {
+    PreparedOutput prepared;
+    return prepare_image_output(path, image, config, deterministic_seed,
+                                &prepared, error)
+           && install_prepared_output(prepared, error);
 }
 
 const char* extension_for_bit_depth(int bit_depth) {
@@ -1024,7 +1059,256 @@ bool report_progress(const ProgressCallback& progress,
     return true;
 }
 
+bool select_sequence_worker_count(const SequenceRenderOptions& options,
+                                  int total_frames,
+                                  std::size_t estimated_peak_bytes,
+                                  std::size_t* worker_count,
+                                  std::string* error) {
+    if (options.worker_count > kMaximumSequenceWorkers) {
+        return fail(error, "Sequence worker count cannot exceed "
+                           + std::to_string(kMaximumSequenceWorkers) + ".");
+    }
+    const std::size_t hardware_workers =
+        std::max<std::size_t>(1U, std::thread::hardware_concurrency());
+    const std::size_t requested = options.worker_count == 0U
+                                      ? hardware_workers
+                                      : options.worker_count;
+    const std::size_t budget = options.memory_budget_bytes == 0U
+                                   ? kDefaultSequenceMemoryBudgetBytes
+                                   : options.memory_budget_bytes;
+    const std::size_t memory_limited = estimated_peak_bytes == 0U
+                                           ? requested
+                                           : std::max<std::size_t>(
+                                                 1U, budget / estimated_peak_bytes);
+    *worker_count = std::max<std::size_t>(
+        1U, std::min({requested, memory_limited,
+                      static_cast<std::size_t>(total_frames),
+                      kMaximumSequenceWorkers}));
+    return true;
+}
+
+enum class FrameFailureStage {
+    None,
+    Render,
+    Encode
+};
+
+struct FrameWorkResult {
+    bool ok = false;
+    FrameFailureStage failure_stage = FrameFailureStage::None;
+    std::string error;
+    std::exception_ptr exception;
+    std::unique_ptr<PreparedOutput> prepared;
+};
+
+struct FrameWorkerSlot {
+    bool ready = false;
+    int frame_index = -1;
+    FrameWorkResult result;
+};
+
+class SequenceWorkerJoiner {
+public:
+    SequenceWorkerJoiner(std::vector<std::thread>& threads,
+                         std::atomic_bool& stop,
+                         std::condition_variable& wake)
+        : threads_(threads), stop_(stop), wake_(wake) {}
+
+    SequenceWorkerJoiner(const SequenceWorkerJoiner&) = delete;
+    SequenceWorkerJoiner& operator=(const SequenceWorkerJoiner&) = delete;
+
+    ~SequenceWorkerJoiner() {
+        stop_.store(true, std::memory_order_relaxed);
+        wake_.notify_all();
+        for (std::thread& thread : threads_) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
+
+private:
+    std::vector<std::thread>& threads_;
+    std::atomic_bool& stop_;
+    std::condition_variable& wake_;
+};
+
+std::string worker_exception_message(const std::exception_ptr& exception) {
+    try {
+        if (exception != nullptr) {
+            std::rethrow_exception(exception);
+        }
+    } catch (const std::bad_alloc&) {
+        return "worker ran out of memory";
+    } catch (const std::exception& value) {
+        return value.what();
+    } catch (...) {
+        return "worker failed with an unknown exception";
+    }
+    return "worker failed without an error";
+}
+
+template <typename RenderFrame>
+bool render_prepared_sequence(int total_frames,
+                              const RenderConfig& output_config,
+                              std::size_t estimated_peak_bytes,
+                              const SequenceRenderOptions& options,
+                              const ProgressCallback& progress,
+                              const std::atomic_bool* cancel,
+                              const char* sequence_name,
+                              const char* frame_name,
+                              RenderFrame render_frame,
+                              std::string* error) {
+    std::size_t worker_count = 0U;
+    if (!select_sequence_worker_count(options, total_frames,
+                                      estimated_peak_bytes, &worker_count, error)) {
+        return false;
+    }
+
+    std::atomic_bool stop {false};
+    std::atomic<int> next_frame {0};
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::vector<FrameWorkerSlot> slots(worker_count);
+    std::vector<std::thread> threads;
+    threads.reserve(worker_count);
+    std::exception_ptr scheduler_exception;
+    SequenceWorkerJoiner joiner(threads, stop, wake);
+
+    for (std::size_t worker = 0U; worker < worker_count; ++worker) {
+        threads.emplace_back([&, worker] {
+            try {
+                Image image;
+                for (;;) {
+                    {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        wake.wait(lock, [&] {
+                            return stop.load(std::memory_order_relaxed)
+                                   || !slots[worker].ready;
+                        });
+                    }
+                    if (stop.load(std::memory_order_relaxed)) {
+                        return;
+                    }
+
+                    const int frame_index =
+                        next_frame.fetch_add(1, std::memory_order_relaxed);
+                    if (frame_index >= total_frames) {
+                        return;
+                    }
+
+                    FrameWorkResult result;
+                    result.failure_stage = FrameFailureStage::Render;
+                    try {
+                        if (render_frame(frame_index, image, &stop, &result.error)) {
+                            result.failure_stage = FrameFailureStage::Encode;
+                            result.prepared = std::make_unique<PreparedOutput>();
+                            fs::path frame_path;
+                            if (build_frame_path(output_config, frame_index,
+                                                 &frame_path, &result.error)
+                                && prepare_image_output(
+                                    detail::path_to_utf8(frame_path), image,
+                                    output_config, kSequenceDitherSeed,
+                                    result.prepared.get(), &result.error)) {
+                                result.ok = true;
+                                result.failure_stage = FrameFailureStage::None;
+                            }
+                        }
+                    } catch (...) {
+                        result.exception = std::current_exception();
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        slots[worker].frame_index = frame_index;
+                        slots[worker].result = std::move(result);
+                        slots[worker].ready = true;
+                    }
+                    wake.notify_all();
+                }
+            } catch (...) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    if (scheduler_exception == nullptr) {
+                        scheduler_exception = std::current_exception();
+                    }
+                }
+                stop.store(true, std::memory_order_relaxed);
+                wake.notify_all();
+            }
+        });
+    }
+
+    for (int expected_frame = 0; expected_frame < total_frames; ++expected_frame) {
+        FrameWorkResult result;
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            for (;;) {
+                if (scheduler_exception != nullptr) {
+                    return fail(error, std::string(sequence_name)
+                                           + " worker failed: "
+                                           + worker_exception_message(
+                                                 scheduler_exception) + ".");
+                }
+                if (cancelled(cancel)) {
+                    stop.store(true, std::memory_order_relaxed);
+                    wake.notify_all();
+                    return fail(error, std::string(sequence_name)
+                                           + " was cancelled.");
+                }
+
+                auto ready = std::find_if(
+                    slots.begin(), slots.end(),
+                    [expected_frame](const FrameWorkerSlot& slot) {
+                        return slot.ready && slot.frame_index == expected_frame;
+                    });
+                if (ready != slots.end()) {
+                    result = std::move(ready->result);
+                    ready->ready = false;
+                    ready->frame_index = -1;
+                    break;
+                }
+                wake.wait_for(lock, std::chrono::milliseconds(10));
+            }
+        }
+        wake.notify_all();
+
+        if (result.exception != nullptr) {
+            return fail(error, "Could not process " + std::string(frame_name) + " "
+                                   + std::to_string(expected_frame) + ": "
+                                   + worker_exception_message(result.exception) + ".");
+        }
+        if (!result.ok) {
+            const char* action = result.failure_stage == FrameFailureStage::Encode
+                                     ? "export"
+                                     : "render";
+            return fail(error, "Could not " + std::string(action) + " "
+                                   + frame_name + " "
+                                   + std::to_string(expected_frame) + ": "
+                                   + result.error);
+        }
+        if (cancelled(cancel)) {
+            return fail(error, std::string(sequence_name) + " was cancelled.");
+        }
+
+        std::string install_error;
+        if (result.prepared == nullptr
+            || !install_prepared_output(*result.prepared, &install_error)) {
+            return fail(error, "Could not export " + std::string(frame_name) + " "
+                                   + std::to_string(expected_frame) + ": "
+                                   + (install_error.empty()
+                                          ? "the prepared output is missing"
+                                          : install_error));
+        }
+        if (!report_progress(progress, expected_frame + 1, total_frames, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool render_sequence_impl(const RenderConfig& config,
+                          const SequenceRenderOptions& options,
                           const ProgressCallback& progress,
                           const std::atomic_bool* cancel,
                           std::string* error) {
@@ -1042,8 +1326,8 @@ bool render_sequence_impl(const RenderConfig& config,
         return false;
     }
 
-    // Inspect every final name before rendering. write_image repeats the check
-    // atomically at install time so another process cannot exploit the gap.
+    // Inspect every final name before rendering. Installation repeats the
+    // check atomically so another process cannot exploit the gap.
     for (int frame_index = 0; frame_index < config.total_frames; ++frame_index) {
         if (cancelled(cancel)) {
             return fail(error, "Rendering was cancelled during output preflight.");
@@ -1073,35 +1357,20 @@ bool render_sequence_impl(const RenderConfig& config,
         }
     }
 
-    Image image;
-    for (int frame_index = 0; frame_index < config.total_frames; ++frame_index) {
-        if (cancelled(cancel)) {
-            return fail(error, "Rendering was cancelled.");
-        }
-
-        std::string frame_error;
-        if (!render_frame_cancellable(config, frame_index, image, cancel,
-                                      &frame_error)) {
-            return fail(error, "Could not render frame " + std::to_string(frame_index)
-                               + ": " + frame_error);
-        }
-        fs::path path;
-        if (!build_frame_path(config, frame_index, &path, error)) {
-            return false;
-        }
-        if (!write_image(detail::path_to_utf8(path), image, config, kSequenceDitherSeed,
-                         &frame_error)) {
-            return fail(error, "Could not export frame " + std::to_string(frame_index)
-                               + ": " + frame_error);
-        }
-        if (!report_progress(progress, frame_index + 1, config.total_frames, error)) {
-            return false;
-        }
-    }
-    return true;
+    return render_prepared_sequence(
+        config.total_frames, config, validation.estimated_peak_bytes,
+        options, progress, cancel, "Rendering", "frame",
+        [&config](int frame_index, Image& image,
+                  const std::atomic_bool* worker_cancel,
+                  std::string* frame_error) {
+            return render_frame_cancellable(config, frame_index, image,
+                                            worker_cancel, frame_error);
+        },
+        error);
 }
 
 bool render_project_sequence_impl(const ProjectConfig& project,
+                                  const SequenceRenderOptions& options,
                                   const ProgressCallback& progress,
                                   const std::atomic_bool* cancel,
                                   std::string* error) {
@@ -1163,36 +1432,17 @@ bool render_project_sequence_impl(const ProjectConfig& project,
         }
     }
 
-    Image image;
-    for (int frame_index = 0; frame_index < project.canvas.total_frames;
-         ++frame_index) {
-        if (cancelled(cancel)) {
-            return fail(error, "Project rendering was cancelled.");
-        }
-
-        std::string frame_error;
-        if (!render_project_frame(project, frame_index, image, cancel,
-                                  &frame_error)) {
-            return fail(error, "Could not render project frame "
-                                   + std::to_string(frame_index) + ": "
-                                   + frame_error);
-        }
-        fs::path path;
-        if (!build_frame_path(output_config, frame_index, &path, error)) {
-            return false;
-        }
-        if (!write_image(detail::path_to_utf8(path), image, output_config,
-                         kSequenceDitherSeed, &frame_error)) {
-            return fail(error, "Could not export project frame "
-                                   + std::to_string(frame_index) + ": "
-                                   + frame_error);
-        }
-        if (!report_progress(progress, frame_index + 1,
-                             project.canvas.total_frames, error)) {
-            return false;
-        }
-    }
-    return true;
+    return render_prepared_sequence(
+        project.canvas.total_frames, output_config,
+        validation.estimated_peak_bytes, options, progress, cancel,
+        "Project rendering", "project frame",
+        [&project](int frame_index, Image& image,
+                   const std::atomic_bool* worker_cancel,
+                   std::string* frame_error) {
+            return render_project_frame(project, frame_index, image,
+                                        worker_cancel, frame_error);
+        },
+        error);
 }
 
 } // namespace
@@ -1220,9 +1470,17 @@ bool render_sequence(const RenderConfig& config,
                      const ProgressCallback& progress,
                      const std::atomic_bool* cancel,
                      std::string* error) {
+    return render_sequence(config, SequenceRenderOptions{}, progress, cancel, error);
+}
+
+bool render_sequence(const RenderConfig& config,
+                     const SequenceRenderOptions& options,
+                     const ProgressCallback& progress,
+                     const std::atomic_bool* cancel,
+                     std::string* error) {
     clear_error(error);
     try {
-        return render_sequence_impl(config, progress, cancel, error);
+        return render_sequence_impl(config, options, progress, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Sequence rendering ran out of memory.");
     } catch (const std::filesystem::filesystem_error& exception) {
@@ -1239,9 +1497,19 @@ bool render_project_sequence(const ProjectConfig& project,
                              const ProgressCallback& progress,
                              const std::atomic_bool* cancel,
                              std::string* error) {
+    return render_project_sequence(project, SequenceRenderOptions{}, progress,
+                                   cancel, error);
+}
+
+bool render_project_sequence(const ProjectConfig& project,
+                             const SequenceRenderOptions& options,
+                             const ProgressCallback& progress,
+                             const std::atomic_bool* cancel,
+                             std::string* error) {
     clear_error(error);
     try {
-        return render_project_sequence_impl(project, progress, cancel, error);
+        return render_project_sequence_impl(project, options, progress, cancel,
+                                            error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project sequence rendering ran out of memory.");
     } catch (const std::filesystem::filesystem_error& exception) {

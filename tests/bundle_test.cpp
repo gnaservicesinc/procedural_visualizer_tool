@@ -1,4 +1,5 @@
 #include "bundle_archive.h"
+#include "config_codec.h"
 #include "path_utf8.h"
 #include "project_bundle.h"
 
@@ -15,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,6 +158,76 @@ bool write_test_zip(const fs::path& path,
     return ok;
 }
 
+void test_layer_codec_backward_compatibility() {
+    pvt::RenderData original = pvt::default_layer().render;
+    original.waves.front().direction = 0.123;
+    original.swings.front().center_x = 0.31;
+    original.swings.front().center_y = 0.69;
+    original.swings.front().radius = 0.27;
+    original.effects.front().space = pvt::EffectSpace::Surface;
+    original.effects.front().area_radius = 0.36;
+    original.palette = pvt::default_palette(2U);
+    original.transform.flip_vertical = true;
+    original.transform.mirror = pvt::MirrorMode::RightToLeft;
+
+    std::string version_two;
+    std::string error;
+    CHECK(pvt::detail::serialize_layer_config(original, version_two, &error));
+    pvt::RenderData current_round_trip;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_two, current_round_trip, &error));
+    CHECK(current_round_trip.swings.front().radius == 0.27);
+    CHECK(current_round_trip.effects.front().space
+          == pvt::EffectSpace::Surface);
+    CHECK(current_round_trip.palette.name == "Vaporwave");
+    CHECK(current_round_trip.transform.mirror
+          == pvt::MirrorMode::RightToLeft);
+
+    // PVT_LAYER v1 carried the PVT_SETUP v3 render subset. Strip every v2-only
+    // record to emulate a real legacy layer rather than merely changing the
+    // header on a modern document.
+    std::istringstream input(version_two);
+    std::ostringstream legacy;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(input, line)));
+    CHECK(line == "PVT_LAYER\t2");
+    legacy << "PVT_LAYER\t1\n";
+    const auto has_suffix = [](const std::string& value,
+                               const std::string& suffix) {
+        return value.size() >= suffix.size()
+               && value.compare(value.size() - suffix.size(), suffix.size(),
+                                suffix) == 0;
+    };
+    while (std::getline(input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v2_only = key.rfind("palette.", 0U) == 0U
+                             || key.rfind("transform.", 0U) == 0U
+                             || (key.rfind("swings.", 0U) == 0U
+                                 && (has_suffix(key, ".center_x")
+                                     || has_suffix(key, ".center_y")
+                                     || has_suffix(key, ".radius")))
+                             || (key.rfind("effects.", 0U) == 0U
+                                 && (has_suffix(key, ".space")
+                                     || has_suffix(key, ".area_radius")));
+        if (!v2_only) legacy << line << '\n';
+    }
+
+    pvt::RenderData loaded = original;
+    CHECK(pvt::detail::deserialize_layer_config(
+        legacy.str(), loaded, &error));
+    CHECK(loaded.waves.front().direction == 0.123);
+    CHECK(loaded.swings.front().center_x == 0.5);
+    CHECK(loaded.swings.front().center_y == 0.5);
+    CHECK(loaded.swings.front().radius == 0.0);
+    CHECK(loaded.effects.front().space == pvt::EffectSpace::Texture);
+    CHECK(loaded.effects.front().area_radius == 0.0);
+    CHECK(!loaded.palette.enabled && loaded.palette.colors.empty());
+    CHECK(!loaded.transform.flip_horizontal
+          && !loaded.transform.flip_vertical);
+    CHECK(loaded.transform.mirror == pvt::MirrorMode::None);
+}
+
 void test_sha_and_archive_guards(const fs::path& directory) {
     std::string digest;
     std::string error;
@@ -274,6 +346,17 @@ void test_archive_compare_and_swap(const fs::path& directory) {
 void test_directory_versions_and_names(const fs::path& directory) {
     pvt::ProjectDocument document = pvt::default_project_document();
     document.project.name = "Fire: Night";
+    auto& initial_render = document.project.layers.front().render;
+    initial_render.swings.front().center_x = 0.31;
+    initial_render.swings.front().center_y = 0.69;
+    initial_render.swings.front().radius = 0.27;
+    initial_render.effects.front().space = pvt::EffectSpace::Surface;
+    initial_render.effects.front().center_x = 0.42;
+    initial_render.effects.front().center_y = 0.58;
+    initial_render.effects.front().area_radius = 0.36;
+    initial_render.palette = pvt::default_palette(2U);
+    initial_render.transform.flip_horizontal = true;
+    initial_render.transform.mirror = pvt::MirrorMode::TopToBottom;
     const std::string opened = document.last_opened_utc;
     const fs::path bundle = directory
                             / pvt::detail::path_from_utf8(
@@ -292,9 +375,22 @@ void test_directory_versions_and_names(const fs::path& directory) {
     pvt::ProjectDocument loaded;
     CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
     CHECK(loaded.project.name == "Fire: Night");
+    const auto& loaded_render = loaded.project.layers.front().render;
+    CHECK(loaded_render.swings.front().center_x == 0.31);
+    CHECK(loaded_render.swings.front().center_y == 0.69);
+    CHECK(loaded_render.swings.front().radius == 0.27);
+    CHECK(loaded_render.effects.front().space == pvt::EffectSpace::Surface);
+    CHECK(loaded_render.effects.front().area_radius == 0.36);
+    CHECK(loaded_render.palette.enabled);
+    CHECK(loaded_render.palette.name == "Vaporwave");
+    CHECK(loaded_render.palette.colors.size()
+          == pvt::default_palette(2U).colors.size());
+    CHECK(loaded_render.transform.flip_horizontal);
+    CHECK(loaded_render.transform.mirror == pvt::MirrorMode::TopToBottom);
     loaded.project.layers[0].name = "Brighter base";
     loaded.project.output.filename_prefix = "ember % glow_";
     loaded.project.layers[0].render.waves[0].name = "Warm % core";
+    loaded.project.layers[0].render.palette.name = "Night % Sky";
     CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
     CHECK(report.created_version && report.version == 1U);
 
@@ -311,6 +407,12 @@ void test_directory_versions_and_names(const fs::path& directory) {
                           return value.field.find("render.waves.0.name")
                                      != std::string::npos
                                  && value.after == "Warm % core";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field.find("render.palette.name")
+                                     != std::string::npos
+                                 && value.after == "Night % Sky";
                       }));
 
     loaded.project.name = "Renamed: Flame";
@@ -348,6 +450,97 @@ void test_directory_versions_and_names(const fs::path& directory) {
     pvt::ProjectDocument copied_document;
     CHECK(pvt::load_project_document(as_utf8(copied), copied_document, &error));
     CHECK(copied_document.project.name == "Copied Display Name");
+}
+
+void test_independent_current_state_copy(const fs::path& directory) {
+    pvt::ProjectDocument source = pvt::default_project_document();
+    source.project.name = "Original History";
+    pvt::LayerConfig upper = pvt::default_layer(1U);
+    upper.name = "Upper layer";
+    upper.file_id = 7U;
+    source.project.layers.push_back(std::move(upper));
+    const fs::path source_path = directory / "independent-source.zip";
+    pvt::BundleSaveReport report;
+    std::string error;
+    CHECK(pvt::save_project_document(source, as_utf8(source_path), &report, &error));
+    source.project.output.filename_prefix = "second-version_";
+    CHECK(pvt::save_project_document(source, as_utf8(source_path), &report, &error));
+    CHECK(source.versions.size() == 2U);
+
+    const std::string source_project_uuid = source.project.uuid;
+    std::vector<std::string> source_layer_uuids;
+    for (const pvt::LayerConfig& layer : source.project.layers) {
+        source_layer_uuids.push_back(layer.uuid);
+    }
+    pvt::ProjectConfig renamed_snapshot = source.project;
+    renamed_snapshot.name = "Independent Current State";
+
+    pvt::ProjectDocument independent;
+    CHECK(pvt::make_independent_project_copy(
+        renamed_snapshot, independent, &error));
+    CHECK(independent.project.name == renamed_snapshot.name);
+    CHECK(independent.project.uuid != source_project_uuid);
+    CHECK(independent.project.layers.size() == source.project.layers.size());
+    CHECK(independent.source_path.empty());
+    CHECK(independent.imported_from_path.empty());
+    CHECK(independent.loaded_snapshot_digest.empty());
+    CHECK(independent.loaded_bundle_state_digest.empty());
+    CHECK(independent.versions.empty());
+    CHECK(independent.dirty && !independent.legacy_import);
+    CHECK(independent.project.output.filename_prefix == "second-version_");
+    for (std::size_t index = 0U;
+         index < independent.project.layers.size(); ++index) {
+        CHECK(independent.project.layers[index].uuid
+              != source_layer_uuids[index]);
+        CHECK(std::find(source_layer_uuids.begin(), source_layer_uuids.end(),
+                        independent.project.layers[index].uuid)
+              == source_layer_uuids.end());
+        CHECK(independent.project.layers[index].file_id
+              == static_cast<std::uint64_t>(index));
+        CHECK(independent.project.layers[index].name
+              == renamed_snapshot.layers[index].name);
+    }
+    CHECK(pvt::validate(independent.project).ok);
+
+    const fs::path independent_path = directory / "independent-copy.zip";
+    CHECK(pvt::save_project_document(
+        independent, as_utf8(independent_path), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+    CHECK(independent.versions.size() == 1U);
+    CHECK(independent.source_path == as_utf8(independent_path));
+    CHECK(source.source_path == as_utf8(source_path));
+    CHECK(source.versions.size() == 2U);
+
+    pvt::ProjectDocument reloaded;
+    CHECK(pvt::load_project_document(as_utf8(independent_path), reloaded, &error));
+    CHECK(reloaded.project.uuid == independent.project.uuid);
+    CHECK(reloaded.project.uuid != source.project.uuid);
+    CHECK(reloaded.project.name == "Independent Current State");
+    CHECK(reloaded.versions.size() == 1U);
+
+    // A second independent copy has no inherited destination identity or
+    // compare-and-swap token, so it cannot replace the first copy.
+    pvt::ProjectDocument collision;
+    CHECK(pvt::make_independent_project_copy(
+        renamed_snapshot, collision, &error));
+    const std::string collision_uuid = collision.project.uuid;
+    CHECK(!pvt::save_project_document(
+        collision, as_utf8(independent_path), &report, &error));
+    CHECK(collision.project.uuid == collision_uuid);
+    CHECK(collision.source_path.empty());
+    CHECK(!error.empty());
+    pvt::ProjectDocument after_collision;
+    CHECK(pvt::load_project_document(
+        as_utf8(independent_path), after_collision, &error));
+    CHECK(after_collision.project.uuid == independent.project.uuid);
+    CHECK(after_collision.versions.size() == 1U);
+
+    pvt::ProjectConfig invalid = renamed_snapshot;
+    invalid.uuid.clear();
+    pvt::ProjectDocument untouched = pvt::default_project_document();
+    const std::string untouched_uuid = untouched.project.uuid;
+    CHECK(!pvt::make_independent_project_copy(invalid, untouched, &error));
+    CHECK(untouched.project.uuid == untouched_uuid);
 }
 
 void test_zip_unicode_and_legacy(const fs::path& directory) {
@@ -732,7 +925,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(pvt::validate_project_bundle(as_utf8(checksum_bundle), nullptr, &error));
 
     std::string root = read_bytes(checksum_bundle / "metadata.txt");
-    CHECK(replace_once(root, "project.last_changed_with_version\t3.0.0\n",
+    CHECK(replace_once(root, "project.last_changed_with_version\t4.0.0\n",
                        "project.last_changed_with_version\t99.0.0\n"));
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
@@ -770,9 +963,11 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
 
 int main() {
     TemporaryDirectory temporary;
+    test_layer_codec_backward_compatibility();
     test_sha_and_archive_guards(temporary.path());
     test_archive_compare_and_swap(temporary.path());
     test_directory_versions_and_names(temporary.path());
+    test_independent_current_state_copy(temporary.path());
     test_zip_unicode_and_legacy(temporary.path());
     test_external_change_lifecycle(temporary.path());
     test_fallback_orphan_and_stale(temporary.path());

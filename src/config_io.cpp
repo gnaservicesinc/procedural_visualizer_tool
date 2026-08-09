@@ -51,16 +51,17 @@ namespace {
 // optional records within a given version. This keeps parsing unambiguous,
 // safely rejectable, and friendly to source control while still allowing
 // arbitrary string bytes. Version 2 adds PNG compression and custom-OBJ path
-// fields. Version 3 separates final output alpha from procedural layer alpha;
-// versions 1 and 2 remain accepted and derive that new field from alpha.enabled.
+// fields. Version 3 separates final output alpha from procedural layer alpha.
+// Version 4 adds spatial swings/effects, effect stage selection, palettes, and
+// layer transforms. Older versions remain accepted with neutral defaults.
 
 constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
 constexpr std::size_t kMaximumKeyBytes = 128U;
 constexpr std::size_t kMaximumDecodedStringBytes = 64U * 1024U;
 constexpr std::size_t kMaximumRecordCount = 16384U;
 
-static_assert(kSetupFormatVersion == 3U,
-              "config_io.cpp implements setup format version 3");
+static_assert(kSetupFormatVersion == 4U,
+              "config_io.cpp implements setup format version 4");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -160,10 +161,12 @@ bool parse_records(const std::string& contents,
                 setup_version = 2U;
             } else if (line == "PVT_SETUP\t3") {
                 setup_version = 3U;
+            } else if (line == "PVT_SETUP\t4") {
+                setup_version = 4U;
             } else {
                 return fail(error,
                             "Unsupported or malformed setup header; expected "
-                            "'PVT_SETUP\\t1', 'PVT_SETUP\\t2', or 'PVT_SETUP\\t3'.");
+                            "'PVT_SETUP\\t1' through 'PVT_SETUP\\t4'.");
             }
         } else {
             const std::size_t tab = line.find('\t');
@@ -472,6 +475,11 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 6U> kEffectTypes{{
     {"block_scale", EffectType::BlockScale},
 }};
 
+constexpr std::array<std::pair<std::string_view, EffectSpace>, 2U> kEffectSpaces{{
+    {"texture", EffectSpace::Texture},
+    {"surface", EffectSpace::Surface},
+}};
+
 constexpr std::array<std::pair<std::string_view, DitherMethod>, 3U> kDitherMethods{{
     {"blue_noise", DitherMethod::BlueNoise},
     {"ordered_bayer", DitherMethod::OrderedBayer},
@@ -497,6 +505,15 @@ constexpr std::array<std::pair<std::string_view, QuantizationMode>, 3U> kQuantiz
     {"rgb", QuantizationMode::Rgb},
     {"luminance", QuantizationMode::Luminance},
     {"hue", QuantizationMode::Hue},
+}};
+
+constexpr std::array<std::pair<std::string_view, MirrorMode>, 6U> kMirrorModes{{
+    {"none", MirrorMode::None},
+    {"left_to_right", MirrorMode::LeftToRight},
+    {"right_to_left", MirrorMode::RightToLeft},
+    {"top_to_bottom", MirrorMode::TopToBottom},
+    {"bottom_to_top", MirrorMode::BottomToTop},
+    {"four_way", MirrorMode::FourWay},
 }};
 
 std::string indexed_key(std::string_view collection,
@@ -664,6 +681,9 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_integer(indexed_key("swings", index, "cycles_per_loop"), swing.cycles_per_loop);
         builder.add_double(indexed_key("swings", index, "phase_degrees"), swing.phase_degrees);
         builder.add_double(indexed_key("swings", index, "shape"), swing.shape);
+        builder.add_double(indexed_key("swings", index, "center_x"), swing.center_x);
+        builder.add_double(indexed_key("swings", index, "center_y"), swing.center_y);
+        builder.add_double(indexed_key("swings", index, "radius"), swing.radius);
     }
 
     builder.add_integer("effects.count", config.effects.size());
@@ -672,6 +692,7 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_integer(indexed_key("effects", index, "id"), effect.id);
         builder.add_string(indexed_key("effects", index, "name"), effect.name);
         builder.add_enum(indexed_key("effects", index, "type"), effect.type, kEffectTypes);
+        builder.add_enum(indexed_key("effects", index, "space"), effect.space, kEffectSpaces);
         builder.add_bool(indexed_key("effects", index, "enabled"), effect.enabled);
         builder.add_bool(indexed_key("effects", index, "synchronized"), effect.synchronized);
         builder.add_integer(indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop);
@@ -687,6 +708,7 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("effects", index, "radius_pixels"), effect.radius_pixels);
         builder.add_double(indexed_key("effects", index, "threshold"), effect.threshold);
         builder.add_double(indexed_key("effects", index, "soft_knee"), effect.soft_knee);
+        builder.add_double(indexed_key("effects", index, "area_radius"), effect.area_radius);
     }
 
     builder.add_double("rhythm.phrase_warp", config.phrase_warp);
@@ -725,6 +747,20 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("surface.curvature", config.surface.curvature);
     builder.add_double("surface.lighting", config.surface.lighting);
     builder.add_string("surface.obj_path", config.surface.obj_path);
+
+    builder.add_bool("palette.enabled", config.palette.enabled);
+    builder.add_string("palette.name", config.palette.name);
+    builder.add_integer("palette.colors.count", config.palette.colors.size());
+    for (std::size_t index = 0; index < config.palette.colors.size(); ++index) {
+        const PaletteColor& color = config.palette.colors[index];
+        builder.add_double(indexed_key("palette.colors", index, "red"), color.red);
+        builder.add_double(indexed_key("palette.colors", index, "green"), color.green);
+        builder.add_double(indexed_key("palette.colors", index, "blue"), color.blue);
+    }
+
+    builder.add_bool("transform.flip_horizontal", config.transform.flip_horizontal);
+    builder.add_bool("transform.flip_vertical", config.transform.flip_vertical);
+    builder.add_enum("transform.mirror", config.transform.mirror, kMirrorModes);
 
     builder.add_integer("output.bit_depth", config.output.bit_depth);
     builder.add_integer("output.png_compression_level",
@@ -799,6 +835,15 @@ bool deserialize_setup(Records& records,
             || !consume_double(records, indexed_key("swings", index, "shape"), swing.shape, error)) {
             return false;
         }
+        if (setup_version >= 4U
+            && (!consume_double(records, indexed_key("swings", index, "center_x"),
+                                swing.center_x, error)
+                || !consume_double(records, indexed_key("swings", index, "center_y"),
+                                   swing.center_y, error)
+                || !consume_double(records, indexed_key("swings", index, "radius"),
+                                   swing.radius, error))) {
+            return false;
+        }
     }
 
     std::size_t effect_count = 0;
@@ -811,8 +856,15 @@ bool deserialize_setup(Records& records,
         EffectConfig& effect = candidate.effects[index];
         if (!consume_integer(records, indexed_key("effects", index, "id"), effect.id, error)
             || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)
-            || !consume_enum(records, indexed_key("effects", index, "type"), effect.type, kEffectTypes, error)
-            || !consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
+            || !consume_enum(records, indexed_key("effects", index, "type"), effect.type, kEffectTypes, error)) {
+            return false;
+        }
+        if (setup_version >= 4U
+            && !consume_enum(records, indexed_key("effects", index, "space"),
+                             effect.space, kEffectSpaces, error)) {
+            return false;
+        }
+        if (!consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
             || !consume_bool(records, indexed_key("effects", index, "synchronized"), effect.synchronized, error)
             || !consume_integer(records, indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop, error)
             || !consume_double(records, indexed_key("effects", index, "phase_degrees"), effect.phase_degrees, error)
@@ -827,6 +879,11 @@ bool deserialize_setup(Records& records,
             || !consume_double(records, indexed_key("effects", index, "radius_pixels"), effect.radius_pixels, error)
             || !consume_double(records, indexed_key("effects", index, "threshold"), effect.threshold, error)
             || !consume_double(records, indexed_key("effects", index, "soft_knee"), effect.soft_knee, error)) {
+            return false;
+        }
+        if (setup_version >= 4U
+            && !consume_double(records, indexed_key("effects", index, "area_radius"),
+                               effect.area_radius, error)) {
             return false;
         }
     }
@@ -871,6 +928,37 @@ bool deserialize_setup(Records& records,
         && !consume_string(records, "surface.obj_path",
                            candidate.surface.obj_path, error)) {
         return false;
+    }
+
+    if (setup_version >= 4U) {
+        std::size_t palette_color_count = 0U;
+        if (!consume_bool(records, "palette.enabled", candidate.palette.enabled, error)
+            || !consume_string(records, "palette.name", candidate.palette.name, error)
+            || !consume_count(records, "palette.colors.count",
+                              kMaximumPaletteColors, palette_color_count, error)) {
+            return false;
+        }
+        candidate.palette.colors.clear();
+        candidate.palette.colors.resize(palette_color_count);
+        for (std::size_t index = 0U; index < palette_color_count; ++index) {
+            PaletteColor& color = candidate.palette.colors[index];
+            if (!consume_double(records, indexed_key("palette.colors", index, "red"),
+                                color.red, error)
+                || !consume_double(records, indexed_key("palette.colors", index, "green"),
+                                   color.green, error)
+                || !consume_double(records, indexed_key("palette.colors", index, "blue"),
+                                   color.blue, error)) {
+                return false;
+            }
+        }
+        if (!consume_bool(records, "transform.flip_horizontal",
+                          candidate.transform.flip_horizontal, error)
+            || !consume_bool(records, "transform.flip_vertical",
+                             candidate.transform.flip_vertical, error)
+            || !consume_enum(records, "transform.mirror",
+                             candidate.transform.mirror, kMirrorModes, error)) {
+            return false;
+        }
     }
 
     if (!consume_integer(records, "output.bit_depth", candidate.output.bit_depth, error)) {

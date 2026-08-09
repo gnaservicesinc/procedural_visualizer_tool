@@ -154,6 +154,15 @@ bool valid_enum(EffectType value) {
     return false;
 }
 
+bool valid_enum(EffectSpace value) {
+    switch (value) {
+        case EffectSpace::Texture:
+        case EffectSpace::Surface:
+            return true;
+    }
+    return false;
+}
+
 bool valid_enum(DitherMethod value) {
     switch (value) {
         case DitherMethod::BlueNoise:
@@ -192,6 +201,19 @@ bool valid_enum(QuantizationMode value) {
         case QuantizationMode::Rgb:
         case QuantizationMode::Luminance:
         case QuantizationMode::Hue:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(MirrorMode value) {
+    switch (value) {
+        case MirrorMode::None:
+        case MirrorMode::LeftToRight:
+        case MirrorMode::RightToLeft:
+        case MirrorMode::TopToBottom:
+        case MirrorMode::BottomToTop:
+        case MirrorMode::FourWay:
             return true;
     }
     return false;
@@ -297,15 +319,78 @@ double evaluate_waveform(Waveform waveform, double phase, double shape) {
     return 0.0;
 }
 
-double master_motion_phase(const RenderConfig& config, double loop_phase) {
-    double result = loop_phase + config.phrase_warp * std::sin(loop_phase);
+double circular_influence(double center_x, double center_y, double radius,
+                          double x, double y, int width, int height) {
+    if (radius <= 1.0e-12) {
+        return 1.0;
+    }
+    const double short_side = static_cast<double>(std::min(width, height));
+    const double dx = x - center_x * static_cast<double>(width - 1);
+    const double dy = y - center_y * static_cast<double>(height - 1);
+    const double normalized_distance = std::hypot(dx, dy) / short_side;
+    // Keep most of the selected circle at full strength and feather its outer
+    // fifth. This avoids a visible hard ring while keeping placement intuitive.
+    const double feather_start = radius * 0.8;
+    if (normalized_distance <= feather_start) {
+        return 1.0;
+    }
+    if (normalized_distance >= radius) {
+        return 0.0;
+    }
+    return 1.0 - smoothstep((normalized_distance - feather_start)
+                            / std::max(1.0e-12, radius - feather_start));
+}
+
+struct SpatialSwingSample {
+    double center_x = 0.5;
+    double center_y = 0.5;
+    double radius = 0.0;
+    double contribution = 0.0;
+};
+
+struct MotionClockState {
+    double global_phase = 0.0;
+    std::array<SpatialSwingSample, kMaximumSwings> spatial_swings{};
+    std::size_t spatial_swing_count = 0U;
+};
+
+MotionClockState prepare_motion_clock(const RenderConfig& config,
+                                      double loop_phase) {
+    MotionClockState state;
+    state.global_phase = loop_phase
+                         + config.phrase_warp * std::sin(loop_phase);
     for (const SwingConfig& swing : config.swings) {
         if (!swing.enabled) {
             continue;
         }
-        const double swing_phase = static_cast<double>(swing.cycles_per_loop) * loop_phase
-                                   + radians(swing.phase_degrees);
-        result += swing.amount * evaluate_waveform(swing.waveform, swing_phase, swing.shape);
+        const double swing_phase =
+            static_cast<double>(swing.cycles_per_loop) * loop_phase
+            + radians(swing.phase_degrees);
+        const double contribution =
+            swing.amount
+            * evaluate_waveform(swing.waveform, swing_phase, swing.shape);
+        if (swing.radius <= 1.0e-12) {
+            state.global_phase += contribution;
+            continue;
+        }
+        // Validation guarantees the configured collection fits this bounded
+        // array. Keeping it inline avoids a per-frame heap allocation.
+        if (state.spatial_swing_count < state.spatial_swings.size()) {
+            state.spatial_swings[state.spatial_swing_count++] = {
+                swing.center_x, swing.center_y, swing.radius, contribution};
+        }
+    }
+    return state;
+}
+
+double motion_phase_at(const MotionClockState& state, double x, double y,
+                       int width, int height) {
+    double result = state.global_phase;
+    for (std::size_t index = 0U; index < state.spatial_swing_count; ++index) {
+        const SpatialSwingSample& swing = state.spatial_swings[index];
+        result += swing.contribution * circular_influence(
+            swing.center_x, swing.center_y, swing.radius, x, y,
+            width, height);
     }
     return result;
 }
@@ -594,6 +679,14 @@ const char* effect_type_name(EffectType value) {
     return "Unknown";
 }
 
+const char* effect_space_name(EffectSpace value) {
+    switch (value) {
+        case EffectSpace::Texture: return "Texture";
+        case EffectSpace::Surface: return "Mapped object";
+    }
+    return "Unknown";
+}
+
 const char* edge_mode_name(EdgeMode value) {
     switch (value) {
         case EdgeMode::Alpha: return "Alpha";
@@ -639,6 +732,18 @@ const char* quantization_mode_name(QuantizationMode value) {
         case QuantizationMode::Rgb: return "RGB";
         case QuantizationMode::Luminance: return "Luminance";
         case QuantizationMode::Hue: return "Hue";
+    }
+    return "Unknown";
+}
+
+const char* mirror_mode_name(MirrorMode value) {
+    switch (value) {
+        case MirrorMode::None: return "Off";
+        case MirrorMode::LeftToRight: return "Left to right";
+        case MirrorMode::RightToLeft: return "Right to left";
+        case MirrorMode::TopToBottom: return "Top to bottom";
+        case MirrorMode::BottomToTop: return "Bottom to top";
+        case MirrorMode::FourWay: return "Four-way from top left";
     }
     return "Unknown";
 }
@@ -736,6 +841,50 @@ EffectConfig default_effect(EffectType type) {
     return effect;
 }
 
+PaletteConfig default_palette(std::size_t index) {
+    PaletteConfig palette;
+    palette.enabled = true;
+    switch (index % kBuiltInPaletteCount) {
+        case 0U:
+            palette.name = "Ember";
+            palette.colors = {{0.08, 0.01, 0.02}, {0.55, 0.03, 0.02},
+                              {1.00, 0.24, 0.02}, {1.00, 0.75, 0.12},
+                              {1.00, 0.97, 0.72}};
+            break;
+        case 1U:
+            palette.name = "Deep Ocean";
+            palette.colors = {{0.01, 0.04, 0.16}, {0.00, 0.20, 0.42},
+                              {0.00, 0.52, 0.66}, {0.20, 0.86, 0.82},
+                              {0.78, 1.00, 0.92}};
+            break;
+        case 2U:
+            palette.name = "Vaporwave";
+            palette.colors = {{0.12, 0.02, 0.24}, {0.42, 0.10, 0.72},
+                              {0.96, 0.18, 0.72}, {0.12, 0.86, 0.96},
+                              {1.00, 0.78, 0.96}};
+            break;
+        case 3U:
+            palette.name = "Forest Biolume";
+            palette.colors = {{0.01, 0.08, 0.05}, {0.02, 0.28, 0.15},
+                              {0.10, 0.58, 0.30}, {0.42, 0.92, 0.38},
+                              {0.84, 1.00, 0.62}};
+            break;
+        case 4U:
+            palette.name = "Arcade";
+            palette.colors = {{0.02, 0.02, 0.04}, {0.98, 0.08, 0.22},
+                              {1.00, 0.82, 0.08}, {0.10, 0.92, 0.42},
+                              {0.06, 0.36, 1.00}, {0.72, 0.12, 1.00}};
+            break;
+        default:
+            palette.name = "Moonlight";
+            palette.colors = {{0.02, 0.03, 0.08}, {0.12, 0.16, 0.28},
+                              {0.34, 0.40, 0.58}, {0.68, 0.74, 0.88},
+                              {0.96, 0.98, 1.00}};
+            break;
+    }
+    return palette;
+}
+
 RenderConfig default_config() {
     RenderConfig config;
     config.waves.reserve(3);
@@ -757,6 +906,8 @@ RenderConfig default_config() {
         effect.id = static_cast<std::uint64_t>(index) + 5U;
         config.effects.push_back(std::move(effect));
     }
+    config.palette = default_palette(0U);
+    config.palette.enabled = false;
     return config;
 }
 
@@ -909,7 +1060,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
             || !finite_in_range(swing.amount, -2.0, 2.0)
             || swing.cycles_per_loop < 0 || swing.cycles_per_loop > 1000
             || !finite_in_range(swing.phase_degrees, -36000.0, 36000.0)
-            || !finite_in_range(swing.shape, 0.0, 1.0)) {
+            || !finite_in_range(swing.shape, 0.0, 1.0)
+            || !finite_in_range(swing.center_x, -10.0, 10.0)
+            || !finite_in_range(swing.center_y, -10.0, 10.0)
+            || !finite_in_range(swing.radius, 0.0, 10.0)) {
             return invalid_result("Swing " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -928,6 +1082,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
             return invalid_result("Every wave, swing, and effect must have a unique nonzero ID.");
         }
         if (!valid_name(effect.name) || !valid_enum(effect.type)
+            || !valid_enum(effect.space)
             || !valid_enum(effect.edge_mode)
             || effect.cycles_per_loop < -1000 || effect.cycles_per_loop > 1000
             || !finite_in_range(effect.phase_degrees, -36000.0, 36000.0)
@@ -941,7 +1096,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
             || !finite_in_range(effect.radius_pixels, 0.0,
                                 static_cast<double>(kMaximumDimension))
             || !finite_in_range(effect.threshold, 0.0, 64.0)
-            || !finite_in_range(effect.soft_knee, 0.0, 1.0)) {
+            || !finite_in_range(effect.soft_knee, 0.0, 1.0)
+            || !finite_in_range(effect.area_radius, 0.0, 10.0)) {
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -987,6 +1143,23 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
         || config.hue_cycles < -100 || config.hue_cycles > 100
         || !finite_in_range(config.saturation, 0.0, 1.0)) {
         return invalid_result("One or more pattern, rhythm, or lighting values are out of range.");
+    }
+
+    if (!valid_name(config.palette.name)
+        || config.palette.colors.size() > kMaximumPaletteColors
+        || (config.palette.enabled && config.palette.colors.empty())) {
+        return invalid_result(
+            "An enabled palette needs 1 to 256 colors and a valid name.");
+    }
+    for (const PaletteColor& color : config.palette.colors) {
+        if (!finite_in_range(color.red, 0.0, 1.0)
+            || !finite_in_range(color.green, 0.0, 1.0)
+            || !finite_in_range(color.blue, 0.0, 1.0)) {
+            return invalid_result("Palette colors must contain finite RGB values from 0 to 1.");
+        }
+    }
+    if (!valid_enum(config.transform.mirror)) {
+        return invalid_result("The layer transform contains an unknown mirror mode.");
     }
 
     if (!finite_in_range(config.alpha.minimum, 0.0, 1.0)
@@ -1137,7 +1310,7 @@ double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
 }
 
 void generate_base_image(const RenderConfig& config, double loop_phase,
-                         double motion_phase, Image& image,
+                         const MotionClockState& motion_clock, Image& image,
                          const std::atomic_bool* cancel) {
     throw_if_cancelled(cancel);
     ensure_image(image, config.width, config.height);
@@ -1153,7 +1326,6 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         }
     }
 
-    const double ghost_phase = motion_phase - radians(config.ghost_lag_degrees);
     const double breath = 0.85 + 0.35 * std::sin(loop_phase);
 
     std::size_t block_counter = 0U;
@@ -1163,15 +1335,37 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             if ((block_counter++ & 63U) == 0U) {
                 throw_if_cancelled(cancel);
             }
+            const double motion_phase = motion_phase_at(
+                motion_clock, static_cast<double>(block_x),
+                static_cast<double>(block_y), config.width, config.height);
+            const double motion_phase_right =
+                motion_clock.spatial_swing_count == 0U
+                    ? motion_phase
+                    : motion_phase_at(
+                          motion_clock,
+                          static_cast<double>(block_x + config.block_size),
+                          static_cast<double>(block_y), config.width,
+                          config.height);
+            const double motion_phase_down =
+                motion_clock.spatial_swing_count == 0U
+                    ? motion_phase
+                    : motion_phase_at(
+                          motion_clock, static_cast<double>(block_x),
+                          static_cast<double>(block_y + config.block_size),
+                          config.width, config.height);
+            const double ghost_phase = motion_phase
+                                       - radians(config.ghost_lag_degrees);
             const double height_here = wave_height(config, block_x, block_y,
                                                    loop_phase, motion_phase);
             const double height_right = wave_height(config,
                                                      block_x + config.block_size,
                                                      block_y,
-                                                     loop_phase, motion_phase);
+                                                     loop_phase,
+                                                     motion_phase_right);
             const double height_down = wave_height(config, block_x,
                                                     block_y + config.block_size,
-                                                    loop_phase, motion_phase);
+                                                    loop_phase,
+                                                    motion_phase_down);
             const double slope_x = height_right - height_here;
             const double slope_y = height_down - height_here;
             const double displacement = config.displacement_enabled
@@ -1237,9 +1431,24 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     }
 }
 
-double effect_phase(const EffectConfig& effect, double loop_phase,
-                    double motion_phase) {
-    const double clock = effect.synchronized ? motion_phase : loop_phase;
+double effect_phase(const RenderConfig& config, const EffectConfig& effect,
+                    double loop_phase,
+                    const MotionClockState& motion_clock) {
+    const double center_x = effect.center_x
+                            * static_cast<double>(config.width - 1);
+    const double center_y = effect.center_y
+                            * static_cast<double>(config.height - 1);
+    // Localized Swings live in source/UV space. A mapped-object center is a
+    // post-projection canvas coordinate and cannot be mapped back uniquely for
+    // cylinders, meshes, or mirrored layers, so it synchronizes to the honest
+    // global portion of the shared clock instead of an unrelated UV location.
+    const double synchronized_clock = effect.space == EffectSpace::Surface
+                                          ? motion_clock.global_phase
+                                          : motion_phase_at(
+                                                motion_clock, center_x,
+                                                center_y, config.width,
+                                                config.height);
+    const double clock = effect.synchronized ? synchronized_clock : loop_phase;
     return static_cast<double>(effect.cycles_per_loop) * clock
            + radians(effect.phase_degrees);
 }
@@ -1289,6 +1498,10 @@ void apply_coordinate_effect(const Image& source, Image& destination,
         for (int x = 0; x < source.width; ++x) {
             double sample_x = static_cast<double>(x);
             double sample_y = static_cast<double>(y);
+            const double area = circular_influence(
+                effect.center_x, effect.center_y, effect.area_radius,
+                static_cast<double>(x), static_cast<double>(y),
+                source.width, source.height);
             Color sampled;
 
             switch (effect.type) {
@@ -1307,7 +1520,8 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                         center_y + relative_y / zoom_scale_b, effect.edge_mode);
                     const Color zoomed = blend_straight_alpha(first, second, zoom_blend);
                     sampled = blend_straight_alpha(load_color(source, x, y), zoomed,
-                                                   clamp_value(intensity, 0.0, 1.0));
+                                                   clamp_value(intensity * area,
+                                                               0.0, 1.0));
                     break;
                 }
                 case EffectType::Ripple: {
@@ -1321,15 +1535,19 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                             ? 1.0 / (1.0 + (effect.secondary - 1.0)
                                            * distance / short_side)
                             : 1.0;
-                        sample_x -= dx / distance * displacement * wave * attenuation;
-                        sample_y -= dy / distance * displacement * wave * attenuation;
+                        sample_x -= dx / distance * displacement * wave
+                                    * attenuation * area;
+                        sample_y -= dy / distance * displacement * wave
+                                    * attenuation * area;
                     }
                     sampled = sample_bilinear(source, sample_x, sample_y, effect.edge_mode);
                     break;
                 }
                 case EffectType::Shake:
-                    sampled = sample_bilinear(source, x - rotated_shake_x,
-                                              y - rotated_shake_y, effect.edge_mode);
+                    sampled = sample_bilinear(source,
+                                              x - rotated_shake_x * area,
+                                              y - rotated_shake_y * area,
+                                              effect.edge_mode);
                     break;
                 case EffectType::FlagWave: {
                     const double dx = x - center_x;
@@ -1339,9 +1557,11 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                     const double harmonic = std::sin(kTau * effect.frequency * 0.5 * along
                                                      - 2.0 * phase + 1.0472);
                     sample_x -= perpendicular_x * displacement
-                                * (flag + effect.secondary * 0.35 * harmonic);
+                                * (flag + effect.secondary * 0.35 * harmonic)
+                                * area;
                     sample_y -= perpendicular_y * displacement
-                                * (flag + effect.secondary * 0.35 * harmonic);
+                                * (flag + effect.secondary * 0.35 * harmonic)
+                                * area;
                     sampled = sample_bilinear(source, sample_x, sample_y, effect.edge_mode);
                     break;
                 }
@@ -1425,7 +1645,7 @@ double bloom_weight(double luminance, double threshold, double soft_knee) {
 }
 
 void extract_bright(const Image& source, Image& bright,
-                    double threshold, double soft_knee,
+                    const EffectConfig& effect,
                     const std::atomic_bool* cancel) {
     throw_if_cancelled(cancel);
     ensure_image(bright, source.width, source.height);
@@ -1435,7 +1655,12 @@ void extract_bright(const Image& source, Image& bright,
         for (int x = 0; x < source.width; ++x) {
             const Color input = load_color(source, x, y);
             const double luminance = 0.2126 * input.r + 0.7152 * input.g + 0.0722 * input.b;
-            const double weight = bloom_weight(luminance, threshold, soft_knee);
+            const double area = circular_influence(
+                effect.center_x, effect.center_y, effect.area_radius,
+                static_cast<double>(x), static_cast<double>(y),
+                source.width, source.height);
+            const double weight = area * bloom_weight(
+                luminance, effect.threshold, effect.soft_knee);
             store_color(bright, x, y,
                         {input.r, input.g, input.b, input.a * weight});
         }
@@ -1496,7 +1721,7 @@ void apply_glow(Image& image, Image& scratch, Image& auxiliary,
     if (animated_intensity <= 1.0e-12 || effect.radius_pixels <= 1.0e-12) {
         return;
     }
-    extract_bright(image, scratch, effect.threshold, effect.soft_knee, cancel);
+    extract_bright(image, scratch, effect, cancel);
     blur_nine_tap(scratch, auxiliary, effect.radius_pixels, true, cancel);
     blur_nine_tap(auxiliary, scratch, effect.radius_pixels, false, cancel);
     for (int y = 0; y < image.height; ++y) {
@@ -1949,6 +2174,153 @@ void apply_quantization(Image& image, const QuantizationConfig& quantization,
     }
 }
 
+void copy_pixel(Image& image, int source_x, int source_y,
+                int destination_x, int destination_y) {
+    const std::size_t source = pixel_offset_unchecked(image, source_x, source_y);
+    const std::size_t destination = pixel_offset_unchecked(
+        image, destination_x, destination_y);
+    for (std::size_t channel = 0U; channel < 4U; ++channel) {
+        image.pixels[destination + channel] = image.pixels[source + channel];
+    }
+}
+
+void mirror_left_to_right(Image& image, const std::atomic_bool* cancel) {
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = (image.width + 1) / 2; x < image.width; ++x) {
+            copy_pixel(image, image.width - 1 - x, y, x, y);
+        }
+    }
+}
+
+void mirror_right_to_left(Image& image, const std::atomic_bool* cancel) {
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width / 2; ++x) {
+            copy_pixel(image, image.width - 1 - x, y, x, y);
+        }
+    }
+}
+
+void mirror_top_to_bottom(Image& image, const std::atomic_bool* cancel) {
+    for (int y = (image.height + 1) / 2; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            copy_pixel(image, x, image.height - 1 - y, x, y);
+        }
+    }
+}
+
+void mirror_bottom_to_top(Image& image, const std::atomic_bool* cancel) {
+    for (int y = 0; y < image.height / 2; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            copy_pixel(image, x, image.height - 1 - y, x, y);
+        }
+    }
+}
+
+void flip_horizontal(Image& image, const std::atomic_bool* cancel) {
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width / 2; ++x) {
+            const std::size_t first = pixel_offset_unchecked(image, x, y);
+            const std::size_t second = pixel_offset_unchecked(
+                image, image.width - 1 - x, y);
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                std::swap(image.pixels[first + channel],
+                          image.pixels[second + channel]);
+            }
+        }
+    }
+}
+
+void flip_vertical(Image& image, const std::atomic_bool* cancel) {
+    for (int y = 0; y < image.height / 2; ++y) {
+        throw_if_cancelled(cancel);
+        const int opposite = image.height - 1 - y;
+        for (int x = 0; x < image.width; ++x) {
+            const std::size_t first = pixel_offset_unchecked(image, x, y);
+            const std::size_t second = pixel_offset_unchecked(image, x, opposite);
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                std::swap(image.pixels[first + channel],
+                          image.pixels[second + channel]);
+            }
+        }
+    }
+}
+
+void apply_layer_transform(Image& image,
+                           const LayerTransformConfig& transform,
+                           const std::atomic_bool* cancel) {
+    switch (transform.mirror) {
+        case MirrorMode::None:
+            break;
+        case MirrorMode::LeftToRight:
+            mirror_left_to_right(image, cancel);
+            break;
+        case MirrorMode::RightToLeft:
+            mirror_right_to_left(image, cancel);
+            break;
+        case MirrorMode::TopToBottom:
+            mirror_top_to_bottom(image, cancel);
+            break;
+        case MirrorMode::BottomToTop:
+            mirror_bottom_to_top(image, cancel);
+            break;
+        case MirrorMode::FourWay:
+            mirror_left_to_right(image, cancel);
+            mirror_top_to_bottom(image, cancel);
+            break;
+    }
+    if (transform.flip_horizontal) {
+        flip_horizontal(image, cancel);
+    }
+    if (transform.flip_vertical) {
+        flip_vertical(image, cancel);
+    }
+}
+
+void apply_palette(Image& image, const PaletteConfig& palette,
+                   const std::atomic_bool* cancel) {
+    if (!palette.enabled) {
+        return;
+    }
+    std::vector<Color> linear_palette;
+    linear_palette.reserve(palette.colors.size());
+    for (const PaletteColor& authored : palette.colors) {
+        linear_palette.push_back({srgb_to_linear(authored.red),
+                                  srgb_to_linear(authored.green),
+                                  srgb_to_linear(authored.blue), 1.0});
+    }
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            Color input = load_color(image, x, y);
+            const Color* closest = &linear_palette.front();
+            double closest_distance = std::numeric_limits<double>::infinity();
+            for (const Color& candidate : linear_palette) {
+                const double dr = input.r - candidate.r;
+                const double dg = input.g - candidate.g;
+                const double db = input.b - candidate.b;
+                // Linear-light luminance weights make nearest-color selection
+                // better match what the eye sees than an unweighted RGB cube.
+                const double distance = 0.2126 * dr * dr
+                                        + 0.7152 * dg * dg
+                                        + 0.0722 * db * db;
+                if (distance < closest_distance) {
+                    closest = &candidate;
+                    closest_distance = distance;
+                }
+            }
+            input.r = closest->r;
+            input.g = closest->g;
+            input.b = closest->b;
+            store_color(image, x, y, input);
+        }
+    }
+}
+
 } // namespace
 
 bool render_frame_at_phase_cancellable(const RenderConfig& config,
@@ -1969,29 +2341,38 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
         }
 
         const double loop_phase = kTau * wrap_unit(normalized_phase);
-        const double motion_phase = master_motion_phase(config, loop_phase);
+        const MotionClockState motion_clock =
+            prepare_motion_clock(config, loop_phase);
         Image current;
         Image scratch;
         Image auxiliary;
-        generate_base_image(config, loop_phase, motion_phase, current, cancel);
+        generate_base_image(config, loop_phase, motion_clock, current, cancel);
 
-        for (const EffectConfig& effect : config.effects) {
-            throw_if_cancelled(cancel);
-            if (!effect_has_render_work(effect)) {
-                continue;
+        const auto apply_effect_stage = [&](EffectSpace stage) {
+            for (const EffectConfig& effect : config.effects) {
+                throw_if_cancelled(cancel);
+                if (effect.space != stage || !effect_has_render_work(effect)) {
+                    continue;
+                }
+                const double phase = effect_phase(
+                    config, effect, loop_phase, motion_clock);
+                if (effect.type == EffectType::Glow) {
+                    apply_glow(current, scratch, auxiliary, effect, phase, cancel);
+                } else if (effect.type == EffectType::BlockScale) {
+                    apply_block_scale(current, scratch, effect, phase,
+                                      config.block_size, cancel);
+                    current.pixels.swap(scratch.pixels);
+                } else {
+                    apply_coordinate_effect(current, scratch, effect, phase, cancel);
+                    current.pixels.swap(scratch.pixels);
+                }
             }
-            const double phase = effect_phase(effect, loop_phase, motion_phase);
-            if (effect.type == EffectType::Glow) {
-                apply_glow(current, scratch, auxiliary, effect, phase, cancel);
-            } else if (effect.type == EffectType::BlockScale) {
-                apply_block_scale(current, scratch, effect, phase,
-                                  config.block_size, cancel);
-                current.pixels.swap(scratch.pixels);
-            } else {
-                apply_coordinate_effect(current, scratch, effect, phase, cancel);
-                current.pixels.swap(scratch.pixels);
-            }
-        }
+        };
+
+        // Effects retain their relative order inside each explicit stage.
+        // Texture effects alter the image painted onto a surface; mapped-object
+        // effects run later and therefore move/deform the complete silhouette.
+        apply_effect_stage(EffectSpace::Texture);
 
         // Curvature zero is the neutral setting for 3D surface mappings. The
         // surface's visibility mask and lighting must not crop or shade the
@@ -2011,7 +2392,14 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
             }
             current.pixels.swap(scratch.pixels);
         }
+        // The layer transform defines the final canvas orientation. Applying
+        // mapped-object effects afterward keeps their centers in honest screen
+        // coordinates (including with mirrors/flips) and lets Shake move the
+        // already transformed primitive as one object.
+        apply_layer_transform(current, config.transform, cancel);
+        apply_effect_stage(EffectSpace::Surface);
         apply_quantization(current, config.quantization, cancel);
+        apply_palette(current, config.palette, cancel);
         throw_if_cancelled(cancel);
 
         destination.width = current.width;

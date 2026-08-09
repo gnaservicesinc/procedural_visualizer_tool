@@ -350,6 +350,148 @@ bool prompt_enum(const std::string& heading, Enum& value,
     }
 }
 
+bool palettes_equal(const pvt::PaletteConfig& left,
+                    const pvt::PaletteConfig& right) {
+    if (left.enabled != right.enabled || left.name != right.name
+        || left.colors.size() != right.colors.size()) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.colors.size(); ++index) {
+        if (left.colors[index].red != right.colors[index].red
+            || left.colors[index].green != right.colors[index].green
+            || left.colors[index].blue != right.colors[index].blue) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool configure_palette(RenderConfig& config) {
+    for (;;) {
+        const auto& palette = config.palette;
+        std::cout << "\n-- Layer palette: " << palette.name << " ("
+                  << (palette.enabled ? "enabled" : "disabled") << ") --\n";
+        for (std::size_t index = 0U; index < palette.colors.size(); ++index) {
+            const auto& color = palette.colors[index];
+            std::cout << "  " << (index + 1U) << ") RGB " << color.red << ", "
+                      << color.green << ", " << color.blue << '\n';
+        }
+        if (palette.colors.empty()) {
+            std::cout << "  (no custom colors)\n";
+        }
+        std::cout << "Presets:";
+        for (std::size_t index = 0U; index < pvt::kBuiltInPaletteCount; ++index) {
+            std::cout << " p" << (index + 1U) << ' '
+                      << pvt::default_palette(index).name;
+            if (index + 1U != pvt::kBuiltInPaletteCount) {
+                std::cout << " |";
+            }
+        }
+        std::cout << "\nCommands: e toggle, p N preset, n rename, number edit, "
+                     "a add, d N delete, b back.\n";
+
+        std::string input;
+        if (!read_line("Palette action [b]: ", input)) {
+            return false;
+        }
+        if (input.empty() || input == "b" || input == "B") {
+            return true;
+        }
+        if (input == "e" || input == "E") {
+            if (config.palette.colors.empty()) {
+                const pvt::PaletteConfig next = pvt::default_palette(0U);
+                g_prompt_changed = g_prompt_changed
+                                   || !palettes_equal(config.palette, next);
+                config.palette = next;
+                std::cout << "Loaded and enabled the Ember preset because an enabled "
+                             "palette needs at least one color.\n";
+            } else {
+                config.palette.enabled = !config.palette.enabled;
+                g_prompt_changed = true;
+            }
+            continue;
+        }
+        if ((input[0] == 'p' || input[0] == 'P') && input.size() > 1U) {
+            long long selected = 0;
+            if (!parse_integer(trim(input.substr(1)), 1,
+                               static_cast<long long>(pvt::kBuiltInPaletteCount),
+                               selected)) {
+                std::cout << "Use p followed by a preset number from 1 through "
+                          << pvt::kBuiltInPaletteCount << ".\n";
+                continue;
+            }
+            const pvt::PaletteConfig next = pvt::default_palette(
+                static_cast<std::size_t>(selected - 1));
+            g_prompt_changed = g_prompt_changed
+                               || !palettes_equal(config.palette, next);
+            config.palette = next;
+            continue;
+        }
+        if (input == "n" || input == "N") {
+            if (!prompt_text("Palette name", config.palette.name,
+                             kMaximumNameBytes)) {
+                return false;
+            }
+            continue;
+        }
+        if (input == "a" || input == "A") {
+            if (config.palette.colors.size() >= pvt::kMaximumPaletteColors) {
+                std::cout << "The safety limit of " << pvt::kMaximumPaletteColors
+                          << " palette colors has been reached.\n";
+                continue;
+            }
+            const pvt::PaletteColor next = config.palette.colors.empty()
+                                               ? pvt::PaletteColor{1.0, 1.0, 1.0}
+                                               : config.palette.colors.back();
+            config.palette.colors.push_back(next);
+            g_prompt_changed = true;
+            const std::size_t index = config.palette.colors.size() - 1U;
+            if (!prompt_real("Red (sRGB)", config.palette.colors[index].red,
+                             0.0, 1.0)
+                || !prompt_real("Green (sRGB)", config.palette.colors[index].green,
+                                0.0, 1.0)
+                || !prompt_real("Blue (sRGB)", config.palette.colors[index].blue,
+                                0.0, 1.0)) {
+                return false;
+            }
+            continue;
+        }
+        if ((input[0] == 'd' || input[0] == 'D') && input.size() > 1U) {
+            long long selected = 0;
+            if (!parse_integer(trim(input.substr(1)), 1,
+                               static_cast<long long>(config.palette.colors.size()),
+                               selected)) {
+                std::cout << "Use d followed by an existing color number.\n";
+                continue;
+            }
+            if (config.palette.enabled && config.palette.colors.size() == 1U) {
+                std::cout << "An enabled palette needs at least one color. Disable it "
+                             "or add a replacement first.\n";
+                continue;
+            }
+            config.palette.colors.erase(
+                config.palette.colors.begin() + (selected - 1));
+            g_prompt_changed = true;
+            continue;
+        }
+
+        long long selected = 0;
+        if (!parse_integer(input, 1,
+                           static_cast<long long>(config.palette.colors.size()),
+                           selected)) {
+            std::cout << "Unrecognized palette action.\n";
+            continue;
+        }
+        auto& color = config.palette.colors[
+            static_cast<std::size_t>(selected - 1)];
+        if (!prompt_real("Red (sRGB)", color.red, 0.0, 1.0)
+            || !prompt_real("Green (sRGB)", color.green, 0.0, 1.0)
+            || !prompt_real("Blue (sRGB)", color.blue, 0.0, 1.0)) {
+            return false;
+        }
+    }
+}
+
 bool configure_wave(RenderConfig& config, std::size_t index) {
     auto& wave = config.waves[index];
     std::cout << "\n-- Wave " << (index + 1) << " --\n"
@@ -471,8 +613,21 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
     if (!prompt_text("Name", effect.name, kMaximumNameBytes)
         || !prompt_bool("Enabled", effect.enabled)
         || !prompt_bool("Synchronized (optional)", effect.synchronized)
+        || !prompt_enum("Effect space (texture is before surface mapping)",
+                        effect.space,
+                        {{pvt::EffectSpace::Texture, "Texture/artwork"},
+                         {pvt::EffectSpace::Surface, "Mapped object/silhouette"}})
         || !prompt_int("Cycles per loop", effect.cycles_per_loop, -1000, 1000)
         || !prompt_real("Starting phase (degrees)", effect.phase_degrees, -36000.0, 36000.0)) {
+        return false;
+    }
+    if (effect.type != EffectType::BlockScale
+        && (!prompt_real("Center X (0-1 is on-canvas)", effect.center_x,
+                         -10.0, 10.0)
+            || !prompt_real("Center Y (0-1 is on-canvas)", effect.center_y,
+                            -10.0, 10.0)
+            || !prompt_real("Local area radius (0 whole layer; fraction of short edge)",
+                            effect.area_radius, 0.0, 10.0))) {
         return false;
     }
     switch (effect.type) {
@@ -480,16 +635,12 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
             return prompt_real("Mix/intensity", effect.intensity, 0.0, 100.0)
                    && prompt_real("Zoom strength", effect.magnitude, 0.0, 10.0)
                    && prompt_real("Zoom octave multiplier", effect.frequency, 0.0, 1000.0)
-                   && prompt_real("Center X (0-1 is on-canvas)", effect.center_x, -10.0, 10.0)
-                   && prompt_real("Center Y (0-1 is on-canvas)", effect.center_y, -10.0, 10.0)
                    && configure_edge_mode(effect.edge_mode);
         case EffectType::Ripple:
             return prompt_real("Mix/intensity", effect.intensity, 0.0, 100.0)
                    && prompt_real("Magnitude (fraction of short edge)", effect.magnitude, 0.0, 10.0)
                    && prompt_real("Spatial frequency", effect.frequency, 0.0, 1000.0)
                    && prompt_real("Distance attenuation", effect.secondary, -100.0, 100.0)
-                   && prompt_real("Center X (0-1 is on-canvas)", effect.center_x, -10.0, 10.0)
-                   && prompt_real("Center Y (0-1 is on-canvas)", effect.center_y, -10.0, 10.0)
                    && configure_edge_mode(effect.edge_mode);
         case EffectType::Shake:
             return prompt_real("Mix/intensity", effect.intensity, 0.0, 100.0)
@@ -503,8 +654,6 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                    && prompt_real("Magnitude (fraction of short edge)", effect.magnitude, 0.0, 10.0)
                    && prompt_real("Spatial frequency", effect.frequency, 0.0, 1000.0)
                    && prompt_real("Secondary harmonic mix", effect.secondary, -100.0, 100.0)
-                   && prompt_real("Center X (0-1 is on-canvas)", effect.center_x, -10.0, 10.0)
-                   && prompt_real("Center Y (0-1 is on-canvas)", effect.center_y, -10.0, 10.0)
                    && prompt_real("Wave angle (degrees)", effect.angle_degrees, -36000.0, 36000.0)
                    && configure_edge_mode(effect.edge_mode);
         case EffectType::Glow:
@@ -540,7 +689,12 @@ void configure_effects(RenderConfig& config) {
             const auto& effect = config.effects[i];
             std::cout << "  " << (i + 1) << ") " << (effect.enabled ? "on  " : "off ")
                       << (effect.synchronized ? "sync " : "free ") << effect.name
-                      << " [" << pvt::effect_type_name(effect.type) << "]\n";
+                      << " [" << pvt::effect_type_name(effect.type) << ", "
+                      << pvt::effect_space_name(effect.space) << ']';
+            if (effect.type != EffectType::BlockScale) {
+                std::cout << " | area " << effect.area_radius;
+            }
+            std::cout << '\n';
         }
         std::cout << "Enter a number to edit, a to add, d N to delete, m FROM TO to move,"
                      " or b to go back.\n";
@@ -604,7 +758,13 @@ bool configure_swing(RenderConfig& config, std::size_t index) {
            && prompt_real("Swing amount", swing.amount, -2.0, 2.0)
            && prompt_int("Pulses per loop", swing.cycles_per_loop, 0, 1000)
            && prompt_real("Starting phase (degrees)", swing.phase_degrees, -36000.0, 36000.0)
-           && prompt_real("Waveform shape", swing.shape, 0.0, 1.0);
+           && prompt_real("Waveform shape", swing.shape, 0.0, 1.0)
+           && prompt_real("Center X (0-1 is on-canvas)", swing.center_x,
+                          -10.0, 10.0)
+           && prompt_real("Center Y (0-1 is on-canvas)", swing.center_y,
+                          -10.0, 10.0)
+           && prompt_real("Local radius (0 whole layer; fraction of short edge)",
+                          swing.radius, 0.0, 10.0);
 }
 
 void configure_rhythm(RenderConfig& config) {
@@ -625,17 +785,28 @@ void configure_rhythm(RenderConfig& config) {
     }
 
     for (;;) {
-        std::cout << "\nSwing modulators (" << config.swings.size() << "):\n";
+        std::cout << "\nPalette: "
+                  << (config.palette.enabled ? config.palette.name : "disabled")
+                  << " (" << config.palette.colors.size() << " color(s))\n"
+                  << "Swing modulators (" << config.swings.size() << "):\n";
         for (std::size_t i = 0; i < config.swings.size(); ++i) {
             const auto& swing = config.swings[i];
             std::cout << "  " << (i + 1) << ") " << (swing.enabled ? "on  " : "off ")
                       << swing.name << " | " << pvt::waveform_name(swing.waveform)
-                      << " | amount " << swing.amount << '\n';
+                      << " | amount " << swing.amount
+                      << " | radius " << swing.radius << '\n';
         }
         std::string input;
-        if (!read_line("Number to edit, a to add, d N to delete, m FROM TO to move, or b [b]: ", input)
+        if (!read_line("Number to edit, p palette, a to add, d N to delete, "
+                       "m FROM TO to move, or b [b]: ", input)
             || input.empty() || input == "b" || input == "B") {
             return;
+        }
+        if (input == "p" || input == "P") {
+            if (!configure_palette(config)) {
+                return;
+            }
+            continue;
         }
         if (input == "a" || input == "A") {
             if (config.swings.size() >= pvt::kMaximumSwings) {
@@ -719,6 +890,20 @@ void configure_surface(RenderConfig& config) {
                 -36000.0, 36000.0);
     prompt_real("Surface curvature", config.surface.curvature, 0.0, 1.0);
     prompt_real("Surface lighting", config.surface.lighting, 0.0, 10.0);
+
+    std::cout << "\n-- Layer transform (before mapped-object effects; mirror before flips) --\n";
+    if (!prompt_enum("Mirror mode", config.transform.mirror,
+                     {{pvt::MirrorMode::None, "Off"},
+                      {pvt::MirrorMode::LeftToRight, "Copy left half to right"},
+                      {pvt::MirrorMode::RightToLeft, "Copy right half to left"},
+                      {pvt::MirrorMode::TopToBottom, "Copy top half to bottom"},
+                      {pvt::MirrorMode::BottomToTop, "Copy bottom half to top"},
+                      {pvt::MirrorMode::FourWay,
+                       "Four-way mirror from the top-left quadrant"}})
+        || !prompt_bool("Flip horizontally", config.transform.flip_horizontal)
+        || !prompt_bool("Flip vertically", config.transform.flip_vertical)) {
+        return;
+    }
     if (config.surface.enabled
         && config.surface.mapping != pvt::SurfaceMapping::Plane
         && config.surface.curvature > 0.0) {
@@ -840,7 +1025,7 @@ void warn_if_created_by_newer_version(const ProjectDocument& document) {
 #ifdef PVT_PROGRAM_VERSION
     const std::string current = PVT_PROGRAM_VERSION;
 #else
-    const std::string current = "3.0.0";
+    const std::string current = "4.0.0";
 #endif
     const bool newer_created = version_is_newer(document.created_with_version, current);
     const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
@@ -1219,7 +1404,12 @@ void print_summary(const CliState& state) {
               << "Active stack: " << layer.render.waves.size() << " wave(s), "
               << layer.render.swings.size() << " swing(s), "
               << layer.render.effects.size() << " effect(s) | alpha modulation "
-              << (layer.render.alpha.enabled ? "on" : "off") << "\n"
+              << (layer.render.alpha.enabled ? "on" : "off")
+              << " | palette "
+              << (layer.render.palette.enabled ? layer.render.palette.name : "off")
+              << " | mirror " << pvt::mirror_mode_name(layer.render.transform.mirror)
+              << (layer.render.transform.flip_horizontal ? " + flip H" : "")
+              << (layer.render.transform.flip_vertical ? " + flip V" : "") << "\n"
               << "Output: " << project.output.bit_depth
               << (project.output.bit_depth == 32 ? "-bit float " : "-bit ")
               << (project.output.write_alpha ? "RGBA" : "RGB")
@@ -1239,7 +1429,7 @@ void print_summary(const CliState& state) {
                       ? " | external change/integrity mismatch" : "")
               << "\nPeak working-memory estimate: " << std::fixed << std::setprecision(1)
               << static_cast<double>(validation.estimated_peak_bytes) / (1024.0 * 1024.0)
-              << " MiB\n";
+              << " MiB\n" << std::defaultfloat << std::setprecision(6);
     if (!validation.ok) {
         std::cout << "Project needs attention: " << validation.message << "\n";
     }
@@ -1247,8 +1437,8 @@ void print_summary(const CliState& state) {
               << "2) Canvas and timing (global)\n"
               << "3) Waves for active layer\n"
               << "4) Effects for active layer\n"
-              << "5) Surface and procedural features for active layer\n"
-              << "6) Rhythm, swings, color, and quantization for active layer\n"
+              << "5) Surface, transforms, and procedural features for active layer\n"
+              << "6) Rhythm, swings, palette, color, and quantization for active layer\n"
               << "7) Procedural alpha modulation for active layer\n"
               << "8) Export settings (global)\n"
               << "9) Save project bundle\n"
@@ -1386,6 +1576,8 @@ void print_help(const char* program) {
         << "  --render (or --defaults)\n"
         << "  --width N --height N --block-size N --frames N --fps N\n"
         << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
+        << "  --workers 0.." << pvt::kMaximumSequenceWorkers
+        << "  (0 auto, 1 sequential)\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping and final alpha)\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
         << "  --output-dir PATH --prefix TEXT --start-frame N --digits N\n"
@@ -1411,7 +1603,7 @@ bool option_takes_value(const std::string& option) {
            || option == "--layer-opacity" || option == "--width"
            || option == "--height" || option == "--block-size" || option == "--frames"
            || option == "--fps" || option == "--waves" || option == "--bit-depth"
-           || option == "--png-compression"
+           || option == "--png-compression" || option == "--workers"
            || option == "--obj"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
            || option == "--start-frame" || option == "--digits";
@@ -1476,9 +1668,27 @@ int quick_self_test() {
     project.canvas.block_size = 8;
     project.canvas.total_frames = 12;
     project.output.write_alpha = true;
-    for (auto& effect : project.layers.front().render.effects) {
+    auto& lower_render = project.layers.front().render;
+    lower_render.surface.enabled = true;
+    lower_render.surface.mapping = pvt::SurfaceMapping::Sphere;
+    lower_render.surface.curvature = 0.65;
+    lower_render.swings.front().center_x = 0.42;
+    lower_render.swings.front().center_y = 0.58;
+    lower_render.swings.front().radius = 0.36;
+    for (std::size_t index = 0U; index < lower_render.effects.size(); ++index) {
+        auto& effect = lower_render.effects[index];
         effect.enabled = true;
+        effect.space = (index & 1U) == 0U ? pvt::EffectSpace::Texture
+                                         : pvt::EffectSpace::Surface;
+        if (effect.type != pvt::EffectType::BlockScale) {
+            effect.center_x = 0.44;
+            effect.center_y = 0.56;
+            effect.area_radius = 0.38;
+        }
     }
+    lower_render.palette = pvt::default_palette(2U);
+    lower_render.transform.mirror = pvt::MirrorMode::LeftToRight;
+    lower_render.transform.flip_vertical = true;
     auto upper = pvt::default_layer(1);
     upper.file_id = pvt::allocate_layer_file_id(project);
     upper.name = "Self-test overlay";
@@ -1496,8 +1706,8 @@ int quick_self_test() {
                   << '\n';
         return EXIT_FAILURE;
     }
-    std::cout << "Self-test passed: float RGBA layer rendering, blending, and the full "
-                 "effect stack are deterministic.\n";
+    std::cout << "Self-test passed: float RGBA layers, palette/transform stages, "
+                 "localized texture/object effects, and blending are deterministic.\n";
     return EXIT_SUCCESS;
 }
 
@@ -1505,6 +1715,7 @@ int quick_self_test() {
 
 int main(int argc, char** argv) {
     CliState state;
+    pvt::SequenceRenderOptions render_options;
     bool render_now = false;
     bool loaded_document = false;
     bool save_default = false;
@@ -1691,6 +1902,12 @@ int main(int argc, char** argv) {
                    && parse_integer(value, 0, 9, integer)) {
             mark_changed(state.document.project.output.png_compression_level,
                          static_cast<int>(integer));
+        } else if (option == "--workers"
+                   && parse_integer(value, 0,
+                                    static_cast<long long>(
+                                        pvt::kMaximumSequenceWorkers),
+                                    integer)) {
+            render_options.worker_count = static_cast<std::size_t>(integer);
         } else if (option == "--obj" && valid_output_directory(value)) {
             mutate_active([&](RenderConfig& config) {
                 const bool changed = !config.surface.enabled
@@ -1810,7 +2027,7 @@ int main(int argc, char** argv) {
     }
 
     if (!pvt::render_project_sequence(
-            state.document.project,
+            state.document.project, render_options,
             [](int completed, int total) {
                 std::cout << '\r' << "Rendered " << completed << '/' << total << std::flush;
                 return true;

@@ -25,7 +25,7 @@
 #include <utility>
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "3.0.0"
+#  define PVT_PROGRAM_VERSION "4.0.0"
 #endif
 
 namespace pvt {
@@ -1516,6 +1516,62 @@ ProjectDocument default_project_document() {
     return document;
 }
 
+bool make_independent_project_copy(const ProjectConfig& project,
+                                   ProjectDocument& destination,
+                                   std::string* error) {
+    clear_error(error);
+    try {
+        const ValidationResult validation = validate(project);
+        if (!validation.ok || !valid_semantic_project_name(project.name)) {
+            return fail(error, "Cannot copy invalid project: "
+                                   + validation.message);
+        }
+
+        ProjectDocument candidate = default_project_document();
+        candidate.project = project;
+        std::unordered_set<std::string> reserved_uuids;
+        reserved_uuids.reserve(project.layers.size() * 2U + 2U);
+        reserved_uuids.insert(project.uuid);
+        for (const LayerConfig& layer : project.layers) {
+            reserved_uuids.insert(layer.uuid);
+        }
+        const auto fresh_uuid = [&reserved_uuids]() {
+            for (int attempt = 0; attempt < 128; ++attempt) {
+                std::string candidate_uuid = generate_uuid();
+                if (reserved_uuids.insert(candidate_uuid).second) {
+                    return candidate_uuid;
+                }
+            }
+            return std::string{};
+        };
+        candidate.project.uuid = fresh_uuid();
+        for (std::size_t index = 0U;
+             index < candidate.project.layers.size(); ++index) {
+            candidate.project.layers[index].uuid = fresh_uuid();
+            // File IDs are bundle-local stable identities. A detached copy has
+            // no history to preserve, so give its sole initial snapshot a
+            // compact, deterministic file layout.
+            candidate.project.layers[index].file_id =
+                static_cast<std::uint64_t>(index);
+        }
+        candidate.bundle_root_name = portable_root_name(candidate.project.name);
+        candidate.dirty = true;
+
+        const ValidationResult copied_validation = validate(candidate.project);
+        if (!copied_validation.ok) {
+            return fail(error, "Could not assign independent project identities: "
+                                   + copied_validation.message);
+        }
+        destination = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to create an independent project copy.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected independent-copy error: ")
+                               + exception.what());
+    }
+}
+
 bool import_legacy_setup(const std::string& path,
                          ProjectDocument& destination,
                          std::string* error) {
@@ -1783,6 +1839,7 @@ bool semantic_fields(const ProjectConfig& project,
         }
         const std::string render_prefix = layer_prefix + "render.";
         fields[render_prefix + "surface.obj_path"] = layer.render.surface.obj_path;
+        fields[render_prefix + "palette.name"] = layer.render.palette.name;
         for (std::size_t wave = 0U; wave < layer.render.waves.size(); ++wave) {
             fields[render_prefix + "waves." + std::to_string(wave) + ".name"] =
                 layer.render.waves[wave].name;

@@ -57,13 +57,35 @@ bundle and native non-macOS executable names.
   cycles per loop, and propagation direction.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
   glow, and animated block scaling. Every effect can be enabled, synchronized,
-  duplicated, removed, and reordered. Controls include type-specific centers,
-  edges, frequencies, harmonics/attenuation, glow bloom parameters, and block
-  scale range/mix/quantization steps.
+  duplicated, removed, and reordered. Each effect explicitly runs either in
+  **Texture** space before surface wrapping or on the **Mapped object** after
+  wrapping and the layer mirror/flip; the latter moves or deforms the rendered
+  silhouette of a cylinder, sphere, cube, or OBJ in final canvas coordinates
+  rather than editing its source 3D geometry. Controls
+  include type-specific centers, edges, frequencies, harmonics/attenuation,
+  glow bloom parameters, and block scale
+  range/mix/quantization steps.
+- Draggable numbered effect centers in the preview. A local area radius of zero
+  preserves whole-layer behavior; a positive radius creates a smoothly
+  feathered circle around the center for zoom, ripple, shake, flag wave, and
+  glow. Glow's blur radius remains a separate control. Texture-effect and Swing
+  overlays are explicitly marked as unprojected source/UV coordinates; mapped-
+  object overlays are final screen coordinates.
 - Transparent, black, white, or reflected out-of-frame handling for coordinate
   effects.
 - Multiple dynamic swing modulators with sine, triangle, smooth-pulse, and
-  bounce variations, including add, remove, edit, and reorder controls.
+  bounce variations, including add, remove, edit, and reorder controls. A swing
+  radius of zero modulates the whole layer; a positive radius localizes its
+  clock influence to a feathered circle whose numbered center handle is
+  draggable in the preview. Localized Swing timing drives source waves and
+  Texture effects; Mapped-object effects use the global synchronized clock
+  because an arbitrary projected screen point does not map to one unique UV.
+- An optional palette per layer with 1-256 authored sRGB colors, custom
+  add/edit/remove controls, and six presets: Ember, Deep Ocean, Vaporwave,
+  Forest Biolume, Arcade, and Moonlight. Nearest-color selection is performed
+  in linear light without changing alpha.
+- Per-layer horizontal/vertical flips and directional mirror symmetry
+  (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
 - Independent feature toggles for displacement, slope lighting, spiral, and
   wall reflection.
 - RGB, luminance, or hue quantization with 2-65,536 levels and adjustable mix.
@@ -79,8 +101,10 @@ bundle and native non-macOS executable names.
   dithering for integer PNG output. Dithering is never applied to float EXR.
 
 The GUI includes a topmost-first Layers dock, project naming, per-layer blend and
-opacity controls, a session-only **Solo** preview, draggable wave handles,
-ordered wave/swing/effect editors, type-aware effect controls, a live
+opacity controls, a session-only **Solo** preview, draggable center handles for
+waves, swings, and centered effects with visible radius rings, ordered
+wave/swing/effect editors, palette and transform controls, type-aware effect
+controls, a live
 checkerboard alpha preview, a continuously updating loop timeline, and
 background composite export with cooperative cancellation inside expensive
 frame/effect/OBJ passes. The Output tab is
@@ -120,6 +144,38 @@ Wave propagation direction is continuous:
 - `1.0`: vertical propagation
 
 Intermediate values blend between radial and the selected axis.
+
+## Parallel sequence export
+
+Sequence exports use a bounded CPU worker pool. Each worker renders and encodes
+an independent frame; completed files are still installed atomically in
+ascending frame order, and progress callbacks run serially on the calling
+thread. This keeps collision protection, deterministic filenames, cancellation,
+and callback behavior compatible with the former sequential exporter.
+
+The GUI and the default library overload select workers automatically. The CLI
+can choose the upper bound explicitly:
+
+```sh
+# Hardware-concurrency auto selection (also the default)
+./build/render9 --render --workers 0
+
+# Reproducible sequential reference, or an explicit bounded pool
+./build/render9 --render --workers 1
+./build/render9 --render --workers 12
+```
+
+The requested value is capped by the frame count, the reported hardware
+concurrency when automatic, a hard 256-worker limit, and a conservative
+aggregate memory budget derived from the validated per-frame peak estimate. A
+request is therefore an upper bound, not permission to exhaust RAM.
+
+On one representative Apple M2 Max workload (12 CPU cores, 24 frames at
+960x540, block size 1, 64 waves, PNG compression 0), `--workers 1` took 44.95
+seconds and `--workers 12` took 5.44 seconds: an 8.3x wall-clock speedup. All 24
+PNGs were byte-identical. This is a measured example, not a universal guarantee;
+scaling depends on image size, layer/effect cost, encoder settings, storage, and
+the memory-derived worker cap.
 
 ## Alpha and color precision
 
@@ -174,10 +230,28 @@ is the portable project name plus `.zip`:
 ```
 
 ZIP bundles and unpacked bundle directories contain the same human-readable
-tree. The first Save/Save As fixes the sanitized archive/directory root. Later
-project renames are versioned display data and never move the associated bundle;
-a Save As to a new destination chooses a new root, while adopting an exact copied
-bundle retains its embedded root. A two-layer first save looks like this:
+tree. The first Save/Save As fixes the sanitized archive/directory root. When a
+project that has already been saved is renamed in the GUI, it offers four
+explicit choices:
+
+- **Keep Existing Filename** changes the semantic project name, marks the
+  current document dirty, and records that rename as a normal new version on
+  the next Save. The associated bundle path/root does not move.
+- **Save As and Open** creates a new independent bundle using the sanitized new
+  name by default, then switches the GUI to it.
+- **Save Copy, Stay Here** creates the same independent bundle but leaves the
+  original project open and restores its previous displayed name.
+- **Cancel** changes neither project.
+
+An independent rename copy contains only the current working state as version
+0. It receives a new project UUID, new UUIDs for every layer, and fresh
+bundle-local file identities; it inherits no source path, history, or stale-save
+token. The original bundle is never rewritten, and the new-copy operation
+refuses every existing destination. This is intentionally different from
+adopting an exact filesystem copy of a complete bundle, which retains its
+embedded identity and history. CLI project-name edits remain ordinary semantic
+renames; they do not open this GUI choice dialog or implicitly fork a project.
+A two-layer first save looks like this:
 
 ```text
 Midnight Bonfire/
@@ -245,11 +319,13 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1 and 2 remain
-importable; current explicit legacy output is setup format 3, which preserves the
-new final-alpha selection. Import creates a new unsaved one-layer project with a
-new project/layer UUID and clears its save association, so normal Save can never
-overwrite the source `.pvt`. New saves remain bundles. The CLI exposes
+Legacy deterministic line-oriented `.pvt` setup versions 1-3 remain importable;
+current explicit legacy output is setup format 4. Format 4 adds effect stage and
+local-area data, localized swings, palettes, and layer transforms while older
+files receive neutral compatibility defaults. Import creates a new unsaved
+one-layer project with a new project/layer UUID and clears its save association,
+so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
+The CLI exposes
 `--save-legacy FILE.pvt` only as a clearly lossy escape hatch and rejects it when
 more than one layer exists.
 
@@ -260,7 +336,7 @@ Common CLI overrides can be layered on defaults or on a loaded project:
 ```sh
 ./build/render9 --load "Midnight Bonfire.zip" --render \
   --width 640 --height 360 --block-size 4 \
-  --frames 120 --fps 30 --waves 10 \
+  --frames 120 --fps 30 --waves 10 --workers 0 \
   --alpha --bit-depth 16 --png-compression 5 --dither blue \
   --output-dir preview --prefix ripple_
 ```
@@ -353,7 +429,8 @@ The public header is `include/procedural_visualizer_tool.h`. It exposes:
 - float RGBA layer/project rendering by frame index or normalized phase;
 - bounded linear-light blend compositing, individual PNG/EXR writing, and
   composite sequence export;
-- progress/cancellation callbacks; and
+- a bounded `SequenceRenderOptions` CPU worker policy, ordered atomic output,
+  and serialized progress/cancellation callbacks; and
 - backward-compatible transactional `.pvt` setup save/load.
 
 Bundle/version persistence is an internal application helper, not installed
@@ -407,8 +484,10 @@ make check
 
 The suite covers dynamic zero/one/ten-item configurations, deterministic frames,
 exact and near-seam continuity for every effect in both synchronization modes,
-direction modes, alpha range and straight-alpha/glow composition, primitive
-mappings, rear-surface alpha/color compositing, bounded OBJ parsing/caching and
+texture/mapped-object stages, local effect and swing influence, palettes,
+transforms, direction modes, alpha range and straight-alpha/glow composition,
+primitive mappings, rear-surface alpha/color compositing, bounded OBJ
+parsing/caching and
 two-sided perspective rendering, animated smooth/stepped block grouping and
 effect ordering, default glow visibility, memory and value limits, setup round
 trips and transactional failure, project/layer validation, every blend mode,
@@ -416,12 +495,45 @@ opacity and paint order, ZIP/directory bundle round trips, immutable version
 append/no-change validation, semantic diffs, current/revert behavior, legacy
 promotion, checksum/fallback handling, and hostile archive/tree rejection,
 8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
-deterministic dithering,
+deterministic dithering, byte-identical one/four-worker sequence output,
 callback/cancel behavior, sequence collision preflight, Unicode paths, and the
 public library API. It also exercises CLI help, option rejection, and the
 multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's
 offscreen platform, exercises project/layer/bundle state, and verifies that Play
 installs advancing completed preview frames.
+
+## Planned architecture (not implemented)
+
+The following requests are deliberately not represented as half-working fields
+or external-path shortcuts:
+
+- **Metal acceleration:** rendering is currently CPU-only. A future macOS Metal
+  implementation should sit behind a backend-neutral frame-render interface,
+  with the current CPU renderer retained as the reference and fallback. Backend
+  selection, pipeline/resource caching, bounded GPU memory, cancellation, and
+  CPU/Metal image/alpha/seam parity need to be designed and tested together.
+  The existing frame worker scheduler should choose an appropriate CPU or GPU
+  execution policy rather than layering ad-hoc Metal versions into individual
+  effects.
+- **Layer starting images:** a project must import and embed a bounded,
+  checksummed image asset in its bundle; a saved layer must not depend on an
+  arbitrary external filename. Layers should reference a stable asset ID or
+  digest, while preview/export share an immutable decoded image. Edits and undo
+  should use copy-on-write references (or compact deltas), not duplicate a
+  full-resolution bitmap in every snapshot. The static source then participates
+  in the same periodic effects, surfaces, transforms, palettes, and paths so the
+  resulting animation remains loop-safe.
+- **Reusable closed motion paths:** paths should be named project resources,
+  separate from bindings that attach them to a wave, effect center, or mapped
+  object. A path will contain at least three nodes and closed cubic segments,
+  with stable node IDs and Corner, Auto Smooth, Smooth, and Symmetric handle
+  modes. Three arbitrary smooth nodes do not mathematically define an exact
+  ellipse, so the editor should include an ellipse tool that creates the usual
+  four-node cubic approximation. Each consumer binding owns enable, sync/free
+  clock, cycles, phase, direction, offset, and optional follow-tangent settings.
+  A bounded arc-length lookup table should provide visually uniform motion, and
+  the GUI needs a dedicated node/handle editor plus strict persistence
+  validation. This avoids duplicating geometry or baking one position per frame.
 
 ## Current boundary
 
@@ -432,7 +544,8 @@ the surface image. Cooperative cancellation is checked within base rendering,
 effects, surface mapping, quantization, layer compositing, and OBJ rasterization.
 An image encoder already writing one atomic output file is allowed to finish that
 file before cancellation returns. Custom OBJ assets remain external to project
-bundles. See
+bundles. Metal rendering, embedded starting-image assets, and reusable path
+animation remain planned work as described above. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 
 This project is licensed under GPLv3. Applications distributed with the library

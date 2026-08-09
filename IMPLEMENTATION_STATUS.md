@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -43,9 +43,13 @@ digest comparison serializes cooperating writers and closes the stale-save
 check/commit window without placing machine-specific lock state inside bundles.
 
 The sanitized archive/directory root is selected on first Save/Save As and then
-stays stable for that associated bundle. Project display names are snapshotted
-per version, so renaming never moves the bundle and old-name diff/revert remains
-meaningful; root metadata reflects whichever version is current.
+stays stable for that associated bundle when the user chooses to keep its
+filename. Renaming a saved project in the GUI now offers keep-filename, create
+and open an independent copy, create a copy while staying in the original, and
+Cancel. Independent copies transactionally carry only the current working state
+as version 0, regenerate project/layer UUIDs and bundle-local file IDs, and
+refuse existing destinations. The stay-here path never mutates the open project
+and restores its previous displayed name.
 
 The ZIP/directory boundary is hostile-input hardened: traversal, absolute or
 platform-special paths, malformed UTF-8/NUL, collisions, symlinks/special files,
@@ -61,10 +65,29 @@ undo/redo. Undo depth, window state, and dialog locations use per-user platform
 settings, while a hard 128 MiB history budget bounds full-state snapshots.
 Preview/export cancellation now reaches per-frame effects and OBJ rasterization;
 stale previews are cancelled and document replacement is blocked during export.
-The CLI opens ZIPs, directories, and legacy setups; renders composite
-projects; edits the selected layer; manages bounded layers; separates final alpha
-from modulation; performs normal bundle saves; and reserves `--save-legacy` for
-an explicit one-layer export.
+The GUI now also exposes draggable numbered center handles and visible radius
+rings for effects and swings, Texture versus Mapped-object effect stages,
+custom/built-in per-layer palettes, and directional mirror plus
+horizontal/vertical layer transforms. Block Scale remains a whole-image effect
+without a center/radius overlay. These values are centrally validated and
+persisted in setup format 4 with neutral defaults when formats 1-3 are loaded.
+The CLI's interactive editor exposes the new layer/effect/swing controls;
+scripted sequence rendering adds `--workers`.
+
+Sequence export now uses independent-frame CPU workers for rendering and
+encoding. Automatic selection is bounded by hardware concurrency, frame count,
+256 workers, and a conservative aggregate memory budget computed from the
+validated per-frame peak. Output installation and progress callbacks remain in
+ascending frame order. On the representative Apple M2 Max workload recorded for
+this pass (24 frames, 960x540, block size 1, 64 waves, PNG compression 0), 12
+workers reduced wall time from 44.95 seconds to 5.44 seconds (8.3x), with all 24
+PNGs byte-identical. This is evidence for that workload, not a general speedup
+guarantee.
+
+The CLI opens ZIPs, directories, and legacy setups; renders composite projects;
+edits the selected layer; manages bounded layers; separates final alpha from
+modulation; performs normal bundle saves; and reserves `--save-legacy` for an
+explicit one-layer export.
 
 The earlier C-to-C++ migration, float pipeline, ordered effects, quantization,
 dithering, PNG/EXR writing, custom OBJ mapping, strict legacy setup codec, and
@@ -86,49 +109,80 @@ consumers do not inherit minizip requirements.
 | 7 | Float processing and lower-depth dithering | Complete | Linear float image pipeline; sRGB conversion plus blue-noise-like, Bayer, or Floyd-Steinberg dithering for PNG; dither is off/ignored for EXR. |
 | 8 | Safe setup save/load | Complete | Versioned deterministic `.pvt` files, bounded strict parser, complete validation, transactional load, atomic/durable save, UTF-8 paths, and no NUL truncation. |
 | 9 | Library-only build and useful Qt-facing API | Complete | `libProceduralVisualizerTool`, public header, installable CMake package, example consumer, and build switches that omit every `main`. |
-| 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave handles, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, and background export. |
+| 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave/swing/effect center handles and visible local-radius rings, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, and background export. |
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
 | 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
-| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v3, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
+| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v4, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
 | 14 | Randomize stack values or composition | Complete | Separate GUI actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items. |
 | 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, and completed previews advance during Play even under timer/render overlap. |
-| 16 | Named projects and default filenames | Complete | Semantic name appears in the title; a portable sanitizer supplies the initial root/default `.zip`. The associated root stays stable while renamed display values are versioned. |
+| 16 | Named projects and default filenames | Complete | Semantic name appears in the title and a portable sanitizer supplies the initial `.zip`. Saved-project rename choices either preserve that path or create a current-state-only independent project with fresh identities, then open it or stay in the original. |
 | 17 | Full render-config layers | Complete | Global canvas/export data is split from per-layer render data; layer switches cannot overwrite global output state. Stable UUIDs/file IDs survive names and reorders. |
 | 18 | Layer compositing | Complete | Sequential bounded float-RGBA compositing implements all 11 requested modes plus opacity; only one layer frame and one accumulator are retained. |
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, per-version global output, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
 | 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
-| 22 | Legacy compatibility without overwrite | Complete | Setup v1/v2 import into a new unsaved one-layer project; setup v3 retains final-alpha state. Only explicit one-layer `--save-legacy` writes `.pvt`. |
+| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v3 import into a new unsaved one-layer project; setup v4 persists spatial/stage/palette/transform data. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; a configurable step limit plus hard 128 MiB history budget and UI state live in per-user `QSettings`, outside bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
+| 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
+| 26 | Better CPU utilization | Complete | Bounded frame-level render/encode workers, ordered atomic install, serialized progress, `--workers 0..256`, and auto selection in GUI/library. Representative M2 Max measurement: 44.95 s to 5.44 s (8.3x). |
+| 27 | Texture versus mapped-surface effects | Complete | Each effect runs before surface mapping or after it; mapped-object coordinate effects move/deform the primitive silhouette. Relative order is retained within each stage. |
+| 28 | Draggable/localized effects | Complete | Numbered preview handles edit centers; zero area radius preserves whole-layer behavior and positive radii add feathered local influence. Glow blur and influence radii remain separate. |
+| 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
+| 30 | Per-layer palettes | Complete | 1-256 embedded sRGB colors, six presets, custom GUI/CLI editing, and linear-light nearest-color mapping that leaves alpha intact. |
+| 31 | Transform layer | Complete (requested scope) | Directional horizontal/vertical/four-way mirrors plus horizontal and vertical flips run after surface mapping and before mapped-object effects and quantization/palette mapping. This is not a general move/scale/rotate affine transform. |
+| 32 | Metal GPU acceleration | Deferred - designed | Add a backend-neutral frame renderer with CPU reference/fallback, Metal resource/pipeline management, bounded scheduling, cancellation, and image/alpha/seam parity tests; no Metal backend exists yet. |
+| 33 | Layer starting image | Deferred - designed | Import a bounded checksummed bundle asset, reference it by stable ID/digest, share immutable decoded storage, and use copy-on-write or compact undo rather than an external path or repeated full-image snapshots. |
+| 34 | Closed reusable motion paths | Deferred - designed | Store named closed cubic paths separately from per-wave/effect/object bindings; use at least three nodes, handle modes, bounded arc-length LUT sampling, independent sync/phase/direction, and a dedicated editor. |
 
 ## Important implementation map
 
 - `include/procedural_visualizer_tool.h`: public C++ API and complete owned config model.
-- `src/core.cpp`: defaults, periodic phases, float RGBA layer renderer, effects,
-  quantization, alpha, and analytic surface mappings.
+- `src/core.cpp`: defaults, periodic/spatial phases, staged effects, palettes,
+  transforms, float RGBA layer rendering, quantization, alpha, and analytic
+  surface mappings.
 - `src/composite.cpp`: project/layer validation, UUIDs, linear-light blend modes,
   bounded sequential compositing, and project frame rendering.
 - `src/obj_mesh.cpp` / `src/obj_surface.cpp`: bounded Wavefront parsing/cache and
   perspective, two-sided, layered custom-mesh rasterization.
-- `src/image_io.cpp`: PNG/EXR encoding, PNG compression, dithering, collision preflight,
-  atomic installation, progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v3 codec and split
+- `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
+  compression, dithering, collision preflight, ordered atomic installation,
+  serialized progress, and cancellation checks.
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v4 codec and split
   per-layer/global bundle records with transactional legacy file I/O.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
-  metadata, semantic history operations, bounded ZIP/directory loading, and
-  atomic save staging. This helper is intentionally not installed ABI.
-- `app/cli_main.cpp`: project/layer-aware menu and command-line client.
-- `gui/`: Qt 6 project/layer/version client (Qt 6.5 or newer).
+  metadata, semantic history operations, independent current-state copies,
+  bounded ZIP/directory loading, and atomic save staging. This helper is
+  intentionally not installed ABI.
+- `app/cli_main.cpp`: project/layer-aware interactive client plus scripted
+  `--workers` control.
+- `gui/`: Qt 6 project/layer/version client, saved-rename workflow, draggable
+  spatial center handles and visible radii, palette editor, and transform
+  controls (Qt 6.5 or newer).
 - `tests/test_main.cpp`, `tests/project_composite_test.cpp`, and
   `tests/bundle_test.cpp`: core/seam/format/setup/I/O, layer/blend/project, and
-  persistence/archive-safety coverage.
+  persistence/archive-safety coverage, including worker determinism, setup-v4
+  compatibility, staged/local effects, palettes/transforms, and rename copies.
 
 ## Guardrails retained
 
 - Frames sample `[0, N)` and omit the duplicated endpoint.
 - All animation rates are integer cycles per loop; synchronized and free clocks
   both close exactly.
+- Sequence workers operate on independent frames, not layers. The requested
+  count is capped by frames, hardware/explicit request, 256, and a default 2 GiB
+  aggregate estimate. Encoding may overlap, but installation and progress remain
+  ordered and the complete collision preflight still happens before frame zero.
+- Effects are grouped into two explicit stages: every Texture effect runs before
+  surface wrapping and every Mapped-object effect afterward. List order remains
+  stable within a stage; the mapping boundary cannot be interleaved ambiguously.
+- Effect and Swing radii use zero as the backward-compatible whole-layer mode.
+  Positive values are feathered circles measured against the shorter canvas
+  edge; Glow's pixel blur radius is not reused as its influence radius.
+- The explicit pipeline is Texture effects, surface mapping, layer mirror/flips,
+  Mapped-object effects, quantization, then optional palette mapping. A later
+  localized mapped effect can intentionally break earlier mirror symmetry;
+  neither palette mapping nor transforms rewrite alpha.
 - Project layers are stored bottom-to-top; the GUI reverses that order for a
   conventional topmost-first list. Rendering skips disabled layers and composites
   enabled layers sequentially into one accumulator.
@@ -154,6 +208,9 @@ consumers do not inherit minizip requirements.
   metadata cannot self-checksum (the digest lives in `metadata.sha256`).
 - The archive/directory root is a stable bundle identity chosen at association;
   project display name belongs to each snapshot and may change without a move.
+- A rename-created independent project has no inherited source/CAS token or
+  history, regenerates project/layer identities, and may only target a new path.
+  Copy-and-stay leaves the original document and undo/dirty state unchanged.
 - A checksum mismatch is treated neutrally as an external change/integrity
   signal, not proof of authorship. Opening is read-only; parseable valid changes
   become dirty and are promoted only by explicit Save.
@@ -171,17 +228,24 @@ consumers do not inherit minizip requirements.
 
 ## Validation record
 
-Fresh integrated Release builds passed all 13/13 non-GUI CTests and all 14/14
-Qt-enabled CTests on 2026-08-08, including the project composite, bundle, CLI
-bundle, GUI smoke, and retained core/OBJ/CLI paths. The workspace-root
+Focused `pvt_bundle` and offscreen `pvt_gui_smoke` suites passed on 2026-08-09
+after the saved-project rename work, including all four prompt actions,
+current-state-only copy identity/history, copy-and-stay restoration, and
+transactional open-copy replacement. The representative parallel-export
+measurement and its byte-equality result are recorded above; they characterize
+that workload rather than promising the same scaling for every project.
+
+The final integrated Release build passed all 14/14 Qt-enabled CTests on
+2026-08-09, including core rendering, project compositing, bundle persistence,
+CLI flows, OBJ handling, and the GUI smoke paths. The workspace-root
 `make PVT_BUILD_QT_GUI=ON all` path also rebuilt and linked the macOS GUI
 successfully; an offscreen smoke run produced and verified the Layers/Versions
 window.
 
-A C++20 Release build passed 13/13 CTests after exercising the standard's
-`char8_t` filesystem path behavior. A Debug AddressSanitizer plus
-UndefinedBehaviorSanitizer build passed the same 13/13 tests (LeakSanitizer is
-not supported by this macOS runtime). A core-only configure built without
+A fresh C++20 Release build passed 13/13 non-GUI CTests on 2026-08-09 after
+exercising the standard's `char8_t` filesystem path behavior. A fresh Debug
+AddressSanitizer plus UndefinedBehaviorSanitizer build passed the same 13/13
+tests (LeakSanitizer is not supported by this macOS runtime). A core-only configure built without
 creating a dependency-fetch directory. Static and shared installed-package
 consumers both configured, built, and ran; the installed shared CLI retained its
 relative sibling-library runtime path, passed self-test, and still ran after the
@@ -240,19 +304,52 @@ target.
 
 ## Remaining work for later passes
 
-1. If encoder-level cancellation becomes important, add format-specific abort
+1. **Metal backend:** no GPU renderer is implemented. Introduce a backend-neutral
+   frame-render interface first; retain the CPU implementation as the reference
+   and fallback, then add macOS Metal resource/pipeline caches and backend-aware
+   scheduling. Bound GPU allocations and in-flight frames, preserve cooperative
+   cancellation, and test CPU/Metal seam, alpha, surface, effect, palette, and
+   transform parity. Do not scatter one-off Metal paths through individual
+   effects or run CPU and GPU schedulers independently.
+2. **Layer starting image:** do not persist a naked local path. Add a bounded
+   import operation that decodes transactionally and embeds the original or a
+   canonical representation as a checksummed bundle asset. Reference it by a
+   stable asset ID/digest; share immutable decoded storage across preview,
+   frames, and layers; use copy-on-write references or compact deltas for edits
+   and undo. Apply the existing periodic pipeline to that static source so loop
+   closure is derived from effects/transforms/paths rather than duplicated end
+   frames. This asset store can later support self-contained OBJ resources too.
+3. **Reusable closed cubic paths:** define named project-level path geometry
+   separately from per-consumer bindings. Require at least three nodes, close
+   the final cubic segment to the first, give nodes stable IDs, and store Corner,
+   Auto Smooth, Smooth, or Symmetric handle modes with explicit in/out handles.
+   Because three arbitrary smooth nodes are not an exact ellipse, provide an
+   ellipse tool that creates a four-node cubic approximation instead of silently
+   promising circle behavior the geometry cannot guarantee.
+   Bindings for waves, effect centers, and mapped objects should independently
+   own enable, synchronized/free clock, integer cycles, phase, direction, and
+   offset, plus optional follow-tangent orientation. Build a bounded arc-length
+   lookup table after edits for visually uniform sampling. Add a dedicated GUI
+   node/handle editor, strict setup/bundle validation, undo, and semantic diffs.
+4. **Projected source-overlay editing:** add an explicit unwrapped source/UV
+   preview or inset for Texture effects and localized Swings when a non-plane
+   surface is active. Their current dotted overlays are deliberately labelled
+   as unprojected; arbitrary OBJ UVs can be discontinuous or one-to-many, so a
+   screen-space circle must not pretend to be the projected footprint.
+5. If encoder-level cancellation becomes important, add format-specific abort
    plumbing around libpng/zlib and EXR output. Rendering itself is cancellable
    within expensive frame/effect/OBJ passes; an encoder currently finishes the
    one atomic output file it has already started.
-2. For distributable GUI bundles, deploy the matching Qt runtime. On macOS also
+6. For distributable GUI bundles, deploy the matching Qt runtime. On macOS also
    resolve the deployment-target mismatch by packaging an appropriately built
    libpng and exercise the oldest supported macOS version. Until that deployment
    workflow exists, the GUI intentionally remains a build-tree application and is
    not installed by `cmake --install`.
-3. Expand GUI automation beyond the bounded smoke paths to exhaustively drive
+7. Expand GUI automation beyond the bounded smoke paths to exhaustively drive
    every layer editor, undo merge boundary, long semantic diff, bit-depth
    transition, progress path, and cancellation race.
-4. If self-contained custom-mesh projects become a priority, add an explicit,
-   checksummed asset-import feature with deduplication and strict size/type bounds.
+8. If self-contained custom-mesh projects become a priority before the shared
+   asset-store work above, add an explicit, checksummed asset-import feature with
+   deduplication and strict size/type bounds.
    Current bundles intentionally retain OBJ paths only and never copy or fetch
    mesh/material/texture assets implicitly.

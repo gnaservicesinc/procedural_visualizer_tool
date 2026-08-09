@@ -11,6 +11,7 @@
 #include <QByteArray>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
@@ -60,6 +61,7 @@
 #include <exception>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 
@@ -74,7 +76,7 @@ constexpr int kMaximumUndoLimit = 5000;
 constexpr std::size_t kMaximumUndoHistoryBytes = 128U * 1024U * 1024U;
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "3.0.0"
+#  define PVT_PROGRAM_VERSION "4.0.0"
 #endif
 
 std::optional<std::vector<std::uint64_t>> numeric_version(std::string_view value) {
@@ -328,13 +330,17 @@ QString swing_label(const pvt::SwingConfig& swing, std::size_t index) {
            + QString::fromStdString(swing.name) + QStringLiteral("  [")
            + (swing.enabled ? QStringLiteral("on") : QStringLiteral("off"))
            + QStringLiteral(", ")
-           + QString::fromUtf8(pvt::waveform_name(swing.waveform)) + QLatin1Char(']');
+           + QString::fromUtf8(pvt::waveform_name(swing.waveform))
+           + (swing.radius > 0.0 ? QStringLiteral(", local") : QStringLiteral(", global"))
+           + QLatin1Char(']');
 }
 
 QString effect_label(const pvt::EffectConfig& effect, std::size_t index) {
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(effect.name) + QStringLiteral("  [")
            + QString::fromUtf8(pvt::effect_type_name(effect.type))
+           + QStringLiteral(", ")
+           + QString::fromUtf8(pvt::effect_space_name(effect.space))
            + QStringLiteral(", ")
            + (effect.enabled ? QStringLiteral("on") : QStringLiteral("off"))
            + QStringLiteral(", ")
@@ -369,7 +375,11 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     for (const auto& effect : render.effects) {
         bytes = saturating_add(bytes, estimated_string_bytes(effect.name));
     }
-    return saturating_add(bytes, estimated_string_bytes(render.surface.obj_path));
+    bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_path));
+    bytes = saturating_add(bytes, estimated_string_bytes(render.palette.name));
+    bytes = saturating_add(
+        bytes, render.palette.colors.capacity() * sizeof(pvt::PaletteColor));
+    return bytes;
 }
 
 std::size_t estimated_output_bytes(const pvt::ExportConfig& output) {
@@ -480,6 +490,19 @@ QString existing_writable_directory(const QString& path, bool allow_root = false
     return QDir::cleanPath(directory.absolutePath());
 }
 
+bool equivalent_local_path(const QString& first, const QString& second) {
+    if (first.isEmpty() || second.isEmpty()) return false;
+    const QFileInfo first_info(first);
+    const QFileInfo second_info(second);
+    const QString first_canonical = first_info.canonicalFilePath();
+    const QString second_canonical = second_info.canonicalFilePath();
+    if (!first_canonical.isEmpty() && !second_canonical.isEmpty()) {
+        return first_canonical == second_canonical;
+    }
+    return QDir::cleanPath(first_info.absoluteFilePath())
+           == QDir::cleanPath(second_info.absoluteFilePath());
+}
+
 QString requested_working_directory() {
     const QStringList arguments = QCoreApplication::arguments();
     for (qsizetype index = 1; index < arguments.size(); ++index) {
@@ -561,6 +584,10 @@ void randomize_swing_settings(pvt::SwingConfig& swing, QRandomGenerator& random)
     swing.cycles_per_loop = random_integer(random, 2, 16);
     swing.phase_degrees = random_real(random, 0.0, 360.0);
     swing.shape = random_real(random, 0.15, 0.85);
+    swing.center_x = random_real(random, 0.15, 0.85);
+    swing.center_y = random_real(random, 0.15, 0.85);
+    swing.radius = random_chance(random, 0.35)
+                       ? random_real(random, 0.12, 0.48) : 0.0;
 }
 
 void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& random) {
@@ -573,12 +600,18 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
     effect.name = name;
     effect.enabled = enabled;
     effect.synchronized = random_chance(random, 0.7);
+    effect.space = random_chance(random, 0.25)
+                       ? pvt::EffectSpace::Surface
+                       : pvt::EffectSpace::Texture;
     effect.cycles_per_loop = random_nonzero_cycles(random, 4);
     effect.phase_degrees = random_real(random, 0.0, 360.0);
     const int edge = random_integer(random, 0, 5);
     effect.edge_mode = edge < 3
                            ? pvt::EdgeMode::Reflect
                            : static_cast<pvt::EdgeMode>(edge - 3);
+    effect.area_radius = type != pvt::EffectType::BlockScale
+                                 && random_chance(random, 0.3)
+                             ? random_real(random, 0.12, 0.55) : 0.0;
 
     switch (type) {
         case pvt::EffectType::EndlessZoom:
@@ -601,6 +634,8 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.magnitude = random_real(random, 0.006, 0.035);
             effect.frequency = static_cast<double>(random_integer(random, 1, 7));
             effect.secondary = random_real(random, 0.35, 1.0);
+            effect.center_x = random_real(random, 0.2, 0.8);
+            effect.center_y = random_real(random, 0.2, 0.8);
             effect.angle_degrees = random_real(random, 0.0, 360.0);
             break;
         case pvt::EffectType::FlagWave:
@@ -618,6 +653,8 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.radius_pixels = random_real(random, 8.0, 56.0);
             effect.threshold = random_real(random, 0.2, 0.65);
             effect.soft_knee = random_real(random, 0.15, 0.6);
+            effect.center_x = random_real(random, 0.2, 0.8);
+            effect.center_y = random_real(random, 0.2, 0.8);
             break;
         case pvt::EffectType::BlockScale:
             effect.intensity = random_real(random, 0.65, 1.0);
@@ -890,7 +927,10 @@ QWidget* MainWindow::createSwingPage() {
     auto* layout = new QVBoxLayout(page);
     auto* explanation = new QLabel(
         tr("Swing modulators reshape the shared synchronized clock. Add, remove, "
-           "duplicate, and reorder them to layer loop-safe rhythm variations."));
+           "duplicate, and reorder them to layer loop-safe rhythm variations. "
+           "Set a local radius above zero to place the numbered source/UV circle in the preview. "
+           "Localized Swings drive source waves and Texture effects; Mapped-object effects use "
+           "the global synchronized clock because projected screen points do not map to one UV."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
@@ -924,10 +964,17 @@ QWidget* MainWindow::createSwingPage() {
     swing_cycles_ = integer_editor(0, 1000);
     swing_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     swing_shape_ = real_editor(0.0, 1.0, 4, 0.05);
+    swing_center_x_ = real_editor(-10.0, 10.0, 4, 0.01);
+    swing_center_y_ = real_editor(-10.0, 10.0, 4, 0.01);
+    swing_radius_ = real_editor(0.0, 10.0, 4, 0.01);
+    swing_radius_->setSpecialValueText(tr("Whole layer (0)"));
     swing_amount_->setToolTip(
         tr("Strength of this timing modulation. Negative values invert the swing."));
     swing_shape_->setToolTip(
         tr("Changes the contour of shaped waveforms; sine and triangle ignore it."));
+    swing_radius_->setToolTip(
+        tr("Fraction of the shorter canvas edge. Zero preserves whole-layer behavior; "
+           "positive values create a feathered movable circle."));
     form->addRow(tr("Name"), swing_name_);
     form->addRow(swing_enabled_);
     form->addRow(tr("Waveform"), swing_waveform_);
@@ -935,6 +982,9 @@ QWidget* MainWindow::createSwingPage() {
     form->addRow(tr("Pulses per loop"), swing_cycles_);
     form->addRow(tr("Phase (degrees)"), swing_phase_);
     form->addRow(tr("Waveform shape"), swing_shape_);
+    form->addRow(tr("Center X (0–1)"), swing_center_x_);
+    form->addRow(tr("Center Y (0–1)"), swing_center_y_);
+    form->addRow(tr("Local radius"), swing_radius_);
     layout->addWidget(properties);
 
     connect(add, &QPushButton::clicked, this, [this] {
@@ -992,8 +1042,10 @@ QWidget* MainWindow::createEffectPage() {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     auto* explanation = new QLabel(
-        tr("Effects run in list order. Add, remove, duplicate, or reorder any quantity. "
-           "All animation cycle counts are loop-safe integers."));
+        tr("Effects keep their list order within two stages: Texture effects run before "
+           "surface wrapping; Mapped object effects run after the surface and layer transform "
+           "and can move or deform the complete primitive silhouette. Centers and local radii "
+           "are draggable in the preview."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
@@ -1034,6 +1086,11 @@ QWidget* MainWindow::createEffectPage() {
                             pvt::EffectType::Glow, pvt::EffectType::BlockScale}) {
         add_enum_item(effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
     }
+    effect_space_ = new QComboBox;
+    add_enum_item(effect_space_, tr("Texture (before surface)"),
+                  pvt::EffectSpace::Texture);
+    add_enum_item(effect_space_, tr("Mapped object (after surface)"),
+                  pvt::EffectSpace::Surface);
     effect_cycles_ = integer_editor(-1000, 1000);
     effect_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     effect_edge_ = new QComboBox;
@@ -1051,10 +1108,13 @@ QWidget* MainWindow::createEffectPage() {
     effect_radius_ = real_editor(0.0, 16384.0, 2, 1.0);
     effect_threshold_ = real_editor(0.0, 64.0);
     effect_knee_ = real_editor(0.0, 1.0);
+    effect_area_radius_ = real_editor(0.0, 10.0, 4, 0.01);
+    effect_area_radius_->setSpecialValueText(tr("Whole layer (0)"));
     effect_form_->addRow(tr("Name"), effect_name_);
     effect_form_->addRow(effect_enabled_);
     effect_form_->addRow(effect_sync_);
     effect_form_->addRow(tr("Type"), effect_type_);
+    effect_form_->addRow(tr("Apply to"), effect_space_);
     effect_form_->addRow(tr("Cycles per loop"), effect_cycles_);
     effect_form_->addRow(tr("Phase (degrees)"), effect_phase_);
     effect_form_->addRow(tr("Blank-space handling"), effect_edge_);
@@ -1068,6 +1128,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Glow radius (pixels)"), effect_radius_);
     effect_form_->addRow(tr("Glow threshold"), effect_threshold_);
     effect_form_->addRow(tr("Glow soft knee"), effect_knee_);
+    effect_form_->addRow(tr("Local area radius"), effect_area_radius_);
     scroll->setWidget(properties);
     layout->addWidget(scroll, 2);
 
@@ -1171,6 +1232,71 @@ QWidget* MainWindow::createLayerSettingsPage() {
     pattern->addRow(tr("Saturation"), saturation_);
     layout->addWidget(pattern_group);
 
+    auto* transform_group = new QGroupBox(tr("Transform layer"));
+    auto* transform = new QFormLayout(transform_group);
+    transform_flip_horizontal_ = new QCheckBox(tr("Flip horizontally"));
+    transform_flip_vertical_ = new QCheckBox(tr("Flip vertically"));
+    transform_mirror_ = new QComboBox;
+    for (const auto mode : {pvt::MirrorMode::None,
+                            pvt::MirrorMode::LeftToRight,
+                            pvt::MirrorMode::RightToLeft,
+                            pvt::MirrorMode::TopToBottom,
+                            pvt::MirrorMode::BottomToTop,
+                            pvt::MirrorMode::FourWay}) {
+        add_enum_item(transform_mirror_,
+                      QString::fromUtf8(pvt::mirror_mode_name(mode)), mode);
+    }
+    transform_mirror_->setToolTip(
+        tr("Copies an explicitly named source half into the opposite half. "
+           "Four-way mirrors the top-left quadrant. Flips run afterward."));
+    transform->addRow(transform_flip_horizontal_);
+    transform->addRow(transform_flip_vertical_);
+    transform->addRow(tr("Mirror symmetry"), transform_mirror_);
+    layout->addWidget(transform_group);
+
+    auto* palette_group = new QGroupBox(tr("Layer palette"));
+    auto* palette_layout = new QVBoxLayout(palette_group);
+    auto* palette_form = new QFormLayout;
+    palette_enabled_ = new QCheckBox(tr("Restrict this layer to palette colors"));
+    palette_name_ = new QLineEdit;
+    palette_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
+    palette_name_->setValidator(new Utf8TextValidator(TextRule::Name, palette_name_));
+    auto* preset_row = new QWidget;
+    auto* preset_layout = new QHBoxLayout(preset_row);
+    preset_layout->setContentsMargins(0, 0, 0, 0);
+    palette_preset_ = new QComboBox;
+    for (std::size_t index = 0U; index < pvt::kBuiltInPaletteCount; ++index) {
+        const pvt::PaletteConfig preset = pvt::default_palette(index);
+        palette_preset_->addItem(QString::fromStdString(preset.name),
+                                 static_cast<qulonglong>(index));
+    }
+    auto* apply_preset = new QPushButton(tr("Use preset"));
+    preset_layout->addWidget(palette_preset_, 1);
+    preset_layout->addWidget(apply_preset);
+    palette_form->addRow(palette_enabled_);
+    palette_form->addRow(tr("Palette name"), palette_name_);
+    palette_form->addRow(tr("Built-in palettes"), preset_row);
+    palette_layout->addLayout(palette_form);
+    palette_colors_ = new QListWidget;
+    palette_colors_->setAlternatingRowColors(true);
+    palette_colors_->setSelectionMode(QAbstractItemView::SingleSelection);
+    palette_colors_->setMaximumHeight(150);
+    palette_layout->addWidget(palette_colors_);
+    auto* palette_buttons = new QHBoxLayout;
+    auto* add_color = new QPushButton(tr("Add color…"));
+    auto* edit_color = new QPushButton(tr("Edit color…"));
+    auto* remove_color = new QPushButton(tr("Remove color"));
+    palette_buttons->addWidget(add_color);
+    palette_buttons->addWidget(edit_color);
+    palette_buttons->addWidget(remove_color);
+    palette_layout->addLayout(palette_buttons);
+    auto* palette_help = new QLabel(
+        tr("Colors are authored in sRGB and embedded in this layer. The renderer "
+           "chooses the nearest palette color after effects, surface lighting, and quantization."));
+    palette_help->setWordWrap(true);
+    palette_layout->addWidget(palette_help);
+    layout->addWidget(palette_group);
+
     auto* surface_group = new QGroupBox(tr("3D surface wrapping"));
     auto* surface = new QFormLayout(surface_group);
     surface_enabled_ = new QCheckBox(tr("Surface mapping enabled"));
@@ -1263,6 +1389,18 @@ QWidget* MainWindow::createLayerSettingsPage() {
             applyGlobalEditor(surface_obj_path_);
         }
     });
+    connect(apply_preset, &QPushButton::clicked, this, [this] {
+        applyPalettePreset(static_cast<std::size_t>(
+            palette_preset_->currentData().toULongLong()));
+    });
+    connect(add_color, &QPushButton::clicked,
+            this, &MainWindow::addPaletteColor);
+    connect(edit_color, &QPushButton::clicked,
+            this, &MainWindow::editSelectedPaletteColor);
+    connect(remove_color, &QPushButton::clicked,
+            this, &MainWindow::removeSelectedPaletteColor);
+    connect(palette_colors_, &QListWidget::itemDoubleClicked,
+            this, [this](QListWidgetItem*) { editSelectedPaletteColor(); });
 
     return scroll;
 }
@@ -1676,25 +1814,8 @@ void MainWindow::createLayerDock() {
             selectLayer(item->data(Qt::UserRole).toString().toStdString());
         }
     });
-    connect(project_name_, &QLineEdit::editingFinished, this, [this] {
-        if (populating_) return;
-        const QString edited = project_name_->text();
-        if (!valid_text(edited, TextRule::ProjectName)) {
-            const QSignalBlocker blocker(project_name_);
-            project_name_->setText(QString::fromStdString(project_.name));
-            status_->setText(tr("Use a nonempty project name without control characters or path separators."));
-            return;
-        }
-        const std::string before = project_.name;
-        const std::string after = edited.toStdString();
-        if (before == after) return;
-        project_.name = after;
-        recordUndo(tr("Rename project"),
-                   [this, before] { project_.name = before; refreshLayerList(); noteDocumentChange(); },
-                   [this, after] { project_.name = after; refreshLayerList(); noteDocumentChange(); });
-        noteDocumentChange();
-        refreshLayerList();
-    });
+    connect(project_name_, &QLineEdit::editingFinished,
+            this, &MainWindow::finishProjectNameEdit);
     connect(qApp, &QApplication::focusChanged, this,
             [this](QWidget* previous, QWidget*) {
                 if (previous != project_name_ || project_name_->hasAcceptableInput()) return;
@@ -2006,7 +2127,8 @@ void MainWindow::connectEditors() {
             [this] { applySwingEditor(swing_waveform_); });
     connect(swing_cycles_, &QSpinBox::valueChanged, this,
             [this] { applySwingEditor(swing_cycles_); });
-    for (auto* editor : {swing_amount_, swing_phase_, swing_shape_}) {
+    for (auto* editor : {swing_amount_, swing_phase_, swing_shape_,
+                         swing_center_x_, swing_center_y_, swing_radius_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applySwingEditor(editor); });
     }
@@ -2031,6 +2153,8 @@ void MainWindow::connectEditors() {
             [this] { applyEffectEditor(effect_sync_); });
     connect(effect_type_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_type_); });
+    connect(effect_space_, &QComboBox::currentIndexChanged, this,
+            [this] { applyEffectEditor(effect_space_); });
     connect(effect_edge_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_edge_); });
     connect(effect_cycles_, &QSpinBox::valueChanged, this,
@@ -2038,7 +2162,7 @@ void MainWindow::connectEditors() {
     for (auto* editor : {effect_phase_, effect_intensity_, effect_magnitude_,
                          effect_frequency_, effect_secondary_, effect_center_x_,
                          effect_center_y_, effect_angle_, effect_radius_, effect_threshold_,
-                         effect_knee_}) {
+                         effect_knee_, effect_area_radius_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applyEffectEditor(editor); });
     }
@@ -2059,11 +2183,14 @@ void MainWindow::connectEditors() {
     }
     for (auto* editor : {displacement_enabled_, lighting_enabled_, spiral_enabled_,
                          wall_enabled_, surface_enabled_, quantization_enabled_,
-                         alpha_enabled_, dither_enabled_, write_alpha_, overwrite_}) {
+                         alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
+                         transform_flip_horizontal_, transform_flip_vertical_,
+                         palette_enabled_}) {
         connect(editor, &QCheckBox::toggled, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
-    for (auto* editor : {surface_mapping_, quantization_mode_, bit_depth_, dither_method_}) {
+    for (auto* editor : {surface_mapping_, quantization_mode_, bit_depth_, dither_method_,
+                         transform_mirror_}) {
         connect(editor, &QComboBox::currentIndexChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -2084,6 +2211,20 @@ void MainWindow::connectEditors() {
             applyGlobalEditor(surface_obj_path_);
         }
     });
+    connect(palette_name_, &QLineEdit::editingFinished, this, [this] {
+        if (palette_name_->hasAcceptableInput()) {
+            applyGlobalEditor(palette_name_);
+        }
+    });
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index == 1) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
+        } else if (index == 2) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
+        } else if (index == 0) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
+        }
+    });
 
     connect(preview_, &PreviewWidget::waveSelected, this, [this](std::size_t index) {
         if (index < config_.waves.size()) {
@@ -2095,9 +2236,9 @@ void MainWindow::connectEditors() {
             [this](std::size_t index) {
                 wave_drag_state_.reset();
                 if (index >= config_.waves.size()) return;
-                WaveDragState state;
+                ItemDragState state;
                 state.layer_uuid = active_layer_uuid_;
-                state.wave_id = config_.waves[index].id;
+                state.item_id = config_.waves[index].id;
                 state.before = captureActiveState();
                 wave_drag_state_ = std::move(state);
             });
@@ -2105,7 +2246,7 @@ void MainWindow::connectEditors() {
             [this](std::size_t index, double x, double y) {
                 if (!wave_drag_state_ || index >= config_.waves.size()
                     || wave_drag_state_->layer_uuid != active_layer_uuid_
-                    || wave_drag_state_->wave_id != config_.waves[index].id) {
+                    || wave_drag_state_->item_id != config_.waves[index].id) {
                     return;
                 }
                 if (config_.waves[index].x_percent == x
@@ -2131,10 +2272,110 @@ void MainWindow::connectEditors() {
     connect(preview_, &PreviewWidget::waveDragFinished, this,
             [this](std::size_t) {
                 if (!wave_drag_state_) return;
-                WaveDragState state = std::move(*wave_drag_state_);
+                ItemDragState state = std::move(*wave_drag_state_);
                 wave_drag_state_.reset();
                 if (!state.moved || state.layer_uuid != active_layer_uuid_) return;
                 recordActiveStateChange(tr("Move wave"), std::move(state.before));
+            });
+
+    connect(preview_, &PreviewWidget::swingSelected, this,
+            [this](std::size_t index) {
+                if (index < config_.swings.size()) {
+                    swing_list_->setCurrentRow(static_cast<int>(index));
+                    tabs_->setCurrentIndex(1);
+                }
+            });
+    connect(preview_, &PreviewWidget::swingDragStarted, this,
+            [this](std::size_t index) {
+                swing_drag_state_.reset();
+                if (index >= config_.swings.size()) return;
+                ItemDragState state;
+                state.layer_uuid = active_layer_uuid_;
+                state.item_id = config_.swings[index].id;
+                state.before = captureActiveState();
+                swing_drag_state_ = std::move(state);
+            });
+    connect(preview_, &PreviewWidget::swingMoved, this,
+            [this](std::size_t index, double x, double y) {
+                if (!swing_drag_state_ || index >= config_.swings.size()
+                    || swing_drag_state_->layer_uuid != active_layer_uuid_
+                    || swing_drag_state_->item_id != config_.swings[index].id) {
+                    return;
+                }
+                auto& swing = config_.swings[index];
+                if (swing.center_x == x && swing.center_y == y) return;
+                swing.center_x = x;
+                swing.center_y = y;
+                syncActiveRender();
+                swing_drag_state_->moved = true;
+                if (selectedSwingIndex() && *selectedSwingIndex() == index) {
+                    const QSignalBlocker bx(swing_center_x_);
+                    const QSignalBlocker by(swing_center_y_);
+                    swing_center_x_->setValue(x);
+                    swing_center_y_->setValue(y);
+                }
+                preview_->setConfiguration(config_);
+                ++document_revision_;
+                schedulePreview();
+            });
+    connect(preview_, &PreviewWidget::swingDragFinished, this,
+            [this](std::size_t) {
+                if (!swing_drag_state_) return;
+                ItemDragState state = std::move(*swing_drag_state_);
+                swing_drag_state_.reset();
+                if (!state.moved || state.layer_uuid != active_layer_uuid_) return;
+                recordActiveStateChange(tr("Move swing area"),
+                                        std::move(state.before));
+            });
+
+    connect(preview_, &PreviewWidget::effectSelected, this,
+            [this](std::size_t index) {
+                if (index < config_.effects.size()) {
+                    effect_list_->setCurrentRow(static_cast<int>(index));
+                    tabs_->setCurrentIndex(2);
+                }
+            });
+    connect(preview_, &PreviewWidget::effectDragStarted, this,
+            [this](std::size_t index) {
+                effect_drag_state_.reset();
+                if (index >= config_.effects.size()) return;
+                ItemDragState state;
+                state.layer_uuid = active_layer_uuid_;
+                state.item_id = config_.effects[index].id;
+                state.before = captureActiveState();
+                effect_drag_state_ = std::move(state);
+            });
+    connect(preview_, &PreviewWidget::effectMoved, this,
+            [this](std::size_t index, double x, double y) {
+                if (!effect_drag_state_ || index >= config_.effects.size()
+                    || effect_drag_state_->layer_uuid != active_layer_uuid_
+                    || effect_drag_state_->item_id != config_.effects[index].id) {
+                    return;
+                }
+                auto& effect = config_.effects[index];
+                if (effect.center_x == x && effect.center_y == y) return;
+                effect.center_x = x;
+                effect.center_y = y;
+                syncActiveRender();
+                effect_drag_state_->moved = true;
+                if (selectedEffectIndex() && *selectedEffectIndex() == index) {
+                    const QSignalBlocker bx(effect_center_x_);
+                    const QSignalBlocker by(effect_center_y_);
+                    effect_center_x_->setValue(x);
+                    effect_center_y_->setValue(y);
+                }
+                preview_->setConfiguration(config_);
+                ++document_revision_;
+                schedulePreview();
+            });
+    connect(preview_, &PreviewWidget::effectDragFinished, this,
+            [this](std::size_t) {
+                if (!effect_drag_state_) return;
+                ItemDragState state = std::move(*effect_drag_state_);
+                effect_drag_state_.reset();
+                if (!state.moved || state.layer_uuid != active_layer_uuid_) return;
+                recordActiveStateChange(tr("Move effect area"),
+                                        std::move(state.before));
             });
 }
 
@@ -2765,6 +3006,7 @@ void MainWindow::refreshSwingList(std::optional<std::uint64_t> selectedId) {
     swing_list_->setCurrentRow(selected_row);
     populating_ = false;
     loadSelectedSwing();
+    preview_->setConfiguration(config_);
 }
 
 void MainWindow::refreshEffectList(std::optional<std::uint64_t> selectedId) {
@@ -2791,6 +3033,7 @@ void MainWindow::refreshEffectList(std::optional<std::uint64_t> selectedId) {
     effect_list_->setCurrentRow(selected_row);
     populating_ = false;
     loadSelectedEffect();
+    preview_->setConfiguration(config_);
 }
 
 std::optional<std::size_t> MainWindow::selectedWaveIndex() const {
@@ -2856,7 +3099,8 @@ void MainWindow::loadSelectedSwing() {
     const bool enabled = index.has_value();
     for (auto* widget : std::initializer_list<QWidget*>{
              swing_name_, swing_enabled_, swing_waveform_, swing_amount_, swing_cycles_,
-             swing_phase_, swing_shape_}) {
+             swing_phase_, swing_shape_, swing_center_x_, swing_center_y_,
+             swing_radius_}) {
         widget->setEnabled(enabled);
     }
     if (index) {
@@ -2868,8 +3112,12 @@ void MainWindow::loadSelectedSwing() {
         swing_cycles_->setValue(swing.cycles_per_loop);
         swing_phase_->setValue(swing.phase_degrees);
         swing_shape_->setValue(swing.shape);
+        swing_center_x_->setValue(swing.center_x);
+        swing_center_y_->setValue(swing.center_y);
+        swing_radius_->setValue(swing.radius);
     }
     populating_ = false;
+    preview_->setSelectedSwing(index);
 }
 
 void MainWindow::updateEffectEditorVisibility() {
@@ -2884,7 +3132,7 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_glow = type == pvt::EffectType::Glow;
     const bool is_block_scale = type == pvt::EffectType::BlockScale;
     const bool coordinate_effect = !is_glow && !is_block_scale;
-    const bool has_center = is_zoom || is_ripple || is_flag;
+    const bool has_center = !is_block_scale;
 
     effect_form_->setRowVisible(effect_edge_, coordinate_effect);
     effect_form_->setRowVisible(effect_magnitude_, coordinate_effect || is_block_scale);
@@ -2896,12 +3144,16 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_radius_, is_glow);
     effect_form_->setRowVisible(effect_threshold_, is_glow);
     effect_form_->setRowVisible(effect_knee_, is_glow);
+    effect_form_->setRowVisible(effect_area_radius_, !is_block_scale);
 
     effect_edge_->setToolTip(
         tr("Controls samples that move beyond the source image boundary."));
     effect_center_x_->setToolTip(tr("Normalized horizontal center; 0 is left and 1 is right."));
     effect_center_y_->setToolTip(tr("Normalized vertical center; 0 is top and 1 is bottom."));
     effect_radius_->setToolTip(tr("Glow blur radius in full-resolution output pixels."));
+    effect_area_radius_->setToolTip(
+        tr("Fraction of the shorter canvas edge. Zero affects the whole layer; "
+           "positive values create a feathered draggable circle."));
     effect_threshold_->setToolTip(tr("Linear-light brightness where glow begins."));
     effect_knee_->setToolTip(tr("Soft transition width around the glow threshold."));
 
@@ -2992,10 +3244,12 @@ void MainWindow::loadSelectedEffect() {
     populating_ = true;
     const bool enabled = index.has_value();
     for (auto* widget : std::initializer_list<QWidget*>{
-             effect_name_, effect_enabled_, effect_sync_, effect_type_, effect_cycles_,
+             effect_name_, effect_enabled_, effect_sync_, effect_type_, effect_space_,
+             effect_cycles_,
              effect_phase_, effect_edge_, effect_intensity_, effect_magnitude_,
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
-             effect_angle_, effect_radius_, effect_threshold_, effect_knee_}) {
+             effect_angle_, effect_radius_, effect_threshold_, effect_knee_,
+             effect_area_radius_}) {
         widget->setEnabled(enabled);
     }
     if (index) {
@@ -3004,6 +3258,7 @@ void MainWindow::loadSelectedEffect() {
         effect_enabled_->setChecked(effect.enabled);
         effect_sync_->setChecked(effect.synchronized);
         select_enum(effect_type_, effect.type);
+        select_enum(effect_space_, effect.space);
         updateEffectEditorVisibility();
         effect_cycles_->setValue(effect.cycles_per_loop);
         effect_phase_->setValue(effect.phase_degrees);
@@ -3022,9 +3277,11 @@ void MainWindow::loadSelectedEffect() {
         effect_radius_->setValue(effect.radius_pixels);
         effect_threshold_->setValue(effect.threshold);
         effect_knee_->setValue(effect.soft_knee);
+        effect_area_radius_->setValue(effect.area_radius);
     }
     updateEffectEditorVisibility();
     populating_ = false;
+    preview_->setSelectedEffect(index);
 }
 
 void MainWindow::loadGlobalEditors() {
@@ -3056,6 +3313,12 @@ void MainWindow::loadGlobalEditors() {
     surface_phase_->setValue(config_.surface.phase_degrees);
     surface_curvature_->setValue(config_.surface.curvature);
     surface_lighting_->setValue(config_.surface.lighting);
+    transform_flip_horizontal_->setChecked(config_.transform.flip_horizontal);
+    transform_flip_vertical_->setChecked(config_.transform.flip_vertical);
+    select_enum(transform_mirror_, config_.transform.mirror);
+    palette_enabled_->setChecked(config_.palette.enabled);
+    palette_name_->setText(QString::fromStdString(config_.palette.name));
+    refreshPaletteEditor();
     quantization_enabled_->setChecked(config_.quantization.enabled);
     quantization_levels_->setValue(config_.quantization.levels);
     quantization_mix_->setValue(config_.quantization.mix);
@@ -3087,6 +3350,115 @@ void MainWindow::loadGlobalEditors() {
     overwrite_->setChecked(config_.output.overwrite_existing);
     populating_ = false;
     updateOutputEditorValidity();
+}
+
+void MainWindow::refreshPaletteEditor() {
+    if (palette_colors_ == nullptr) return;
+    const int previous_row = palette_colors_->currentRow();
+    const QSignalBlocker blocker(palette_colors_);
+    palette_colors_->clear();
+    for (std::size_t index = 0U; index < config_.palette.colors.size(); ++index) {
+        const pvt::PaletteColor& value = config_.palette.colors[index];
+        const QColor color = QColor::fromRgbF(
+            static_cast<float>(value.red), static_cast<float>(value.green),
+            static_cast<float>(value.blue));
+        auto* item = new QListWidgetItem(
+            tr("%1. %2   RGB(%3, %4, %5)")
+                .arg(static_cast<qulonglong>(index + 1U))
+                .arg(color.name(QColor::HexRgb).toUpper())
+                .arg(value.red, 0, 'f', 3)
+                .arg(value.green, 0, 'f', 3)
+                .arg(value.blue, 0, 'f', 3),
+            palette_colors_);
+        item->setBackground(color);
+        const double luminance = 0.2126 * value.red + 0.7152 * value.green
+                                 + 0.0722 * value.blue;
+        item->setForeground(luminance > 0.5 ? Qt::black : Qt::white);
+        item->setData(Qt::UserRole, static_cast<qulonglong>(index));
+    }
+    if (!config_.palette.colors.empty()) {
+        palette_colors_->setCurrentRow(std::clamp(
+            previous_row, 0,
+            static_cast<int>(config_.palette.colors.size()) - 1));
+    }
+}
+
+void MainWindow::applyPalettePreset(std::size_t index) {
+    if (populating_) return;
+    auto before = captureActiveState();
+    config_.palette = pvt::default_palette(index);
+    syncActiveRender();
+    loadGlobalEditors();
+    schedulePreview();
+    recordActiveStateChange(tr("Use palette preset"), std::move(before));
+}
+
+void MainWindow::addPaletteColor() {
+    if (config_.palette.colors.size() >= pvt::kMaximumPaletteColors) {
+        QMessageBox::warning(this, tr("Palette limit"),
+                             tr("A palette can contain at most 256 colors."));
+        return;
+    }
+    const QColor initial = config_.palette.colors.empty()
+                               ? QColor(Qt::white)
+                               : QColor::fromRgbF(
+                                     static_cast<float>(config_.palette.colors.back().red),
+                                     static_cast<float>(config_.palette.colors.back().green),
+                                     static_cast<float>(config_.palette.colors.back().blue));
+    const QColor chosen = QColorDialog::getColor(
+        initial, this, tr("Add palette color"));
+    if (!chosen.isValid()) return;
+    auto before = captureActiveState();
+    config_.palette.colors.push_back(
+        {chosen.redF(), chosen.greenF(), chosen.blueF()});
+    syncActiveRender();
+    refreshPaletteEditor();
+    palette_colors_->setCurrentRow(
+        static_cast<int>(config_.palette.colors.size()) - 1);
+    schedulePreview();
+    recordActiveStateChange(tr("Add palette color"), std::move(before));
+}
+
+void MainWindow::editSelectedPaletteColor() {
+    const int row = palette_colors_ != nullptr ? palette_colors_->currentRow() : -1;
+    if (row < 0 || static_cast<std::size_t>(row) >= config_.palette.colors.size()) {
+        return;
+    }
+    const auto& current = config_.palette.colors[static_cast<std::size_t>(row)];
+    const QColor chosen = QColorDialog::getColor(
+        QColor::fromRgbF(static_cast<float>(current.red),
+                         static_cast<float>(current.green),
+                         static_cast<float>(current.blue)),
+        this, tr("Edit palette color"));
+    if (!chosen.isValid()) return;
+    auto before = captureActiveState();
+    config_.palette.colors[static_cast<std::size_t>(row)] =
+        {chosen.redF(), chosen.greenF(), chosen.blueF()};
+    syncActiveRender();
+    refreshPaletteEditor();
+    palette_colors_->setCurrentRow(row);
+    schedulePreview();
+    recordActiveStateChange(tr("Edit palette color"), std::move(before));
+}
+
+void MainWindow::removeSelectedPaletteColor() {
+    const int row = palette_colors_ != nullptr ? palette_colors_->currentRow() : -1;
+    if (row < 0 || static_cast<std::size_t>(row) >= config_.palette.colors.size()) {
+        return;
+    }
+    auto before = captureActiveState();
+    config_.palette.colors.erase(
+        config_.palette.colors.begin() + static_cast<std::ptrdiff_t>(row));
+    if (config_.palette.colors.empty()) {
+        config_.palette.enabled = false;
+        const QSignalBlocker blocker(palette_enabled_);
+        palette_enabled_->setChecked(false);
+        status_->setText(tr("The empty palette was disabled."));
+    }
+    syncActiveRender();
+    refreshPaletteEditor();
+    schedulePreview();
+    recordActiveStateChange(tr("Remove palette color"), std::move(before));
 }
 
 void MainWindow::applyWaveEditor(const QObject* changed_editor) {
@@ -3153,11 +3525,18 @@ void MainWindow::applySwingEditor(const QObject* changed_editor) {
         swing.phase_degrees = swing_phase_->value();
     } else if (changed_editor == swing_shape_) {
         swing.shape = swing_shape_->value();
+    } else if (changed_editor == swing_center_x_) {
+        swing.center_x = swing_center_x_->value();
+    } else if (changed_editor == swing_center_y_) {
+        swing.center_y = swing_center_y_->value();
+    } else if (changed_editor == swing_radius_) {
+        swing.radius = swing_radius_->value();
     } else {
         return;
     }
     syncActiveRender();
     updateSwingListItem(*index);
+    preview_->setConfiguration(config_);
     schedulePreview();
     const QString key = QStringLiteral("swing:%1:%2:%3")
                             .arg(QString::fromStdString(active_layer_uuid_))
@@ -3180,6 +3559,9 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.enabled = effect_enabled_->isChecked();
     } else if (changed_editor == effect_sync_) {
         effect.synchronized = effect_sync_->isChecked();
+    } else if (changed_editor == effect_space_) {
+        effect.space = static_cast<pvt::EffectSpace>(
+            effect_space_->currentData().toInt());
     } else if (changed_editor == effect_type_) {
         const auto old_type = effect.type;
         const auto new_type =
@@ -3188,8 +3570,12 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             const auto id = effect.id;
             const bool enabled = effect.enabled;
             const bool synchronized = effect.synchronized;
+            const auto space = effect.space;
             const int cycles = effect.cycles_per_loop;
             const double phase = effect.phase_degrees;
+            const double center_x = effect.center_x;
+            const double center_y = effect.center_y;
+            const double area_radius = effect.area_radius;
             const std::string old_default_name = pvt::effect_type_name(old_type);
             const bool used_default_name = effect.name == old_default_name;
             const std::string custom_name = effect.name;
@@ -3197,8 +3583,12 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             effect.id = id;
             effect.enabled = enabled;
             effect.synchronized = synchronized;
+            effect.space = space;
             effect.cycles_per_loop = cycles;
             effect.phase_degrees = phase;
+            effect.center_x = center_x;
+            effect.center_y = center_y;
+            effect.area_radius = area_radius;
             if (!used_default_name) {
                 effect.name = custom_name;
             }
@@ -3236,6 +3626,8 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.threshold = effect_threshold_->value();
     } else if (changed_editor == effect_knee_) {
         effect.soft_knee = effect_knee_->value();
+    } else if (changed_editor == effect_area_radius_) {
+        effect.area_radius = effect_area_radius_->value();
     } else {
         return;
     }
@@ -3299,6 +3691,27 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.hue_cycles = hue_cycles_->value();
     } else if (changed_editor == saturation_) {
         config_.saturation = saturation_->value();
+    } else if (changed_editor == transform_flip_horizontal_) {
+        config_.transform.flip_horizontal =
+            transform_flip_horizontal_->isChecked();
+    } else if (changed_editor == transform_flip_vertical_) {
+        config_.transform.flip_vertical = transform_flip_vertical_->isChecked();
+    } else if (changed_editor == transform_mirror_) {
+        config_.transform.mirror = static_cast<pvt::MirrorMode>(
+            transform_mirror_->currentData().toInt());
+    } else if (changed_editor == palette_enabled_) {
+        if (palette_enabled_->isChecked() && config_.palette.colors.empty()) {
+            config_.palette = pvt::default_palette(0U);
+            const QSignalBlocker name_blocker(palette_name_);
+            palette_name_->setText(QString::fromStdString(config_.palette.name));
+            refreshPaletteEditor();
+            status_->setText(tr("Loaded the Ember preset because an enabled palette needs at least one color."));
+        } else {
+            config_.palette.enabled = palette_enabled_->isChecked();
+        }
+    } else if (changed_editor == palette_name_) {
+        if (!palette_name_->hasAcceptableInput()) return;
+        config_.palette.name = palette_name_->text().toStdString();
     } else if (changed_editor == surface_enabled_) {
         config_.surface.enabled = surface_enabled_->isChecked();
     } else if (changed_editor == surface_mapping_) {
@@ -3987,12 +4400,20 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     if (!expected.swings.empty()) {
         expected.swings.front().phase_degrees = 137.50776405003785;
+        expected.swings.front().center_x = 0.2345;
+        expected.swings.front().center_y = 0.7654;
+        expected.swings.front().radius = 0.3141;
     }
     if (!expected.effects.empty()) {
         expected.effects.front().center_x = -9.0;
         expected.effects.front().center_y = 9.0;
         expected.effects.front().frequency = 1.123456789012;
+        expected.effects.front().space = pvt::EffectSpace::Surface;
+        expected.effects.front().area_radius = 0.2718;
     }
+    expected.palette = pvt::default_palette(3U);
+    expected.transform.flip_vertical = true;
+    expected.transform.mirror = pvt::MirrorMode::RightToLeft;
     QTemporaryDir directory;
     if (!directory.isValid()) {
         if (error != nullptr) {
@@ -4021,6 +4442,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
                              original_legacy_path, original_dialog_directory,
                              original_status] {
         preview_test_delay_ms_ = 0;
+        independent_copy_test_path_.clear();
         if (playback_timer_ != nullptr) playback_timer_->stop();
         project_ = original_project;
         document_ = original_document
@@ -4034,6 +4456,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         imported_legacy_path_ = original_legacy_path;
         last_dialog_directory_ = original_dialog_directory;
         wave_drag_state_.reset();
+        swing_drag_state_.reset();
+        effect_drag_state_.reset();
         loadActiveConfiguration();
         if (undo_stack_ != nullptr) {
             clearUndoHistory(false);
@@ -4109,9 +4533,25 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || surface_lighting_->value() != expected.surface.lighting
         || surface_obj_path_->text().toStdString() != expected.surface.obj_path
         || png_compression_->value() != expected.output.png_compression_level
+        || !palette_enabled_->isChecked()
+        || palette_name_->text().toStdString() != expected.palette.name
+        || palette_colors_->count()
+               != static_cast<int>(expected.palette.colors.size())
+        || !transform_flip_vertical_->isChecked()
+        || static_cast<pvt::MirrorMode>(transform_mirror_->currentData().toInt())
+               != expected.transform.mirror
+        || (!expected.swings.empty()
+            && (swing_center_x_->value() != expected.swings.front().center_x
+                || swing_center_y_->value() != expected.swings.front().center_y
+                || swing_radius_->value() != expected.swings.front().radius))
         || (!expected.effects.empty()
             && (effect_center_x_->value() != expected.effects.front().center_x
-                || effect_center_y_->value() != expected.effects.front().center_y))) {
+                || effect_center_y_->value() != expected.effects.front().center_y
+                || effect_area_radius_->value()
+                       != expected.effects.front().area_radius
+                || static_cast<pvt::EffectSpace>(
+                       effect_space_->currentData().toInt())
+                       != expected.effects.front().space))) {
         if (error != nullptr) {
             *error = tr("GUI editors clamped values accepted by central validation.");
         }
@@ -4643,6 +5083,54 @@ bool MainWindow::runSmokeChecks(QString* error) {
         if (error != nullptr) *error = tr("The GUI could not create the first bundle version.");
         return false;
     }
+
+    const std::string saved_project_name = project_.name;
+    const auto choose_rename_prompt_button = [](const QString& object_name) {
+        QTimer::singleShot(0, [object_name] {
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                if (auto* message = qobject_cast<QMessageBox*>(widget)) {
+                    if (auto* button = message->findChild<QPushButton*>(object_name)) {
+                        button->click();
+                        return;
+                    }
+                }
+            }
+        });
+    };
+    project_name_->setText(QStringLiteral("Canceled Saved Rename"));
+    choose_rename_prompt_button(QStringLiteral("projectRenameCancel"));
+    if (!QMetaObject::invokeMethod(project_name_, "editingFinished",
+                                   Qt::DirectConnection)
+        || project_.name != saved_project_name
+        || project_name_->text().toStdString() != saved_project_name
+        || current_project_path_ != bundle_path || hasUnsavedChanges()
+        || undo_stack_->count() != 0) {
+        if (error != nullptr) {
+            *error = tr("Canceling the saved-project rename changed the active project.");
+        }
+        return false;
+    }
+    project_name_->setText(QStringLiteral("Same Bundle, New Display Name"));
+    choose_rename_prompt_button(QStringLiteral("projectRenameKeepFilename"));
+    if (!QMetaObject::invokeMethod(project_name_, "editingFinished",
+                                   Qt::DirectConnection)
+        || project_.name != "Same Bundle, New Display Name"
+        || current_project_path_ != bundle_path || !hasUnsavedChanges()
+        || undo_stack_->count() != 1) {
+        if (error != nullptr) {
+            *error = tr("Keeping the bundle filename did not register an undoable project rename.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (project_.name != saved_project_name || hasUnsavedChanges()
+        || project_name_->text().toStdString() != saved_project_name) {
+        if (error != nullptr) {
+            *error = tr("Undoing the in-place project rename did not restore the saved state.");
+        }
+        return false;
+    }
+
     const auto first_version = document_->versions.front().number;
     phrase_warp_->setValue(config_.phrase_warp < 1.8
                                ? config_.phrase_warp + 0.1
@@ -4673,6 +5161,39 @@ bool MainWindow::runSmokeChecks(QString* error) {
         if (error != nullptr) {
             *error = tr("The saved GUI bundle did not validate: %1")
                          .arg(QString::fromStdString(validation_error));
+        }
+        return false;
+    }
+
+    const QString stay_copy_path =
+        directory.filePath(QStringLiteral("renamed-copy-stay.zip"));
+    const std::string original_project_uuid = project_.uuid;
+    const QString original_name = QString::fromStdString(project_.name);
+    project_name_->setText(QStringLiteral("Renamed Copy While Staying"));
+    independent_copy_test_path_ = stay_copy_path;
+    choose_rename_prompt_button(QStringLiteral("projectRenameSaveAndStay"));
+    if (!QMetaObject::invokeMethod(project_name_, "editingFinished",
+                                   Qt::DirectConnection)) {
+        if (error != nullptr) {
+            *error = tr("The saved-project rename prompt could not dispatch Save Copy and Stay.");
+        }
+        return false;
+    }
+    pvt::ProjectDocument stay_copy;
+    std::string stay_load_error;
+    if (!pvt::load_project_document(
+            stay_copy_path.toStdString(), stay_copy, &stay_load_error)
+        || stay_copy.versions.size() != 1U || stay_copy.current_version != 0U
+        || stay_copy.project.name != "Renamed Copy While Staying"
+        || stay_copy.project.uuid == original_project_uuid
+        || project_.uuid != original_project_uuid
+        || QString::fromStdString(project_.name) != original_name
+        || project_name_->text() != original_name
+        || current_project_path_ != bundle_path
+        || document_->versions.size() != 2U || hasUnsavedChanges()
+        || !independent_copy_test_path_.isEmpty()) {
+        if (error != nullptr) {
+            *error = tr("Save Copy and Stay did not restore the old displayed name, preserve the original project, or reset the copy history.");
         }
         return false;
     }
@@ -4739,6 +5260,43 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
+    const QString opened_copy_path =
+        directory.filePath(QStringLiteral("renamed-copy-open.zip"));
+    const std::vector<std::string> old_layer_uuids = [&] {
+        std::vector<std::string> values;
+        values.reserve(project_.layers.size());
+        for (const pvt::LayerConfig& layer : project_.layers) {
+            values.push_back(layer.uuid);
+        }
+        return values;
+    }();
+    project_name_->setText(QStringLiteral("Renamed Copy Opened"));
+    independent_copy_test_path_ = opened_copy_path;
+    choose_rename_prompt_button(QStringLiteral("projectRenameSaveAndOpen"));
+    if (!QMetaObject::invokeMethod(project_name_, "editingFinished",
+                                   Qt::DirectConnection)
+        || current_project_path_ != opened_copy_path
+        || project_.name != "Renamed Copy Opened"
+        || project_.uuid == original_project_uuid
+        || document_->versions.size() != 1U
+        || document_->current_version != 0U || hasUnsavedChanges()
+        || project_name_->text() != QStringLiteral("Renamed Copy Opened")
+        || !independent_copy_test_path_.isEmpty()) {
+        if (error != nullptr) {
+            *error = tr("Save As and Open did not replace the active document cleanly.");
+        }
+        return false;
+    }
+    for (const pvt::LayerConfig& layer : project_.layers) {
+        if (std::find(old_layer_uuids.begin(), old_layer_uuids.end(), layer.uuid)
+            != old_layer_uuids.end()) {
+            if (error != nullptr) {
+                *error = tr("An opened independent copy retained an original layer UUID.");
+            }
+            return false;
+        }
+    }
+
     document_->created_with_version = "999.0.0";
     updateCompatibilityWarning();
     if (compatibility_warning_.isEmpty() || compatibility_warning_label_->isHidden()
@@ -4748,6 +5306,342 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    return true;
+}
+
+void MainWindow::finishProjectNameEdit() {
+    if (populating_) return;
+    const QString edited = project_name_->text();
+    const auto restore_editor = [this] {
+        const QSignalBlocker blocker(project_name_);
+        project_name_->setText(QString::fromStdString(project_.name));
+    };
+    if (!valid_text(edited, TextRule::ProjectName)) {
+        restore_editor();
+        status_->setText(
+            tr("Use a nonempty project name without control characters or path separators."));
+        return;
+    }
+
+    const std::string before = project_.name;
+    const std::string after = edited.toStdString();
+    if (before == after) return;
+    if (current_project_path_.isEmpty()) {
+        applyProjectNameChange(before, after);
+        return;
+    }
+
+    const SavedProjectRenameAction action =
+        promptForSavedProjectRename(before, after);
+    if (action == SavedProjectRenameAction::Cancel) {
+        restore_editor();
+        status_->setText(tr("Project rename canceled; no project was changed."));
+        return;
+    }
+    if (action == SavedProjectRenameAction::KeepBundleFilename) {
+        applyProjectNameChange(before, after);
+        status_->setText(
+            tr("Project renamed. The existing bundle filename is unchanged; Save will append the rename as a new version."));
+        return;
+    }
+
+    const bool open_copy = action == SavedProjectRenameAction::SaveCopyAndOpen;
+    if (open_copy && !documentReplacementAllowed()) {
+        restore_editor();
+        return;
+    }
+    const QString path = chooseIndependentCopyPath(after);
+    if (path.isEmpty()) {
+        restore_editor();
+        status_->setText(tr("Project copy canceled; the current project was not changed."));
+        return;
+    }
+    QString copy_error;
+    if (!saveIndependentRenamedCopy(after, path, open_copy, &copy_error)) {
+        restore_editor();
+        QMessageBox::critical(
+            this, tr("Could not create independent project"), copy_error);
+        return;
+    }
+    if (!open_copy) {
+        restore_editor();
+    }
+}
+
+void MainWindow::applyProjectNameChange(const std::string& before,
+                                        const std::string& after) {
+    if (before == after) return;
+    project_.name = after;
+    recordUndo(
+        tr("Rename project"),
+        [this, before] {
+            project_.name = before;
+            refreshLayerList();
+            noteDocumentChange();
+        },
+        [this, after] {
+            project_.name = after;
+            refreshLayerList();
+            noteDocumentChange();
+        });
+    noteDocumentChange();
+    refreshLayerList();
+}
+
+MainWindow::SavedProjectRenameAction MainWindow::promptForSavedProjectRename(
+    const std::string& before, const std::string& after) {
+    QMessageBox prompt(this);
+    prompt.setIcon(QMessageBox::Question);
+    prompt.setWindowTitle(tr("Rename saved project"));
+    const QString old_name = QString::fromStdString(before);
+    const QString new_name = QString::fromStdString(after);
+    const QString bundle_name = QFileInfo(current_project_path_).fileName();
+    prompt.setText(QStringLiteral("“") + old_name
+                   + tr("” is currently saved as “") + bundle_name
+                   + QStringLiteral("”."));
+    prompt.setInformativeText(
+        tr("Keep the existing filename and record the rename on the next Save, "
+           "or create a new independent bundle named from “")
+        + new_name
+        + tr("”. An independent copy contains only the current working state as "
+             "version 0 and receives new project and layer UUIDs."));
+
+    auto* keep = prompt.addButton(
+        tr("Keep Existing Filename"), QMessageBox::AcceptRole);
+    auto* open_copy = prompt.addButton(
+        tr("Save As and Open"), QMessageBox::ActionRole);
+    auto* stay = prompt.addButton(
+        tr("Save Copy, Stay Here"), QMessageBox::ActionRole);
+    auto* cancel = prompt.addButton(QMessageBox::Cancel);
+    keep->setObjectName(QStringLiteral("projectRenameKeepFilename"));
+    open_copy->setObjectName(QStringLiteral("projectRenameSaveAndOpen"));
+    stay->setObjectName(QStringLiteral("projectRenameSaveAndStay"));
+    cancel->setObjectName(QStringLiteral("projectRenameCancel"));
+    keep->setToolTip(
+        tr("Rename this project but leave its current bundle path unchanged."));
+    open_copy->setToolTip(
+        tr("Create and switch to an independent one-version project copy."));
+    stay->setToolTip(
+        tr("Create the independent copy, then continue editing this project under its old name."));
+    if (export_watcher_ != nullptr && export_watcher_->isRunning()) {
+        open_copy->setEnabled(false);
+        open_copy->setToolTip(
+            tr("Finish or cancel the active export before switching projects."));
+    }
+    prompt.setDefaultButton(keep);
+    prompt.setEscapeButton(cancel);
+    prompt.exec();
+
+    if (prompt.clickedButton() == keep) {
+        return SavedProjectRenameAction::KeepBundleFilename;
+    }
+    if (prompt.clickedButton() == open_copy) {
+        return SavedProjectRenameAction::SaveCopyAndOpen;
+    }
+    if (prompt.clickedButton() == stay) {
+        return SavedProjectRenameAction::SaveCopyAndStay;
+    }
+    return SavedProjectRenameAction::Cancel;
+}
+
+QString MainWindow::chooseIndependentCopyPath(
+    const std::string& project_name) {
+    const QString filename = QString::fromStdString(
+        pvt::portable_project_filename(project_name));
+    const QString preferred = QFileInfo(current_project_path_).absolutePath();
+    const QString initial_path =
+        QDir(usableDialogDirectory(preferred)).filePath(filename);
+    QString suggested_path = initial_path;
+    while (true) {
+        QString path;
+        if (!independent_copy_test_path_.isEmpty()) {
+            path.swap(independent_copy_test_path_);
+        } else {
+            path = QFileDialog::getSaveFileName(
+                this, tr("Save independent project copy"), suggested_path,
+                tr("PVT project bundle (*.zip);;All files (*)"));
+        }
+        if (path.isEmpty()) return {};
+        if (QFileInfo(path).suffix().compare(
+                QStringLiteral("zip"), Qt::CaseInsensitive) != 0) {
+            path.append(QStringLiteral(".zip"));
+        }
+        suggested_path = path;
+        const QFileInfo destination(path);
+        if (equivalent_local_path(path, current_project_path_)) {
+            QMessageBox::warning(
+                this, tr("Choose a new bundle filename"),
+                tr("An independent project cannot replace the bundle that is currently open. Choose a different filename."));
+            continue;
+        }
+        if (destination.exists() || destination.isSymLink()) {
+            QMessageBox::warning(
+                this, tr("Destination already exists"),
+                tr("Independent project copies never overwrite an existing file or directory. Choose a new destination."));
+            continue;
+        }
+        return path;
+    }
+}
+
+bool MainWindow::saveIndependentRenamedCopy(
+    const std::string& project_name, const QString& path, bool open_copy,
+    QString* error) {
+    const auto fail_copy = [error](const QString& message) {
+        if (error != nullptr) *error = message;
+        return false;
+    };
+    if (!valid_text(QString::fromStdString(project_name), TextRule::ProjectName)) {
+        return fail_copy(tr("The copied project name is invalid."));
+    }
+    if (path.isEmpty()) {
+        return fail_copy(tr("The copied project needs a destination path."));
+    }
+    QString editor_error;
+    if (!outputEditorsValid(&editor_error)) {
+        return fail_copy(
+            tr("Fix the invalid output settings before copying the project.\n\n")
+            + editor_error);
+    }
+    if (open_copy) {
+        QString replacement_error;
+        if (!documentReplacementAllowed(&replacement_error)) {
+            return fail_copy(replacement_error);
+        }
+    }
+    if (equivalent_local_path(path, current_project_path_)) {
+        return fail_copy(
+            tr("An independent project cannot replace the bundle that is currently open."));
+    }
+    const QFileInfo destination(path);
+    if (destination.exists() || destination.isSymLink()) {
+        return fail_copy(
+            tr("Independent project copies never overwrite an existing file or directory."));
+    }
+
+    std::unique_ptr<pvt::ProjectDocument> copy;
+    pvt::ProjectConfig opened_project;
+    pvt::RenderConfig opened_config;
+    std::string opened_active_layer_uuid;
+    std::optional<std::string> opened_solo_layer_uuid;
+    QString opened_path;
+    bool opened_integer_dither_preference = integer_dither_preference_;
+    try {
+        // Build the complete working snapshot locally. In particular, do not
+        // synchronize into project_: Save Copy and Stay must leave the open
+        // project byte-for-byte unchanged if allocation or persistence fails.
+        pvt::ProjectConfig snapshot = project_;
+        const auto active = std::find_if(
+            snapshot.layers.begin(), snapshot.layers.end(),
+            [this](const pvt::LayerConfig& layer) {
+                return layer.uuid == active_layer_uuid_;
+            });
+        if (active == snapshot.layers.end()) {
+            return fail_copy(tr("The active layer is missing from the project."));
+        }
+        active->render = static_cast<const pvt::RenderData&>(config_);
+        snapshot.canvas.width = config_.width;
+        snapshot.canvas.height = config_.height;
+        snapshot.canvas.block_size = config_.block_size;
+        snapshot.canvas.total_frames = config_.total_frames;
+        snapshot.canvas.fps = config_.fps;
+        snapshot.output = config_.output;
+        snapshot.name = project_name;
+
+        copy = std::make_unique<pvt::ProjectDocument>();
+        std::string copy_error;
+        if (!pvt::make_independent_project_copy(snapshot, *copy, &copy_error)) {
+            return fail_copy(QString::fromStdString(copy_error));
+        }
+
+        const std::size_t active_index = static_cast<std::size_t>(
+            std::distance(snapshot.layers.begin(), active));
+        std::optional<std::size_t> solo_index;
+        if (solo_layer_uuid_) {
+            const auto found = std::find_if(
+                snapshot.layers.begin(), snapshot.layers.end(),
+                [this](const pvt::LayerConfig& layer) {
+                    return layer.uuid == *solo_layer_uuid_;
+                });
+            if (found != snapshot.layers.end()) {
+                solo_index = static_cast<std::size_t>(
+                    std::distance(snapshot.layers.begin(), found));
+            }
+        }
+
+        if (open_copy) {
+            // Prepare every allocating piece of replacement state before the
+            // save. Once persistence succeeds, switching documents is a
+            // sequence of non-throwing moves/swaps.
+            opened_project = copy->project;
+            if (active_index >= opened_project.layers.size()) {
+                return fail_copy(
+                    tr("The copied project did not preserve its active layer."));
+            }
+            opened_active_layer_uuid =
+                opened_project.layers[active_index].uuid;
+            if (solo_index && *solo_index < opened_project.layers.size()) {
+                opened_solo_layer_uuid =
+                    opened_project.layers[*solo_index].uuid;
+            }
+            opened_config = pvt::apply_global_config(
+                opened_project.canvas, opened_project.output,
+                opened_project.layers[active_index].render);
+            opened_integer_dither_preference =
+                opened_project.output.bit_depth == 32
+                    ? integer_dither_preference_
+                    : opened_project.output.dither_enabled;
+            opened_path = path;
+        }
+
+        rememberDialogLocation(path);
+        pvt::BundleSaveReport report;
+        if (!pvt::save_project_document(
+                *copy, path.toStdString(), &report, &copy_error)) {
+            return fail_copy(QString::fromStdString(copy_error));
+        }
+    } catch (const std::bad_alloc&) {
+        return fail_copy(
+            tr("There was not enough memory to create the independent project copy."));
+    } catch (const std::exception& exception) {
+        return fail_copy(
+            tr("Unexpected independent-copy error: %1")
+                .arg(QString::fromUtf8(exception.what())));
+    }
+
+    if (!open_copy) {
+        status_->setText(
+            tr("Created independent version-0 project copy at %1; continuing in the original project.")
+                .arg(path));
+        return true;
+    }
+
+    static_assert(std::is_nothrow_move_assignable_v<pvt::ProjectConfig>);
+    static_assert(std::is_nothrow_move_assignable_v<pvt::RenderConfig>);
+    static_assert(std::is_nothrow_move_assignable_v<std::string>);
+    static_assert(
+        std::is_nothrow_move_assignable_v<std::optional<std::string>>);
+    document_ = std::move(copy);
+    project_ = std::move(opened_project);
+    config_ = std::move(opened_config);
+    active_layer_uuid_ = std::move(opened_active_layer_uuid);
+    solo_layer_uuid_ = std::move(opened_solo_layer_uuid);
+    current_project_path_.swap(opened_path);
+    QString empty_import_path;
+    imported_legacy_path_.swap(empty_import_path);
+    integer_dither_preference_ = opened_integer_dither_preference;
+    baseline_dirty_ = false;
+    clearUndoHistory(false);
+    if (undo_stack_ != nullptr) undo_stack_->setClean();
+    ++document_revision_;
+    updateCompatibilityWarning();
+    refreshLayerList();
+    refreshAll();
+    refreshVersionsPage();
+    updateWindowTitle();
+    schedulePreview();
+    status_->setText(
+        tr("Created and opened independent version-0 project at %1.").arg(path));
     return true;
 }
 

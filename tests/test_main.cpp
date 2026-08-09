@@ -51,6 +51,17 @@ std::vector<unsigned char> read_bytes(const fs::path& path) {
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+bool has_temporary_output(const fs::path& directory) {
+    if (!fs::exists(directory)) {
+        return false;
+    }
+    return std::any_of(fs::directory_iterator(directory), fs::directory_iterator(),
+                       [](const fs::directory_entry& entry) {
+                           return entry.path().filename().string().find(".tmp.")
+                                  != std::string::npos;
+                       });
+}
+
 std::vector<unsigned char> decode_png_rgba8(const fs::path& path,
                                              png_uint_32* width,
                                              png_uint_32* height) {
@@ -662,6 +673,225 @@ void test_block_scale_and_default_glow_visibility() {
     CHECK(mean_absolute_difference(block_then_ripple, ripple_then_block) > 0.001);
 }
 
+void test_palettes_transforms_and_spatial_stages() {
+    auto config = pvt::default_config();
+    make_small(config);
+    config.effects.clear();
+    config.palette.enabled = false;
+    config.transform = {};
+    std::string error;
+    pvt::Image baseline;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, baseline, &error));
+
+    config.transform.flip_horizontal = true;
+    pvt::Image flipped;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, flipped, &error));
+    for (int y = 0; y < baseline.height; ++y) {
+        for (int x = 0; x < baseline.width; ++x) {
+            const float* expected = baseline.pixel(baseline.width - 1 - x, y);
+            const float* actual = flipped.pixel(x, y);
+            CHECK(expected != nullptr && actual != nullptr);
+            if (expected != nullptr && actual != nullptr) {
+                CHECK(std::equal(expected, expected + 4, actual));
+            }
+        }
+    }
+
+    config.transform = {};
+    config.transform.mirror = pvt::MirrorMode::LeftToRight;
+    pvt::Image mirrored;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, mirrored, &error));
+    for (int y = 0; y < baseline.height; ++y) {
+        for (int x = 0; x < baseline.width; ++x) {
+            const int source_x = x < (baseline.width + 1) / 2
+                                     ? x : baseline.width - 1 - x;
+            const float* expected = baseline.pixel(source_x, y);
+            const float* actual = mirrored.pixel(x, y);
+            CHECK(expected != nullptr && actual != nullptr);
+            if (expected != nullptr && actual != nullptr) {
+                CHECK(std::equal(expected, expected + 4, actual));
+            }
+        }
+    }
+
+    config.transform = {};
+    config.palette.enabled = true;
+    config.palette.name = "Binary";
+    config.palette.colors = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}};
+    pvt::Image paletted;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, paletted, &error));
+    for (std::size_t offset = 0U; offset < paletted.pixels.size(); offset += 4U) {
+        const bool black = paletted.pixels[offset] == 0.0F
+                           && paletted.pixels[offset + 1U] == 0.0F
+                           && paletted.pixels[offset + 2U] == 0.0F;
+        const bool white = paletted.pixels[offset] == 1.0F
+                           && paletted.pixels[offset + 1U] == 1.0F
+                           && paletted.pixels[offset + 2U] == 1.0F;
+        CHECK(black || white);
+    }
+    pvt::Image palette_seam;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, paletted, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0, palette_seam, &error));
+    CHECK(paletted.pixels == palette_seam.pixels);
+    CHECK(!pvt::default_palette(0U).colors.empty());
+    CHECK(pvt::default_palette(0U).name != pvt::default_palette(1U).name);
+    config.palette.colors.clear();
+    CHECK(!pvt::validate(config).ok);
+
+    // Localized shake leaves pixels outside its feathered circle untouched,
+    // while the center is visibly transformed and still closes at the seam.
+    config = pvt::default_config();
+    make_small(config);
+    config.effects.clear();
+    config.swings.clear();
+    CHECK(pvt::render_frame_at_phase(config, 0.371, baseline, &error));
+    auto shake = pvt::default_effect(pvt::EffectType::Shake);
+    shake.id = pvt::allocate_id(config);
+    shake.enabled = true;
+    shake.synchronized = false;
+    shake.intensity = 1.0;
+    shake.magnitude = 0.12;
+    shake.area_radius = 0.22;
+    shake.center_x = 0.5;
+    shake.center_y = 0.5;
+    shake.edge_mode = pvt::EdgeMode::Reflect;
+    config.effects.push_back(shake);
+    pvt::Image localized;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, localized, &error));
+    CHECK(std::equal(baseline.pixels.begin(), baseline.pixels.begin() + 4,
+                     localized.pixels.begin()));
+    CHECK(mean_absolute_difference(baseline, localized) > 0.0001);
+    CHECK(pvt::render_frame_at_phase(config, 0.0, localized, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0, palette_seam, &error));
+    CHECK(localized.pixels == palette_seam.pixels);
+
+    // The same effect produces a distinct result on either side of surface
+    // mapping: mapped-object space moves the complete primitive silhouette.
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::Sphere;
+    config.surface.curvature = 1.0;
+    config.effects.front().area_radius = 0.0;
+    config.effects.front().space = pvt::EffectSpace::Texture;
+    pvt::Image texture_stage;
+    pvt::Image surface_stage;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, texture_stage, &error));
+    config.effects.front().space = pvt::EffectSpace::Surface;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, surface_stage, &error));
+    CHECK(mean_absolute_difference(texture_stage, surface_stage) > 0.0001);
+    bool silhouette_moved = false;
+    for (std::size_t offset = 3U; offset < texture_stage.pixels.size();
+         offset += 4U) {
+        silhouette_moved = silhouette_moved
+                           || texture_stage.pixels[offset]
+                                  != surface_stage.pixels[offset];
+    }
+    CHECK(silhouette_moved);
+
+    // Layer transforms define the mapped-object effect canvas. A localized
+    // post-surface effect therefore stays under its visible handle instead of
+    // being mirrored to the opposite side after the effect is evaluated.
+    config.transform.flip_horizontal = true;
+    config.effects.front().center_x = 0.2;
+    config.effects.front().center_y = 0.5;
+    config.effects.front().area_radius = 0.18;
+    config.effects.front().enabled = false;
+    pvt::Image transformed_without_effect;
+    pvt::Image transformed_with_effect;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.371, transformed_without_effect, &error));
+    config.effects.front().enabled = true;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.371, transformed_with_effect, &error));
+    double left_difference = 0.0;
+    double right_difference = 0.0;
+    for (int y = 0; y < transformed_with_effect.height; ++y) {
+        for (int x = 0; x < transformed_with_effect.width; ++x) {
+            const float* before = transformed_without_effect.pixel(x, y);
+            const float* after = transformed_with_effect.pixel(x, y);
+            CHECK(before != nullptr && after != nullptr);
+            if (before == nullptr || after == nullptr) continue;
+            double& difference = x < transformed_with_effect.width / 2
+                                     ? left_difference : right_difference;
+            for (int channel = 0; channel < 4; ++channel) {
+                difference += std::fabs(
+                    static_cast<double>(before[channel] - after[channel]));
+            }
+        }
+    }
+    CHECK(left_difference > 0.0001);
+    CHECK(left_difference > right_difference * 10.0 + 1.0e-6);
+
+    // Spatial swings now modulate the clock at render coordinates rather than
+    // pretending a center/radius can be represented by one global scalar.
+    config = pvt::default_config();
+    make_small(config);
+    config.effects.clear();
+    config.swings.clear();
+    CHECK(pvt::render_frame_at_phase(config, 0.371, baseline, &error));
+    auto swing = pvt::default_swing(0U);
+    swing.id = pvt::allocate_id(config);
+    swing.amount = 1.0;
+    swing.center_x = 0.5;
+    swing.center_y = 0.5;
+    swing.radius = 0.22;
+    config.swings.push_back(swing);
+    CHECK(pvt::render_frame_at_phase(config, 0.371, localized, &error));
+    CHECK(std::equal(baseline.pixels.begin(), baseline.pixels.begin() + 4,
+                     localized.pixels.begin()));
+    CHECK(mean_absolute_difference(baseline, localized) > 0.0001);
+
+    // A localized Swing is a source/UV clock. Texture effects sample it at
+    // their source center, while mapped-object effects deliberately use only
+    // the global synchronized clock because screen points cannot be mapped
+    // uniquely back through arbitrary surfaces and mirrors.
+    config = pvt::default_config();
+    make_small(config);
+    for (auto& wave : config.waves) wave.synchronized = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.swings.clear();
+    swing = pvt::default_swing(0U);
+    swing.id = pvt::allocate_id(config);
+    swing.amount = 1.0;
+    swing.center_x = 0.25;
+    swing.center_y = 0.5;
+    swing.radius = 0.3;
+    config.swings.push_back(swing);
+    config.effects.clear();
+    shake = pvt::default_effect(pvt::EffectType::Shake);
+    shake.id = pvt::allocate_id(config);
+    shake.enabled = true;
+    shake.synchronized = true;
+    shake.intensity = 1.0;
+    shake.magnitude = 0.12;
+    shake.center_x = swing.center_x;
+    shake.center_y = swing.center_y;
+    shake.edge_mode = pvt::EdgeMode::Reflect;
+    shake.space = pvt::EffectSpace::Surface;
+    config.effects.push_back(shake);
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::Sphere;
+    config.surface.curvature = 1.0;
+    pvt::Image swing_enabled_effect;
+    pvt::Image swing_disabled_effect;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.123, swing_enabled_effect, &error));
+    config.swings.front().enabled = false;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.123, swing_disabled_effect, &error));
+    CHECK(swing_enabled_effect.pixels == swing_disabled_effect.pixels);
+
+    config.effects.front().space = pvt::EffectSpace::Texture;
+    config.swings.front().enabled = true;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.123, swing_enabled_effect, &error));
+    config.swings.front().enabled = false;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.123, swing_disabled_effect, &error));
+    CHECK(mean_absolute_difference(swing_enabled_effect,
+                                   swing_disabled_effect) > 0.0001);
+}
+
 void test_validation_limits() {
     auto config = pvt::default_config();
     CHECK(pvt::validate(config).ok);
@@ -790,15 +1020,25 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.waves[0].direction = 0.123;
     original.swings.push_back(pvt::default_swing(4));
     original.swings.back().id = pvt::allocate_id(original);
+    original.swings.back().center_x = 0.27;
+    original.swings.back().center_y = 0.73;
+    original.swings.back().radius = 0.31;
     original.effects.push_back(pvt::default_effect(pvt::EffectType::Shake));
     original.effects.back().id = pvt::allocate_id(original);
     original.effects.back().enabled = true;
+    original.effects.back().space = pvt::EffectSpace::Surface;
+    original.effects.back().center_x = 0.42;
+    original.effects.back().center_y = 0.61;
+    original.effects.back().area_radius = 0.24;
     original.alpha.enabled = true;
     original.quantization.enabled = true;
     original.quantization.mode = pvt::QuantizationMode::Hue;
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
     original.surface.obj_path = "mesh folder/test.obj";
+    original.palette = pvt::default_palette(2U);
+    original.transform.flip_horizontal = true;
+    original.transform.mirror = pvt::MirrorMode::BottomToTop;
     original.output.bit_depth = 16;
     original.output.png_compression_level = 3;
     original.output.dither_method = pvt::DitherMethod::FloydSteinberg;
@@ -847,13 +1087,58 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.output.png_compression_level == 3);
     CHECK(!loaded.output.write_alpha);
     CHECK(loaded.surface.obj_path == original.surface.obj_path);
+    CHECK(loaded.swings.back().radius == original.swings.back().radius);
+    CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
+    CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
+    CHECK(loaded.palette.name == original.palette.name);
+    CHECK(loaded.palette.colors.size() == original.palette.colors.size());
+    CHECK(loaded.transform.flip_horizontal);
+    CHECK(loaded.transform.mirror == pvt::MirrorMode::BottomToTop);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
 
     // Version 2 predates the independent export-alpha flag. Legacy files map
     // it from the render alpha setting instead of silently losing that state.
-    const auto version_three_bytes = read_bytes(first);
-    std::string version_two(version_three_bytes.begin(), version_three_bytes.end());
+    const auto version_four_bytes = read_bytes(first);
+    std::string version_three(version_four_bytes.begin(), version_four_bytes.end());
+    CHECK(version_three.rfind("PVT_SETUP\t4\n", 0U) == 0U);
+    version_three.replace(0U, std::string("PVT_SETUP\t4").size(), "PVT_SETUP\t3");
+    const auto erase_record = [](std::string& setup, const std::string& key) {
+        const std::string prefix = key + "\t";
+        const std::size_t position = setup.find(prefix);
+        CHECK(position != std::string::npos);
+        if (position == std::string::npos) return;
+        const std::size_t newline = setup.find('\n', position);
+        CHECK(newline != std::string::npos);
+        if (newline != std::string::npos) {
+            setup.erase(position, newline + 1U - position);
+        }
+    };
+    for (std::size_t index = 0U; index < original.swings.size(); ++index) {
+        for (const char* field : {"center_x", "center_y", "radius"}) {
+            erase_record(version_three, "swings." + std::to_string(index)
+                                           + "." + field);
+        }
+    }
+    for (std::size_t index = 0U; index < original.effects.size(); ++index) {
+        erase_record(version_three, "effects." + std::to_string(index) + ".space");
+        erase_record(version_three,
+                     "effects." + std::to_string(index) + ".area_radius");
+    }
+    erase_record(version_three, "palette.enabled");
+    erase_record(version_three, "palette.name");
+    erase_record(version_three, "palette.colors.count");
+    for (std::size_t index = 0U; index < original.palette.colors.size(); ++index) {
+        for (const char* field : {"red", "green", "blue"}) {
+            erase_record(version_three, "palette.colors." + std::to_string(index)
+                                           + "." + field);
+        }
+    }
+    erase_record(version_three, "transform.flip_horizontal");
+    erase_record(version_three, "transform.flip_vertical");
+    erase_record(version_three, "transform.mirror");
+
+    std::string version_two = version_three;
     CHECK(version_two.rfind("PVT_SETUP\t3\n", 0U) == 0U);
     version_two.replace(0U, std::string("PVT_SETUP\t3").size(), "PVT_SETUP\t2");
     const std::string write_alpha_record = "output.write_alpha\t0\n";
@@ -870,6 +1155,12 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     auto loaded_version_two = pvt::default_config();
     CHECK(pvt::load_setup(version_two_setup.string(), loaded_version_two, &error));
     CHECK(loaded_version_two.output.write_alpha);
+    CHECK(!loaded_version_two.palette.enabled);
+    CHECK(loaded_version_two.palette.colors.empty());
+    CHECK(loaded_version_two.effects.back().space == pvt::EffectSpace::Texture);
+    CHECK(loaded_version_two.effects.back().area_radius == 0.0);
+    CHECK(loaded_version_two.swings.back().radius == 0.0);
+    CHECK(loaded_version_two.transform.mirror == pvt::MirrorMode::None);
 
     // Version 1 also predates PNG compression control and custom OBJ paths. It
     // remains loadable and receives the current defaults for both fields.
@@ -1230,16 +1521,16 @@ void test_sequence_preflight(const fs::path& directory) {
     config.output.bit_depth = 8;
     config.output.overwrite_existing = false;
     std::string error;
-    int progress_calls = 0;
+    std::vector<int> progress_values;
     CHECK(pvt::render_sequence(
         config,
-        [&progress_calls](int completed, int total) {
+        [&progress_values](int completed, int total) {
             CHECK(completed >= 1 && completed <= total);
-            ++progress_calls;
+            progress_values.push_back(completed);
             return true;
         },
         nullptr, &error));
-    CHECK(progress_calls == 3);
+    CHECK(progress_values == std::vector<int>({1, 2, 3}));
     CHECK(fs::exists(sequence_directory
                      / pvt::detail::path_from_utf8(unicode_prefix + "0000.png")));
     CHECK(!pvt::render_sequence(config, {}, nullptr, &error));
@@ -1259,6 +1550,43 @@ void test_sequence_preflight(const fs::path& directory) {
     CHECK(!fs::exists(late_collision_directory / "loop_0001.png"));
     CHECK(read_bytes(late_collision) == collision_bytes);
 
+    // Parallel scheduling must be byte-deterministic and retain ascending,
+    // single-threaded callback semantics. A one-worker run is the reference.
+    config.total_frames = 6;
+    config.output.png_compression_level = 0;
+    config.output.filename_prefix = "deterministic_";
+    const fs::path sequential_directory = directory / "workers-one";
+    const fs::path parallel_directory = directory / "workers-four";
+    pvt::SequenceRenderOptions sequence_options;
+    sequence_options.worker_count = 1U;
+    config.output.output_directory = sequential_directory.string();
+    CHECK(pvt::render_sequence(config, sequence_options, {}, nullptr, &error));
+    sequence_options.worker_count = 4U;
+    config.output.output_directory = parallel_directory.string();
+    progress_values.clear();
+    CHECK(pvt::render_sequence(
+        config, sequence_options,
+        [&progress_values](int completed, int) {
+            progress_values.push_back(completed);
+            return true;
+        },
+        nullptr, &error));
+    CHECK(progress_values == std::vector<int>({1, 2, 3, 4, 5, 6}));
+    for (int frame = 0; frame < config.total_frames; ++frame) {
+        std::string number = std::to_string(frame);
+        number.insert(0U, 4U - number.size(), '0');
+        const fs::path filename = "deterministic_" + number + ".png";
+        CHECK(read_bytes(sequential_directory / filename)
+              == read_bytes(parallel_directory / filename));
+    }
+
+    sequence_options.worker_count = pvt::kMaximumSequenceWorkers + 1U;
+    config.output.output_directory = (directory / "too-many-workers").string();
+    CHECK(!pvt::render_sequence(config, sequence_options, {}, nullptr, &error));
+    CHECK(error.find("worker count") != std::string::npos);
+    CHECK(!fs::exists(directory / "too-many-workers" / "deterministic_0000.png"));
+
+    config.total_frames = 3;
     config.output.filename_prefix = "loop_";
     config.output.output_directory = (directory / "callback-cancel").string();
     int callback_calls = 0;
@@ -1272,6 +1600,7 @@ void test_sequence_preflight(const fs::path& directory) {
     CHECK(callback_calls == 1);
     CHECK(fs::exists(directory / "callback-cancel" / "loop_0000.png"));
     CHECK(!fs::exists(directory / "callback-cancel" / "loop_0001.png"));
+    CHECK(!has_temporary_output(directory / "callback-cancel"));
 
     config.output.output_directory = (directory / "callback-throw").string();
     CHECK(!pvt::render_sequence(
@@ -1279,6 +1608,7 @@ void test_sequence_preflight(const fs::path& directory) {
         [](int, int) -> bool { throw std::runtime_error("test callback failure"); },
         nullptr, &error));
     CHECK(error.find("callback failed") != std::string::npos);
+    CHECK(!has_temporary_output(directory / "callback-throw"));
 
     config.output.output_directory = (directory / "atomic-cancel").string();
     std::atomic_bool cancelled {true};
@@ -1322,6 +1652,7 @@ void test_sequence_preflight(const fs::path& directory) {
     CHECK(!sequence_result);
     CHECK(error.find("cancelled") != std::string::npos);
     CHECK(!fs::exists(directory / "in-frame-cancel" / "heavy_0000.png"));
+    CHECK(!has_temporary_output(directory / "in-frame-cancel"));
 
     // A literal dot remains relative to the caller's working directory, and
     // sibling temporary output must stay there rather than drifting to root.
@@ -1363,6 +1694,7 @@ int main(int argc, char** argv) {
     test_direction_alpha_and_surfaces(source_root);
     test_partial_alpha_glow_composition();
     test_block_scale_and_default_glow_visibility();
+    test_palettes_transforms_and_spatial_stages();
     test_validation_limits();
     test_setup_round_trip_and_transaction(test_directory);
     test_image_formats_and_dither(test_directory);

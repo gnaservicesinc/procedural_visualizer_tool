@@ -60,6 +60,13 @@ private:
         QString error;
     };
 
+    enum class SavedProjectRenameAction {
+        Cancel,
+        KeepBundleFilename,
+        SaveCopyAndOpen,
+        SaveCopyAndStay
+    };
+
     QWidget* createWavePage();
     QWidget* createSwingPage();
     QWidget* createEffectPage();
@@ -91,6 +98,11 @@ private:
     void updateSwingListItem(std::size_t index);
     void updateEffectListItem(std::size_t index);
     void updateEffectEditorVisibility();
+    void refreshPaletteEditor();
+    void applyPalettePreset(std::size_t index);
+    void addPaletteColor();
+    void editSelectedPaletteColor();
+    void removeSelectedPaletteColor();
 
     pvt::LayerConfig* activeLayer();
     const pvt::LayerConfig* activeLayer() const;
@@ -165,6 +177,16 @@ private:
     QString usableDialogDirectory(const QString& preferred = {}) const;
     void rememberDialogLocation(const QString& selectedPath);
     bool startExport();
+    void finishProjectNameEdit();
+    void applyProjectNameChange(const std::string& before,
+                                const std::string& after);
+    SavedProjectRenameAction promptForSavedProjectRename(
+        const std::string& before, const std::string& after);
+    QString chooseIndependentCopyPath(const std::string& projectName);
+    bool saveIndependentRenamedCopy(const std::string& projectName,
+                                    const QString& path,
+                                    bool openCopy,
+                                    QString* error = nullptr);
     void saveSetup();
     void saveSetupAs();
     bool saveProjectPath(const QString& path);
@@ -188,15 +210,18 @@ private:
     bool playback_preview_advanced_ = false;
     int last_previewed_frame_ = -1;
     int preview_test_delay_ms_ = 0;
+    QString independent_copy_test_path_;
     std::uint64_t preview_generation_ = 0;
     std::uint64_t document_revision_ = 1;
-    struct WaveDragState {
+    struct ItemDragState {
         std::string layer_uuid;
-        std::uint64_t wave_id = 0;
+        std::uint64_t item_id = 0;
         ActiveDocumentState before;
         bool moved = false;
     };
-    std::optional<WaveDragState> wave_drag_state_;
+    std::optional<ItemDragState> wave_drag_state_;
+    std::optional<ItemDragState> swing_drag_state_;
+    std::optional<ItemDragState> effect_drag_state_;
     std::size_t undo_history_estimated_bytes_ = 0U;
     std::shared_ptr<std::atomic_bool> preview_cancel_;
     std::atomic_bool cancel_export_{false};
@@ -256,6 +281,9 @@ private:
     QSpinBox* swing_cycles_ = nullptr;
     QDoubleSpinBox* swing_phase_ = nullptr;
     QDoubleSpinBox* swing_shape_ = nullptr;
+    QDoubleSpinBox* swing_center_x_ = nullptr;
+    QDoubleSpinBox* swing_center_y_ = nullptr;
+    QDoubleSpinBox* swing_radius_ = nullptr;
 
     QListWidget* effect_list_ = nullptr;
     QComboBox* add_effect_type_ = nullptr;
@@ -263,6 +291,7 @@ private:
     QCheckBox* effect_enabled_ = nullptr;
     QCheckBox* effect_sync_ = nullptr;
     QComboBox* effect_type_ = nullptr;
+    QComboBox* effect_space_ = nullptr;
     QSpinBox* effect_cycles_ = nullptr;
     QDoubleSpinBox* effect_phase_ = nullptr;
     QComboBox* effect_edge_ = nullptr;
@@ -276,6 +305,7 @@ private:
     QDoubleSpinBox* effect_radius_ = nullptr;
     QDoubleSpinBox* effect_threshold_ = nullptr;
     QDoubleSpinBox* effect_knee_ = nullptr;
+    QDoubleSpinBox* effect_area_radius_ = nullptr;
     QFormLayout* effect_form_ = nullptr;
 
     QSpinBox* width_ = nullptr;
@@ -305,6 +335,13 @@ private:
     QDoubleSpinBox* surface_phase_ = nullptr;
     QDoubleSpinBox* surface_curvature_ = nullptr;
     QDoubleSpinBox* surface_lighting_ = nullptr;
+    QCheckBox* transform_flip_horizontal_ = nullptr;
+    QCheckBox* transform_flip_vertical_ = nullptr;
+    QComboBox* transform_mirror_ = nullptr;
+    QCheckBox* palette_enabled_ = nullptr;
+    QLineEdit* palette_name_ = nullptr;
+    QComboBox* palette_preset_ = nullptr;
+    QListWidget* palette_colors_ = nullptr;
     QCheckBox* quantization_enabled_ = nullptr;
     QSpinBox* quantization_levels_ = nullptr;
     QDoubleSpinBox* quantization_mix_ = nullptr;
