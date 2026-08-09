@@ -196,9 +196,11 @@ struct EffectConfig {
     double area_radius = 0.0;
 };
 
-// Palette component values are authored in display/sRGB space. Rendering
-// converts them to linear light before choosing the nearest color. Alpha is
-// deliberately independent so palette changes never rewrite layer opacity.
+// Palette component values are authored in display/sRGB space. When enabled,
+// the palette selects the procedural layer's starting colors in linear light.
+// Procedural slope lighting, Texture effects, surface lighting, mapped-object
+// effects, and explicit quantization run afterward and may create other colors.
+// Alpha is deliberately independent so palette changes never rewrite opacity.
 struct PaletteColor {
     double red = 0.0;
     double green = 0.0;

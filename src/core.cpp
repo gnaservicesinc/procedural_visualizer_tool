@@ -1149,7 +1149,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
         || config.palette.colors.size() > kMaximumPaletteColors
         || (config.palette.enabled && config.palette.colors.empty())) {
         return invalid_result(
-            "An enabled palette needs 1 to 256 colors and a valid name.");
+            "An enabled starting palette needs 1 to 256 colors and a valid name.");
     }
     for (const PaletteColor& color : config.palette.colors) {
         if (!finite_in_range(color.red, 0.0, 1.0)
@@ -1291,6 +1291,44 @@ void throw_if_cancelled(const std::atomic_bool* cancel) {
     }
 }
 
+std::vector<Color> prepare_starting_palette(const PaletteConfig& palette) {
+    std::vector<Color> prepared;
+    if (!palette.enabled) {
+        return prepared;
+    }
+    prepared.reserve(palette.colors.size());
+    for (const PaletteColor& authored : palette.colors) {
+        prepared.push_back({srgb_to_linear(authored.red),
+                            srgb_to_linear(authored.green),
+                            srgb_to_linear(authored.blue), 1.0});
+    }
+    return prepared;
+}
+
+Color nearest_starting_color(const Color& input,
+                             const std::vector<Color>& palette) {
+    if (palette.empty()) {
+        return input;
+    }
+    const Color* closest = &palette.front();
+    double closest_distance = std::numeric_limits<double>::infinity();
+    for (const Color& candidate : palette) {
+        const double dr = input.r - candidate.r;
+        const double dg = input.g - candidate.g;
+        const double db = input.b - candidate.b;
+        // Linear-light luminance weights make starting-color selection better
+        // match what the eye sees than an unweighted RGB cube.
+        const double distance = 0.2126 * dr * dr
+                                + 0.7152 * dg * dg
+                                + 0.0722 * db * db;
+        if (distance < closest_distance) {
+            closest = &candidate;
+            closest_distance = distance;
+        }
+    }
+    return *closest;
+}
+
 double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
     if (!config.alpha.enabled) {
         return 1.0;
@@ -1327,6 +1365,8 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     }
 
     const double breath = 0.85 + 0.35 * std::sin(loop_phase);
+    const std::vector<Color> starting_palette =
+        prepare_starting_palette(config.palette);
 
     std::size_t block_counter = 0U;
     for (int block_y = 0; block_y < config.height; block_y += config.block_size) {
@@ -1416,7 +1456,26 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                  : 0.28 * normalized_light;
             }
             lightness = clamp_value(lightness, 0.04, 0.68);
-            const Color base = hsl_to_linear_rgb(hue, config.saturation, lightness);
+            Color base;
+            if (starting_palette.empty()) {
+                base = hsl_to_linear_rgb(hue, config.saturation, lightness);
+            } else {
+                // Choose an authored source color before procedural slope
+                // lighting. Otherwise a one-color palette would accidentally
+                // make that independent layer toggle inert.
+                base = nearest_starting_color(
+                    hsl_to_linear_rgb(hue, config.saturation, 0.40),
+                    starting_palette);
+                if (config.lighting_enabled) {
+                    const double lighting_scale = lightness / 0.40;
+                    base.r *= lighting_scale;
+                    base.g *= lighting_scale;
+                    base.b *= lighting_scale;
+                }
+            }
+            // Effects, surface lighting, and later stages remain free to create
+            // colors outside the starting palette. Selecting once per block
+            // also avoids the old width*height*palette-size restriction pass.
             const int end_x = std::min(block_x + config.block_size, config.width);
             const int end_y = std::min(block_y + config.block_size, config.height);
             for (int y = block_y; y < end_y; ++y) {
@@ -2281,46 +2340,6 @@ void apply_layer_transform(Image& image,
     }
 }
 
-void apply_palette(Image& image, const PaletteConfig& palette,
-                   const std::atomic_bool* cancel) {
-    if (!palette.enabled) {
-        return;
-    }
-    std::vector<Color> linear_palette;
-    linear_palette.reserve(palette.colors.size());
-    for (const PaletteColor& authored : palette.colors) {
-        linear_palette.push_back({srgb_to_linear(authored.red),
-                                  srgb_to_linear(authored.green),
-                                  srgb_to_linear(authored.blue), 1.0});
-    }
-    for (int y = 0; y < image.height; ++y) {
-        throw_if_cancelled(cancel);
-        for (int x = 0; x < image.width; ++x) {
-            Color input = load_color(image, x, y);
-            const Color* closest = &linear_palette.front();
-            double closest_distance = std::numeric_limits<double>::infinity();
-            for (const Color& candidate : linear_palette) {
-                const double dr = input.r - candidate.r;
-                const double dg = input.g - candidate.g;
-                const double db = input.b - candidate.b;
-                // Linear-light luminance weights make nearest-color selection
-                // better match what the eye sees than an unweighted RGB cube.
-                const double distance = 0.2126 * dr * dr
-                                        + 0.7152 * dg * dg
-                                        + 0.0722 * db * db;
-                if (distance < closest_distance) {
-                    closest = &candidate;
-                    closest_distance = distance;
-                }
-            }
-            input.r = closest->r;
-            input.g = closest->g;
-            input.b = closest->b;
-            store_color(image, x, y, input);
-        }
-    }
-}
-
 } // namespace
 
 bool render_frame_at_phase_cancellable(const RenderConfig& config,
@@ -2399,7 +2418,6 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
         apply_layer_transform(current, config.transform, cancel);
         apply_effect_stage(EffectSpace::Surface);
         apply_quantization(current, config.quantization, cancel);
-        apply_palette(current, config.palette, cancel);
         throw_if_cancelled(cancel);
 
         destination.width = current.width;

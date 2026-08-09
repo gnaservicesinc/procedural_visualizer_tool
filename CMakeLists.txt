@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(ProceduralVisualizerTool VERSION 4.0.0 LANGUAGES CXX)
+project(ProceduralVisualizerTool VERSION 4.0.1 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)

@@ -76,7 +76,7 @@ constexpr int kMaximumUndoLimit = 5000;
 constexpr std::size_t kMaximumUndoHistoryBytes = 128U * 1024U * 1024U;
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "4.0.0"
+#  define PVT_PROGRAM_VERSION "4.0.1"
 #endif
 
 std::optional<std::vector<std::uint64_t>> numeric_version(std::string_view value) {
@@ -667,6 +667,14 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
     }
 }
 
+bool editor_change_is_continuous(const QObject* editor) {
+    // Checkboxes and enum choices are discrete user decisions. Merging two of
+    // them can turn an on->off sequence into a phantom Undo command whose
+    // before and after values are both off.
+    return qobject_cast<const QCheckBox*>(editor) == nullptr
+           && qobject_cast<const QComboBox*>(editor) == nullptr;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -1254,10 +1262,10 @@ QWidget* MainWindow::createLayerSettingsPage() {
     transform->addRow(tr("Mirror symmetry"), transform_mirror_);
     layout->addWidget(transform_group);
 
-    auto* palette_group = new QGroupBox(tr("Layer palette"));
+    auto* palette_group = new QGroupBox(tr("Starting palette"));
     auto* palette_layout = new QVBoxLayout(palette_group);
     auto* palette_form = new QFormLayout;
-    palette_enabled_ = new QCheckBox(tr("Restrict this layer to palette colors"));
+    palette_enabled_ = new QCheckBox(tr("Use this palette for starting colors"));
     palette_name_ = new QLineEdit;
     palette_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
     palette_name_->setValidator(new Utf8TextValidator(TextRule::Name, palette_name_));
@@ -1292,7 +1300,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     palette_layout->addLayout(palette_buttons);
     auto* palette_help = new QLabel(
         tr("Colors are authored in sRGB and embedded in this layer. The renderer "
-           "chooses the nearest palette color after effects, surface lighting, and quantization."));
+           "selects the procedural starting colors from this palette. Lighting and "
+           "effects may create other colors afterward. Use Post-effects "
+           "color quantization below when you want to deliberately reduce final colors."));
     palette_help->setWordWrap(true);
     palette_layout->addWidget(palette_help);
     layout->addWidget(palette_group);
@@ -1334,7 +1344,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface->addRow(tr("Lighting"), surface_lighting_);
     layout->addWidget(surface_group);
 
-    auto* quantization_group = new QGroupBox(tr("Visual quantization"));
+    auto* quantization_group = new QGroupBox(tr("Post-effects color quantization"));
     auto* quantization = new QFormLayout(quantization_group);
     quantization_enabled_ = new QCheckBox(tr("Quantization enabled"));
     quantization_levels_ = integer_editor(2, 65536);
@@ -3386,7 +3396,9 @@ void MainWindow::refreshPaletteEditor() {
 void MainWindow::applyPalettePreset(std::size_t index) {
     if (populating_) return;
     auto before = captureActiveState();
+    const bool was_enabled = config_.palette.enabled;
     config_.palette = pvt::default_palette(index);
+    config_.palette.enabled = was_enabled;
     syncActiveRender();
     loadGlobalEditors();
     schedulePreview();
@@ -3496,10 +3508,12 @@ void MainWindow::applyWaveEditor(const QObject* changed_editor) {
     updateWaveListItem(*index);
     preview_->setConfiguration(config_);
     schedulePreview();
-    const QString key = QStringLiteral("wave:%1:%2:%3")
-                            .arg(QString::fromStdString(active_layer_uuid_))
-                            .arg(wave.id)
-                            .arg(reinterpret_cast<quintptr>(changed_editor));
+    const QString key = editor_change_is_continuous(changed_editor)
+                            ? QStringLiteral("wave:%1:%2:%3")
+                                  .arg(QString::fromStdString(active_layer_uuid_))
+                                  .arg(wave.id)
+                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            : QString{};
     recordActiveStateChange(tr("Edit wave"), std::move(before), key);
 }
 
@@ -3538,10 +3552,12 @@ void MainWindow::applySwingEditor(const QObject* changed_editor) {
     updateSwingListItem(*index);
     preview_->setConfiguration(config_);
     schedulePreview();
-    const QString key = QStringLiteral("swing:%1:%2:%3")
-                            .arg(QString::fromStdString(active_layer_uuid_))
-                            .arg(swing.id)
-                            .arg(reinterpret_cast<quintptr>(changed_editor));
+    const QString key = editor_change_is_continuous(changed_editor)
+                            ? QStringLiteral("swing:%1:%2:%3")
+                                  .arg(QString::fromStdString(active_layer_uuid_))
+                                  .arg(swing.id)
+                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            : QString{};
     recordActiveStateChange(tr("Edit swing"), std::move(before), key);
 }
 
@@ -3638,10 +3654,12 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     updateEffectEditorVisibility();
     preview_->setConfiguration(config_);
     schedulePreview();
-    const QString key = QStringLiteral("effect:%1:%2:%3")
-                            .arg(QString::fromStdString(active_layer_uuid_))
-                            .arg(effect.id)
-                            .arg(reinterpret_cast<quintptr>(changed_editor));
+    const QString key = editor_change_is_continuous(changed_editor)
+                            ? QStringLiteral("effect:%1:%2:%3")
+                                  .arg(QString::fromStdString(active_layer_uuid_))
+                                  .arg(effect.id)
+                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            : QString{};
     recordActiveStateChange(tr("Edit effect"), std::move(before), key);
 }
 
@@ -3705,9 +3723,12 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             const QSignalBlocker name_blocker(palette_name_);
             palette_name_->setText(QString::fromStdString(config_.palette.name));
             refreshPaletteEditor();
-            status_->setText(tr("Loaded the Ember preset because an enabled palette needs at least one color."));
+            status_->setText(tr("Loaded the Ember preset because a starting palette needs at least one color."));
         } else {
             config_.palette.enabled = palette_enabled_->isChecked();
+            status_->setText(config_.palette.enabled
+                                 ? tr("Starting palette enabled.")
+                                 : tr("Starting palette disabled."));
         }
     } else if (changed_editor == palette_name_) {
         if (!palette_name_->hasAcceptableInput()) return;
@@ -3821,9 +3842,11 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         preview_->setConfiguration(config_);
         schedulePreview();
     }
-    const QString key = QStringLiteral("setting:%1:%2")
-                            .arg(QString::fromStdString(active_layer_uuid_))
-                            .arg(reinterpret_cast<quintptr>(changed_editor));
+    const QString key = editor_change_is_continuous(changed_editor)
+                            ? QStringLiteral("setting:%1:%2")
+                                  .arg(QString::fromStdString(active_layer_uuid_))
+                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            : QString{};
     recordActiveStateChange(tr("Edit project setting"), std::move(before), key);
 }
 
@@ -4558,7 +4581,77 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    surface_enabled_->setChecked(!surface_enabled_->isChecked());
+    // Palette enablement is an independent source-stage toggle. Exercise the
+    // widget, active layer synchronization, Undo/Redo, and preset application
+    // directly so a future force-on regression cannot hide behind persistence.
+    const int palette_undo_index = undo_stack_->index();
+    palette_enabled_->setChecked(false);
+    if (palette_enabled_->isChecked() || config_.palette.enabled
+        || activeLayer() == nullptr || activeLayer()->render.palette.enabled
+        || undo_stack_->index() != palette_undo_index + 1) {
+        if (error != nullptr) {
+            *error = tr("Turning off the starting palette did not update the active layer or Undo history.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (!palette_enabled_->isChecked() || !config_.palette.enabled
+        || activeLayer() == nullptr || !activeLayer()->render.palette.enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore starting-palette enablement.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    if (palette_enabled_->isChecked() || config_.palette.enabled
+        || activeLayer() == nullptr || activeLayer()->render.palette.enabled) {
+        if (error != nullptr) {
+            *error = tr("Redo did not turn the starting palette back off.");
+        }
+        return false;
+    }
+    applyPalettePreset(3U);
+    if (palette_enabled_->isChecked() || config_.palette.enabled
+        || config_.palette.name != pvt::default_palette(3U).name) {
+        if (error != nullptr) {
+            *error = tr("Applying a preset silently re-enabled the starting palette.");
+        }
+        return false;
+    }
+    palette_enabled_->setChecked(true);
+    if (!config_.palette.enabled || activeLayer() == nullptr
+        || !activeLayer()->render.palette.enabled
+        || undo_stack_->index() != palette_undo_index + 2) {
+        if (error != nullptr) {
+            *error = tr("Turning the starting palette back on did not create an independent Undo step.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (palette_enabled_->isChecked() || config_.palette.enabled
+        || activeLayer() == nullptr || activeLayer()->render.palette.enabled) {
+        if (error != nullptr) {
+            *error = tr("Consecutive palette toggles merged into a phantom Undo step.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    if (!palette_enabled_->isChecked() || !config_.palette.enabled
+        || activeLayer() == nullptr || !activeLayer()->render.palette.enabled) {
+        if (error != nullptr) {
+            *error = tr("Redo did not restore the independently recorded palette toggle.");
+        }
+        return false;
+    }
+
+    const bool expected_surface_enabled = config_.surface.enabled;
+    surface_enabled_->setChecked(!expected_surface_enabled);
+    if (config_.surface.enabled == expected_surface_enabled) {
+        if (error != nullptr) {
+            *error = tr("The surface enable toggle did not update its backing configuration.");
+        }
+        return false;
+    }
     if (config_.surface.rotations_per_loop != expected.surface.rotations_per_loop
         || config_.surface.lighting != expected.surface.lighting
         || config_.ghost_lag_degrees != expected.ghost_lag_degrees) {
@@ -4567,8 +4660,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    surface_enabled_->setChecked(expected_surface_enabled);
     if (!expected.effects.empty()) {
-        effect_enabled_->setChecked(!effect_enabled_->isChecked());
+        const bool expected_effect_enabled = config_.effects.front().enabled;
+        effect_enabled_->setChecked(!expected_effect_enabled);
+        if (config_.effects.front().enabled == expected_effect_enabled) {
+            if (error != nullptr) {
+                *error = tr("The effect enable toggle did not update its backing configuration.");
+            }
+            return false;
+        }
         if (config_.effects.front().center_x != expected.effects.front().center_x
             || config_.effects.front().center_y != expected.effects.front().center_y
             || config_.effects.front().frequency != expected.effects.front().frequency) {
@@ -4577,25 +4678,37 @@ bool MainWindow::runSmokeChecks(QString* error) {
             }
             return false;
         }
+        effect_enabled_->setChecked(expected_effect_enabled);
     }
     if (!expected.waves.empty()) {
-        wave_enabled_->setChecked(!wave_enabled_->isChecked());
+        const bool expected_wave_enabled = config_.waves.front().enabled;
+        wave_enabled_->setChecked(!expected_wave_enabled);
+        if (config_.waves.front().enabled == expected_wave_enabled) {
+            if (error != nullptr) {
+                *error = tr("The wave enable toggle did not update its backing configuration.");
+            }
+            return false;
+        }
         if (config_.waves.front().x_percent != expected.waves.front().x_percent) {
             if (error != nullptr) {
                 *error = tr("Editing an unrelated wave control changed loaded precision.");
             }
             return false;
         }
+        wave_enabled_->setChecked(expected_wave_enabled);
     }
     if (!expected.swings.empty()) {
-        swing_enabled_->setChecked(!swing_enabled_->isChecked());
-        if (config_.swings.front().phase_degrees
-            != expected.swings.front().phase_degrees) {
+        const bool expected_swing_enabled = config_.swings.front().enabled;
+        swing_enabled_->setChecked(!expected_swing_enabled);
+        if (config_.swings.front().enabled == expected_swing_enabled
+            || config_.swings.front().phase_degrees
+                   != expected.swings.front().phase_degrees) {
             if (error != nullptr) {
-                *error = tr("Editing an unrelated swing control changed loaded precision.");
+                *error = tr("The Swing enable toggle failed or changed unrelated precision.");
             }
             return false;
         }
+        swing_enabled_->setChecked(expected_swing_enabled);
     }
 
     const auto validator_rejects = [](const QLineEdit* editor, QString value) {

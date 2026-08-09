@@ -683,6 +683,14 @@ void test_palettes_transforms_and_spatial_stages() {
     pvt::Image baseline;
     CHECK(pvt::render_frame_at_phase(config, 0.371, baseline, &error));
 
+    // A populated but disabled palette is a complete render bypass. This
+    // locks down the GUI/CLI toggle contract independently of persistence.
+    config.palette.name = "Ignored while disabled";
+    config.palette.colors = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}};
+    pvt::Image disabled_palette;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, disabled_palette, &error));
+    CHECK(disabled_palette.pixels == baseline.pixels);
+
     config.transform.flip_horizontal = true;
     pvt::Image flipped;
     CHECK(pvt::render_frame_at_phase(config, 0.371, flipped, &error));
@@ -718,6 +726,7 @@ void test_palettes_transforms_and_spatial_stages() {
     config.palette.enabled = true;
     config.palette.name = "Binary";
     config.palette.colors = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}};
+    config.lighting_enabled = false;
     pvt::Image paletted;
     CHECK(pvt::render_frame_at_phase(config, 0.371, paletted, &error));
     for (std::size_t offset = 0U; offset < paletted.pixels.size(); offset += 4U) {
@@ -729,12 +738,66 @@ void test_palettes_transforms_and_spatial_stages() {
                            && paletted.pixels[offset + 2U] == 1.0F;
         CHECK(black || white);
     }
+    pvt::Image palette_seam_start;
     pvt::Image palette_seam;
-    CHECK(pvt::render_frame_at_phase(config, 0.0, paletted, &error));
+    CHECK(pvt::render_frame_at_phase(config, 0.0, palette_seam_start, &error));
     CHECK(pvt::render_frame_at_phase(config, 1.0, palette_seam, &error));
-    CHECK(paletted.pixels == palette_seam.pixels);
+    CHECK(palette_seam_start.pixels == palette_seam.pixels);
     CHECK(!pvt::default_palette(0U).colors.empty());
     CHECK(pvt::default_palette(0U).name != pvt::default_palette(1U).name);
+
+    // Slope lighting follows source-color selection, so a starting palette
+    // does not make that independent layer feature inert.
+    config.lighting_enabled = true;
+    pvt::Image slope_lit_palette;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.371, slope_lit_palette, &error));
+    CHECK(mean_absolute_difference(paletted, slope_lit_palette) > 0.0001);
+    config.lighting_enabled = false;
+
+    // Palette colors seed the procedural source; they are not a final color
+    // lock. Glow is therefore allowed to create brighter, off-palette values.
+    auto glow = pvt::default_effect(pvt::EffectType::Glow);
+    glow.id = pvt::allocate_id(config);
+    glow.enabled = true;
+    glow.synchronized = false;
+    glow.intensity = 1.0;
+    glow.secondary = 0.0;
+    glow.radius_pixels = 4.0;
+    glow.threshold = 0.0;
+    glow.soft_knee = 0.0;
+    config.effects.push_back(glow);
+    pvt::Image glowed;
+    CHECK(pvt::render_frame_at_phase(config, 0.371, glowed, &error));
+    bool glow_created_off_palette_color = false;
+    for (std::size_t offset = 0U; offset < glowed.pixels.size(); offset += 4U) {
+        const auto is_binary = [](float value) {
+            return value == 0.0F || value == 1.0F;
+        };
+        glow_created_off_palette_color = glow_created_off_palette_color
+                                         || !is_binary(glowed.pixels[offset])
+                                         || !is_binary(glowed.pixels[offset + 1U])
+                                         || !is_binary(glowed.pixels[offset + 2U]);
+    }
+    CHECK(glow_created_off_palette_color);
+
+    // Explicit quantization remains the final color-reduction stage.
+    config.quantization.enabled = true;
+    config.quantization.levels = 2;
+    config.quantization.mix = 1.0;
+    config.quantization.mode = pvt::QuantizationMode::Rgb;
+    pvt::Image explicitly_quantized;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.371, explicitly_quantized, &error));
+    for (std::size_t offset = 0U; offset < explicitly_quantized.pixels.size();
+         offset += 4U) {
+        const auto is_binary = [](float value) {
+            return value == 0.0F || value == 1.0F;
+        };
+        CHECK(is_binary(explicitly_quantized.pixels[offset]));
+        CHECK(is_binary(explicitly_quantized.pixels[offset + 1U]));
+        CHECK(is_binary(explicitly_quantized.pixels[offset + 2U]));
+    }
     config.palette.colors.clear();
     CHECK(!pvt::validate(config).ok);
 
@@ -1037,6 +1100,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
     original.surface.obj_path = "mesh folder/test.obj";
     original.palette = pvt::default_palette(2U);
+    original.palette.enabled = false;
     original.transform.flip_horizontal = true;
     original.transform.mirror = pvt::MirrorMode::BottomToTop;
     original.output.bit_depth = 16;
@@ -1090,8 +1154,19 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
+    CHECK(!loaded.palette.enabled);
     CHECK(loaded.palette.name == original.palette.name);
     CHECK(loaded.palette.colors.size() == original.palette.colors.size());
+    if (loaded.palette.colors.size() == original.palette.colors.size()) {
+        for (std::size_t index = 0U; index < loaded.palette.colors.size(); ++index) {
+            CHECK(loaded.palette.colors[index].red
+                  == original.palette.colors[index].red);
+            CHECK(loaded.palette.colors[index].green
+                  == original.palette.colors[index].green);
+            CHECK(loaded.palette.colors[index].blue
+                  == original.palette.colors[index].blue);
+        }
+    }
     CHECK(loaded.transform.flip_horizontal);
     CHECK(loaded.transform.mirror == pvt::MirrorMode::BottomToTop);
     CHECK(pvt::save_setup(loaded, second.string(), &error));

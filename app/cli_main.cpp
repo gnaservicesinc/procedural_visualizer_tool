@@ -369,8 +369,8 @@ bool palettes_equal(const pvt::PaletteConfig& left,
 bool configure_palette(RenderConfig& config) {
     for (;;) {
         const auto& palette = config.palette;
-        std::cout << "\n-- Layer palette: " << palette.name << " ("
-                  << (palette.enabled ? "enabled" : "disabled") << ") --\n";
+        std::cout << "\n-- Layer starting palette: " << palette.name << " ("
+                  << (palette.enabled ? "used" : "not used") << ") --\n";
         for (std::size_t index = 0U; index < palette.colors.size(); ++index) {
             const auto& color = palette.colors[index];
             std::cout << "  " << (index + 1U) << ") RGB " << color.red << ", "
@@ -387,7 +387,7 @@ bool configure_palette(RenderConfig& config) {
                 std::cout << " |";
             }
         }
-        std::cout << "\nCommands: e toggle, p N preset, n rename, number edit, "
+        std::cout << "\nCommands: e toggle starting palette, p N preset, n rename, number edit, "
                      "a add, d N delete, b back.\n";
 
         std::string input;
@@ -403,7 +403,7 @@ bool configure_palette(RenderConfig& config) {
                 g_prompt_changed = g_prompt_changed
                                    || !palettes_equal(config.palette, next);
                 config.palette = next;
-                std::cout << "Loaded and enabled the Ember preset because an enabled "
+                std::cout << "Loaded and enabled the Ember preset because a starting "
                              "palette needs at least one color.\n";
             } else {
                 config.palette.enabled = !config.palette.enabled;
@@ -420,8 +420,9 @@ bool configure_palette(RenderConfig& config) {
                           << pvt::kBuiltInPaletteCount << ".\n";
                 continue;
             }
-            const pvt::PaletteConfig next = pvt::default_palette(
+            pvt::PaletteConfig next = pvt::default_palette(
                 static_cast<std::size_t>(selected - 1));
+            next.enabled = config.palette.enabled;
             g_prompt_changed = g_prompt_changed
                                || !palettes_equal(config.palette, next);
             config.palette = next;
@@ -465,7 +466,7 @@ bool configure_palette(RenderConfig& config) {
                 continue;
             }
             if (config.palette.enabled && config.palette.colors.size() == 1U) {
-                std::cout << "An enabled palette needs at least one color. Disable it "
+                std::cout << "A starting palette needs at least one color. Disable it "
                              "or add a replacement first.\n";
                 continue;
             }
@@ -768,16 +769,16 @@ bool configure_swing(RenderConfig& config, std::size_t index) {
 }
 
 void configure_rhythm(RenderConfig& config) {
-    std::cout << "\n-- Rhythm, color, and visual quantization --\n";
+    std::cout << "\n-- Rhythm, starting colors, and post-effects quantization --\n";
     if (!prompt_real("Phrase warp amount", config.phrase_warp, 0.0, 2.0)
         || !prompt_real("Ghost mix", config.ghost_mix, 0.0, 1.0)
         || !prompt_real("Ghost lag (degrees)", config.ghost_lag_degrees, -360.0, 360.0)
         || !prompt_int("Hue rotations per loop", config.hue_cycles, -100, 100)
         || !prompt_real("Color saturation", config.saturation, 0.0, 1.0)
-        || !prompt_bool("Visual quantization enabled", config.quantization.enabled)
-        || !prompt_int("Visual quantization levels", config.quantization.levels, 2, 65536)
-        || !prompt_real("Visual quantization mix", config.quantization.mix, 0.0, 1.0)
-        || !prompt_enum("Visual quantization mode", config.quantization.mode,
+        || !prompt_bool("Post-effects quantization enabled", config.quantization.enabled)
+        || !prompt_int("Post-effects quantization levels", config.quantization.levels, 2, 65536)
+        || !prompt_real("Post-effects quantization mix", config.quantization.mix, 0.0, 1.0)
+        || !prompt_enum("Post-effects quantization mode", config.quantization.mode,
                        {{pvt::QuantizationMode::Rgb, "RGB channels"},
                         {pvt::QuantizationMode::Luminance, "Luminance"},
                         {pvt::QuantizationMode::Hue, "Hue"}})) {
@@ -785,7 +786,7 @@ void configure_rhythm(RenderConfig& config) {
     }
 
     for (;;) {
-        std::cout << "\nPalette: "
+        std::cout << "\nStarting palette: "
                   << (config.palette.enabled ? config.palette.name : "disabled")
                   << " (" << config.palette.colors.size() << " color(s))\n"
                   << "Swing modulators (" << config.swings.size() << "):\n";
@@ -1025,7 +1026,7 @@ void warn_if_created_by_newer_version(const ProjectDocument& document) {
 #ifdef PVT_PROGRAM_VERSION
     const std::string current = PVT_PROGRAM_VERSION;
 #else
-    const std::string current = "4.0.0";
+    const std::string current = "4.0.1";
 #endif
     const bool newer_created = version_is_newer(document.created_with_version, current);
     const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
@@ -1405,7 +1406,7 @@ void print_summary(const CliState& state) {
               << layer.render.swings.size() << " swing(s), "
               << layer.render.effects.size() << " effect(s) | alpha modulation "
               << (layer.render.alpha.enabled ? "on" : "off")
-              << " | palette "
+              << " | starting palette "
               << (layer.render.palette.enabled ? layer.render.palette.name : "off")
               << " | mirror " << pvt::mirror_mode_name(layer.render.transform.mirror)
               << (layer.render.transform.flip_horizontal ? " + flip H" : "")
@@ -1706,7 +1707,7 @@ int quick_self_test() {
                   << '\n';
         return EXIT_FAILURE;
     }
-    std::cout << "Self-test passed: float RGBA layers, palette/transform stages, "
+    std::cout << "Self-test passed: float RGBA layers, starting-palette/transform stages, "
                  "localized texture/object effects, and blending are deterministic.\n";
     return EXIT_SUCCESS;
 }

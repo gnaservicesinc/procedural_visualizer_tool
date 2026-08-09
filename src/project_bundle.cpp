@@ -25,7 +25,7 @@
 #include <utility>
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "4.0.0"
+#  define PVT_PROGRAM_VERSION "4.0.1"
 #endif
 
 namespace pvt {

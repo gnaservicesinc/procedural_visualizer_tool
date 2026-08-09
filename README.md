@@ -80,15 +80,19 @@ bundle and native non-macOS executable names.
   draggable in the preview. Localized Swing timing drives source waves and
   Texture effects; Mapped-object effects use the global synchronized clock
   because an arbitrary projected screen point does not map to one unique UV.
-- An optional palette per layer with 1-256 authored sRGB colors, custom
+- An optional starting palette per layer with 1-256 authored sRGB colors, custom
   add/edit/remove controls, and six presets: Ember, Deep Ocean, Vaporwave,
-  Forest Biolume, Arcade, and Moonlight. Nearest-color selection is performed
-  in linear light without changing alpha.
+  Forest Biolume, Arcade, and Moonlight. The palette chooses exact procedural
+  source colors in linear light without changing alpha; lighting and effects
+  may create other colors afterward. Presets never silently change
+  whether the starting palette is enabled.
 - Per-layer horizontal/vertical flips and directional mirror symmetry
   (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
 - Independent feature toggles for displacement, slope lighting, spiral, and
   wall reflection.
-- RGB, luminance, or hue quantization with 2-65,536 levels and adjustable mix.
+- Post-effects RGB, luminance, or hue quantization with 2-65,536 levels and
+  adjustable mix. This is the explicit final color-reduction control and is
+  independent of the starting palette.
 - Plane, cylinder, sphere, ray-cast cube, and custom Wavefront OBJ mappings.
   OBJ files may provide texture coordinates and normals; automatic box UVs and
   geometric normals cover meshes that omit them.
@@ -321,13 +325,18 @@ by Save As; a different UUID or advanced/divergent state is rejected.
 
 Legacy deterministic line-oriented `.pvt` setup versions 1-3 remain importable;
 current explicit legacy output is setup format 4. Format 4 adds effect stage and
-local-area data, localized swings, palettes, and layer transforms while older
+local-area data, localized swings, starting palettes, and layer transforms while older
 files receive neutral compatibility defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
 The CLI exposes
 `--save-legacy FILE.pvt` only as a clearly lossy escape hatch and rejects it when
 more than one layer exists.
+
+Version 4.0.1 corrects the 4.0.0 palette-stage bug without changing the setup,
+layer, or bundle schema: an enabled v4 palette now selects starting colors
+instead of rewriting the final effected image. Existing affected projects will
+therefore render with the corrected appearance by design.
 
 ## Scripted rendering
 
@@ -484,7 +493,8 @@ make check
 
 The suite covers dynamic zero/one/ten-item configurations, deterministic frames,
 exact and near-seam continuity for every effect in both synchronization modes,
-texture/mapped-object stages, local effect and swing influence, palettes,
+texture/mapped-object stages, local effect and swing influence, starting
+palette ordering and toggle bypass, post-effects quantization,
 transforms, direction modes, alpha range and straight-alpha/glow composition,
 primitive mappings, rear-surface alpha/color compositing, bounded OBJ
 parsing/caching and
@@ -520,9 +530,10 @@ or external-path shortcuts:
   arbitrary external filename. Layers should reference a stable asset ID or
   digest, while preview/export share an immutable decoded image. Edits and undo
   should use copy-on-write references (or compact deltas), not duplicate a
-  full-resolution bitmap in every snapshot. The static source then participates
-  in the same periodic effects, surfaces, transforms, palettes, and paths so the
-  resulting animation remains loop-safe.
+  full-resolution bitmap in every snapshot. Procedural generation with an
+  optional starting palette and an embedded starting image are mutually
+  exclusive source modes; either source then participates in the same periodic
+  effects, surfaces, transforms, and paths so the result remains loop-safe.
 - **Reusable closed motion paths:** paths should be named project resources,
   separate from bindings that attach them to a wave, effect center, or mapped
   object. A path will contain at least three nodes and closed cubic segments,

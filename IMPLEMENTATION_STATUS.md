@@ -129,8 +129,8 @@ consumers do not inherit minizip requirements.
 | 27 | Texture versus mapped-surface effects | Complete | Each effect runs before surface mapping or after it; mapped-object coordinate effects move/deform the primitive silhouette. Relative order is retained within each stage. |
 | 28 | Draggable/localized effects | Complete | Numbered preview handles edit centers; zero area radius preserves whole-layer behavior and positive radii add feathered local influence. Glow blur and influence radii remain separate. |
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
-| 30 | Per-layer palettes | Complete | 1-256 embedded sRGB colors, six presets, custom GUI/CLI editing, and linear-light nearest-color mapping that leaves alpha intact. |
-| 31 | Transform layer | Complete (requested scope) | Directional horizontal/vertical/four-way mirrors plus horizontal and vertical flips run after surface mapping and before mapped-object effects and quantization/palette mapping. This is not a general move/scale/rotate affine transform. |
+| 30 | Per-layer starting palettes | Complete | 1-256 embedded sRGB source colors, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
+| 31 | Transform layer | Complete (requested scope) | Directional horizontal/vertical/four-way mirrors plus horizontal and vertical flips run after surface mapping and before mapped-object effects and post-effects quantization. This is not a general move/scale/rotate affine transform. |
 | 32 | Metal GPU acceleration | Deferred - designed | Add a backend-neutral frame renderer with CPU reference/fallback, Metal resource/pipeline management, bounded scheduling, cancellation, and image/alpha/seam parity tests; no Metal backend exists yet. |
 | 33 | Layer starting image | Deferred - designed | Import a bounded checksummed bundle asset, reference it by stable ID/digest, share immutable decoded storage, and use copy-on-write or compact undo rather than an external path or repeated full-image snapshots. |
 | 34 | Closed reusable motion paths | Deferred - designed | Store named closed cubic paths separately from per-wave/effect/object bindings; use at least three nodes, handle modes, bounded arc-length LUT sampling, independent sync/phase/direction, and a dedicated editor. |
@@ -179,10 +179,14 @@ consumers do not inherit minizip requirements.
 - Effect and Swing radii use zero as the backward-compatible whole-layer mode.
   Positive values are feathered circles measured against the shorter canvas
   edge; Glow's pixel blur radius is not reused as its influence radius.
-- The explicit pipeline is Texture effects, surface mapping, layer mirror/flips,
-  Mapped-object effects, quantization, then optional palette mapping. A later
+- The explicit pipeline is procedural base generation, optional starting-palette
+  selection, Texture effects, surface mapping, layer mirror/flips,
+  Mapped-object effects, then explicit post-effects quantization. A later
   localized mapped effect can intentionally break earlier mirror symmetry;
-  neither palette mapping nor transforms rewrite alpha.
+  neither starting-palette selection nor transforms rewrite alpha.
+- Version 4.0.1 intentionally reinterprets the existing v4 `palette.enabled`
+  field as source-stage enablement. No schema or ABI layout changed, but 4.0.0
+  projects affected by the final-palette bug render differently after correction.
 - Project layers are stored bottom-to-top; the GUI reverses that order for a
   conventional topmost-first list. Rendering skips disabled layers and composites
   enabled layers sequentially into one accumulator.
@@ -227,6 +231,13 @@ consumers do not inherit minizip requirements.
   do not create commands.
 
 ## Validation record
+
+The 2026-08-09 starting-palette correction passed the Qt-enabled Release suite
+14/14, a fresh C++20 non-GUI suite 13/13, and the AddressSanitizer plus
+UndefinedBehaviorSanitizer non-GUI suite 13/13. Regression coverage now locks
+the base-palette/effect/quantization order, populated-palette bypass when off,
+GUI toggle Undo/Redo and preset state, exact setup/layer/bundle round trips, and
+saved-version semantic diffs for enablement and color changes.
 
 Focused `pvt_bundle` and offscreen `pvt_gui_smoke` suites passed on 2026-08-09
 after the saved-project rename work, including all four prompt actions,
@@ -316,9 +327,11 @@ target.
    canonical representation as a checksummed bundle asset. Reference it by a
    stable asset ID/digest; share immutable decoded storage across preview,
    frames, and layers; use copy-on-write references or compact deltas for edits
-   and undo. Apply the existing periodic pipeline to that static source so loop
-   closure is derived from effects/transforms/paths rather than duplicated end
-   frames. This asset store can later support self-contained OBJ resources too.
+   and undo. Treat it as an alternative to procedural generation and its
+   starting palette, then apply the existing periodic effects, surfaces,
+   transforms, and paths so loop closure is derived from periodic behavior
+   rather than duplicated end frames. This asset store can later support
+   self-contained OBJ resources too.
 3. **Reusable closed cubic paths:** define named project-level path geometry
    separately from per-consumer bindings. Require at least three nodes, close
    the final cubic segment to the first, give nodes stable IDs, and store Corner,

@@ -179,7 +179,22 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.swings.front().radius == 0.27);
     CHECK(current_round_trip.effects.front().space
           == pvt::EffectSpace::Surface);
+    CHECK(current_round_trip.palette.enabled);
     CHECK(current_round_trip.palette.name == "Vaporwave");
+    CHECK(current_round_trip.palette.colors.size()
+          == original.palette.colors.size());
+    if (current_round_trip.palette.colors.size()
+        == original.palette.colors.size()) {
+        for (std::size_t index = 0U;
+             index < current_round_trip.palette.colors.size(); ++index) {
+            CHECK(current_round_trip.palette.colors[index].red
+                  == original.palette.colors[index].red);
+            CHECK(current_round_trip.palette.colors[index].green
+                  == original.palette.colors[index].green);
+            CHECK(current_round_trip.palette.colors[index].blue
+                  == original.palette.colors[index].blue);
+        }
+    }
     CHECK(current_round_trip.transform.mirror
           == pvt::MirrorMode::RightToLeft);
 
@@ -391,6 +406,8 @@ void test_directory_versions_and_names(const fs::path& directory) {
     loaded.project.output.filename_prefix = "ember % glow_";
     loaded.project.layers[0].render.waves[0].name = "Warm % core";
     loaded.project.layers[0].render.palette.name = "Night % Sky";
+    loaded.project.layers[0].render.palette.enabled = false;
+    loaded.project.layers[0].render.palette.colors[0].green = 0.123456789;
     CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
     CHECK(report.created_version && report.version == 1U);
 
@@ -414,6 +431,30 @@ void test_directory_versions_and_names(const fs::path& directory) {
                                      != std::string::npos
                                  && value.after == "Night % Sky";
                       }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field.find("render.palette.enabled")
+                                     != std::string::npos
+                                 && value.before == "1" && value.after == "0";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field.find("render.palette.colors.0.green")
+                                     != std::string::npos
+                                 && value.after == "0.123456789";
+                      }));
+
+    pvt::ProjectDocument reloaded_palette_off;
+    CHECK(pvt::load_project_document(
+        as_utf8(bundle), reloaded_palette_off, &error));
+    const auto& reloaded_palette =
+        reloaded_palette_off.project.layers.front().render.palette;
+    CHECK(!reloaded_palette.enabled);
+    CHECK(reloaded_palette.name == "Night % Sky");
+    CHECK(!reloaded_palette.colors.empty());
+    if (!reloaded_palette.colors.empty()) {
+        CHECK(reloaded_palette.colors.front().green == 0.123456789);
+    }
 
     loaded.project.name = "Renamed: Flame";
     CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
@@ -925,7 +966,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(pvt::validate_project_bundle(as_utf8(checksum_bundle), nullptr, &error));
 
     std::string root = read_bytes(checksum_bundle / "metadata.txt");
-    CHECK(replace_once(root, "project.last_changed_with_version\t4.0.0\n",
+    CHECK(replace_once(root, "project.last_changed_with_version\t4.0.1\n",
                        "project.last_changed_with_version\t99.0.0\n"));
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
