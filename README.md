@@ -17,9 +17,6 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
   beat/spectral analyzer. WAV (including IEEE 32-bit float), FLAC, and MP3 are
   accepted. These private targets are omitted from a core-library-only build.
 - Qt 6.5 or newer with Widgets and Concurrent components for the optional GUI.
-- MP4 export from the GUI requires an `ffmpeg` executable with a working H.264
-  encoder and AAC encoder. The app probes actual encoding rather than trusting
-  an advertised-but-broken codec.
 
 ## Quick start
 
@@ -117,8 +114,7 @@ bundle and native non-macOS executable names.
   geometric normals cover meshes that omit them.
 - Independent procedural alpha modulation with minimum/maximum alpha, spatial
   frequency, phase, and cycles per loop.
-- 8/16-bit RGB or RGBA PNG and 32-bit FLOAT RGB or RGBA EXR sequence output,
-  plus H.264/AAC MP4 with the analyzed source music in the GUI.
+- 8/16-bit RGB or RGBA PNG and 32-bit FLOAT RGB or RGBA EXR sequence output.
 - PNG compression from 0 (off/fastest) through 9 (maximum), with a balanced
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
@@ -202,16 +198,6 @@ the user turns Audio Response off, switching clock modes or replacing the source
 does not force it back on. Swings remain governed by their own active-layer
 checkbox and can be mixed with audio response. A relink must match the cached
 digest; reanalyze is the explicit way to accept changed audio.
-
-Music-video export renders the effective RGBA PNG sequence to a private
-temporary directory, verifies the embedded audio digest, composites transparency
-onto black, pads odd dimensions with black for `yuv420p`, and muxes H.264/AAC.
-When song duration times FPS is fractional, the final video frame receives the
-remaining fractional duration. That preserves both `ceil(duration * FPS)`
-rendered frames and the source's sample-derived duration instead of rounding the
-song to a whole constant-rate frame. The destination is installed atomically;
-collision protection, overwrite choice, progress, and cancellation remain
-explicit.
 
 ## Parallel sequence export
 
@@ -327,7 +313,8 @@ Midnight Bonfire/
   metadata.sha256
   current
   assets/
-    <sha256-of-music-or-obj-or-other-attachment>
+    <sha256-of-music-or-obj-or-other-attachment>/
+      original-filename.ext
   0/
     metadata.txt
     render_output.txt
@@ -339,12 +326,16 @@ Midnight Bonfire/
 `.pvt` stores only one layer's render data. Version metadata stores the project
 display name, program/time, layer UUIDs, stable file IDs, order, names, enabled
 states, blend modes, opacity, attachment references, and SHA-256 digests. Root
-`assets/<sha256>` entries are content-addressed: the same bytes are stored once
-even when several layers or immutable versions reference them. Moving or
-renaming an unchanged source reuses that payload; changed bytes create one new
-payload, while an old payload referenced by history is retained so old versions
-remain loadable. Managed cached copies are created at attachment time, so moving
-or deleting the original image/audio/OBJ before Save cannot break the project.
+assets use collision-safe content-identity directories, but the asset itself
+always keeps the exact imported filename and extension. A valid direct file
+replacement or unambiguous rename is loaded as a dirty external edit; Save
+records fresh filename/digest/size metadata and promotes it to a new version.
+Directly replaced music is reanalyzed
+before it is accepted, matching the GUI import behavior. Managed cached copies
+are created at attachment time, so moving or deleting the original
+image/audio/OBJ before Save cannot break the project. Version-2 bundles with
+legacy bare `assets/<sha256>` entries remain readable and are upgraded by the
+next changed Save.
 Root metadata reflects the current version's project name and also stores the project UUID,
 creation/open/save timestamps, creating/changing program versions, and each
 version-metadata digest; its digest is necessarily kept in the separate
@@ -492,7 +483,7 @@ modification time changes.
 
 Relative OBJ paths use the same stable process working directory as relative
 output paths. The CLI and GUI import the chosen file immediately into the
-project's content-addressed attachment cache and update the remembered file-
+project's managed attachment cache and update the remembered file-
 dialog folder. A saved bundle therefore remains self-contained after the
 original OBJ is moved or deleted. Only the selected OBJ bytes are embedded; the
 loader never follows `.mtl`, texture, sibling, or network references implicitly.
@@ -591,8 +582,8 @@ effect ordering, default glow visibility, memory and value limits, setup round
 trips and transactional failure, project/layer validation, every blend mode,
 opacity and paint order, ZIP/directory bundle round trips, immutable version
 append/no-change validation, semantic diffs, current/revert behavior, legacy
-promotion, checksum/fallback handling, content-addressed attachment deduplication,
-deleted-original recovery, digest mismatch/corruption, hostile archive/tree
+promotion, checksum/fallback handling, readable attachment names and direct-edit
+promotion, deleted-original recovery, invalid replacement rejection, hostile archive/tree
 rejection, adaptive beat/tempo changes, dense transient and spectral/pitch
 features, music-clock interpolation and response routing,
 8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
@@ -601,8 +592,8 @@ callback/cancel behavior, sequence collision preflight, Unicode paths, and the
 public library API. It also exercises CLI help, option rejection, and the
 multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's
 offscreen platform, exercises project/layer/bundle/synchronization state, verifies
-that Play installs advancing completed preview frames, and tests exact-duration
-MP4 muxing when a suitable FFmpeg is present.
+that Play installs advancing completed preview frames, and checks adaptive UI
+layout behavior.
 
 ## Planned architecture (not implemented)
 
@@ -617,7 +608,7 @@ or external-path shortcuts:
   The existing frame worker scheduler should choose an appropriate CPU or GPU
   execution policy rather than layering ad-hoc Metal versions into individual
   effects.
-- **Layer starting images:** the bounded, checksummed, deduplicated attachment
+- **Layer starting images:** the bounded, checksummed, readable attachment
   store is implemented and can already retain generic image attachments. The
   remaining work is the actual layer source-mode schema, decoder/cache, GUI,
   and rendering path. Layers should reference the existing stable attachment
@@ -646,8 +637,9 @@ the surface image. Cooperative cancellation is checked within base rendering,
 effects, surface mapping, quantization, layer compositing, and OBJ rasterization.
 An image encoder already writing one atomic output file is allowed to finish that
 file before cancellation returns. Music, custom OBJ, and registered generic
-attachments are embedded once per distinct digest; starting-image rendering is
-not yet implemented. Metal rendering and reusable path animation remain planned
+attachments are embedded under their content identity and exact original
+filename; starting-image rendering is not yet implemented. Metal rendering and
+reusable path animation remain planned
 work as described above. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 

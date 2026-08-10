@@ -63,7 +63,6 @@ private:
     struct ExportResult {
         bool ok = false;
         bool cancelled = false;
-        bool video = false;
         QString error;
     };
 
@@ -480,8 +479,6 @@ private:
     QSpinBox* first_frame_ = nullptr;
     QSpinBox* filename_digits_ = nullptr;
     QCheckBox* overwrite_ = nullptr;
-    QComboBox* export_target_ = nullptr;
-    QLabel* video_output_ = nullptr;
 };
 
 #endif

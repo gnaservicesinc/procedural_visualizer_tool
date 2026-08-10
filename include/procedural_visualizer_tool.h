@@ -192,9 +192,9 @@ struct MusicTempoPoint {
 };
 
 // Bounded deterministic analysis stored with a project. Project bundles embed
-// the audio once in their content-addressed asset store; immutable versions
-// link it by digest and basename instead of duplicating bytes. Feature samples
-// are evenly spaced over duration_seconds.
+// the audio under a collision-safe content identity while preserving its exact
+// filename and extension. Versions link it by digest and basename. Feature
+// samples are evenly spaced over duration_seconds.
 struct MusicAnalysis {
     std::uint32_t schema_version = 1;
     std::string analyzer_version;
@@ -399,8 +399,9 @@ struct SurfaceConfig {
     double lighting = 0.35;
     // Used when mapping is CustomObj. obj_path is the current runtime/source
     // path and is deliberately not part of portable project semantics when an
-    // embedded digest is present. Project bundles store the bytes once at
-    // assets/<obj_sha256> and materialize a safe local path when opened.
+    // embedded digest is present. New project bundles store the bytes at
+    // assets/<obj_sha256>/<obj_basename> and materialize a safe local path when
+    // opened.
     std::string obj_path;
     std::string obj_sha256;
     std::string obj_basename;

@@ -96,6 +96,45 @@ bool write_bytes(const fs::path& path, const std::string& bytes) {
     return static_cast<bool>(output);
 }
 
+void append_u16(std::string& bytes, std::uint16_t value) {
+    bytes.push_back(static_cast<char>(value & 0xffU));
+    bytes.push_back(static_cast<char>((value >> 8U) & 0xffU));
+}
+
+void append_u32(std::string& bytes, std::uint32_t value) {
+    append_u16(bytes, static_cast<std::uint16_t>(value & 0xffffU));
+    append_u16(bytes, static_cast<std::uint16_t>(value >> 16U));
+}
+
+std::string readable_click_wave() {
+    constexpr std::uint32_t sample_rate = 8000U;
+    constexpr std::uint32_t seconds = 8U;
+    constexpr std::uint32_t sample_count = sample_rate * seconds;
+    constexpr std::uint32_t data_bytes = sample_count * 2U;
+    std::string bytes;
+    bytes.reserve(44U + data_bytes);
+    bytes.append("RIFF", 4U);
+    append_u32(bytes, 36U + data_bytes);
+    bytes.append("WAVEfmt ", 8U);
+    append_u32(bytes, 16U);
+    append_u16(bytes, 1U);
+    append_u16(bytes, 1U);
+    append_u32(bytes, sample_rate);
+    append_u32(bytes, sample_rate * 2U);
+    append_u16(bytes, 2U);
+    append_u16(bytes, 16U);
+    bytes.append("data", 4U);
+    append_u32(bytes, data_bytes);
+    for (std::uint32_t sample = 0U; sample < sample_count; ++sample) {
+        const std::uint32_t within_half_second = sample % (sample_rate / 2U);
+        const std::int16_t value = within_half_second < 12U
+            ? static_cast<std::int16_t>(30000 - within_half_second * 2000U)
+            : 0;
+        append_u16(bytes, static_cast<std::uint16_t>(value));
+    }
+    return bytes;
+}
+
 bool replace_once(std::string& bytes, const std::string& before,
                   const std::string& after) {
     const std::size_t position = bytes.find(before);
@@ -1201,6 +1240,10 @@ std::size_t asset_entry_count(const pvt::detail::BundleFileSet& files) {
         }));
 }
 
+std::string readable_asset_path(const pvt::ProjectAttachment& attachment) {
+    return "assets/" + attachment.sha256 + "/" + attachment.basename;
+}
+
 void test_content_addressed_embedded_assets(const fs::path& directory) {
     const std::string audio_bytes =
         std::string("RIFF\x24\0\0\0WAVEfmt \x10\0\0\0", 20U)
@@ -1233,8 +1276,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::attach_project_file(
         document, "image.cover", as_utf8(image_source),
         &image_attachment, &error));
-    // A second logical reference to identical bytes must not create a second
-    // root object.
+    // A second logical reference with the same bytes and original filename
+    // reuses the same readable bundle entry.
     CHECK(pvt::attach_project_file(
         document, "audio.safety_copy", as_utf8(audio_source), nullptr, &error));
 
@@ -1278,11 +1321,37 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
     CHECK(asset_entry_count(directory_files) == 3U);
-    CHECK(directory_files.files.count("assets/" + music_attachment.sha256) == 1U);
-    CHECK(directory_files.files.count("assets/" + obj_attachment.sha256) == 1U);
-    CHECK(directory_files.files.count("assets/" + image_attachment.sha256) == 1U);
+    CHECK(directory_files.files.count(readable_asset_path(music_attachment)) == 1U);
+    CHECK(directory_files.files.count(readable_asset_path(obj_attachment)) == 1U);
+    CHECK(directory_files.files.count(readable_asset_path(image_attachment)) == 1U);
     CHECK(read_bytes(bundle / "0" / "metadata.txt").rfind(
-              "PVT_VERSION\t2\n", 0U) == 0U);
+              "PVT_VERSION\t3\n", 0U) == 0U);
+
+    // Replacing readable music bytes directly performs the same bounded
+    // analysis transaction as choosing a new source in the GUI.
+    const fs::path edited_music_bundle = directory / "direct-music-edit";
+    filesystem_error.clear();
+    fs::copy(bundle, edited_music_bundle, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    const std::string replacement_wave = readable_click_wave();
+    CHECK(write_bytes(edited_music_bundle / "assets" / music_attachment.sha256
+                          / music_attachment.basename,
+                      replacement_wave));
+    pvt::ProjectDocument edited_music;
+    CHECK(pvt::load_project_document(as_utf8(edited_music_bundle), edited_music,
+                                     &error));
+    CHECK(edited_music.externally_modified && edited_music.dirty);
+    CHECK(edited_music.project.canvas.clock.music.source_basename
+          == music_attachment.basename);
+    CHECK(edited_music.project.canvas.clock.music.source_sha256
+          != music_attachment.sha256);
+    CHECK(edited_music.project.canvas.clock.music.duration_seconds > 7.9);
+    CHECK(pvt::save_project_document(edited_music, as_utf8(edited_music_bundle),
+                                     &report, &error));
+    CHECK(report.promoted_external_change && report.version == 1U);
+    CHECK(pvt::validate_project_bundle(as_utf8(edited_music_bundle), nullptr,
+                                       &error));
 
     pvt::ProjectDocument loaded;
     CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
@@ -1305,8 +1374,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         as_utf8(bundle), directory_files, &error));
     CHECK(asset_entry_count(directory_files) == 3U);
 
-    // Renaming/moving a source changes display metadata but reuses the same
-    // content object. Deleting it after Attach but before Save remains safe.
+    // Renaming/moving a source preserves its exact new filename and extension.
+    // Deleting it after Attach but before Save remains safe.
     const fs::path renamed_audio = directory / "renamed-track.wav";
     CHECK(write_bytes(renamed_audio, audio_bytes));
     pvt::ProjectAttachment renamed_attachment;
@@ -1322,7 +1391,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 2U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 3U);
+    CHECK(asset_entry_count(directory_files) == 4U);
+    CHECK(directory_files.files.count(readable_asset_path(renamed_attachment)) == 1U);
 
     const std::string changed_audio_bytes = audio_bytes + "changed";
     CHECK(write_bytes(renamed_audio, changed_audio_bytes));
@@ -1339,9 +1409,9 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 3U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 4U);
-    CHECK(directory_files.files.count("assets/" + music_attachment.sha256) == 1U);
-    CHECK(directory_files.files.count("assets/" + changed_attachment.sha256) == 1U);
+    CHECK(asset_entry_count(directory_files) == 5U);
+    CHECK(directory_files.files.count(readable_asset_path(music_attachment)) == 1U);
+    CHECK(directory_files.files.count(readable_asset_path(changed_attachment)) == 1U);
 
     // An independent ZIP copy carries the current referenced bytes without
     // copying unreachable history assets.
@@ -1364,14 +1434,91 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
               zip_loaded.project.layers.front().render.surface.obj_path))
           == obj_bytes);
 
-    // Digest/path corruption is rejected before a snapshot can be selected,
-    // for both unpacked and ZIP bundles, and destination loads are transactional.
+    // Version-2 bare-digest payloads remain loadable and the next changed Save
+    // writes a readable version-3 snapshot without rewriting legacy history.
+    pvt::detail::BundleFileSet legacy_files = zip_files;
+    std::vector<std::pair<std::string, std::string>> legacy_assets;
+    for (auto iterator = legacy_files.files.begin();
+         iterator != legacy_files.files.end();) {
+        if (iterator->first.rfind("assets/", 0U) != 0U) {
+            ++iterator;
+            continue;
+        }
+        const std::size_t slash = iterator->first.find('/', 7U);
+        CHECK(slash == 7U + 64U);
+        legacy_assets.emplace_back(iterator->first.substr(0U, slash),
+                                   iterator->second);
+        iterator = legacy_files.files.erase(iterator);
+    }
+    for (auto& asset : legacy_assets) {
+        CHECK(legacy_files.files.emplace(std::move(asset)).second);
+    }
+    std::string& legacy_manifest = legacy_files.files["0/metadata.txt"];
+    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t3\n",
+                       "PVT_VERSION\t2\n"));
+    const fs::path legacy_zip = directory / "legacy-assets-v2.zip";
+    CHECK(pvt::detail::write_bundle_file_set(as_utf8(legacy_zip), legacy_files,
+                                             &error));
+    pvt::ProjectDocument legacy_loaded;
+    CHECK(pvt::load_project_document(as_utf8(legacy_zip), legacy_loaded, &error));
+    CHECK(legacy_loaded.externally_modified);
+    legacy_loaded.project.layers.front().name = "Readable asset upgrade";
+    CHECK(pvt::save_project_document(legacy_loaded, as_utf8(legacy_zip),
+                                     &report, &error));
+    CHECK(report.version == 1U && report.created_version);
+    pvt::detail::BundleFileSet upgraded_files;
+    CHECK(pvt::detail::read_bundle_file_set(as_utf8(legacy_zip), upgraded_files,
+                                            &error));
+    CHECK(upgraded_files.files.count(readable_asset_path(changed_attachment)) == 1U);
+    CHECK(pvt::validate_project_bundle(as_utf8(legacy_zip), nullptr, &error));
+
+    // A direct edit to a readable asset is a first-class project edit. The
+    // loader derives fresh identity metadata, marks the project dirty, and Save
+    // promotes it to a new version without requiring manifest surgery.
+    const std::string edited_image_bytes = image_bytes + "-direct-edit";
+    const fs::path original_image_asset = bundle / "assets"
+                                          / image_attachment.sha256
+                                          / image_attachment.basename;
+    const fs::path renamed_image_asset = original_image_asset.parent_path()
+                                         / "cover-edited.png";
+    filesystem_error.clear();
+    fs::rename(original_image_asset, renamed_image_asset, filesystem_error);
+    CHECK(!filesystem_error);
+    CHECK(write_bytes(renamed_image_asset, edited_image_bytes));
+    pvt::ProjectDocument directly_edited;
+    CHECK(pvt::load_project_document(as_utf8(bundle), directly_edited, &error));
+    CHECK(directly_edited.externally_modified && directly_edited.dirty);
+    const pvt::ProjectAttachment* edited_image =
+        pvt::find_project_attachment(directly_edited, "image.cover");
+    CHECK(edited_image != nullptr);
+    if (edited_image != nullptr) {
+        CHECK(edited_image->basename == "cover-edited.png");
+        CHECK(edited_image->sha256 != image_attachment.sha256);
+        CHECK(edited_image->externally_modified);
+        CHECK(read_bytes(pvt::detail::path_from_utf8(edited_image->local_path))
+              == edited_image_bytes);
+    }
+    CHECK(pvt::save_project_document(directly_edited, as_utf8(bundle),
+                                     &report, &error));
+    CHECK(report.promoted_external_change && report.version == 4U);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    // An unreadable direct replacement is rejected transactionally when it
+    // cannot be treated like the corresponding GUI import. Here the current
+    // music source is replaced with non-audio bytes.
     const fs::path corrupt_directory = directory / "corrupt-assets";
     filesystem_error.clear();
     fs::copy(bundle, corrupt_directory, fs::copy_options::recursive,
              filesystem_error);
     CHECK(!filesystem_error);
-    CHECK(write_bytes(corrupt_directory / "assets" / changed_attachment.sha256,
+    CHECK(write_bytes(corrupt_directory / "assets" / changed_attachment.sha256
+                          / changed_attachment.basename,
+                      "corrupt"));
+    CHECK(write_bytes(corrupt_directory / "assets" / music_attachment.sha256
+                          / music_attachment.basename,
+                      "corrupt"));
+    CHECK(write_bytes(corrupt_directory / "assets" / renamed_attachment.sha256
+                          / renamed_attachment.basename,
                       "corrupt"));
     pvt::ProjectDocument untouched = pvt::default_project_document();
     const std::string untouched_uuid = untouched.project.uuid;
@@ -1380,14 +1527,14 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(untouched.project.uuid == untouched_uuid);
 
     pvt::detail::BundleFileSet corrupt_zip_files = zip_files;
-    corrupt_zip_files.files["assets/" + changed_attachment.sha256] = "corrupt";
+    corrupt_zip_files.files[readable_asset_path(changed_attachment)] = "corrupt";
     const fs::path corrupt_zip = directory / "corrupt-assets.zip";
     CHECK(pvt::detail::write_bundle_file_set(
         as_utf8(corrupt_zip), corrupt_zip_files, &error));
     CHECK(!pvt::load_project_document(as_utf8(corrupt_zip), untouched, &error));
 
     pvt::detail::BundleFileSet hostile = zip_files;
-    hostile.files["assets/not-a-lowercase-sha256"] = "hostile";
+    hostile.files["assets/not-a-lowercase-sha256/source.wav"] = "hostile";
     const fs::path hostile_zip = directory / "hostile-asset.zip";
     CHECK(pvt::detail::write_bundle_file_set(
         as_utf8(hostile_zip), hostile, &error));

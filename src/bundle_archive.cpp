@@ -387,9 +387,14 @@ bool lowercase_sha256_component(std::string_view value) {
 
 bool asset_entry_path(std::string_view path) {
     constexpr std::string_view prefix = "assets/";
-    return path.size() == prefix.size() + 64U
-           && path.substr(0U, prefix.size()) == prefix
-           && lowercase_sha256_component(path.substr(prefix.size()));
+    if (path.substr(0U, prefix.size()) != prefix) return false;
+    const std::string_view relative = path.substr(prefix.size());
+    if (lowercase_sha256_component(relative)) return true; // legacy v2
+    const std::size_t slash = relative.find('/');
+    return slash == 64U
+           && lowercase_sha256_component(relative.substr(0U, slash))
+           && slash + 1U < relative.size()
+           && relative.find('/', slash + 1U) == std::string_view::npos;
 }
 
 std::size_t entry_size_limit(std::string_view path) {
@@ -662,9 +667,10 @@ bool update_existing_directory(const fs::path& destination,
         return fail(error, "A save may commit at most one new version directory.");
     }
 
-    // Assets are immutable and content-addressed. Install them before the new
-    // version so a crash can leave only harmless unreferenced bytes, never a
-    // committed manifest whose dependency is absent.
+    // Assets use collision-safe digest directories with the original readable
+    // filename. Install them before the new version so a crash can leave only
+    // harmless unreferenced bytes, never a committed manifest whose dependency
+    // is absent.
     if (!new_assets.empty()) {
         const fs::path assets_directory = destination / "assets";
         std::error_code filesystem_error;
@@ -683,6 +689,23 @@ bool update_existing_directory(const fs::path& destination,
         for (const auto* entry : new_assets) {
             const fs::path target =
                 destination / path_from_utf8(entry->first);
+            const fs::path target_parent = target.parent_path();
+            if (target_parent != assets_directory) {
+                const fs::file_status parent_status =
+                    fs::symlink_status(target_parent, filesystem_error);
+                if (filesystem_error) {
+                    filesystem_error.clear();
+                    if (!fs::create_directory(target_parent, filesystem_error)
+                        || filesystem_error) {
+                        return fail(error,
+                                    "Could not create readable bundle asset identity directory.");
+                    }
+                } else if (!fs::is_directory(parent_status)
+                           || fs::is_symlink(parent_status)) {
+                    return fail(error,
+                                "Bundle asset identity path is not a regular directory.");
+                }
+            }
             const fs::file_status target_status =
                 fs::symlink_status(target, filesystem_error);
             if (!filesystem_error && fs::exists(target_status)) {
@@ -692,6 +715,7 @@ bool update_existing_directory(const fs::path& destination,
             if (!write_atomic_file(target, entry->second, error)) {
                 return false;
             }
+            (void)flush_path(target_parent);
         }
         (void)flush_path(assets_directory);
     }

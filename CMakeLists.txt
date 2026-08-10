@@ -207,7 +207,9 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
     target_link_libraries(ProceduralVisualizerBundle
         PUBLIC ProceduralVisualizerTool::ProceduralVisualizerTool
-        PRIVATE MINIZIP::minizip)
+        PRIVATE
+            MINIZIP::minizip
+            ProceduralVisualizerTool::Audio)
     pvt_enable_warnings(ProceduralVisualizerBundle)
 endif()
 
@@ -247,20 +249,6 @@ if(PVT_BUILD_QT_GUI)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent)
     qt_standard_project_setup()
 
-    add_library(pvt_music_video_export STATIC
-        gui/music_video_export.cpp
-        gui/music_video_export.h)
-    target_compile_features(pvt_music_video_export PUBLIC cxx_std_17)
-    set_target_properties(pvt_music_video_export PROPERTIES
-        CXX_EXTENSIONS NO
-        POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(pvt_music_video_export PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/gui>)
-    target_link_libraries(pvt_music_video_export
-        PUBLIC Qt6::Core
-        PRIVATE ProceduralVisualizerTool::Audio)
-    pvt_enable_warnings(pvt_music_video_export)
-
     qt_add_executable(ProceduralVisualizerToolGui MACOSX_BUNDLE
         gui/main.cpp
         gui/main_window.cpp
@@ -283,7 +271,6 @@ if(PVT_BUILD_QT_GUI)
     target_link_libraries(ProceduralVisualizerToolGui PRIVATE
         ProceduralVisualizerTool::Bundle
         ProceduralVisualizerTool::Audio
-        pvt_music_video_export
         Qt6::Concurrent
         Qt6::Widgets
     )
@@ -385,18 +372,6 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
-        add_executable(pvt_music_video_export_tests
-            tests/music_video_export_test.cpp)
-        target_compile_features(pvt_music_video_export_tests PRIVATE cxx_std_17)
-        set_target_properties(pvt_music_video_export_tests PROPERTIES
-            CXX_EXTENSIONS NO)
-        target_link_libraries(pvt_music_video_export_tests PRIVATE
-            pvt_music_video_export
-            Qt6::Gui)
-        pvt_enable_warnings(pvt_music_video_export_tests)
-        add_test(NAME pvt_music_video_export
-            COMMAND pvt_music_video_export_tests)
-
         add_test(NAME pvt_gui_smoke
             COMMAND ProceduralVisualizerToolGui --smoke-test)
         set_tests_properties(pvt_gui_smoke PROPERTIES

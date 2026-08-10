@@ -20,16 +20,22 @@ inline constexpr const char* kMusicSourceAttachmentId = "music.source";
 
 struct ProjectAttachmentCache;
 
-// One logical use of an embedded file. Multiple references (and multiple
-// immutable versions) may share sha256; the bundle stores that byte sequence
-// exactly once as assets/<sha256>. local_path is a managed runtime extraction
-// and is never serialized or included in semantic project digests.
+// One logical use of an embedded file. New bundle versions store it under
+// assets/<sha256>/<original-filename>, preserving the user-facing filename and
+// extension while retaining a collision-safe content-identity directory.
+// local_path and bundle_path are managed runtime locations and are never
+// serialized or included in semantic project digests.
 struct ProjectAttachment {
     std::string reference_id;
     std::string sha256;
     std::string basename;
     std::uint64_t size_bytes = 0U;
     std::string local_path;
+    std::string bundle_path;
+    // A valid direct edit to a readable version-3 asset is accepted just like
+    // replacing that source through the application. Saving promotes it to a
+    // new immutable version with fresh identity metadata.
+    bool externally_modified = false;
 };
 
 struct BundleVersionInfo {
@@ -110,8 +116,8 @@ bool make_independent_project_copy(const ProjectDocument& source,
 
 // Registers a file immediately by content, copying it into a managed cache so
 // moving/deleting the original before Save cannot break the project. Reusing
-// identical bytes changes only the logical reference and never duplicates the
-// root asset. Empty/special/symlink sources are rejected transactionally.
+// the same bytes and basename reuses its readable bundle entry. Empty,
+// non-portable, special, and symlink sources are rejected transactionally.
 bool attach_project_file(ProjectDocument& document,
                          const std::string& reference_id,
                          const std::string& source_path,

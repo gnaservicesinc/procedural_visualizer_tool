@@ -1,6 +1,5 @@
 #include "main_window.h"
 
-#include "music_video_export.h"
 #include "preview_widget.h"
 #include "../src/audio_analysis.h"
 #include "../src/config_codec.h"
@@ -50,6 +49,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QThread>
@@ -344,16 +344,6 @@ QString formatted_time(double seconds) {
         .arg(milliseconds, 3, 10, QLatin1Char('0'));
 }
 
-QString video_filename_for_prefix(const std::string& prefix) {
-    QString base = QString::fromStdString(prefix);
-    while (base.endsWith(QLatin1Char('_')) || base.endsWith(QLatin1Char('-'))
-           || base.endsWith(QLatin1Char(' '))) {
-        base.chop(1);
-    }
-    if (base.isEmpty()) base = QStringLiteral("visualizer");
-    return base + QStringLiteral(".mp4");
-}
-
 std::vector<double> music_beats_for_ui(const pvt::ClockConfig& clock) {
     std::vector<double> beats;
     const double offset = static_cast<double>(clock.beat_offset_microseconds)
@@ -474,7 +464,8 @@ std::size_t estimated_attachment_bytes(
     for (const auto& attachment : attachments) {
         for (const std::string* value : {
                  &attachment.reference_id, &attachment.sha256,
-                 &attachment.basename, &attachment.local_path}) {
+                 &attachment.basename, &attachment.local_path,
+                 &attachment.bundle_path}) {
             bytes = saturating_add(bytes, estimated_string_bytes(*value));
         }
     }
@@ -512,7 +503,8 @@ bool attachments_equal(const std::vector<pvt::ProjectAttachment>& left,
         const auto& b = right[index];
         if (a.reference_id != b.reference_id || a.sha256 != b.sha256
             || a.basename != b.basename || a.size_bytes != b.size_bytes
-            || a.local_path != b.local_path) {
+            || a.local_path != b.local_path || a.bundle_path != b.bundle_path
+            || a.externally_modified != b.externally_modified) {
             return false;
         }
     }
@@ -790,6 +782,41 @@ bool editor_change_is_continuous(const QObject* editor) {
            && qobject_cast<const QComboBox*>(editor) == nullptr;
 }
 
+void preserve_control_text_width(QWidget* widget) {
+    if (auto* button = qobject_cast<QPushButton*>(widget)) {
+        button->setMinimumWidth(button->sizeHint().width());
+    } else if (auto* combo = qobject_cast<QComboBox*>(widget)) {
+        combo->setMinimumWidth(combo->sizeHint().width());
+    }
+}
+
+void update_wrapped_label_height(QLabel* label) {
+    if (label == nullptr || !label->wordWrap()) return;
+    label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    const int width = label->contentsRect().width();
+    if (width <= 0 || !label->hasHeightForWidth()) return;
+    const int required = label->heightForWidth(width);
+    if (required > 0 && label->minimumHeight() != required) {
+        label->setMinimumHeight(required);
+    }
+}
+
+void configure_readable_layouts(QWidget* root) {
+    for (QFormLayout* form : root->findChildren<QFormLayout*>()) {
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    }
+    for (QPushButton* button : root->findChildren<QPushButton*>()) {
+        preserve_control_text_width(button);
+    }
+    for (QComboBox* combo : root->findChildren<QComboBox*>()) {
+        preserve_control_text_width(combo);
+    }
+    for (QLabel* label : root->findChildren<QLabel*>()) {
+        update_wrapped_label_height(label);
+    }
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -845,7 +872,10 @@ MainWindow::MainWindow(QWidget* parent)
     tabs_->addTab(createLayerSettingsPage(), tr("Layer Render"));
     tabs_->addTab(createOutputPage(), tr("Output"));
     tabs_->addTab(createVersionsPage(), tr("Versions"));
-    tabs_->setMinimumWidth(440);
+    // Keep every tab caption readable at the default UI font. Individual
+    // pages still use wrapping forms/scroll areas for larger accessibility
+    // fonts, but the primary navigation itself must never elide labels.
+    tabs_->setMinimumWidth((std::max)(600, tabs_->tabBar()->sizeHint().width() + 8));
     splitter->addWidget(preview_);
     splitter->addWidget(tabs_);
     splitter->setStretchFactor(0, 3);
@@ -913,9 +943,7 @@ MainWindow::MainWindow(QWidget* parent)
         if (result.ok) {
             status_->setText(tr("Export complete"));
             QMessageBox::information(this, tr("Export complete"),
-                                     result.video
-                                         ? tr("The music-synchronized MP4 video was exported successfully.")
-                                         : tr("The image sequence was exported successfully."));
+                                     tr("The image sequence was exported successfully."));
         } else if (result.cancelled) {
             status_->setText(tr("Export cancelled"));
         } else {
@@ -941,7 +969,9 @@ MainWindow::MainWindow(QWidget* parent)
     updateWindowTitle();
     updateCompatibilityWarning();
     restoreUserSettings();
+    configure_readable_layouts(this);
     qApp->installEventFilter(this);
+    QTimer::singleShot(0, this, [this] { configure_readable_layouts(this); });
     schedulePreview();
 }
 
@@ -977,6 +1007,25 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (event != nullptr) {
+        if (auto* label = qobject_cast<QLabel*>(watched)) {
+            if (event->type() == QEvent::Resize
+                || event->type() == QEvent::FontChange
+                || event->type() == QEvent::StyleChange) {
+                update_wrapped_label_height(label);
+            }
+        }
+        if (auto* widget = qobject_cast<QWidget*>(watched)) {
+            if (event->type() == QEvent::FontChange
+                || event->type() == QEvent::StyleChange) {
+                preserve_control_text_width(widget);
+                if (tabs_ != nullptr && widget == tabs_->tabBar()) {
+                    tabs_->setMinimumWidth((std::max)(
+                        600, tabs_->tabBar()->sizeHint().width() + 8));
+                }
+            }
+        }
+    }
     if (event != nullptr
         && (event->type() == QEvent::KeyPress
             || event->type() == QEvent::KeyRelease)) {
@@ -1011,15 +1060,18 @@ QWidget* MainWindow::createWavePage() {
     wave_list_->setAlternatingRowColors(true);
     layout->addWidget(wave_list_, 1);
 
-    auto* buttons = new QHBoxLayout;
+    auto* buttons = new QGridLayout;
     auto* add = new QPushButton(tr("Add"));
     auto* duplicate = new QPushButton(tr("Duplicate"));
     auto* remove = new QPushButton(tr("Remove"));
     auto* up = new QPushButton(tr("Up"));
     auto* down = new QPushButton(tr("Down"));
-    for (auto* button : {add, duplicate, remove, up, down}) {
-        buttons->addWidget(button);
-    }
+    buttons->addWidget(add, 0, 0);
+    buttons->addWidget(duplicate, 0, 1);
+    buttons->addWidget(remove, 0, 2);
+    buttons->addWidget(up, 1, 0);
+    buttons->addWidget(down, 1, 1);
+    buttons->setColumnStretch(2, 1);
     layout->addLayout(buttons);
 
     auto* properties = new QGroupBox(tr("Selected wave"));
@@ -1415,7 +1467,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_list_->setAlternatingRowColors(true);
     layout->addWidget(effect_list_, 1);
 
-    auto* add_row = new QHBoxLayout;
+    auto* add_row = new QGridLayout;
     add_effect_type_ = new QComboBox;
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
@@ -1427,10 +1479,13 @@ QWidget* MainWindow::createEffectPage() {
     auto* remove = new QPushButton(tr("Remove"));
     auto* up = new QPushButton(tr("Up"));
     auto* down = new QPushButton(tr("Down"));
-    add_row->addWidget(add_effect_type_, 1);
-    for (auto* button : {add, duplicate, remove, up, down}) {
-        add_row->addWidget(button);
-    }
+    add_row->addWidget(add_effect_type_, 0, 0, 1, 3);
+    add_row->addWidget(add, 1, 0);
+    add_row->addWidget(duplicate, 1, 1);
+    add_row->addWidget(remove, 1, 2);
+    add_row->addWidget(up, 2, 0);
+    add_row->addWidget(down, 2, 1);
+    add_row->setColumnStretch(2, 1);
     layout->addLayout(add_row);
 
     auto* scroll = new QScrollArea;
@@ -1795,12 +1850,6 @@ QWidget* MainWindow::createOutputPage() {
 
     auto* output_group = new QGroupBox(tr("Export"));
     auto* output = new QFormLayout(output_group);
-    export_target_ = new QComboBox;
-    export_target_->setObjectName(QStringLiteral("exportTarget"));
-    export_target_->addItem(tr("Image sequence"), 0);
-    export_target_->addItem(tr("MP4 video with embedded music"), 1);
-    video_output_ = new QLabel;
-    video_output_->setWordWrap(true);
     bit_depth_ = new QComboBox;
     bit_depth_->addItem(tr("8-bit PNG"), 8);
     bit_depth_->addItem(tr("16-bit PNG"), 16);
@@ -1839,8 +1888,6 @@ QWidget* MainWindow::createOutputPage() {
     first_frame_ = integer_editor(0, 1000000000);
     filename_digits_ = integer_editor(1, 12);
     overwrite_ = new QCheckBox(tr("Overwrite existing output"));
-    output->addRow(tr("Target"), export_target_);
-    output->addRow(tr("Video file"), video_output_);
     output->addRow(tr("Bit depth"), bit_depth_);
     output->addRow(tr("PNG compression (0 off, 9 max)"), png_compression_);
     output->addRow(dither_enabled_);
@@ -1865,9 +1912,6 @@ QWidget* MainWindow::createOutputPage() {
             updateOutputEditorValidity();
             applyGlobalEditor(output_directory_);
         }
-    });
-    connect(export_target_, &QComboBox::currentIndexChanged, this, [this] {
-        updateExportAvailability();
     });
     return scroll;
 }
@@ -3470,12 +3514,6 @@ void MainWindow::restoreUserSettings() {
     }
     restoreGeometry(settings.value(QStringLiteral("ui/mainWindow/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("ui/mainWindow/state")).toByteArray());
-    if (export_target_ != nullptr) {
-        const int target = settings.value(
-            QStringLiteral("preferences/exportTarget"), 0).toInt();
-        const int index = export_target_->findData(target);
-        export_target_->setCurrentIndex(index >= 0 ? index : 0);
-    }
 }
 
 void MainWindow::saveUserSettings() {
@@ -3483,10 +3521,6 @@ void MainWindow::saveUserSettings() {
     settings.setValue(QStringLiteral("paths/lastDialogDirectory"), last_dialog_directory_);
     settings.setValue(QStringLiteral("ui/mainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("ui/mainWindow/state"), saveState());
-    if (export_target_ != nullptr) {
-        settings.setValue(QStringLiteral("preferences/exportTarget"),
-                          export_target_->currentData());
-    }
 }
 
 void MainWindow::editUndoLimit() {
@@ -3759,7 +3793,7 @@ void MainWindow::updateMusicSummary() {
         tr("%1 · %2 Hz · %3 channel(s) · %4\n"
            "Detected %5 BPM (%6% confidence) · %7 beat(s) · %8\n"
            "%9 features/s · %10 effective frame(s) at %11 FPS · "
-           "whole-frame sequence overhang %12 ms (MP4 trims to the exact audio duration)")
+           "whole-frame sequence overhang %12 ms")
             .arg(QString::fromStdString(music.source_format))
             .arg(music.source_sample_rate)
             .arg(music.source_channel_count)
@@ -3774,7 +3808,7 @@ void MainWindow::updateMusicSummary() {
             .arg(rounding));
     if (currentMusicSourcePath().isEmpty()) {
         music_error_->setText(
-            tr("The analyzed source is not available locally. Relink the matching file before MP4 export or reanalysis."));
+            tr("The analyzed source is not available locally. Relink the matching file before reanalysis."));
         music_error_->show();
     } else if (count < 1 && !frame_error.isEmpty()) {
         music_error_->setText(frame_error);
@@ -3785,29 +3819,17 @@ void MainWindow::updateMusicSummary() {
 }
 
 void MainWindow::updateExportAvailability() {
-    if (export_target_ == nullptr || video_output_ == nullptr) return;
-    const bool video = export_target_->currentData().toInt() == 1;
-    video_output_->setVisible(video);
-    const QString directory = resolvedOutputDirectory(
-        QString::fromStdString(config_.output.output_directory));
-    video_output_->setText(QDir(directory).filePath(
-        video_filename_for_prefix(config_.output.filename_prefix)));
-    bit_depth_->setEnabled(!video);
-    png_compression_->setEnabled(!video && config_.output.bit_depth != 32);
-    dither_enabled_->setEnabled(!video && config_.output.bit_depth != 32);
-    dither_method_->setEnabled(!video && config_.output.bit_depth != 32
+    bit_depth_->setEnabled(true);
+    png_compression_->setEnabled(config_.output.bit_depth != 32);
+    dither_enabled_->setEnabled(config_.output.bit_depth != 32);
+    dither_method_->setEnabled(config_.output.bit_depth != 32
                                && config_.output.dither_enabled);
-    write_alpha_->setEnabled(!video);
-    first_frame_->setEnabled(!video);
-    filename_digits_->setEnabled(!video);
+    write_alpha_->setEnabled(true);
+    first_frame_->setEnabled(true);
+    filename_digits_->setEnabled(true);
     if (export_action_ != nullptr && !export_active_) {
-        const bool ready = !video
-            || (config_.clock.mode == pvt::ClockMode::Music
-                && musicRenderReady() && !currentMusicSourcePath().isEmpty());
-        export_action_->setEnabled(ready && !music_analysis_active_);
-        export_action_->setToolTip(
-            ready ? QString{}
-                  : tr("MP4 export needs Music clock mode, complete analysis, and an available embedded music source."));
+        export_action_->setEnabled(!music_analysis_active_);
+        export_action_->setToolTip(QString{});
     }
 }
 
@@ -5611,10 +5633,7 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
 
 bool MainWindow::startExport() {
     cancel_export_.store(false);
-    const bool video = export_target_ != nullptr
-                       && export_target_->currentData().toInt() == 1;
-    status_->setText(video ? tr("Preparing MP4 export…")
-                           : tr("Exporting image sequence…"));
+    status_->setText(tr("Exporting image sequence…"));
     export_progress_->setRange(0, 1000);
     export_progress_->setValue(0);
     export_progress_->show();
@@ -5623,180 +5642,12 @@ bool MainWindow::startExport() {
         project.output.output_directory =
             resolvedOutputDirectory(QString::fromStdString(project.output.output_directory))
                 .toStdString();
-        const QString audio_path = video ? currentMusicSourcePath() : QString{};
-        const pvt::MusicAnalysis music = project.canvas.clock.music;
-        const bool video_overwrite = project.output.overwrite_existing;
-        std::string frame_count_error;
-        const int video_frame_count = video
-            ? pvt::effective_frame_count(project.canvas, &frame_count_error)
-            : 0;
-        const QString video_destination = video
-            ? QDir(QString::fromStdString(project.output.output_directory))
-                  .filePath(video_filename_for_prefix(
-                      project.output.filename_prefix))
-            : QString{};
-        if (video && (project.canvas.clock.mode != pvt::ClockMode::Music
-                      || video_frame_count < 1 || audio_path.isEmpty())) {
-            export_progress_->hide();
-            status_->setText(tr("MP4 export is not ready"));
-            QMessageBox::warning(
-                this, tr("MP4 export is not ready"),
-                frame_count_error.empty()
-                    ? tr("Select Music clock mode with a complete, available embedded source first.")
-                    : QString::fromStdString(frame_count_error));
-            return false;
-        }
         export_active_ = true;
         export_watcher_->setFuture(QtConcurrent::run(
-            [this, project = std::move(project), video, audio_path,
-             music, video_frame_count, video_destination,
-             video_overwrite]() mutable {
+            [this, project = std::move(project)]() mutable {
                 ExportResult result;
-                result.video = video;
                 std::string error;
                 try {
-                    if (video) {
-                        const pvt::gui::FfmpegProbe ffmpeg =
-                            pvt::gui::probe_ffmpeg();
-                        if (!ffmpeg.available) {
-                            result.error = ffmpeg.error;
-                            return result;
-                        }
-                        if (cancel_export_.load(std::memory_order_relaxed)) {
-                            result.cancelled = true;
-                            return result;
-                        }
-
-                        QTemporaryDir frames_directory;
-                        if (!frames_directory.isValid()) {
-                            result.error = tr("Could not create temporary storage for rendered video frames.");
-                            return result;
-                        }
-                        const QString destination_directory =
-                            QFileInfo(video_destination).absolutePath();
-                        if (!QDir(destination_directory).exists()
-                            && !QDir().mkpath(destination_directory)) {
-                            result.error = tr("Could not create the MP4 output directory: %1")
-                                               .arg(destination_directory);
-                            return result;
-                        }
-
-                        constexpr int kVideoFrameDigits = 8;
-                        constexpr int kRenderProgressMaximum = 700;
-                        project.output.output_directory =
-                            frames_directory.path().toStdString();
-                        project.output.filename_prefix = "pvt_video_frame_";
-                        project.output.first_frame_number = 0;
-                        project.output.filename_digits = kVideoFrameDigits;
-                        project.output.bit_depth = 8;
-                        project.output.png_compression_level = 1;
-                        project.output.dither_enabled = false;
-                        // Preserve valid project compositing through RGBA PNG.
-                        // The mux helper composites alpha onto black before
-                        // producing opaque H.264 video.
-                        project.output.write_alpha = true;
-                        project.output.overwrite_existing = false;
-                        result.ok = pvt::render_project_sequence(
-                            project,
-                            [this](int completed, int total) {
-                                const int update_stride = std::max(1, total / 200);
-                                if (completed == 0 || completed == total
-                                    || completed % update_stride == 0) {
-                                    QMetaObject::invokeMethod(
-                                        this,
-                                        [this, completed, total] {
-                                            if (!export_active_) return;
-                                            status_->setText(
-                                                tr("Rendering video frame %1/%2…")
-                                                    .arg(completed).arg(total));
-                                            export_progress_->setValue(
-                                                total > 0
-                                                    ? completed
-                                                          * kRenderProgressMaximum
-                                                          / total
-                                                    : 0);
-                                        },
-                                        Qt::QueuedConnection);
-                                }
-                                return !cancel_export_.load(
-                                    std::memory_order_relaxed);
-                            },
-                            &cancel_export_, &error);
-                        if (!result.ok) {
-                            result.cancelled = cancel_export_.load(
-                                std::memory_order_relaxed);
-                            result.error = QString::fromStdString(error);
-                            return result;
-                        }
-
-                        pvt::gui::MusicVideoExportRequest request;
-                        request.sequence.directory = frames_directory.path();
-                        request.sequence.filename_prefix =
-                            QString::fromStdString(project.output.filename_prefix);
-                        request.sequence.first_frame_number = 0;
-                        request.sequence.filename_digits = kVideoFrameDigits;
-                        request.sequence.frame_count = video_frame_count;
-                        request.sequence.format = pvt::gui::RenderedImageFormat::Png;
-                        request.fps = project.canvas.fps;
-                        request.audio_sample_frame_count = music.source_frame_count;
-                        request.audio_sample_rate = music.source_sample_rate;
-                        request.audio_path = audio_path;
-                        request.expected_audio_sha256 =
-                            QString::fromStdString(music.source_sha256);
-                        request.destination_path = video_destination;
-                        request.overwrite_existing = video_overwrite;
-                        request.ffmpeg_executable = ffmpeg.executable;
-
-                        QString video_error;
-                        result.ok = pvt::gui::export_music_video(
-                            request,
-                            [this](pvt::gui::MusicVideoStage stage,
-                                   std::int64_t completed,
-                                   std::int64_t total) {
-                                int start = 700;
-                                int span = 50;
-                                QString message;
-                                switch (stage) {
-                                    case pvt::gui::MusicVideoStage::VerifyAudio:
-                                        message = tr("Verifying embedded music…");
-                                        break;
-                                    case pvt::gui::MusicVideoStage::Prepare:
-                                        start = 750;
-                                        message = tr("Checking rendered video frames…");
-                                        break;
-                                    case pvt::gui::MusicVideoStage::Encode:
-                                        start = 800;
-                                        span = 190;
-                                        message = tr("Encoding H.264/AAC video…");
-                                        break;
-                                    case pvt::gui::MusicVideoStage::Install:
-                                        start = 990;
-                                        span = 10;
-                                        message = tr("Installing finished MP4…");
-                                        break;
-                                }
-                                const int value = total > 0
-                                    ? start + static_cast<int>(
-                                          std::clamp<std::int64_t>(completed, 0, total)
-                                          * span / total)
-                                    : start;
-                                QMetaObject::invokeMethod(
-                                    this,
-                                    [this, value, message = std::move(message)] {
-                                        if (!export_active_) return;
-                                        status_->setText(message);
-                                        export_progress_->setValue(value);
-                                    },
-                                    Qt::QueuedConnection);
-                                return !cancel_export_.load(
-                                    std::memory_order_relaxed);
-                            },
-                            &cancel_export_, &video_error);
-                        result.cancelled = !result.ok
-                            && cancel_export_.load(std::memory_order_relaxed);
-                        result.error = std::move(video_error);
-                        return result;
-                    }
                     result.ok = pvt::render_project_sequence(
                         project,
                         [this](int completed, int total) {
@@ -5894,6 +5745,37 @@ bool MainWindow::loadProjectPath(const QString& path, QString* error) {
 }
 
 bool MainWindow::runSmokeChecks(QString* error) {
+    if (findChild<QComboBox*>(QStringLiteral("exportTarget")) != nullptr) {
+        if (error != nullptr) {
+            *error = tr("The removed MP4 export target is still exposed by the GUI.");
+        }
+        return false;
+    }
+    for (QFormLayout* form : findChildren<QFormLayout*>()) {
+        if (form->rowWrapPolicy() != QFormLayout::WrapLongRows) {
+            if (error != nullptr) {
+                *error = tr("A form can still compress a long label/control row instead of wrapping it.");
+            }
+            return false;
+        }
+    }
+    for (QPushButton* button : findChildren<QPushButton*>()) {
+        if (button->minimumWidth() < button->sizeHint().width()) {
+            if (error != nullptr) {
+                *error = tr("A button can still shrink below the width required by its text: %1")
+                             .arg(button->text());
+            }
+            return false;
+        }
+    }
+    for (QComboBox* combo : findChildren<QComboBox*>()) {
+        if (combo->minimumWidth() < combo->sizeHint().width()) {
+            if (error != nullptr) {
+                *error = tr("A choice control can still shrink below its readable width.");
+            }
+            return false;
+        }
+    }
     const QString home_directory =
         existing_writable_directory(QDir::homePath(), true);
     const QString saved_dialog_directory = existing_writable_directory(

@@ -1,5 +1,6 @@
 #include "project_bundle.h"
 
+#include "audio_analysis.h"
 #include "bundle_archive.h"
 #include "config_codec.h"
 #include "path_utf8.h"
@@ -60,7 +61,7 @@ constexpr std::size_t kMaximumVersions = 4096U;
 constexpr std::size_t kMaximumLineageAliases = 8192U;
 constexpr std::size_t kMaximumProjectNameBytes = 256U;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
-constexpr std::uint32_t kProjectVersionFormatVersion = 2U;
+constexpr std::uint32_t kProjectVersionFormatVersion = 3U;
 
 struct RootMetadata {
     struct PreservedVersion {
@@ -575,11 +576,14 @@ bool valid_attachment_reference_id(std::string_view value) {
     });
 }
 
+bool valid_portable_root_name(const std::string& name);
+
 bool valid_attachment_basename(const std::string& value) {
     return !value.empty()
            && value.size() <= kMaximumAttachmentBasenameBytes
            && value != "." && value != ".."
-           && valid_semantic_project_name(value);
+           && valid_semantic_project_name(value)
+           && valid_portable_root_name(value);
 }
 
 bool attachment_path_is_reparse_point(const fs::path& path) {
@@ -593,8 +597,20 @@ bool attachment_path_is_reparse_point(const fs::path& path) {
 #endif
 }
 
-std::string attachment_asset_path(std::string_view digest) {
+std::string legacy_attachment_asset_path(std::string_view digest) {
     return "assets/" + std::string(digest);
+}
+
+std::string attachment_asset_path(std::string_view digest,
+                                  std::string_view basename) {
+    return "assets/" + std::string(digest) + "/" + std::string(basename);
+}
+
+std::string attachment_asset_path(const ProjectAttachment& attachment,
+                                  std::uint32_t format_version) {
+    return format_version >= 3U
+               ? attachment_asset_path(attachment.sha256, attachment.basename)
+               : legacy_attachment_asset_path(attachment.sha256);
 }
 
 std::string safe_cache_extension(const std::string& basename) {
@@ -1105,6 +1121,9 @@ bool parse_version_manifest(const std::string& bytes,
     } else if (bytes.rfind("PVT_VERSION\t2\n", 0U) == 0U
                || bytes.rfind("PVT_VERSION\t2\r\n", 0U) == 0U) {
         format_version = 2U;
+    } else if (bytes.rfind("PVT_VERSION\t3\n", 0U) == 0U
+               || bytes.rfind("PVT_VERSION\t3\r\n", 0U) == 0U) {
+        format_version = 3U;
     } else {
         return fail(error, "Unsupported version metadata format.");
     }
@@ -1422,26 +1441,6 @@ bool load_snapshot(const detail::BundleFileSet& files,
             return false;
         }
     }
-    std::set<std::string> verified_assets;
-    for (ProjectAttachment& attachment : manifest.attachments) {
-        const auto asset = files.files.find(
-            attachment_asset_path(attachment.sha256));
-        if (asset == files.files.end()) {
-            return fail(error, "Version references a missing embedded asset.");
-        }
-        if (asset->second.size() != attachment.size_bytes) {
-            return fail(error, "Embedded asset size does not match version metadata.");
-        }
-        if (verified_assets.insert(attachment.sha256).second) {
-            std::string actual;
-            if (!detail::sha256_hex(asset->second, actual, error)) return false;
-            if (actual != attachment.sha256) {
-                return fail(error,
-                            "Embedded asset content does not match version metadata.");
-            }
-        }
-        attachment.local_path.clear();
-    }
     if (manifest.format_version >= 2U) {
         const auto attachment_for = [&manifest](std::string_view reference_id)
             -> const ProjectAttachment* {
@@ -1472,6 +1471,118 @@ bool load_snapshot(const detail::BundleFileSet& files,
                         || obj->basename != surface.obj_basename))) {
                 return fail(error,
                             "Custom OBJ configuration and its embedded attachment disagree.");
+            }
+        }
+    }
+    std::set<std::string> manifest_asset_paths;
+    for (const ProjectAttachment& attachment : manifest.attachments) {
+        manifest_asset_paths.insert(attachment_asset_path(
+            attachment, manifest.format_version));
+    }
+    std::map<std::string, std::string> resolved_missing_asset_paths;
+    std::map<std::string, std::string> verified_assets;
+    for (ProjectAttachment& attachment : manifest.attachments) {
+        const std::string expected_asset_path = attachment_asset_path(
+            attachment, manifest.format_version);
+        std::string asset_path = expected_asset_path;
+        auto asset = files.files.find(asset_path);
+        bool renamed = false;
+        if (asset == files.files.end() && manifest.format_version >= 3U) {
+            const auto already_resolved = resolved_missing_asset_paths.find(
+                expected_asset_path);
+            if (already_resolved != resolved_missing_asset_paths.end()) {
+                asset_path = already_resolved->second;
+                asset = files.files.find(asset_path);
+                renamed = asset != files.files.end();
+            } else {
+                const std::string directory = legacy_attachment_asset_path(
+                                                  attachment.sha256)
+                                              + "/";
+                auto renamed_entry = files.files.end();
+                for (auto entry = files.files.lower_bound(directory);
+                     entry != files.files.end()
+                     && entry->first.compare(0U, directory.size(), directory) == 0;
+                     ++entry) {
+                    if (manifest_asset_paths.find(entry->first)
+                        != manifest_asset_paths.end()) {
+                        continue;
+                    }
+                    if (renamed_entry != files.files.end()) {
+                        renamed_entry = files.files.end();
+                        break; // More than one unclaimed filename is ambiguous.
+                    }
+                    renamed_entry = entry;
+                }
+                if (renamed_entry != files.files.end()) {
+                    asset_path = renamed_entry->first;
+                    asset = renamed_entry;
+                    renamed = true;
+                    resolved_missing_asset_paths.emplace(expected_asset_path,
+                                                         asset_path);
+                }
+            }
+        }
+        if (asset == files.files.end()) {
+            return fail(error, "Version references missing embedded asset '"
+                                   + expected_asset_path + "'.");
+        }
+        if (renamed) {
+            const std::size_t basename_at = asset_path.find_last_of('/');
+            const std::string renamed_basename = asset_path.substr(basename_at + 1U);
+            if (!valid_attachment_basename(renamed_basename)) {
+                return fail(error, "Directly renamed asset has an invalid filename.");
+            }
+            attachment.basename = renamed_basename;
+        }
+        std::string actual;
+        const auto verified = verified_assets.find(asset_path);
+        if (verified == verified_assets.end()) {
+            if (!detail::sha256_hex(asset->second, actual, error)) return false;
+            verified_assets.emplace(asset_path, actual);
+        } else {
+            actual = verified->second;
+        }
+        const bool changed = renamed
+                             || asset->second.size() != attachment.size_bytes
+                             || actual != attachment.sha256;
+        if (changed && manifest.format_version < 3U) {
+            return fail(error,
+                        "Legacy content-addressed asset content does not match version metadata.");
+        }
+        attachment.local_path.clear();
+        attachment.bundle_path = asset_path;
+        attachment.externally_modified = changed;
+        if (changed) {
+            // Version-3 asset paths deliberately keep their readable filename
+            // independent of integrity metadata. A user may therefore replace
+            // the file directly; load the new bytes dirty and let Save promote
+            // them exactly as an in-application replacement would.
+            attachment.sha256 = std::move(actual);
+            attachment.size_bytes = static_cast<std::uint64_t>(asset->second.size());
+            external = true;
+        }
+    }
+    if (manifest.format_version >= 3U) {
+        const auto attachment_for = [&manifest](std::string_view reference_id)
+            -> const ProjectAttachment* {
+            const auto found = std::find_if(
+                manifest.attachments.begin(), manifest.attachments.end(),
+                [reference_id](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == reference_id;
+                });
+            return found == manifest.attachments.end() ? nullptr : &*found;
+        };
+        if (ProjectAttachment const* music_source =
+                attachment_for(kMusicSourceAttachmentId)) {
+            candidate.canvas.clock.music.source_sha256 = music_source->sha256;
+            candidate.canvas.clock.music.source_basename = music_source->basename;
+        }
+        for (LayerConfig& layer : candidate.layers) {
+            SurfaceConfig& surface = layer.render.surface;
+            if (const ProjectAttachment* obj = attachment_for(
+                    surface_obj_attachment_id(layer.uuid))) {
+                surface.obj_sha256 = obj->sha256;
+                surface.obj_basename = obj->basename;
             }
         }
     }
@@ -1518,14 +1629,35 @@ bool materialize_snapshot_attachments(
     std::shared_ptr<ProjectAttachmentCache>& cache,
     std::string* error) {
     for (ProjectAttachment& attachment : attachments) {
-        const auto bytes = files.files.find(
-            attachment_asset_path(attachment.sha256));
+        const auto bytes = files.files.find(attachment.bundle_path);
         if (bytes == files.files.end()
             || !materialize_attachment_bytes(cache, attachment.sha256,
                                              attachment.basename, bytes->second,
                                              attachment.local_path, error)) {
             return false;
         }
+    }
+    const auto music_source = std::find_if(
+        attachments.begin(), attachments.end(),
+        [](const ProjectAttachment& attachment) {
+            return attachment.reference_id == kMusicSourceAttachmentId;
+        });
+    if (music_source != attachments.end()
+        && music_source->externally_modified) {
+        MusicAnalysis replacement;
+        std::string analysis_error;
+        if (!audio::analyze_music_file(music_source->local_path, replacement,
+                                       {}, nullptr, &analysis_error)) {
+            return fail(error,
+                        "The directly edited music asset could not be accepted as a GUI replacement: "
+                            + analysis_error);
+        }
+        if (replacement.source_sha256 != music_source->sha256) {
+            return fail(error,
+                        "The directly edited music asset changed during reanalysis.");
+        }
+        replacement.source_basename = music_source->basename;
+        project.canvas.clock.music = std::move(replacement);
     }
     for (LayerConfig& layer : project.layers) {
         if (layer.render.surface.obj_sha256.empty()) continue;
@@ -1580,19 +1712,31 @@ bool validate_root_paths(const detail::BundleFileSet& files,
         if (entry.first == "metadata.txt" || entry.first == "metadata.sha256"
             || entry.first == "current") continue;
         if (entry.first.rfind("assets/", 0U) == 0U) {
-            const std::string digest = entry.first.substr(7U);
-            if (entry.first.size() != 7U + 64U || !canonical_hash(digest)) {
+            const std::string_view relative(entry.first.data() + 7U,
+                                            entry.first.size() - 7U);
+            const std::size_t slash = relative.find('/');
+            const std::string digest(relative.substr(0U, slash));
+            const bool legacy_path = slash == std::string_view::npos;
+            const std::string basename = legacy_path
+                                             ? std::string{}
+                                             : std::string(relative.substr(slash + 1U));
+            if (!canonical_hash(digest)
+                || (!legacy_path
+                    && (basename.find('/') != std::string::npos
+                        || !valid_attachment_basename(basename)))) {
                 return fail(error, "Bundle contains an invalid asset path '"
                                        + entry.first + "'.");
             }
             if (entry.second.size() > kMaximumProjectAttachmentBytes) {
                 return fail(error, "Bundle asset exceeds the 512 MiB limit.");
             }
-            std::string actual;
-            if (!detail::sha256_hex(entry.second, actual, error)) return false;
-            if (actual != digest) {
-                return fail(error,
-                            "Bundle asset content does not match its SHA-256 path.");
+            if (legacy_path) {
+                std::string actual;
+                if (!detail::sha256_hex(entry.second, actual, error)) return false;
+                if (actual != digest) {
+                    return fail(error,
+                                "Legacy bundle asset content does not match its SHA-256 path.");
+                }
             }
             continue;
         }
@@ -2328,6 +2472,11 @@ bool load_project_document(const std::string& path,
                 last_failure = std::move(load_error);
                 continue;
             }
+            if (!project_content_digest(project, snapshot_attachments,
+                                        semantic_digest, &load_error)) {
+                last_failure = std::move(load_error);
+                continue;
+            }
             document.project = std::move(project);
             document.attachments = std::move(snapshot_attachments);
             document.source_path = path;
@@ -2666,8 +2815,9 @@ bool stage_attachment_assets(const ProjectDocument& document,
                              std::string* error) {
     std::set<std::string> staged;
     for (const ProjectAttachment& attachment : document.attachments) {
-        if (!staged.insert(attachment.sha256).second) continue;
-        const std::string asset_path = attachment_asset_path(attachment.sha256);
+        const std::string asset_path = attachment_asset_path(
+            attachment.sha256, attachment.basename);
+        if (!staged.insert(asset_path).second) continue;
         const auto existing = files.files.find(asset_path);
         if (existing != files.files.end()) {
             std::string actual;

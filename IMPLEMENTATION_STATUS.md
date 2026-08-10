@@ -58,13 +58,14 @@ unexpected records, checksums, UUIDs, enums, and values are bounded and checked.
 New directory snapshots and ZIP replacements use sibling staging/atomic rename;
 stale or divergent destinations are refused.
 
-All registered files now use a generic content-addressed attachment store.
-Music, custom OBJ meshes, images, and future attachment types are copied into a
-managed cache at import and written once as root `assets/<sha256>` payloads.
-Version manifests carry only logical reference/digest/basename/size records.
-Identical bytes are never duplicated across references or versions; changed
-bytes create one new payload, and history keeps old referenced bytes available.
-Loads verify every payload before materializing a managed local copy.
+All registered files now use a generic readable attachment store. Music, custom
+OBJ meshes, images, and future attachment types are copied into a managed cache
+at import and saved as `assets/<sha256>/<original-filename.ext>`. The digest
+directory prevents collisions while the actual asset retains the exact user
+filename and extension. Valid direct replacements or unambiguous renames are
+loaded dirty and promoted with fresh identity metadata on Save; directly
+replaced music is reanalyzed before acceptance. Legacy version-2 bare-digest
+assets remain readable.
 
 The Qt GUI separates Synchronization, Layer Render, and global Output, adds a
 topmost-first Layers dock, project name/title, blend/opacity/enable/rename/
@@ -81,8 +82,8 @@ custom/built-in per-layer palettes, and directional mirror plus
 horizontal/vertical layer transforms. Block Scale remains a whole-image effect
 without a center/radius overlay. Version 5 adds a project-wide Default/Frame/
 Time/Meter/Music clock, parameter-state Hold/Linear/Smoothstep interpolation,
-time-varying music analysis, beat navigation, layer audio-response routing, and
-an H.264/AAC MP4 target. Formats 1-4 load with neutral compatibility defaults.
+time-varying music analysis, beat navigation, and layer audio-response routing.
+Formats 1-4 load with neutral compatibility defaults.
 The CLI exposes the same clock/music/swing/audio-response state plus immediate
 portable music and OBJ attachment import.
 
@@ -96,11 +97,8 @@ always evaluates procedural parameters; rendered RGBA frames are never
 crossfaded.
 
 Music-mode frame count is derived from decoded sample frames/sample rate and
-FPS while preserving the stored manual count for later modes. GUI MP4 export
-uses every `ceil(duration * FPS)` rendered frame and gives the last frame any
-fractional remainder, so muxed duration remains sample-derived. It verifies the
-embedded source digest, composites alpha onto black, pads odd dimensions safely,
-runtime-probes H.264/AAC, and installs the destination atomically.
+FPS while preserving the stored manual count for later modes. Export remains
+the supported PNG/EXR image-sequence workflow.
 
 Sequence export now uses independent-frame CPU workers for rendering and
 encoding. Automatic selection is bounded by hardware concurrency, frame count,
@@ -164,8 +162,8 @@ consumers do not inherit minizip requirements.
 | 34 | Closed reusable motion paths | Deferred - designed | Store named closed cubic paths separately from per-wave/effect/object bindings; use at least three nodes, handle modes, bounded arc-length LUT sampling, independent sync/phase/direction, and a dedicated editor. |
 | 35 | Synchronization tab and clock controls | Complete | Global Default/Frame/Time/Meter/Music clock, Hold/Linear/Smoothstep parameter interpolation, fit/exact spacing, direction/phase/beat offset, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. Music no longer adds a redundant swing-suppression control or popup. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and 8,192-sample multiband/onset/spectral/chroma analysis drive the base clock and independently routable wave/effect/color response. First import enables active-layer response, Energy supplies a visibly dynamic default hue route, and later user overrides remain intact. No fixed whole-song BPM clock is used. |
-| 37 | Exact music-video export | Complete in Qt GUI | Effective frame count follows sample duration and FPS; FFmpeg H.264/AAC mux uses a fractional final-frame duration when needed, verified embedded audio, black alpha composition/padding, runtime encoder probes, atomic install, progress, and cancellation. |
-| 38 | Portable embedded attachments | Complete | Music, OBJ, image, and generic registered files use one root payload per distinct SHA-256 with per-version logical references, immediate managed copies, integrity verification, independent-copy support, and hostile/oversize rejection. |
+| 37 | Music-video export | Removed | The broken MP4-with-embedded-music option, FFmpeg helper, and its test target were removed; image-sequence export remains supported. |
+| 38 | Portable embedded attachments | Complete | Music, OBJ, image, and generic files retain exact filenames/extensions beneath collision-safe digest directories, accept valid direct replacements as first-class edits, keep managed copies, and retain hostile/oversize rejection plus v2 compatibility. |
 
 ## Important implementation map
 
@@ -184,7 +182,7 @@ consumers do not inherit minizip requirements.
 - `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v5 codec and split
   per-layer/global bundle records with transactional legacy file I/O.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
-  metadata, semantic history operations, content-addressed attachment storage,
+  metadata, semantic history operations, readable/direct-editable attachment storage,
   independent current-state copies, bounded ZIP/directory loading, and atomic
   save staging. This helper is intentionally not installed ABI.
 - `src/audio_analysis.cpp`: private full-source decoding, adaptive beat/local-
@@ -195,15 +193,13 @@ consumers do not inherit minizip requirements.
   clock, music, attachment, audio-response, and worker controls.
 - `gui/main_window.cpp`: Qt 6 project/layer/version client, Synchronization UI,
   asynchronous analysis, undo/redo, saved-rename workflow, spatial centers,
-  palettes/transforms, and cancellable sequence/video export.
-- `gui/music_video_export.cpp`: verified exact-duration FFmpeg H.264/AAC helper.
+  palettes/transforms, adaptive unclipped layouts, and cancellable sequence export.
 - `tests/test_main.cpp`, `tests/project_composite_test.cpp`, and
   `tests/bundle_test.cpp`: core/seam/format/setup/I/O, layer/blend/project, and
   persistence/archive-safety coverage, including worker determinism, setup-v5
   compatibility, clock/music response, staged/local effects, embedded assets,
-  palettes/transforms, and rename copies. `tests/audio_analysis_test.cpp` and
-  `tests/music_video_export_test.cpp` cover analysis accuracy/density and MP4
-  duration/frame/alpha behavior.
+  palettes/transforms, readable/direct-edited assets, and rename copies.
+  `tests/audio_analysis_test.cpp` covers analysis accuracy and density.
 
 ## Guardrails retained
 
@@ -272,20 +268,27 @@ consumers do not inherit minizip requirements.
   malformed, or externally removed history.
 - Bundle commits hold a hidden sibling advisory lock and compare the complete
   expected on-disk state while locked; lock sidecars contain no project data.
-- Each distinct attachment byte sequence is one root `assets/<sha256>` payload.
-  Logical and historical references do not duplicate it; changed bytes create a
-  new digest while referenced old bytes remain available for immutable history.
+- New attachments live at `assets/<sha256>/<original-filename.ext>`. The final
+  component is always the imported filename, while the parent identity prevents
+  collisions. Valid direct replacements are treated as external edits and Save
+  gives them a fresh identity; legacy bare-digest assets remain readable.
 - Music rendering trusts only cached analysis tied to a valid embedded source
   digest. Relink verifies identity; reanalysis is the explicit content-change
   path. The clock uses event times, never one global BPM estimate.
-- Exact-duration MP4 uses a fractional final-frame duration when song duration
-  is not an integer number of FPS ticks; it does not falsify sample duration or
-  discard the final rendered frame.
 - GUI undo snapshots have a separate 128 MiB hard budget. Oversized or trimmed
   history never clears the document's dirty state, and no-op normalized edits
   do not create commands.
 
 ## Validation record
+
+The 2026-08-10 release-blocker correction passed the clean Qt-enabled Release
+suite 15/15 with standard IEEE-safe optimization flags and the workspace's
+active-SDK linker path. Focused bundle coverage also passed direct image and
+music replacement, automatic music reanalysis, exact filename/extension
+storage, directory/ZIP round trips, version-2 asset migration, invalid
+replacement rejection, and post-promotion validation. Offscreen GUI smoke plus
+captured Effects/Output pages verified full action/tab/form text and the absence
+of the removed MP4 target. `git diff --check` passed.
 
 The 2026-08-09 starting-palette correction passed the Qt-enabled Release suite
 14/14, a fresh C++20 non-GUI suite 13/13, and the AddressSanitizer plus
@@ -301,10 +304,10 @@ transactional open-copy replacement. The representative parallel-export
 measurement and its byte-equality result are recorded above; they characterize
 that workload rather than promising the same scaling for every project.
 
-The final version 5 integrated Release build passed all 16/16 Qt-enabled CTests
+The earlier version 5 integrated Release build passed all 16/16 Qt-enabled CTests
 on 2026-08-09. Coverage includes core rendering, project compositing, bundle
-persistence, adaptive audio analysis, CLI flows, OBJ handling, exact-duration
-music-video export, and GUI smoke paths. The difficult 90 BPM fixture with
+persistence, adaptive audio analysis, CLI flows, OBJ handling, the then-present
+music-video exporter, and GUI smoke paths. The difficult 90 BPM fixture with
 accented eighth-note subdivisions and a missing beat remained on its changing
 local grid to floating-point precision; a fractional-duration regression also
 guards against padded tracker events beyond the final decoded sample. Manual
@@ -381,7 +384,7 @@ target.
    cancellation, and test CPU/Metal seam, alpha, surface, effect, palette, and
    transform parity. Do not scatter one-off Metal paths through individual
    effects or run CPU and GPU schedulers independently.
-2. **Layer starting image:** reuse the implemented bounded content-addressed
+2. **Layer starting image:** reuse the implemented bounded readable attachment
    attachment store; do not add another asset container or naked local path.
    Add only the layer source-mode schema, transactional image decoder/cache,
    renderer integration, and GUI. Reference a stable attachment ID/digest and
