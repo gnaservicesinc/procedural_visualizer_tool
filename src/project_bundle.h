@@ -4,12 +4,33 @@
 #include "procedural_visualizer_tool.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace pvt {
 
 constexpr std::uint32_t kProjectBundleFormatVersion = 1;
+constexpr std::size_t kMaximumProjectAttachmentBytes =
+    kMaximumEmbeddedAssetBytes;
+constexpr std::size_t kMaximumProjectBundleExpandedBytes =
+    std::size_t{1024} * 1024U * 1024U;
+constexpr std::size_t kMaximumProjectAttachmentReferences = 4096U;
+inline constexpr const char* kMusicSourceAttachmentId = "music.source";
+
+struct ProjectAttachmentCache;
+
+// One logical use of an embedded file. Multiple references (and multiple
+// immutable versions) may share sha256; the bundle stores that byte sequence
+// exactly once as assets/<sha256>. local_path is a managed runtime extraction
+// and is never serialized or included in semantic project digests.
+struct ProjectAttachment {
+    std::string reference_id;
+    std::string sha256;
+    std::string basename;
+    std::uint64_t size_bytes = 0U;
+    std::string local_path;
+};
 
 struct BundleVersionInfo {
     std::uint64_t number = 0;
@@ -61,6 +82,8 @@ struct ProjectDocument {
     std::string loaded_bundle_state_digest;
     std::uint64_t current_version = 0;
     std::vector<BundleVersionInfo> versions;
+    std::vector<ProjectAttachment> attachments;
+    mutable std::shared_ptr<ProjectAttachmentCache> attachment_cache;
     bool source_is_zip = false;
     bool legacy_import = false;
     bool dirty = true;
@@ -78,6 +101,31 @@ ProjectDocument default_project_document();
 bool make_independent_project_copy(const ProjectConfig& project,
                                    ProjectDocument& destination,
                                    std::string* error = nullptr);
+
+// Copies a document's current snapshot and embedded attachments while still
+// assigning independent project/layer identities and discarding history.
+bool make_independent_project_copy(const ProjectDocument& source,
+                                   ProjectDocument& destination,
+                                   std::string* error = nullptr);
+
+// Registers a file immediately by content, copying it into a managed cache so
+// moving/deleting the original before Save cannot break the project. Reusing
+// identical bytes changes only the logical reference and never duplicates the
+// root asset. Empty/special/symlink sources are rejected transactionally.
+bool attach_project_file(ProjectDocument& document,
+                         const std::string& reference_id,
+                         const std::string& source_path,
+                         ProjectAttachment* attached = nullptr,
+                         std::string* error = nullptr);
+bool detach_project_file(ProjectDocument& document,
+                         const std::string& reference_id,
+                         std::string* error = nullptr);
+const ProjectAttachment* find_project_attachment(
+    const ProjectDocument& document,
+    const std::string& reference_id);
+std::string project_attachment_path(const ProjectDocument& document,
+                                    const std::string& reference_id);
+std::string surface_obj_attachment_id(const std::string& layer_uuid);
 
 // Legacy imports never associate the returned document with the .pvt path, so
 // a later project save cannot overwrite the imported setup.

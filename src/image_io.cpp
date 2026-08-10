@@ -1320,6 +1320,15 @@ bool render_sequence_impl(const RenderConfig& config,
     if (cancelled(cancel)) {
         return fail(error, "Rendering was cancelled.");
     }
+    std::string frame_count_error;
+    const int total_frames = effective_frame_count(config, &frame_count_error);
+    if (total_frames < 1) {
+        return fail(error, frame_count_error.empty()
+                               ? "The synchronized clock has no renderable frames."
+                               : frame_count_error);
+    }
+    RenderConfig output_config = config;
+    output_config.total_frames = total_frames;
 
     const fs::path directory = detail::path_from_utf8(config.output.output_directory);
     if (!ensure_directory(directory, error)) {
@@ -1328,12 +1337,12 @@ bool render_sequence_impl(const RenderConfig& config,
 
     // Inspect every final name before rendering. Installation repeats the
     // check atomically so another process cannot exploit the gap.
-    for (int frame_index = 0; frame_index < config.total_frames; ++frame_index) {
+    for (int frame_index = 0; frame_index < total_frames; ++frame_index) {
         if (cancelled(cancel)) {
             return fail(error, "Rendering was cancelled during output preflight.");
         }
         fs::path path;
-        if (!build_frame_path(config, frame_index, &path, error)) {
+        if (!build_frame_path(output_config, frame_index, &path, error)) {
             return false;
         }
         bool exists = false;
@@ -1358,7 +1367,7 @@ bool render_sequence_impl(const RenderConfig& config,
     }
 
     return render_prepared_sequence(
-        config.total_frames, config, validation.estimated_peak_bytes,
+        total_frames, output_config, validation.estimated_peak_bytes,
         options, progress, cancel, "Rendering", "frame",
         [&config](int frame_index, Image& image,
                   const std::atomic_bool* worker_cancel,
@@ -1391,6 +1400,15 @@ bool render_project_sequence_impl(const ProjectConfig& project,
         project.canvas, project.output,
         static_cast<const RenderData&>(defaults));
     output_config.alpha.enabled = false;
+    std::string frame_count_error;
+    const int total_frames = effective_frame_count(project.canvas,
+                                                   &frame_count_error);
+    if (total_frames < 1) {
+        return fail(error, frame_count_error.empty()
+                               ? "The project clock has no renderable frames."
+                               : frame_count_error);
+    }
+    output_config.total_frames = total_frames;
 
     const fs::path directory =
         detail::path_from_utf8(project.output.output_directory);
@@ -1400,7 +1418,7 @@ bool render_project_sequence_impl(const ProjectConfig& project,
 
     // Preflight every destination before rendering so a late collision cannot
     // leave an unintentionally partial sequence.
-    for (int frame_index = 0; frame_index < project.canvas.total_frames;
+    for (int frame_index = 0; frame_index < total_frames;
          ++frame_index) {
         if (cancelled(cancel)) {
             return fail(error,
@@ -1433,7 +1451,7 @@ bool render_project_sequence_impl(const ProjectConfig& project,
     }
 
     return render_prepared_sequence(
-        project.canvas.total_frames, output_config,
+        total_frames, output_config,
         validation.estimated_peak_bytes, options, progress, cancel,
         "Project rendering", "project frame",
         [&project](int frame_index, Image& image,

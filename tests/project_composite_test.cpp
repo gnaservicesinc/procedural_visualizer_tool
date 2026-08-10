@@ -75,6 +75,26 @@ void make_small(pvt::ProjectConfig& project) {
     project.canvas.fps = 24.0;
 }
 
+pvt::ClockConfig ready_music_clock(double duration_seconds) {
+    pvt::ClockConfig clock;
+    clock.mode = pvt::ClockMode::Music;
+    clock.music.analyzer_version = "project-test-1";
+    clock.music.source_sha256 = std::string(64U, 'b');
+    clock.music.source_basename = "project-track.wav";
+    clock.music.source_format = "wav-f32";
+    clock.music.source_sample_rate = 1000U;
+    clock.music.source_frame_count = static_cast<std::uint64_t>(
+        std::llround(duration_seconds * 1000.0));
+    clock.music.source_channel_count = 2U;
+    clock.music.duration_seconds =
+        static_cast<double>(clock.music.source_frame_count) / 1000.0;
+    clock.music.detected_bpm = 120.0;
+    clock.music.tempo_confidence = 0.9;
+    clock.music.beat_times_seconds = {0.0,
+        0.5 * clock.music.duration_seconds};
+    return clock;
+}
+
 void test_uuid_factories_and_adapters() {
     const std::string first_uuid = pvt::generate_uuid();
     const std::string second_uuid = pvt::generate_uuid();
@@ -105,6 +125,7 @@ void test_uuid_factories_and_adapters() {
     CHECK(materialized.width == first.canvas.width);
     CHECK(materialized.height == first.canvas.height);
     CHECK(materialized.waves.size() == first.layers[0U].render.waves.size());
+    CHECK(materialized.clock.mode == first.canvas.clock.mode);
     CHECK(pvt::allocate_id(first.layers[0U].render)
           == pvt::allocate_id(materialized));
 }
@@ -509,6 +530,35 @@ void test_project_sequence() {
     std::atomic_bool cancelled {true};
     CHECK(!pvt::render_project_sequence(project, {}, &cancelled, &error));
     CHECK(!fs::exists(directory / "cancelled" / "layered_0000.png"));
+
+    project.canvas.clock = ready_music_clock(0.11);
+    project.canvas.total_frames = 2;
+    project.canvas.fps = 24.0;
+    project.output.output_directory = (directory / "music").string();
+    project.output.filename_prefix = "music_";
+    progress_calls = 0;
+    cancelled.store(false, std::memory_order_relaxed);
+    CHECK(pvt::effective_frame_count(project.canvas, &error) == 3);
+    CHECK(pvt::render_project_sequence(
+        project,
+        [&progress_calls](int completed, int total) {
+            CHECK(total == 3);
+            CHECK(completed == ++progress_calls);
+            return true;
+        }, nullptr, &error));
+    CHECK(progress_calls == 3);
+    CHECK(project.canvas.total_frames == 2);
+    CHECK(fs::exists(directory / "music" / "music_0000.png"));
+    CHECK(fs::exists(directory / "music" / "music_0002.png"));
+    CHECK(!fs::exists(directory / "music" / "music_0003.png"));
+
+    const pvt::RenderConfig layer_render = pvt::apply_global_config(
+        project.canvas, project.output, project.layers.front().render);
+    pvt::Image project_frame;
+    pvt::Image layer_frame;
+    CHECK(pvt::render_project_frame(project, 2, project_frame, nullptr, &error));
+    CHECK(pvt::render_frame(layer_render, 2, layer_frame, &error));
+    CHECK(project_frame.pixels == layer_frame.pixels);
 
     std::error_code ignored;
     fs::remove_all(directory, ignored);

@@ -22,15 +22,24 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 4;
+constexpr std::uint32_t kSetupFormatVersion = 5;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
 constexpr std::size_t kMaximumLayers = 64;
 constexpr std::size_t kMaximumPaletteColors = 256;
 constexpr std::size_t kBuiltInPaletteCount = 6;
-constexpr std::size_t kMaximumSetupBytes = 4U * 1024U * 1024U;
+// Dense music analysis is stored transactionally with the setup. The 8 MiB
+// ceiling remains hostile-input bounded while leaving room for all 8192 rich
+// spectral samples in the human-diffable text format.
+constexpr std::size_t kMaximumSetupBytes = 8U * 1024U * 1024U;
 constexpr std::size_t kMaximumSequenceWorkers = 256;
+constexpr std::size_t kMaximumMusicFeatureSamples = 8192;
+constexpr std::size_t kMaximumMusicBeats = 4096;
+constexpr std::size_t kMaximumMusicTempoPoints = 256;
+constexpr std::size_t kMaximumAttachmentBasenameBytes = 255;
+constexpr std::size_t kMaximumEmbeddedAssetBytes =
+    std::size_t{512} * 1024U * 1024U;
 constexpr std::size_t kDefaultSequenceMemoryBudgetBytes =
     std::size_t{2} << 30U;
 
@@ -108,6 +117,143 @@ enum class BlendMode : std::uint8_t {
     Subtract,
     Multiply,
     Add
+};
+
+// The default clock preserves the original seamless normalized-loop behavior.
+// Frame, Time, and Meter clocks create calculated pulse/keyframe positions;
+// Music follows cached analysis without decoding audio during rendering.
+enum class ClockMode : std::uint8_t {
+    Default = 0,
+    Frame,
+    Time,
+    Meter,
+    Music
+};
+
+enum class ClockInterpolation : std::uint8_t {
+    Hold = 0,
+    Linear,
+    Smoothstep
+};
+
+enum class ClockFit : std::uint8_t {
+    Exact = 0,
+    FitSequence
+};
+
+enum class MusicTempoMode : std::uint8_t {
+    Half = 0,
+    Detected,
+    Double
+};
+
+enum class MusicFeature : std::uint8_t {
+    Energy = 0,
+    Bass,
+    Midrange,
+    Treble,
+    Onset,
+    Beat,
+    SpectralCentroid,
+    SpectralFlatness,
+    ChromaHue,
+    ChromaStrength
+};
+
+// Retained for setup/source compatibility with early format-5 drafts. The
+// layer's swings_enabled master is now authoritative in every clock mode.
+enum class MusicSwingPolicy : std::uint8_t {
+    SuppressAll = 0,
+    SuppressGlobal,
+    KeepAll
+};
+
+struct MusicFeatureSample {
+    float energy = 0.0F;
+    float bass = 0.0F;
+    float midrange = 0.0F;
+    float treble = 0.0F;
+    float onset = 0.0F;
+    float beat = 0.0F;
+    // Perceptual frequency brightness and noise-like spectral spread.
+    float spectral_centroid = 0.0F;
+    float spectral_flatness = 0.0F;
+    // ChromaHue is circular over [0, 1): C through B. ChromaStrength is the
+    // confidence/tonality of that pitch-class control, so callers can avoid
+    // reacting to an arbitrary hue during silence or noise.
+    float chroma_hue = 0.0F;
+    float chroma_strength = 0.0F;
+};
+
+struct MusicTempoPoint {
+    double time_seconds = 0.0;
+    double bpm = 0.0;
+    double confidence = 0.0;
+};
+
+// Bounded deterministic analysis stored with a project. Project bundles embed
+// the audio once in their content-addressed asset store; immutable versions
+// link it by digest and basename instead of duplicating bytes. Feature samples
+// are evenly spaced over duration_seconds.
+struct MusicAnalysis {
+    std::uint32_t schema_version = 1;
+    std::string analyzer_version;
+    std::string source_sha256;
+    std::string source_basename;
+    std::string source_format;
+    std::uint64_t source_frame_count = 0;
+    std::uint32_t source_sample_rate = 0;
+    std::uint32_t source_channel_count = 0;
+    double duration_seconds = 0.0;
+    double detected_bpm = 0.0;
+    double tempo_confidence = 0.0;
+    std::vector<double> beat_times_seconds;
+    std::vector<MusicTempoPoint> tempo_points;
+    std::vector<MusicFeatureSample> feature_samples;
+};
+
+// BPM is measured against tempo_note_denominator (4 means quarter-note BPM).
+// Expressions support 7/8, 3+2+3/8, 5/4 | 6/4, and non-dyadic denominators
+// such as 4/3 or 6/7.
+struct MeterConfig {
+    std::string expression = "4/4";
+    double bpm = 120.0;
+    int tempo_note_denominator = 4;
+};
+
+struct ClockConfig {
+    ClockMode mode = ClockMode::Default;
+    ClockInterpolation interpolation = ClockInterpolation::Linear;
+    ClockFit fit = ClockFit::Exact;
+    int frame_interval = 1;
+    std::int64_t time_interval_microseconds = 500000;
+    MeterConfig meter;
+    MusicTempoMode music_tempo = MusicTempoMode::Detected;
+    // Retained for setup compatibility. The Swing master checkbox is
+    // authoritative; new projects always mix authored swings with Music.
+    MusicSwingPolicy music_swing_policy = MusicSwingPolicy::KeepAll;
+    std::int64_t beat_offset_microseconds = 0;
+    double phase_offset_degrees = 0.0;
+    bool reverse = false;
+    MusicAnalysis music;
+};
+
+// Music response changes only evaluated values. Authored wave/effect settings
+// remain untouched; by default free-running items do not respond.
+struct AudioReactiveConfig {
+    bool enabled = false;
+    bool synchronized_only = true;
+    bool waves_enabled = true;
+    MusicFeature wave_source = MusicFeature::Beat;
+    double wave_amount = 0.35;
+    bool effects_enabled = true;
+    MusicFeature effect_source = MusicFeature::Energy;
+    double effect_amount = 0.45;
+    bool color_enabled = true;
+    // Energy is intentionally the visible default. Pitch color remains an
+    // opt-in tonality-weighted route and can be subtle for noisy/atonal audio.
+    MusicFeature color_source = MusicFeature::Energy;
+    double color_amount_degrees = 180.0;
 };
 
 struct WaveConfig {
@@ -251,9 +397,13 @@ struct SurfaceConfig {
     // 1.0. Plane uses phase/rotation but not curvature.
     double curvature = 1.0;
     double lighting = 0.35;
-    // Used when mapping is CustomObj. Relative paths are resolved against the
-    // process working directory; GUI launches anchor that directory explicitly.
+    // Used when mapping is CustomObj. obj_path is the current runtime/source
+    // path and is deliberately not part of portable project semantics when an
+    // embedded digest is present. Project bundles store the bytes once at
+    // assets/<obj_sha256> and materialize a safe local path when opened.
     std::string obj_path;
+    std::string obj_sha256;
+    std::string obj_basename;
 };
 
 struct ExportConfig {
@@ -279,6 +429,7 @@ struct CanvasLoopConfig {
     int block_size = 16;
     int total_frames = 480;
     double fps = 60.0;
+    ClockConfig clock;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live
@@ -287,6 +438,9 @@ struct RenderData {
     std::vector<WaveConfig> waves;
     std::vector<SwingConfig> swings;
     std::vector<EffectConfig> effects;
+
+    bool swings_enabled = true;
+    AudioReactiveConfig audio_reactive;
 
     double phrase_warp = 0.05;
     double ghost_mix = 0.25;
@@ -320,6 +474,7 @@ struct RenderConfig : RenderData {
     int block_size = 16;
     int total_frames = 480;
     double fps = 60.0;
+    ClockConfig clock;
 
     ExportConfig output;
 };
@@ -409,6 +564,17 @@ PVT_API RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
 
 PVT_API ValidationResult validate(const RenderConfig& config);
 PVT_API ValidationResult validate(const ProjectConfig& project);
+// Returns the stored manual count except for a render-ready Music clock, where
+// it returns ceil(audio duration * FPS). A negative result indicates an invalid
+// or unprepared clock and is accompanied by `error` when supplied.
+PVT_API int effective_frame_count(const CanvasLoopConfig& canvas,
+                                  std::string* error = nullptr);
+PVT_API int effective_frame_count(const RenderConfig& config,
+                                  std::string* error = nullptr);
+// Validates the supported meter grammar and returns a concise parsed summary.
+PVT_API bool describe_meter(const std::string& expression,
+                            std::string& description,
+                            std::string* error = nullptr);
 PVT_API bool render_frame_at_phase(const RenderConfig& config,
                                    double normalized_phase,
                                    Image& destination,
@@ -496,6 +662,12 @@ PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
 PVT_API const char* mirror_mode_name(MirrorMode value);
 PVT_API const char* blend_mode_name(BlendMode value);
+PVT_API const char* clock_mode_name(ClockMode value);
+PVT_API const char* clock_interpolation_name(ClockInterpolation value);
+PVT_API const char* clock_fit_name(ClockFit value);
+PVT_API const char* music_tempo_mode_name(MusicTempoMode value);
+PVT_API const char* music_feature_name(MusicFeature value);
+PVT_API const char* music_swing_policy_name(MusicSwingPolicy value);
 
 } // namespace pvt
 

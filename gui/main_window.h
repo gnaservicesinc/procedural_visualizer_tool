@@ -2,6 +2,7 @@
 #define PVT_MAIN_WINDOW_H
 
 #include "procedural_visualizer_tool.h"
+#include "../src/project_bundle.h"
 
 #include <QFutureWatcher>
 #include <QImage>
@@ -13,16 +14,21 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 class QCheckBox;
+class QAction;
 class QCloseEvent;
 class QComboBox;
 class QDockWidget;
 class QDoubleSpinBox;
+class QEvent;
 class QFormLayout;
+class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QProgressBar;
 class QPushButton;
 class QPlainTextEdit;
 class QSlider;
@@ -30,9 +36,8 @@ class QSpinBox;
 class QTabWidget;
 class QTimer;
 class QUndoStack;
+class QWidget;
 class PreviewWidget;
-
-namespace pvt { struct ProjectDocument; }
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -44,6 +49,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     struct PreviewResult {
@@ -57,7 +63,28 @@ private:
     struct ExportResult {
         bool ok = false;
         bool cancelled = false;
+        bool video = false;
         QString error;
+    };
+
+    enum class MusicAnalysisAction {
+        Choose,
+        Relink,
+        Reanalyze
+    };
+
+    struct MusicAnalysisResult {
+        bool ok = false;
+        bool cancelled = false;
+        bool verified_only = false;
+        QString error;
+        QString source_path;
+        pvt::MusicAnalysis analysis;
+        pvt::ProjectAttachment attached;
+        std::shared_ptr<pvt::ProjectDocument> staged_document;
+        MusicAnalysisAction action = MusicAnalysisAction::Choose;
+        std::uint64_t generation = 0;
+        std::uint64_t document_revision = 0;
     };
 
     enum class SavedProjectRenameAction {
@@ -68,7 +95,8 @@ private:
     };
 
     QWidget* createWavePage();
-    QWidget* createSwingPage();
+    QWidget* createSynchronizationPage();
+    QWidget* createSwingBlock();
     QWidget* createEffectPage();
     QWidget* createLayerSettingsPage();
     QWidget* createOutputPage();
@@ -83,6 +111,11 @@ private:
     void refreshSwingList(std::optional<std::uint64_t> selectedId = std::nullopt);
     void refreshEffectList(std::optional<std::uint64_t> selectedId = std::nullopt);
     void updateTimelineState();
+    void updateSynchronizationState();
+    void updateMusicSummary();
+    void updateExportAvailability();
+    void updateTimelineReadout();
+    void togglePlayback();
     void loadSelectedWave();
     void loadSelectedSwing();
     void loadSelectedEffect();
@@ -91,6 +124,8 @@ private:
     void applySwingEditor(const QObject* changedEditor);
     void applyEffectEditor(const QObject* changedEditor);
     void applyGlobalEditor(const QObject* changedEditor);
+    void applyClockEditor(const QObject* changedEditor);
+    void applyAudioReactiveEditor(const QObject* changedEditor);
     void ensureAlphaForTransparency();
     bool outputEditorsValid(QString* error = nullptr) const;
     void updateOutputEditorValidity();
@@ -118,6 +153,7 @@ private:
     void duplicateLayer();
     void removeLayer();
     void moveActiveLayer(int direction);
+    bool setSurfaceObjSource(const QString& sourcePath);
     void updateWindowTitle();
     void updateCompatibilityWarning();
     void noteDocumentChange();
@@ -137,18 +173,27 @@ private:
         pvt::RenderData render;
         pvt::CanvasLoopConfig canvas;
         pvt::ExportConfig output;
+        std::vector<pvt::ProjectAttachment> attachments;
+        std::shared_ptr<pvt::ProjectAttachmentCache> attachment_cache;
+    };
+    struct ProjectDocumentState {
+        pvt::ProjectConfig project;
+        std::vector<pvt::ProjectAttachment> attachments;
+        std::shared_ptr<pvt::ProjectAttachmentCache> attachment_cache;
     };
     ActiveDocumentState captureActiveState() const;
+    ProjectDocumentState captureProjectState() const;
     void restoreActiveState(const std::string& layerUuid,
                             const ActiveDocumentState& state);
     void recordActiveStateChange(const QString& text,
                                  ActiveDocumentState before,
                                  const QString& mergeKey = {});
-    void restoreProjectState(const pvt::ProjectConfig& state,
+    void restoreProjectState(const ProjectDocumentState& state,
                              const std::string& activeLayerUuid);
     void recordProjectStateChange(const QString& text,
-                                  pvt::ProjectConfig before,
+                                  ProjectDocumentState before,
                                   const std::string& beforeActiveLayerUuid);
+    void updateMusicTransactionGuards();
     void recordUndo(const QString& text,
                     std::function<void()> undo,
                     std::function<void()> redo,
@@ -177,6 +222,18 @@ private:
     QString usableDialogDirectory(const QString& preferred = {}) const;
     void rememberDialogLocation(const QString& selectedPath);
     bool startExport();
+    bool startMusicAnalysis(const QString& sourcePath,
+                            MusicAnalysisAction action);
+    void finishMusicAnalysis(const MusicAnalysisResult& result);
+    void cancelMusicAnalysis(const QString& message = {});
+    void chooseMusicSource();
+    void relinkMusicSource();
+    void reanalyzeMusicSource();
+    void clearMusicSource();
+    QString currentMusicSourcePath() const;
+    int effectiveFrameCount(QString* error = nullptr) const;
+    bool musicRenderReady() const;
+    void navigateToBeat(int direction);
     void finishProjectNameEdit();
     void applyProjectNameChange(const std::string& before,
                                 const std::string& after);
@@ -224,7 +281,10 @@ private:
     std::optional<ItemDragState> effect_drag_state_;
     std::size_t undo_history_estimated_bytes_ = 0U;
     std::shared_ptr<std::atomic_bool> preview_cancel_;
+    std::shared_ptr<std::atomic_bool> music_analysis_cancel_;
     std::atomic_bool cancel_export_{false};
+    std::uint64_t music_analysis_generation_ = 0;
+    bool music_analysis_active_ = false;
     QString startup_working_directory_;
     QString last_dialog_directory_;
     QString current_project_path_;
@@ -233,15 +293,33 @@ private:
 
     PreviewWidget* preview_ = nullptr;
     QTabWidget* tabs_ = nullptr;
+    QWidget* wave_page_ = nullptr;
+    QWidget* synchronization_page_ = nullptr;
+    QWidget* effect_page_ = nullptr;
     QLabel* status_ = nullptr;
+    QProgressBar* export_progress_ = nullptr;
     QLabel* frame_label_ = nullptr;
     QSlider* timeline_ = nullptr;
     QPushButton* play_button_ = nullptr;
+    QPushButton* previous_beat_ = nullptr;
+    QPushButton* next_beat_ = nullptr;
     QTimer* preview_timer_ = nullptr;
     QTimer* playback_timer_ = nullptr;
     QFutureWatcher<PreviewResult>* preview_watcher_ = nullptr;
     QFutureWatcher<ExportResult>* export_watcher_ = nullptr;
+    QFutureWatcher<MusicAnalysisResult>* music_analysis_watcher_ = nullptr;
     QUndoStack* undo_stack_ = nullptr;
+    QAction* export_action_ = nullptr;
+    QAction* cancel_export_action_ = nullptr;
+    QAction* new_action_ = nullptr;
+    QAction* open_action_ = nullptr;
+    QAction* open_folder_action_ = nullptr;
+    QAction* save_action_ = nullptr;
+    QAction* save_as_action_ = nullptr;
+    QAction* randomize_values_action_ = nullptr;
+    QAction* randomize_mix_action_ = nullptr;
+    QAction* undo_action_ = nullptr;
+    QAction* redo_action_ = nullptr;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;
@@ -273,6 +351,32 @@ private:
     QDoubleSpinBox* wave_phase_ = nullptr;
     QDoubleSpinBox* wave_direction_ = nullptr;
 
+    QGroupBox* clock_group_ = nullptr;
+    QFormLayout* clock_form_ = nullptr;
+    QComboBox* clock_mode_ = nullptr;
+    QComboBox* clock_interpolation_ = nullptr;
+    QComboBox* clock_fit_ = nullptr;
+    QSpinBox* clock_frame_interval_ = nullptr;
+    QDoubleSpinBox* clock_time_interval_ms_ = nullptr;
+    QLineEdit* meter_expression_ = nullptr;
+    QLabel* meter_summary_ = nullptr;
+    QDoubleSpinBox* meter_bpm_ = nullptr;
+    QSpinBox* meter_tempo_note_ = nullptr;
+    QCheckBox* clock_reverse_ = nullptr;
+    QDoubleSpinBox* clock_phase_offset_ = nullptr;
+    QComboBox* music_tempo_mode_ = nullptr;
+    QDoubleSpinBox* music_beat_offset_ms_ = nullptr;
+    QLineEdit* music_source_ = nullptr;
+    QLabel* music_summary_ = nullptr;
+    QLabel* music_error_ = nullptr;
+    QProgressBar* music_progress_ = nullptr;
+    QPushButton* music_choose_ = nullptr;
+    QPushButton* music_relink_ = nullptr;
+    QPushButton* music_reanalyze_ = nullptr;
+    QPushButton* music_clear_ = nullptr;
+    QPushButton* music_cancel_ = nullptr;
+
+    QGroupBox* swings_group_ = nullptr;
     QListWidget* swing_list_ = nullptr;
     QLineEdit* swing_name_ = nullptr;
     QCheckBox* swing_enabled_ = nullptr;
@@ -284,6 +388,18 @@ private:
     QDoubleSpinBox* swing_center_x_ = nullptr;
     QDoubleSpinBox* swing_center_y_ = nullptr;
     QDoubleSpinBox* swing_radius_ = nullptr;
+
+    QGroupBox* audio_response_group_ = nullptr;
+    QCheckBox* audio_sync_only_ = nullptr;
+    QCheckBox* audio_waves_enabled_ = nullptr;
+    QComboBox* audio_wave_source_ = nullptr;
+    QDoubleSpinBox* audio_wave_amount_ = nullptr;
+    QCheckBox* audio_effects_enabled_ = nullptr;
+    QComboBox* audio_effect_source_ = nullptr;
+    QDoubleSpinBox* audio_effect_amount_ = nullptr;
+    QCheckBox* audio_color_enabled_ = nullptr;
+    QComboBox* audio_color_source_ = nullptr;
+    QDoubleSpinBox* audio_color_amount_ = nullptr;
 
     QListWidget* effect_list_ = nullptr;
     QComboBox* add_effect_type_ = nullptr;
@@ -312,6 +428,7 @@ private:
     QSpinBox* height_ = nullptr;
     QSpinBox* block_size_ = nullptr;
     QSpinBox* frames_ = nullptr;
+    QLabel* effective_frames_ = nullptr;
     QDoubleSpinBox* fps_ = nullptr;
     QDoubleSpinBox* phrase_warp_ = nullptr;
     QDoubleSpinBox* ghost_mix_ = nullptr;
@@ -335,6 +452,7 @@ private:
     QDoubleSpinBox* surface_phase_ = nullptr;
     QDoubleSpinBox* surface_curvature_ = nullptr;
     QDoubleSpinBox* surface_lighting_ = nullptr;
+    QPushButton* surface_obj_browse_ = nullptr;
     QCheckBox* transform_flip_horizontal_ = nullptr;
     QCheckBox* transform_flip_vertical_ = nullptr;
     QComboBox* transform_mirror_ = nullptr;
@@ -362,6 +480,8 @@ private:
     QSpinBox* first_frame_ = nullptr;
     QSpinBox* filename_digits_ = nullptr;
     QCheckBox* overwrite_ = nullptr;
+    QComboBox* export_target_ = nullptr;
+    QLabel* video_output_ = nullptr;
 };
 
 #endif

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(ProceduralVisualizerTool VERSION 4.0.1 LANGUAGES CXX)
+project(ProceduralVisualizerTool VERSION 5.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -60,6 +60,77 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 pvt_enable_warnings(ProceduralVisualizerTool)
+
+# Music decoding and analysis are application/test features rather than part of
+# the installed rendering ABI. The core-only installed consumer therefore does
+# not inherit a decoder or a C-language requirement.
+set(PVT_NEEDS_AUDIO_SUPPORT OFF)
+if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI OR BUILD_TESTING)
+    set(PVT_NEEDS_AUDIO_SUPPORT ON)
+endif()
+
+if(PVT_NEEDS_AUDIO_SUPPORT)
+    enable_language(C)
+    add_library(pvt_miniaudio STATIC
+        third_party/miniaudio/miniaudio.c
+        third_party/miniaudio/miniaudio.h)
+    target_compile_features(pvt_miniaudio PRIVATE c_std_11)
+    target_compile_definitions(pvt_miniaudio PRIVATE
+        MA_NO_DEVICE_IO
+        MA_NO_ENCODING
+        MA_NO_ENGINE
+        MA_NO_GENERATION
+        MA_NO_NODE_GRAPH
+        MA_NO_RESOURCE_MANAGER)
+    target_include_directories(pvt_miniaudio SYSTEM PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio>)
+    set_target_properties(pvt_miniaudio PROPERTIES
+        C_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON)
+    if(MSVC)
+        target_compile_options(pvt_miniaudio PRIVATE /W0)
+    else()
+        target_compile_options(pvt_miniaudio PRIVATE -w)
+    endif()
+
+    # Beat-and-Tempo-Tracking is a causal, time-varying tracker. It supplies
+    # independent local beat/tempo observations to the offline analyzer; no
+    # whole-song fixed-BPM estimate is used to build the music clock.
+    add_library(pvt_btt STATIC
+        third_party/btt/src/BTT.c
+        third_party/btt/src/DFT.c
+        third_party/btt/src/Filter.c
+        third_party/btt/src/STFT.c
+        third_party/btt/src/Statistics.c
+        third_party/btt/src/fastsin.c)
+    target_compile_features(pvt_btt PRIVATE c_std_11)
+    target_include_directories(pvt_btt SYSTEM PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/btt>)
+    set_target_properties(pvt_btt PROPERTIES
+        C_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON)
+    if(MSVC)
+        target_compile_definitions(pvt_btt PRIVATE _USE_MATH_DEFINES)
+        target_compile_options(pvt_btt PRIVATE /W0)
+    else()
+        target_compile_options(pvt_btt PRIVATE -w)
+    endif()
+
+    add_library(ProceduralVisualizerAudio STATIC
+        src/audio_analysis.cpp
+        src/audio_analysis.h)
+    add_library(ProceduralVisualizerTool::Audio ALIAS ProceduralVisualizerAudio)
+    target_compile_features(ProceduralVisualizerAudio PUBLIC cxx_std_17)
+    target_include_directories(ProceduralVisualizerAudio PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+    target_link_libraries(ProceduralVisualizerAudio
+        PUBLIC ProceduralVisualizerTool::ProceduralVisualizerTool
+        PRIVATE pvt_miniaudio pvt_btt)
+    set_target_properties(ProceduralVisualizerAudio PROPERTIES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON)
+    pvt_enable_warnings(ProceduralVisualizerAudio)
+endif()
 
 # Project bundles are an application/test feature rather than part of the
 # installed rendering library ABI. Keeping this helper non-installed prevents
@@ -155,7 +226,9 @@ if(PVT_BUILD_CLI)
         set_target_properties(render9 PROPERTIES
             INSTALL_RPATH "\$ORIGIN/${pvt_cli_install_library_path}")
     endif()
-    target_link_libraries(render9 PRIVATE ProceduralVisualizerTool::Bundle)
+    target_link_libraries(render9 PRIVATE
+        ProceduralVisualizerTool::Bundle
+        ProceduralVisualizerTool::Audio)
     target_compile_definitions(render9 PRIVATE
         PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
     pvt_enable_warnings(render9)
@@ -173,6 +246,21 @@ endif()
 if(PVT_BUILD_QT_GUI)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent)
     qt_standard_project_setup()
+
+    add_library(pvt_music_video_export STATIC
+        gui/music_video_export.cpp
+        gui/music_video_export.h)
+    target_compile_features(pvt_music_video_export PUBLIC cxx_std_17)
+    set_target_properties(pvt_music_video_export PROPERTIES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(pvt_music_video_export PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/gui>)
+    target_link_libraries(pvt_music_video_export
+        PUBLIC Qt6::Core
+        PRIVATE ProceduralVisualizerTool::Audio)
+    pvt_enable_warnings(pvt_music_video_export)
+
     qt_add_executable(ProceduralVisualizerToolGui MACOSX_BUNDLE
         gui/main.cpp
         gui/main_window.cpp
@@ -194,6 +282,8 @@ if(PVT_BUILD_QT_GUI)
     endif()
     target_link_libraries(ProceduralVisualizerToolGui PRIVATE
         ProceduralVisualizerTool::Bundle
+        ProceduralVisualizerTool::Audio
+        pvt_music_video_export
         Qt6::Concurrent
         Qt6::Widgets
     )
@@ -203,6 +293,14 @@ if(PVT_BUILD_QT_GUI)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(pvt_audio_analysis_tests tests/audio_analysis_test.cpp)
+    target_compile_features(pvt_audio_analysis_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_audio_analysis_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_audio_analysis_tests PRIVATE
+        ProceduralVisualizerTool::Audio)
+    pvt_enable_warnings(pvt_audio_analysis_tests)
+    add_test(NAME pvt_audio_analysis COMMAND pvt_audio_analysis_tests)
+
     add_executable(pvt_tests tests/test_main.cpp)
     target_compile_features(pvt_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_tests PROPERTIES CXX_EXTENSIONS NO)
@@ -287,6 +385,18 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_music_video_export_tests
+            tests/music_video_export_test.cpp)
+        target_compile_features(pvt_music_video_export_tests PRIVATE cxx_std_17)
+        set_target_properties(pvt_music_video_export_tests PROPERTIES
+            CXX_EXTENSIONS NO)
+        target_link_libraries(pvt_music_video_export_tests PRIVATE
+            pvt_music_video_export
+            Qt6::Gui)
+        pvt_enable_warnings(pvt_music_video_export_tests)
+        add_test(NAME pvt_music_video_export
+            COMMAND pvt_music_video_export_tests)
+
         add_test(NAME pvt_gui_smoke
             COMMAND ProceduralVisualizerToolGui --smoke-test)
         set_tests_properties(pvt_gui_smoke PROPERTIES
@@ -307,6 +417,14 @@ install(FILES include/procedural_visualizer_tool.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES README.md IMPLEMENTATION_STATUS.md LICENSE
     DESTINATION ${CMAKE_INSTALL_DOCDIR})
+if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI)
+    install(FILES third_party/miniaudio/LICENSE
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}
+        RENAME MINIAUDIO-LICENSE)
+    install(FILES third_party/btt/LICENSE
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}
+        RENAME BEAT-AND-TEMPO-TRACKING-LICENSE)
+endif()
 install(EXPORT ProceduralVisualizerToolTargets
     FILE ProceduralVisualizerToolTargets.cmake
     NAMESPACE ProceduralVisualizerTool::

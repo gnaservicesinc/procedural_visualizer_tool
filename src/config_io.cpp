@@ -53,15 +53,23 @@ namespace {
 // arbitrary string bytes. Version 2 adds PNG compression and custom-OBJ path
 // fields. Version 3 separates final output alpha from procedural layer alpha.
 // Version 4 adds spatial swings/effects, effect stage selection, palettes, and
-// layer transforms. Older versions remain accepted with neutral defaults.
+// layer transforms. Version 5 adds project clocks, bounded cached music
+// analysis, a master swing switch, per-layer audio response, and portable
+// custom-OBJ attachment identity. Older versions remain accepted with neutral
+// defaults for every field introduced later.
 
 constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
 constexpr std::size_t kMaximumKeyBytes = 128U;
 constexpr std::size_t kMaximumDecodedStringBytes = 64U * 1024U;
-constexpr std::size_t kMaximumRecordCount = 16384U;
+constexpr std::size_t kMaximumRecordCount = 131072U;
+constexpr std::size_t kMaximumMeterExpressionBytes = 256U;
+constexpr std::size_t kMaximumAnalyzerVersionBytes = 256U;
+constexpr std::size_t kMaximumMusicBasenameBytes = 4096U;
+constexpr std::size_t kMaximumMusicFormatBytes = 64U;
+constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 4U,
-              "config_io.cpp implements setup format version 4");
+static_assert(kSetupFormatVersion == 5U,
+              "config_io.cpp implements setup format version 5");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -163,10 +171,12 @@ bool parse_records(const std::string& contents,
                 setup_version = 3U;
             } else if (line == "PVT_SETUP\t4") {
                 setup_version = 4U;
+            } else if (line == "PVT_SETUP\t5") {
+                setup_version = 5U;
             } else {
                 return fail(error,
                             "Unsupported or malformed setup header; expected "
-                            "'PVT_SETUP\\t1' through 'PVT_SETUP\\t4'.");
+                            "'PVT_SETUP\\t1' through 'PVT_SETUP\\t5'.");
             }
         } else {
             const std::size_t tab = line.find('\t');
@@ -182,7 +192,7 @@ bool parse_records(const std::string& contents,
                                        + " has an invalid or overlong key.");
             }
             if (records.size() >= kMaximumRecordCount) {
-                return fail(error, "Setup file exceeds the 16384-record limit.");
+                return fail(error, "Setup file exceeds the 131072-record limit.");
             }
 
             std::string key(key_view);
@@ -224,7 +234,7 @@ bool read_setup_file(const std::string& path, std::string& contents, std::string
         if (count > 0) {
             const std::size_t byte_count = static_cast<std::size_t>(count);
             if (contents.size() > kMaximumSetupBytes - byte_count) {
-                return fail(error, "Setup file exceeds the 4 MiB input limit.");
+                return fail(error, "Setup file exceeds the 8 MiB input limit.");
             }
             contents.append(buffer.data(), byte_count);
         }
@@ -424,6 +434,52 @@ bool consume_string(Records& records,
     return true;
 }
 
+bool consume_bounded_string(Records& records,
+                            const std::string& key,
+                            std::size_t maximum,
+                            std::string& destination,
+                            std::string* error) {
+    std::string value;
+    if (!consume_string(records, key, value, error)) {
+        return false;
+    }
+    if (value.size() > maximum) {
+        return fail(error, record_error("Decoded string exceeds its field limit in setup key",
+                                        key));
+    }
+    destination = std::move(value);
+    return true;
+}
+
+bool consume_float(Records& records,
+                   const std::string& key,
+                   float& destination,
+                   std::string* error) {
+    double value = 0.0;
+    if (!consume_double(records, key, value, error)) {
+        return false;
+    }
+    if (value < -static_cast<double>(std::numeric_limits<float>::max())
+        || value > static_cast<double>(std::numeric_limits<float>::max())) {
+        return fail(error, record_error("Number exceeds the float range in setup key", key));
+    }
+    destination = static_cast<float>(value);
+    return true;
+}
+
+bool is_lowercase_sha256(std::string_view digest) {
+    if (digest.empty()) {
+        return true;
+    }
+    if (digest.size() != kSha256HexBytes) {
+        return false;
+    }
+    return std::all_of(digest.begin(), digest.end(), [](char character) {
+        return (character >= '0' && character <= '9')
+               || (character >= 'a' && character <= 'f');
+    });
+}
+
 template <typename Enum, std::size_t Count>
 bool consume_enum(Records& records,
                   const std::string& key,
@@ -516,6 +572,54 @@ constexpr std::array<std::pair<std::string_view, MirrorMode>, 6U> kMirrorModes{{
     {"four_way", MirrorMode::FourWay},
 }};
 
+constexpr std::array<std::pair<std::string_view, ClockMode>, 5U> kClockModes{{
+    {"default", ClockMode::Default},
+    {"frame", ClockMode::Frame},
+    {"time", ClockMode::Time},
+    {"meter", ClockMode::Meter},
+    {"music", ClockMode::Music},
+}};
+
+constexpr std::array<std::pair<std::string_view, ClockInterpolation>, 3U>
+    kClockInterpolations{{
+        {"hold", ClockInterpolation::Hold},
+        {"linear", ClockInterpolation::Linear},
+        {"smoothstep", ClockInterpolation::Smoothstep},
+    }};
+
+constexpr std::array<std::pair<std::string_view, ClockFit>, 2U> kClockFits{{
+    {"exact", ClockFit::Exact},
+    {"fit_sequence", ClockFit::FitSequence},
+}};
+
+constexpr std::array<std::pair<std::string_view, MusicTempoMode>, 3U>
+    kMusicTempoModes{{
+        {"half", MusicTempoMode::Half},
+        {"detected", MusicTempoMode::Detected},
+        {"double", MusicTempoMode::Double},
+    }};
+
+constexpr std::array<std::pair<std::string_view, MusicFeature>, 10U>
+    kMusicFeatures{{
+        {"energy", MusicFeature::Energy},
+        {"bass", MusicFeature::Bass},
+        {"midrange", MusicFeature::Midrange},
+        {"treble", MusicFeature::Treble},
+        {"onset", MusicFeature::Onset},
+        {"beat", MusicFeature::Beat},
+        {"spectral_centroid", MusicFeature::SpectralCentroid},
+        {"spectral_flatness", MusicFeature::SpectralFlatness},
+        {"chroma_hue", MusicFeature::ChromaHue},
+        {"chroma_strength", MusicFeature::ChromaStrength},
+    }};
+
+constexpr std::array<std::pair<std::string_view, MusicSwingPolicy>, 3U>
+    kMusicSwingPolicies{{
+        {"suppress_all", MusicSwingPolicy::SuppressAll},
+        {"suppress_global", MusicSwingPolicy::SuppressGlobal},
+        {"keep_all", MusicSwingPolicy::KeepAll},
+    }};
+
 std::string indexed_key(std::string_view collection,
                         std::size_t index,
                         std::string_view field) {
@@ -563,7 +667,7 @@ public:
         }
         const std::size_t added = key.size() + value.size() + 2U;
         if (contents_.size() > kMaximumSetupBytes - added) {
-            ok_ = fail(error_, "Serialized setup exceeds the 4 MiB format limit.");
+            ok_ = fail(error_, "Serialized setup exceeds the 8 MiB format limit.");
             return false;
         }
         contents_.append(key);
@@ -634,6 +738,36 @@ private:
     bool ok_ = true;
 };
 
+bool validate_persistence_bounds(const RenderConfig& config,
+                                 std::string* error) {
+    const MusicAnalysis& music = config.clock.music;
+    if (config.clock.meter.expression.size() > kMaximumMeterExpressionBytes) {
+        return fail(error, "Cannot save configuration: the meter expression exceeds 256 bytes.");
+    }
+    if (music.analyzer_version.size() > kMaximumAnalyzerVersionBytes
+        || music.source_basename.size() > kMaximumMusicBasenameBytes
+        || music.source_format.size() > kMaximumMusicFormatBytes) {
+        return fail(error, "Cannot save configuration: music source metadata exceeds its field limit.");
+    }
+    if (!is_lowercase_sha256(music.source_sha256)) {
+        return fail(error,
+                    "Cannot save configuration: the music source digest must be empty or 64 lowercase hexadecimal characters.");
+    }
+    if (!is_lowercase_sha256(config.surface.obj_sha256)
+        || config.surface.obj_basename.size()
+               > kMaximumAttachmentBasenameBytes) {
+        return fail(error,
+                    "Cannot save configuration: custom OBJ attachment metadata is invalid.");
+    }
+    if (music.beat_times_seconds.size() > kMaximumMusicBeats
+        || music.tempo_points.size() > kMaximumMusicTempoPoints
+        || music.feature_samples.size() > kMaximumMusicFeatureSamples) {
+        return fail(error,
+                    "Cannot save configuration: cached music analysis exceeds a public collection maximum.");
+    }
+    return true;
+}
+
 bool serialize_setup(const RenderConfig& config,
                      std::string& serialized,
                      std::string* error) {
@@ -646,6 +780,9 @@ bool serialize_setup(const RenderConfig& config,
         || config.effects.size() > kMaximumEffects) {
         return fail(error, "Cannot save configuration: a collection exceeds its public maximum.");
     }
+    if (!validate_persistence_bounds(config, error)) {
+        return false;
+    }
 
     SetupBuilder builder(error);
     builder.add_integer("canvas.width", config.width);
@@ -653,6 +790,93 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_integer("canvas.block_size", config.block_size);
     builder.add_integer("timing.total_frames", config.total_frames);
     builder.add_double("timing.fps", config.fps);
+
+    builder.add_enum("timing.clock.mode", config.clock.mode, kClockModes);
+    builder.add_enum("timing.clock.interpolation", config.clock.interpolation,
+                     kClockInterpolations);
+    builder.add_enum("timing.clock.fit", config.clock.fit, kClockFits);
+    builder.add_integer("timing.clock.frame_interval",
+                        config.clock.frame_interval);
+    builder.add_integer("timing.clock.time_interval_microseconds",
+                        config.clock.time_interval_microseconds);
+    builder.add_string("timing.clock.meter.expression",
+                       config.clock.meter.expression);
+    builder.add_double("timing.clock.meter.bpm", config.clock.meter.bpm);
+    builder.add_integer("timing.clock.meter.tempo_note_denominator",
+                        config.clock.meter.tempo_note_denominator);
+    builder.add_enum("timing.clock.music_tempo", config.clock.music_tempo,
+                     kMusicTempoModes);
+    builder.add_enum("timing.clock.music_swing_policy",
+                     config.clock.music_swing_policy, kMusicSwingPolicies);
+    builder.add_integer("timing.clock.beat_offset_microseconds",
+                        config.clock.beat_offset_microseconds);
+    builder.add_double("timing.clock.phase_offset_degrees",
+                       config.clock.phase_offset_degrees);
+    builder.add_bool("timing.clock.reverse", config.clock.reverse);
+
+    const MusicAnalysis& music = config.clock.music;
+    builder.add_integer("timing.music.schema_version", music.schema_version);
+    builder.add_string("timing.music.analyzer_version", music.analyzer_version);
+    builder.add_string("timing.music.source_sha256", music.source_sha256);
+    builder.add_string("timing.music.source_basename", music.source_basename);
+    builder.add_string("timing.music.source_format", music.source_format);
+    builder.add_integer("timing.music.source_frame_count",
+                        music.source_frame_count);
+    builder.add_integer("timing.music.source_sample_rate",
+                        music.source_sample_rate);
+    builder.add_integer("timing.music.source_channel_count",
+                        music.source_channel_count);
+    builder.add_double("timing.music.duration_seconds", music.duration_seconds);
+    builder.add_double("timing.music.detected_bpm", music.detected_bpm);
+    builder.add_double("timing.music.tempo_confidence", music.tempo_confidence);
+    builder.add_integer("timing.music.beat_times.count",
+                        music.beat_times_seconds.size());
+    for (std::size_t index = 0U; index < music.beat_times_seconds.size(); ++index) {
+        builder.add_double(indexed_key("timing.music.beat_times", index,
+                                       "seconds"),
+                           music.beat_times_seconds[index]);
+    }
+    builder.add_integer("timing.music.tempo_points.count",
+                        music.tempo_points.size());
+    for (std::size_t index = 0U; index < music.tempo_points.size(); ++index) {
+        const MusicTempoPoint& point = music.tempo_points[index];
+        builder.add_double(indexed_key("timing.music.tempo_points", index,
+                                       "time_seconds"),
+                           point.time_seconds);
+        builder.add_double(indexed_key("timing.music.tempo_points", index, "bpm"),
+                           point.bpm);
+        builder.add_double(indexed_key("timing.music.tempo_points", index,
+                                       "confidence"),
+                           point.confidence);
+    }
+    builder.add_integer("timing.music.feature_samples.count",
+                        music.feature_samples.size());
+    for (std::size_t index = 0U; index < music.feature_samples.size(); ++index) {
+        const MusicFeatureSample& sample = music.feature_samples[index];
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "energy"), sample.energy);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "bass"), sample.bass);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "midrange"), sample.midrange);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "treble"), sample.treble);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "onset"), sample.onset);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "beat"), sample.beat);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "spectral_centroid"),
+                           sample.spectral_centroid);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "spectral_flatness"),
+                           sample.spectral_flatness);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "chroma_hue"), sample.chroma_hue);
+        builder.add_double(indexed_key("timing.music.feature_samples", index,
+                                       "chroma_strength"),
+                           sample.chroma_strength);
+    }
 
     builder.add_integer("waves.count", config.waves.size());
     for (std::size_t index = 0; index < config.waves.size(); ++index) {
@@ -711,9 +935,32 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("effects", index, "area_radius"), effect.area_radius);
     }
 
+    builder.add_bool("rhythm.swings_enabled", config.swings_enabled);
     builder.add_double("rhythm.phrase_warp", config.phrase_warp);
     builder.add_double("rhythm.ghost_mix", config.ghost_mix);
     builder.add_double("rhythm.ghost_lag_degrees", config.ghost_lag_degrees);
+
+    builder.add_bool("audio_reactive.enabled", config.audio_reactive.enabled);
+    builder.add_bool("audio_reactive.synchronized_only",
+                     config.audio_reactive.synchronized_only);
+    builder.add_bool("audio_reactive.waves_enabled",
+                     config.audio_reactive.waves_enabled);
+    builder.add_enum("audio_reactive.wave_source",
+                     config.audio_reactive.wave_source, kMusicFeatures);
+    builder.add_double("audio_reactive.wave_amount",
+                       config.audio_reactive.wave_amount);
+    builder.add_bool("audio_reactive.effects_enabled",
+                     config.audio_reactive.effects_enabled);
+    builder.add_enum("audio_reactive.effect_source",
+                     config.audio_reactive.effect_source, kMusicFeatures);
+    builder.add_double("audio_reactive.effect_amount",
+                       config.audio_reactive.effect_amount);
+    builder.add_bool("audio_reactive.color_enabled",
+                     config.audio_reactive.color_enabled);
+    builder.add_enum("audio_reactive.color_source",
+                     config.audio_reactive.color_source, kMusicFeatures);
+    builder.add_double("audio_reactive.color_amount_degrees",
+                       config.audio_reactive.color_amount_degrees);
 
     builder.add_bool("appearance.displacement_enabled", config.displacement_enabled);
     builder.add_double("appearance.displacement", config.displacement);
@@ -747,6 +994,8 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("surface.curvature", config.surface.curvature);
     builder.add_double("surface.lighting", config.surface.lighting);
     builder.add_string("surface.obj_path", config.surface.obj_path);
+    builder.add_string("surface.obj_sha256", config.surface.obj_sha256);
+    builder.add_string("surface.obj_basename", config.surface.obj_basename);
 
     builder.add_bool("palette.enabled", config.palette.enabled);
     builder.add_string("palette.name", config.palette.name);
@@ -792,6 +1041,169 @@ bool deserialize_setup(Records& records,
         || !consume_integer(records, "timing.total_frames", candidate.total_frames, error)
         || !consume_double(records, "timing.fps", candidate.fps, error)) {
         return false;
+    }
+
+    if (setup_version >= 5U) {
+        MusicAnalysis& music = candidate.clock.music;
+        if (!consume_enum(records, "timing.clock.mode", candidate.clock.mode,
+                          kClockModes, error)
+            || !consume_enum(records, "timing.clock.interpolation",
+                             candidate.clock.interpolation,
+                             kClockInterpolations, error)
+            || !consume_enum(records, "timing.clock.fit", candidate.clock.fit,
+                             kClockFits, error)
+            || !consume_integer(records, "timing.clock.frame_interval",
+                                candidate.clock.frame_interval, error)
+            || !consume_integer(records, "timing.clock.time_interval_microseconds",
+                                candidate.clock.time_interval_microseconds, error)
+            || !consume_bounded_string(records, "timing.clock.meter.expression",
+                                       kMaximumMeterExpressionBytes,
+                                       candidate.clock.meter.expression, error)
+            || !consume_double(records, "timing.clock.meter.bpm",
+                               candidate.clock.meter.bpm, error)
+            || !consume_integer(records,
+                                "timing.clock.meter.tempo_note_denominator",
+                                candidate.clock.meter.tempo_note_denominator,
+                                error)
+            || !consume_enum(records, "timing.clock.music_tempo",
+                             candidate.clock.music_tempo,
+                             kMusicTempoModes, error)
+            || !consume_enum(records, "timing.clock.music_swing_policy",
+                             candidate.clock.music_swing_policy,
+                             kMusicSwingPolicies, error)
+            || !consume_integer(records, "timing.clock.beat_offset_microseconds",
+                                candidate.clock.beat_offset_microseconds, error)
+            || !consume_double(records, "timing.clock.phase_offset_degrees",
+                               candidate.clock.phase_offset_degrees, error)
+            || !consume_bool(records, "timing.clock.reverse",
+                             candidate.clock.reverse, error)
+            || !consume_integer(records, "timing.music.schema_version",
+                                music.schema_version, error)
+            || !consume_bounded_string(records, "timing.music.analyzer_version",
+                                       kMaximumAnalyzerVersionBytes,
+                                       music.analyzer_version, error)
+            || !consume_bounded_string(records, "timing.music.source_sha256",
+                                       kSha256HexBytes,
+                                       music.source_sha256, error)
+            || !consume_bounded_string(records, "timing.music.source_basename",
+                                       kMaximumMusicBasenameBytes,
+                                       music.source_basename, error)
+            || !consume_bounded_string(records, "timing.music.source_format",
+                                       kMaximumMusicFormatBytes,
+                                       music.source_format, error)
+            || !consume_integer(records, "timing.music.source_frame_count",
+                                music.source_frame_count, error)
+            || !consume_integer(records, "timing.music.source_sample_rate",
+                                music.source_sample_rate, error)
+            || !consume_integer(records, "timing.music.source_channel_count",
+                                music.source_channel_count, error)
+            || !consume_double(records, "timing.music.duration_seconds",
+                               music.duration_seconds, error)
+            || !consume_double(records, "timing.music.detected_bpm",
+                               music.detected_bpm, error)
+            || !consume_double(records, "timing.music.tempo_confidence",
+                               music.tempo_confidence, error)) {
+            return false;
+        }
+        if (!is_lowercase_sha256(music.source_sha256)) {
+            return fail(error,
+                        record_error("Invalid lowercase SHA-256 digest in setup key",
+                                     "timing.music.source_sha256"));
+        }
+
+        std::size_t beat_count = 0U;
+        if (!consume_count(records, "timing.music.beat_times.count",
+                           kMaximumMusicBeats, beat_count, error)) {
+            return false;
+        }
+        music.beat_times_seconds.clear();
+        music.beat_times_seconds.resize(beat_count);
+        for (std::size_t index = 0U; index < beat_count; ++index) {
+            if (!consume_double(records,
+                                indexed_key("timing.music.beat_times", index,
+                                            "seconds"),
+                                music.beat_times_seconds[index], error)) {
+                return false;
+            }
+        }
+
+        std::size_t tempo_count = 0U;
+        if (!consume_count(records, "timing.music.tempo_points.count",
+                           kMaximumMusicTempoPoints, tempo_count, error)) {
+            return false;
+        }
+        music.tempo_points.clear();
+        music.tempo_points.resize(tempo_count);
+        for (std::size_t index = 0U; index < tempo_count; ++index) {
+            MusicTempoPoint& point = music.tempo_points[index];
+            if (!consume_double(records,
+                                indexed_key("timing.music.tempo_points", index,
+                                            "time_seconds"),
+                                point.time_seconds, error)
+                || !consume_double(records,
+                                   indexed_key("timing.music.tempo_points", index,
+                                               "bpm"),
+                                   point.bpm, error)
+                || !consume_double(records,
+                                   indexed_key("timing.music.tempo_points", index,
+                                               "confidence"),
+                                   point.confidence, error)) {
+                return false;
+            }
+        }
+
+        std::size_t feature_count = 0U;
+        if (!consume_count(records, "timing.music.feature_samples.count",
+                           kMaximumMusicFeatureSamples, feature_count, error)) {
+            return false;
+        }
+        music.feature_samples.clear();
+        music.feature_samples.resize(feature_count);
+        for (std::size_t index = 0U; index < feature_count; ++index) {
+            MusicFeatureSample& sample = music.feature_samples[index];
+            if (!consume_float(records,
+                               indexed_key("timing.music.feature_samples", index,
+                                           "energy"),
+                               sample.energy, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "bass"),
+                                  sample.bass, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "midrange"),
+                                  sample.midrange, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "treble"),
+                                  sample.treble, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "onset"),
+                                  sample.onset, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "beat"),
+                                  sample.beat, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "spectral_centroid"),
+                                  sample.spectral_centroid, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "spectral_flatness"),
+                                  sample.spectral_flatness, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "chroma_hue"),
+                                  sample.chroma_hue, error)
+                || !consume_float(records,
+                                  indexed_key("timing.music.feature_samples", index,
+                                              "chroma_strength"),
+                                  sample.chroma_strength, error)) {
+                return false;
+            }
+        }
     }
 
     std::size_t wave_count = 0;
@@ -888,6 +1300,38 @@ bool deserialize_setup(Records& records,
         }
     }
 
+    if (setup_version >= 5U
+        && (!consume_bool(records, "rhythm.swings_enabled",
+                          candidate.swings_enabled, error)
+            || !consume_bool(records, "audio_reactive.enabled",
+                             candidate.audio_reactive.enabled, error)
+            || !consume_bool(records, "audio_reactive.synchronized_only",
+                             candidate.audio_reactive.synchronized_only, error)
+            || !consume_bool(records, "audio_reactive.waves_enabled",
+                             candidate.audio_reactive.waves_enabled, error)
+            || !consume_enum(records, "audio_reactive.wave_source",
+                             candidate.audio_reactive.wave_source,
+                             kMusicFeatures, error)
+            || !consume_double(records, "audio_reactive.wave_amount",
+                               candidate.audio_reactive.wave_amount, error)
+            || !consume_bool(records, "audio_reactive.effects_enabled",
+                             candidate.audio_reactive.effects_enabled, error)
+            || !consume_enum(records, "audio_reactive.effect_source",
+                             candidate.audio_reactive.effect_source,
+                             kMusicFeatures, error)
+            || !consume_double(records, "audio_reactive.effect_amount",
+                               candidate.audio_reactive.effect_amount, error)
+            || !consume_bool(records, "audio_reactive.color_enabled",
+                             candidate.audio_reactive.color_enabled, error)
+            || !consume_enum(records, "audio_reactive.color_source",
+                             candidate.audio_reactive.color_source,
+                             kMusicFeatures, error)
+            || !consume_double(records, "audio_reactive.color_amount_degrees",
+                               candidate.audio_reactive.color_amount_degrees,
+                               error))) {
+        return false;
+    }
+
     if (!consume_double(records, "rhythm.phrase_warp", candidate.phrase_warp, error)
         || !consume_double(records, "rhythm.ghost_mix", candidate.ghost_mix, error)
         || !consume_double(records, "rhythm.ghost_lag_degrees", candidate.ghost_lag_degrees, error)
@@ -928,6 +1372,19 @@ bool deserialize_setup(Records& records,
         && !consume_string(records, "surface.obj_path",
                            candidate.surface.obj_path, error)) {
         return false;
+    }
+    if (setup_version >= 5U) {
+        if (!consume_bounded_string(records, "surface.obj_sha256",
+                                    kSha256HexBytes,
+                                    candidate.surface.obj_sha256, error)
+            || !consume_bounded_string(records, "surface.obj_basename",
+                                       kMaximumAttachmentBasenameBytes,
+                                       candidate.surface.obj_basename, error)
+            || !is_lowercase_sha256(candidate.surface.obj_sha256)) {
+            return fail(error,
+                        record_error("Invalid custom OBJ attachment metadata at setup key",
+                                     "surface.obj_sha256"));
+        }
     }
 
     if (setup_version >= 4U) {
@@ -1281,7 +1738,7 @@ bool deserialize_setup_config(const std::string& serialized,
     clear_error(error);
     try {
         if (serialized.size() > kMaximumSetupBytes) {
-            return fail(error, "Setup data exceeds the 4 MiB input limit.");
+            return fail(error, "Setup data exceeds the 8 MiB input limit.");
         }
         Records records;
         std::uint32_t setup_version = 0U;
@@ -1358,6 +1815,68 @@ bool load_setup(const std::string& path,
         return fail(error, std::string("Unexpected error while loading setup; destination was not changed: ")
                            + exception.what());
     }
+}
+
+const char* clock_mode_name(ClockMode value) {
+    switch (value) {
+        case ClockMode::Default: return "Default";
+        case ClockMode::Frame: return "Frame";
+        case ClockMode::Time: return "Time";
+        case ClockMode::Meter: return "Time signature";
+        case ClockMode::Music: return "Music";
+    }
+    return "Unknown";
+}
+
+const char* clock_interpolation_name(ClockInterpolation value) {
+    switch (value) {
+        case ClockInterpolation::Hold: return "Hold";
+        case ClockInterpolation::Linear: return "Linear";
+        case ClockInterpolation::Smoothstep: return "Smoothstep";
+    }
+    return "Unknown";
+}
+
+const char* clock_fit_name(ClockFit value) {
+    switch (value) {
+        case ClockFit::Exact: return "Exact interval";
+        case ClockFit::FitSequence: return "Fit sequence";
+    }
+    return "Unknown";
+}
+
+const char* music_tempo_mode_name(MusicTempoMode value) {
+    switch (value) {
+        case MusicTempoMode::Half: return "Half tempo";
+        case MusicTempoMode::Detected: return "Detected tempo";
+        case MusicTempoMode::Double: return "Double tempo";
+    }
+    return "Unknown";
+}
+
+const char* music_feature_name(MusicFeature value) {
+    switch (value) {
+        case MusicFeature::Energy: return "Energy";
+        case MusicFeature::Bass: return "Bass";
+        case MusicFeature::Midrange: return "Midrange";
+        case MusicFeature::Treble: return "Treble";
+        case MusicFeature::Onset: return "Onset";
+        case MusicFeature::Beat: return "Beat";
+        case MusicFeature::SpectralCentroid: return "Spectral brightness";
+        case MusicFeature::SpectralFlatness: return "Spectral noisiness";
+        case MusicFeature::ChromaHue: return "Pitch color (tonality-weighted)";
+        case MusicFeature::ChromaStrength: return "Tonal strength";
+    }
+    return "Unknown";
+}
+
+const char* music_swing_policy_name(MusicSwingPolicy value) {
+    switch (value) {
+        case MusicSwingPolicy::SuppressAll: return "Disable all swings";
+        case MusicSwingPolicy::SuppressGlobal: return "Disable global swings";
+        case MusicSwingPolicy::KeepAll: return "Keep all swings";
+    }
+    return "Unknown";
 }
 
 } // namespace pvt

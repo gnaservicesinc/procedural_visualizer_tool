@@ -12,10 +12,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <locale>
 #include <map>
+#include <mutex>
 #include <new>
 #include <set>
 #include <sstream>
@@ -24,11 +26,29 @@
 #include <unordered_set>
 #include <utility>
 
+#if defined(_WIN32)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
+
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "4.0.1"
+#  define PVT_PROGRAM_VERSION "5.0.0"
 #endif
 
 namespace pvt {
+
+struct ProjectAttachmentCache {
+    std::string directory;
+    std::map<std::string, std::string> materialized_by_identity;
+    // ProjectDocument snapshots deliberately share this immutable-byte cache.
+    // Attachment vectors remain copy-on-write at the document level, while
+    // materialization may happen on a worker during a GUI import transaction.
+    mutable std::mutex mutex;
+    ~ProjectAttachmentCache();
+};
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -40,6 +60,7 @@ constexpr std::size_t kMaximumVersions = 4096U;
 constexpr std::size_t kMaximumLineageAliases = 8192U;
 constexpr std::size_t kMaximumProjectNameBytes = 256U;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
+constexpr std::uint32_t kProjectVersionFormatVersion = 2U;
 
 struct RootMetadata {
     struct PreservedVersion {
@@ -68,13 +89,18 @@ struct RootMetadata {
 };
 
 struct VersionManifest {
+    std::uint32_t format_version = kProjectVersionFormatVersion;
     BundleVersionInfo info;
     std::string project_name;
     std::string render_output_digest;
     std::vector<LayerConfig> layers;
     std::vector<std::string> layer_digests;
+    std::vector<ProjectAttachment> attachments;
     std::string reverted_from_digest;
 };
+
+bool sync_project_attachment_references(ProjectDocument& document,
+                                        std::string* error);
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -539,6 +565,197 @@ bool valid_semantic_project_name(const std::string& name) {
     return true;
 }
 
+bool valid_attachment_reference_id(std::string_view value) {
+    if (value.empty() || value.size() > 256U) return false;
+    return std::all_of(value.begin(), value.end(), [](char character) {
+        return (character >= 'a' && character <= 'z')
+               || (character >= 'A' && character <= 'Z')
+               || (character >= '0' && character <= '9')
+               || character == '.' || character == '_' || character == '-';
+    });
+}
+
+bool valid_attachment_basename(const std::string& value) {
+    return !value.empty()
+           && value.size() <= kMaximumAttachmentBasenameBytes
+           && value != "." && value != ".."
+           && valid_semantic_project_name(value);
+}
+
+bool attachment_path_is_reparse_point(const fs::path& path) {
+#if defined(_WIN32)
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES
+           && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U;
+#else
+    (void)path;
+    return false;
+#endif
+}
+
+std::string attachment_asset_path(std::string_view digest) {
+    return "assets/" + std::string(digest);
+}
+
+std::string safe_cache_extension(const std::string& basename) {
+    const std::size_t dot = basename.find_last_of('.');
+    if (dot == std::string::npos || dot + 1U == basename.size()
+        || basename.size() - dot > 17U) {
+        return ".asset";
+    }
+    std::string extension = basename.substr(dot);
+    for (char& character : extension) {
+        if (character == '.') continue;
+        const unsigned char raw = static_cast<unsigned char>(character);
+        if (!((raw >= 'a' && raw <= 'z') || (raw >= 'A' && raw <= 'Z')
+              || (raw >= '0' && raw <= '9'))) {
+            return ".asset";
+        }
+        if (raw >= 'A' && raw <= 'Z') {
+            character = static_cast<char>(raw - 'A' + 'a');
+        }
+    }
+    return extension;
+}
+
+bool read_attachment_source(const std::string& path,
+                            std::string& basename,
+                            std::string& bytes,
+                            std::string& digest,
+                            std::string* error) {
+    if (path.empty() || path.size() > 4096U || path.find('\0') != std::string::npos
+        || !detail::valid_utf8(path)) {
+        return fail(error, "Attachment source path is invalid or overlong.");
+    }
+    const fs::path native = detail::path_from_utf8(path);
+    std::error_code filesystem_error;
+    const fs::file_status status = fs::symlink_status(native, filesystem_error);
+    if (filesystem_error || fs::is_symlink(status)
+        || attachment_path_is_reparse_point(native)
+        || !fs::is_regular_file(status)) {
+        return fail(error,
+                    "Attachment source must be a readable regular file, not a link or special file.");
+    }
+    const std::uintmax_t size = fs::file_size(native, filesystem_error);
+    if (filesystem_error || size > kMaximumProjectAttachmentBytes) {
+        return fail(error, "Attachment exceeds the 512 MiB per-file limit.");
+    }
+    basename = detail::path_to_utf8(native.filename());
+    if (!valid_attachment_basename(basename)) {
+        return fail(error, "Attachment basename is invalid or not portable.");
+    }
+    std::ifstream input(native, std::ios::binary);
+    if (!input) return fail(error, "Could not open attachment source.");
+    bytes.assign(static_cast<std::size_t>(size), '\0');
+    if (!bytes.empty()) {
+        input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    if (!input || input.peek() != std::char_traits<char>::eof()) {
+        return fail(error, "Could not read the complete attachment source.");
+    }
+    return detail::sha256_hex(bytes, digest, error);
+}
+
+bool ensure_attachment_cache(std::shared_ptr<ProjectAttachmentCache>& cache,
+                             std::string* error) {
+    if (cache != nullptr && !cache->directory.empty()) return true;
+    std::error_code filesystem_error;
+    const fs::path temporary_root = fs::temp_directory_path(filesystem_error);
+    if (filesystem_error) {
+        return fail(error, "Could not locate the temporary directory for attachments.");
+    }
+    auto candidate = std::make_shared<ProjectAttachmentCache>();
+    for (int attempt = 0; attempt < 128; ++attempt) {
+        const fs::path directory = temporary_root
+                                   / detail::path_from_utf8(
+                                       "pvt-asset-cache-" + generate_uuid());
+        filesystem_error.clear();
+        if (fs::create_directory(directory, filesystem_error)
+            && !filesystem_error) {
+            fs::permissions(directory, fs::perms::owner_all,
+                            fs::perm_options::replace, filesystem_error);
+            if (filesystem_error) {
+                std::error_code ignored;
+                fs::remove(directory, ignored);
+                return fail(error,
+                            "Could not secure the temporary attachment directory.");
+            }
+            candidate->directory = detail::path_to_utf8(directory);
+            cache = std::move(candidate);
+            return true;
+        }
+    }
+    return fail(error, "Could not create a unique attachment cache directory.");
+}
+
+bool materialize_attachment_bytes(
+    std::shared_ptr<ProjectAttachmentCache>& cache,
+    const std::string& digest,
+    const std::string& basename,
+    const std::string& bytes,
+    std::string& local_path,
+    std::string* error) {
+    if (!canonical_hash(digest) || !valid_attachment_basename(basename)
+        || bytes.size() > kMaximumProjectAttachmentBytes) {
+        return fail(error, "Cannot materialize invalid attachment metadata.");
+    }
+    std::string actual;
+    if (!detail::sha256_hex(bytes, actual, error) || actual != digest) {
+        return fail(error, "Embedded attachment bytes do not match their SHA-256 identity.");
+    }
+    if (!ensure_attachment_cache(cache, error)) return false;
+    // Keep lookup, validation, installation, and registration one transaction.
+    // In particular, two copied ProjectDocuments may otherwise race while
+    // materializing the same digest into their shared cache directory.
+    const std::unique_lock<std::mutex> cache_lock(cache->mutex);
+    const std::string extension = safe_cache_extension(basename);
+    const std::string cache_key = digest + extension;
+    const auto existing = cache->materialized_by_identity.find(cache_key);
+    if (existing != cache->materialized_by_identity.end()) {
+        std::error_code filesystem_error;
+        const fs::file_status status = fs::symlink_status(
+            detail::path_from_utf8(existing->second), filesystem_error);
+        if (!filesystem_error && fs::is_regular_file(status)
+            && !fs::is_symlink(status)) {
+            local_path = existing->second;
+            return true;
+        }
+        cache->materialized_by_identity.erase(existing);
+    }
+    const fs::path directory = detail::path_from_utf8(cache->directory);
+    const fs::path destination = directory / detail::path_from_utf8(
+        cache_key);
+    const fs::path temporary = directory / detail::path_from_utf8(
+        ".attachment-" + generate_uuid() + ".tmp");
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) return fail(error, "Could not create temporary attachment cache file.");
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        output.flush();
+        if (!output) {
+            std::error_code ignored;
+            fs::remove(temporary, ignored);
+            return fail(error, "Could not write temporary attachment cache file.");
+        }
+    }
+    std::error_code filesystem_error;
+    fs::rename(temporary, destination, filesystem_error);
+    if (filesystem_error) {
+        fs::remove(temporary, filesystem_error);
+        return fail(error, "Could not install temporary attachment cache file.");
+    }
+    fs::permissions(destination,
+                    fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, filesystem_error);
+    if (filesystem_error) {
+        fs::remove(destination, filesystem_error);
+        return fail(error, "Could not secure materialized attachment file.");
+    }
+    local_path = detail::path_to_utf8(destination);
+    cache->materialized_by_identity[cache_key] = local_path;
+    return true;
+}
+
 bool valid_portable_root_name(const std::string& name) {
     if (!valid_semantic_project_name(name) || name == "." || name == ".."
         || name.back() == ' ' || name.back() == '.') return false;
@@ -824,7 +1041,10 @@ bool parse_current(const std::string& bytes, std::uint64_t& version,
 bool serialize_version_manifest(const VersionManifest& manifest,
                                 std::string& bytes,
                                 std::string* error) {
-    TextBuilder builder("PVT_VERSION", 1U);
+    if (manifest.attachments.size() > kMaximumProjectAttachmentReferences) {
+        return fail(error, "Version exceeds the attachment-reference limit.");
+    }
+    TextBuilder builder("PVT_VERSION", kProjectVersionFormatVersion);
     builder.integer("version.number", manifest.info.number);
     builder.string("version.uuid", manifest.info.uuid);
     builder.string("version.parent_digest", manifest.info.parent_digest);
@@ -847,6 +1067,26 @@ bool serialize_version_manifest(const VersionManifest& manifest,
         builder.add(indexed("layers", index, "sha256"),
                     manifest.layer_digests[index]);
     }
+    builder.integer("attachments.count", manifest.attachments.size());
+    std::set<std::string> reference_ids;
+    for (std::size_t index = 0U; index < manifest.attachments.size(); ++index) {
+        const ProjectAttachment& attachment = manifest.attachments[index];
+        if (!valid_attachment_reference_id(attachment.reference_id)
+            || !canonical_hash(attachment.sha256)
+            || !valid_attachment_basename(attachment.basename)
+            || attachment.size_bytes > kMaximumProjectAttachmentBytes
+            || !reference_ids.insert(attachment.reference_id).second) {
+            return fail(error, "Version contains invalid attachment metadata.");
+        }
+        builder.string(indexed("attachments", index, "reference_id"),
+                       attachment.reference_id);
+        builder.add(indexed("attachments", index, "sha256"),
+                    attachment.sha256);
+        builder.string(indexed("attachments", index, "basename"),
+                       attachment.basename);
+        builder.integer(indexed("attachments", index, "size_bytes"),
+                        attachment.size_bytes);
+    }
     if (!builder.ok()) {
         return fail(error, "Could not serialize version metadata.");
     }
@@ -858,8 +1098,21 @@ bool parse_version_manifest(const std::string& bytes,
                             VersionManifest& destination,
                             std::string* error) {
     Records records;
-    if (!parse_text(bytes, "PVT_VERSION", 1U, records, error)) return false;
+    std::uint32_t format_version = 0U;
+    if (bytes.rfind("PVT_VERSION\t1\n", 0U) == 0U
+        || bytes.rfind("PVT_VERSION\t1\r\n", 0U) == 0U) {
+        format_version = 1U;
+    } else if (bytes.rfind("PVT_VERSION\t2\n", 0U) == 0U
+               || bytes.rfind("PVT_VERSION\t2\r\n", 0U) == 0U) {
+        format_version = 2U;
+    } else {
+        return fail(error, "Unsupported version metadata format.");
+    }
+    if (!parse_text(bytes, "PVT_VERSION", format_version, records, error)) {
+        return false;
+    }
     VersionManifest candidate;
+    candidate.format_version = format_version;
     if (!take_integer(records, "version.number", candidate.info.number, error)
         || !take_string(records, "version.uuid", candidate.info.uuid, error)
         || !take_string(records, "version.parent_digest",
@@ -905,6 +1158,38 @@ bool parse_version_manifest(const std::string& bytes,
             || !file_ids.insert(layer.file_id).second
             || !uuids.insert(layer.uuid).second) {
             return fail(error, "Version metadata has an invalid layer entry.");
+        }
+    }
+    if (format_version >= 2U) {
+        std::size_t attachment_count = 0U;
+        if (!take_integer(records, "attachments.count", attachment_count, error)
+            || attachment_count > kMaximumProjectAttachmentReferences) {
+            return fail(error,
+                        "Version metadata has an invalid attachment-reference count.");
+        }
+        candidate.attachments.resize(attachment_count);
+        std::set<std::string> reference_ids;
+        for (std::size_t index = 0U; index < attachment_count; ++index) {
+            ProjectAttachment& attachment = candidate.attachments[index];
+            if (!take_string(records,
+                             indexed("attachments", index, "reference_id"),
+                             attachment.reference_id, error)
+                || !take(records, indexed("attachments", index, "sha256"),
+                         attachment.sha256, error)
+                || !take_string(records,
+                                indexed("attachments", index, "basename"),
+                                attachment.basename, error)
+                || !take_integer(records,
+                                 indexed("attachments", index, "size_bytes"),
+                                 attachment.size_bytes, error)
+                || !valid_attachment_reference_id(attachment.reference_id)
+                || !canonical_hash(attachment.sha256)
+                || !valid_attachment_basename(attachment.basename)
+                || attachment.size_bytes > kMaximumProjectAttachmentBytes
+                || !reference_ids.insert(attachment.reference_id).second) {
+                return fail(error,
+                            "Version metadata has an invalid attachment reference.");
+            }
         }
     }
     const bool valid_parent = candidate.info.parent_digest.empty()
@@ -1009,6 +1294,7 @@ bool find_file(const detail::BundleFileSet& files, const std::string& path,
 }
 
 bool project_content_digest(const ProjectConfig& project,
+                            const std::vector<ProjectAttachment>& attachments,
                             std::string& digest,
                             std::string* error) {
     std::string output_bytes;
@@ -1036,6 +1322,34 @@ bool project_content_digest(const ProjectConfig& project,
         builder.real(indexed("layers", index, "opacity"), layer.opacity);
         builder.add(indexed("layers", index, "render_sha256"), layer_digest);
     }
+    std::vector<const ProjectAttachment*> ordered_attachments;
+    ordered_attachments.reserve(attachments.size());
+    for (const ProjectAttachment& attachment : attachments) {
+        ordered_attachments.push_back(&attachment);
+    }
+    std::sort(ordered_attachments.begin(), ordered_attachments.end(),
+              [](const ProjectAttachment* left,
+                 const ProjectAttachment* right) {
+                  return left->reference_id < right->reference_id;
+              });
+    builder.integer("attachments.count", ordered_attachments.size());
+    for (std::size_t index = 0U; index < ordered_attachments.size(); ++index) {
+        const ProjectAttachment& attachment = *ordered_attachments[index];
+        if (!valid_attachment_reference_id(attachment.reference_id)
+            || !canonical_hash(attachment.sha256)
+            || !valid_attachment_basename(attachment.basename)
+            || attachment.size_bytes > kMaximumProjectAttachmentBytes) {
+            return fail(error, "Could not canonicalize invalid project attachment.");
+        }
+        builder.string(indexed("attachments", index, "reference_id"),
+                       attachment.reference_id);
+        builder.add(indexed("attachments", index, "sha256"),
+                    attachment.sha256);
+        builder.string(indexed("attachments", index, "basename"),
+                       attachment.basename);
+        builder.integer(indexed("attachments", index, "size_bytes"),
+                        attachment.size_bytes);
+    }
     if (!builder.ok()) {
         return fail(error, "Could not canonicalize project content.");
     }
@@ -1049,7 +1363,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
                    BundleVersionInfo& version_info,
                    std::string& semantic_digest,
                    bool& externally_modified,
-                   std::string* error) {
+                   std::string* error,
+                   std::vector<ProjectAttachment>* snapshot_attachments = nullptr) {
     const std::string* metadata_bytes = nullptr;
     if (!find_file(files, version_path(version, "metadata.txt"),
                    metadata_bytes, error)) return false;
@@ -1107,6 +1422,59 @@ bool load_snapshot(const detail::BundleFileSet& files,
             return false;
         }
     }
+    std::set<std::string> verified_assets;
+    for (ProjectAttachment& attachment : manifest.attachments) {
+        const auto asset = files.files.find(
+            attachment_asset_path(attachment.sha256));
+        if (asset == files.files.end()) {
+            return fail(error, "Version references a missing embedded asset.");
+        }
+        if (asset->second.size() != attachment.size_bytes) {
+            return fail(error, "Embedded asset size does not match version metadata.");
+        }
+        if (verified_assets.insert(attachment.sha256).second) {
+            std::string actual;
+            if (!detail::sha256_hex(asset->second, actual, error)) return false;
+            if (actual != attachment.sha256) {
+                return fail(error,
+                            "Embedded asset content does not match version metadata.");
+            }
+        }
+        attachment.local_path.clear();
+    }
+    if (manifest.format_version >= 2U) {
+        const auto attachment_for = [&manifest](std::string_view reference_id)
+            -> const ProjectAttachment* {
+            const auto found = std::find_if(
+                manifest.attachments.begin(), manifest.attachments.end(),
+                [reference_id](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == reference_id;
+                });
+            return found == manifest.attachments.end() ? nullptr : &*found;
+        };
+        const MusicAnalysis& music = candidate.canvas.clock.music;
+        const ProjectAttachment* music_source =
+            attachment_for(kMusicSourceAttachmentId);
+        if (music.source_sha256.empty() != (music_source == nullptr)
+            || (music_source != nullptr
+                && (music_source->sha256 != music.source_sha256
+                    || music_source->basename != music.source_basename))) {
+            return fail(error,
+                        "Music analysis and its embedded source attachment disagree.");
+        }
+        for (const LayerConfig& layer : candidate.layers) {
+            const SurfaceConfig& surface = layer.render.surface;
+            const ProjectAttachment* obj =
+                attachment_for(surface_obj_attachment_id(layer.uuid));
+            if (surface.obj_sha256.empty() != (obj == nullptr)
+                || (obj != nullptr
+                    && (obj->sha256 != surface.obj_sha256
+                        || obj->basename != surface.obj_basename))) {
+                return fail(error,
+                            "Custom OBJ configuration and its embedded attachment disagree.");
+            }
+        }
+    }
     const std::string prefix = std::to_string(version) + "/";
     for (const auto& entry : files.files) {
         if (entry.first.compare(0U, prefix.size(), prefix) == 0
@@ -1119,7 +1487,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
     if (!validation.ok) {
         return fail(error, "Version project failed validation: " + validation.message);
     }
-    if (!project_content_digest(candidate, semantic_digest, error)) return false;
+    if (!project_content_digest(candidate, manifest.attachments,
+                                semantic_digest, error)) return false;
     std::string actual_tree_digest;
     if (!version_tree_digest(files, version, actual_tree_digest, error)) return false;
     const auto recorded_tree = root.version_tree_digests.find(version);
@@ -1134,9 +1503,48 @@ bool load_snapshot(const detail::BundleFileSet& files,
     manifest.info.externally_modified = external;
     manifest.info.changed_since_recorded = changed_since_recorded;
     project = std::move(candidate);
+    if (snapshot_attachments != nullptr) {
+        *snapshot_attachments = std::move(manifest.attachments);
+    }
     version_info = std::move(manifest.info);
     externally_modified = external;
     return true;
+}
+
+bool materialize_snapshot_attachments(
+    const detail::BundleFileSet& files,
+    ProjectConfig& project,
+    std::vector<ProjectAttachment>& attachments,
+    std::shared_ptr<ProjectAttachmentCache>& cache,
+    std::string* error) {
+    for (ProjectAttachment& attachment : attachments) {
+        const auto bytes = files.files.find(
+            attachment_asset_path(attachment.sha256));
+        if (bytes == files.files.end()
+            || !materialize_attachment_bytes(cache, attachment.sha256,
+                                             attachment.basename, bytes->second,
+                                             attachment.local_path, error)) {
+            return false;
+        }
+    }
+    for (LayerConfig& layer : project.layers) {
+        if (layer.render.surface.obj_sha256.empty()) continue;
+        const std::string reference_id =
+            surface_obj_attachment_id(layer.uuid);
+        const auto found = std::find_if(
+            attachments.begin(), attachments.end(),
+            [&reference_id](const ProjectAttachment& attachment) {
+                return attachment.reference_id == reference_id;
+            });
+        if (found == attachments.end()) {
+            return fail(error, "Custom OBJ attachment disappeared during materialization.");
+        }
+        layer.render.surface.obj_path = found->local_path;
+    }
+    const ValidationResult validation = validate(project);
+    return validation.ok
+               || fail(error, "Materialized project failed validation: "
+                                  + validation.message);
 }
 
 bool parse_root(const detail::BundleFileSet& files,
@@ -1171,6 +1579,23 @@ bool validate_root_paths(const detail::BundleFileSet& files,
     for (const auto& entry : files.files) {
         if (entry.first == "metadata.txt" || entry.first == "metadata.sha256"
             || entry.first == "current") continue;
+        if (entry.first.rfind("assets/", 0U) == 0U) {
+            const std::string digest = entry.first.substr(7U);
+            if (entry.first.size() != 7U + 64U || !canonical_hash(digest)) {
+                return fail(error, "Bundle contains an invalid asset path '"
+                                       + entry.first + "'.");
+            }
+            if (entry.second.size() > kMaximumProjectAttachmentBytes) {
+                return fail(error, "Bundle asset exceeds the 512 MiB limit.");
+            }
+            std::string actual;
+            if (!detail::sha256_hex(entry.second, actual, error)) return false;
+            if (actual != digest) {
+                return fail(error,
+                            "Bundle asset content does not match its SHA-256 path.");
+            }
+            continue;
+        }
         const std::size_t slash = entry.first.find('/');
         std::uint64_t version = 0U;
         if (slash == std::string::npos
@@ -1359,6 +1784,7 @@ bool preserve_raw_version(RootMetadata& root,
 }
 
 bool build_version(ProjectConfig project,
+                   std::vector<ProjectAttachment> attachments,
                    std::uint64_t number,
                    const std::string& parent_digest,
                    const std::string& reason,
@@ -1384,6 +1810,7 @@ bool build_version(ProjectConfig project,
     manifest.reverted_from_digest = reverted_from_digest;
     manifest.project_name = project.name;
     manifest.layers = project.layers;
+    manifest.attachments = std::move(attachments);
 
     std::string output_bytes;
     if (!detail::serialize_render_output_config(project.canvas, project.output,
@@ -1405,7 +1832,8 @@ bool build_version(ProjectConfig project,
     std::string metadata_bytes;
     if (!serialize_version_manifest(manifest, metadata_bytes, error)
         || !detail::sha256_hex(metadata_bytes, manifest.info.metadata_digest, error)
-        || !project_content_digest(project, semantic_digest, error)) return false;
+        || !project_content_digest(project, manifest.attachments,
+                                   semantic_digest, error)) return false;
     files.files[version_path(number, "metadata.txt")] = std::move(metadata_bytes);
     version_info = std::move(manifest.info);
     return true;
@@ -1502,6 +1930,37 @@ std::string basename_without_extension(const std::string& path) {
 
 } // namespace
 
+ProjectAttachmentCache::~ProjectAttachmentCache() {
+    if (directory.empty()) return;
+    std::error_code filesystem_error;
+    const std::filesystem::path native = detail::path_from_utf8(directory);
+    const std::filesystem::path temporary_root =
+        std::filesystem::temp_directory_path(filesystem_error);
+    if (filesystem_error || native.parent_path() != temporary_root
+        || detail::path_to_utf8(native.filename()).rfind("pvt-asset-cache-", 0U)
+               != 0U) {
+        return;
+    }
+    const std::filesystem::file_status status =
+        std::filesystem::symlink_status(native, filesystem_error);
+    if (filesystem_error || !std::filesystem::is_directory(status)
+        || std::filesystem::is_symlink(status)) {
+        return;
+    }
+    for (std::filesystem::directory_iterator iterator(native, filesystem_error), end;
+         !filesystem_error && iterator != end; ++iterator) {
+        const std::filesystem::file_status entry_status =
+            std::filesystem::symlink_status(iterator->path(), filesystem_error);
+        if (filesystem_error || !std::filesystem::is_regular_file(entry_status)
+            || std::filesystem::is_symlink(entry_status)) {
+            return; // Do not traverse or remove a cache directory that was altered.
+        }
+    }
+    if (!filesystem_error) {
+        std::filesystem::remove_all(native, filesystem_error);
+    }
+}
+
 ProjectDocument default_project_document() {
     ProjectDocument document;
     document.project = default_project();
@@ -1516,6 +1975,111 @@ ProjectDocument default_project_document() {
     return document;
 }
 
+std::string surface_obj_attachment_id(const std::string& layer_uuid) {
+    return "layer." + layer_uuid + ".surface.obj";
+}
+
+const ProjectAttachment* find_project_attachment(
+    const ProjectDocument& document,
+    const std::string& reference_id) {
+    const auto found = std::find_if(
+        document.attachments.begin(), document.attachments.end(),
+        [&reference_id](const ProjectAttachment& attachment) {
+            return attachment.reference_id == reference_id;
+        });
+    return found == document.attachments.end() ? nullptr : &*found;
+}
+
+std::string project_attachment_path(const ProjectDocument& document,
+                                    const std::string& reference_id) {
+    const ProjectAttachment* attachment =
+        find_project_attachment(document, reference_id);
+    return attachment == nullptr ? std::string{} : attachment->local_path;
+}
+
+bool attach_project_file(ProjectDocument& document,
+                         const std::string& reference_id,
+                         const std::string& source_path,
+                         ProjectAttachment* attached,
+                         std::string* error) {
+    clear_error(error);
+    try {
+        if (!valid_attachment_reference_id(reference_id)) {
+            return fail(error, "Attachment reference ID is invalid.");
+        }
+        std::string basename;
+        std::string bytes;
+        std::string digest;
+        if (!read_attachment_source(source_path, basename, bytes, digest, error)) {
+            return false;
+        }
+        std::shared_ptr<ProjectAttachmentCache> cache = document.attachment_cache;
+        ProjectAttachment candidate;
+        candidate.reference_id = reference_id;
+        candidate.sha256 = digest;
+        candidate.basename = basename;
+        candidate.size_bytes = static_cast<std::uint64_t>(bytes.size());
+        if (!materialize_attachment_bytes(cache, digest, basename, bytes,
+                                          candidate.local_path, error)) {
+            return false;
+        }
+        auto existing = std::find_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&reference_id](const ProjectAttachment& attachment) {
+                return attachment.reference_id == reference_id;
+            });
+        const bool changed = existing == document.attachments.end()
+                             || existing->sha256 != candidate.sha256
+                             || existing->basename != candidate.basename
+                             || existing->size_bytes != candidate.size_bytes;
+        if (existing == document.attachments.end()) {
+            if (document.attachments.size()
+                >= kMaximumProjectAttachmentReferences) {
+                return fail(error,
+                            "Project has reached the attachment-reference limit.");
+            }
+            document.attachments.push_back(candidate);
+        } else {
+            *existing = candidate;
+        }
+        document.attachment_cache = std::move(cache);
+        document.dirty = document.dirty || changed;
+        if (attached != nullptr) *attached = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to attach project file.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected attachment error: ")
+                               + exception.what());
+    }
+}
+
+bool detach_project_file(ProjectDocument& document,
+                         const std::string& reference_id,
+                         std::string* error) {
+    clear_error(error);
+    try {
+        if (!valid_attachment_reference_id(reference_id)) {
+            return fail(error, "Attachment reference ID is invalid.");
+        }
+        const std::size_t before = document.attachments.size();
+        document.attachments.erase(
+            std::remove_if(
+                document.attachments.begin(), document.attachments.end(),
+                [&reference_id](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == reference_id;
+                }),
+            document.attachments.end());
+        if (document.attachments.size() != before) document.dirty = true;
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to detach project file.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected detach error: ")
+                               + exception.what());
+    }
+}
+
 bool make_independent_project_copy(const ProjectConfig& project,
                                    ProjectDocument& destination,
                                    std::string* error) {
@@ -1525,6 +2089,16 @@ bool make_independent_project_copy(const ProjectConfig& project,
         if (!validation.ok || !valid_semantic_project_name(project.name)) {
             return fail(error, "Cannot copy invalid project: "
                                    + validation.message);
+        }
+        const bool has_embedded_identity =
+            !project.canvas.clock.music.source_sha256.empty()
+            || std::any_of(project.layers.begin(), project.layers.end(),
+                           [](const LayerConfig& layer) {
+                               return !layer.render.surface.obj_sha256.empty();
+                           });
+        if (has_embedded_identity) {
+            return fail(error,
+                        "Attachment-bearing snapshots must be copied from ProjectDocument so their bytes are retained.");
         }
 
         ProjectDocument candidate = default_project_document();
@@ -1568,6 +2142,65 @@ bool make_independent_project_copy(const ProjectConfig& project,
         return fail(error, "Not enough memory to create an independent project copy.");
     } catch (const std::exception& exception) {
         return fail(error, std::string("Unexpected independent-copy error: ")
+                               + exception.what());
+    }
+}
+
+bool make_independent_project_copy(const ProjectDocument& source,
+                                   ProjectDocument& destination,
+                                   std::string* error) {
+    clear_error(error);
+    try {
+        ProjectConfig attachment_free = source.project;
+        attachment_free.canvas.clock.music.source_sha256.clear();
+        attachment_free.canvas.clock.music.source_basename.clear();
+        for (LayerConfig& layer : attachment_free.layers) {
+            layer.render.surface.obj_sha256.clear();
+            layer.render.surface.obj_basename.clear();
+        }
+        ProjectDocument candidate;
+        if (!make_independent_project_copy(attachment_free, candidate, error)) {
+            return false;
+        }
+        // Restore the complete snapshot after independent identities have been
+        // assigned, then remap stable layer-scoped attachment references by
+        // layer position.
+        candidate.project.canvas.clock = source.project.canvas.clock;
+        candidate.project.output = source.project.output;
+        candidate.attachments = source.attachments;
+        candidate.attachment_cache = source.attachment_cache;
+        for (std::size_t index = 0U; index < source.project.layers.size(); ++index) {
+            candidate.project.layers[index].render =
+                source.project.layers[index].render;
+            const std::string old_id =
+                surface_obj_attachment_id(source.project.layers[index].uuid);
+            const std::string new_id =
+                surface_obj_attachment_id(candidate.project.layers[index].uuid);
+            for (ProjectAttachment& attachment : candidate.attachments) {
+                if (attachment.reference_id == old_id) {
+                    attachment.reference_id = new_id;
+                }
+            }
+        }
+        if (!sync_project_attachment_references(candidate, error)) return false;
+        candidate.source_path.clear();
+        candidate.imported_from_path.clear();
+        candidate.loaded_snapshot_digest.clear();
+        candidate.loaded_bundle_state_digest.clear();
+        candidate.versions.clear();
+        candidate.current_version = 0U;
+        candidate.source_is_zip = false;
+        candidate.legacy_import = false;
+        candidate.externally_modified = false;
+        candidate.newer_program_version = false;
+        candidate.dirty = true;
+        destination = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to copy project attachments independently.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected attachment-copy error: ")
                                + exception.what());
     }
 }
@@ -1661,12 +2294,14 @@ bool load_project_document(const std::string& path,
         std::string last_failure = "Bundle has no versions.";
         for (const std::uint64_t candidate_number : candidates) {
             ProjectConfig project;
+            std::vector<ProjectAttachment> snapshot_attachments;
             BundleVersionInfo info;
             std::string semantic_digest;
             bool version_external = false;
             std::string load_error;
             if (!load_snapshot(files, root, candidate_number, project, info,
-                               semantic_digest, version_external, &load_error)) {
+                               semantic_digest, version_external, &load_error,
+                               &snapshot_attachments)) {
                 last_failure = std::move(load_error);
                 continue;
             }
@@ -1675,7 +2310,8 @@ bool load_project_document(const std::string& path,
                 display_name_external = project.name != root.project_name;
                 if (display_name_external) {
                     project.name = root.project_name;
-                    if (!project_content_digest(project, semantic_digest,
+                    if (!project_content_digest(project, snapshot_attachments,
+                                                semantic_digest,
                                                 &load_error)) {
                         last_failure = std::move(load_error);
                         continue;
@@ -1686,7 +2322,14 @@ bool load_project_document(const std::string& path,
                                           || candidate_number != current
                                           || current_digest != info.metadata_digest;
             ProjectDocument document;
+            if (!materialize_snapshot_attachments(
+                    files, project, snapshot_attachments,
+                    document.attachment_cache, &load_error)) {
+                last_failure = std::move(load_error);
+                continue;
+            }
             document.project = std::move(project);
+            document.attachments = std::move(snapshot_attachments);
             document.source_path = path;
             document.bundle_root_name = files.root_name;
             document.first_created_utc = root.first_created_utc;
@@ -1765,11 +2408,18 @@ bool load_project_version(const ProjectDocument& document,
                         "Project changed on disk since it was loaded; refusing stale version read.");
         }
         ProjectConfig candidate;
+        std::vector<ProjectAttachment> snapshot_attachments;
         BundleVersionInfo info;
         std::string digest;
         bool version_external = false;
         if (!load_snapshot(files, root, version, candidate, info, digest,
-                           version_external, error)) return false;
+                           version_external, error,
+                           &snapshot_attachments)
+            || !materialize_snapshot_attachments(
+                files, candidate, snapshot_attachments,
+                document.attachment_cache, error)) {
+            return false;
+        }
         destination = std::move(candidate);
         return true;
     } catch (const std::bad_alloc&) {
@@ -1819,6 +2469,16 @@ bool semantic_fields(const ProjectConfig& project,
     // sequences in future enum or numeric fields.
     fields["global.output.output_directory"] = project.output.output_directory;
     fields["global.output.filename_prefix"] = project.output.filename_prefix;
+    fields["global.timing.clock.meter.expression"] =
+        project.canvas.clock.meter.expression;
+    fields["global.timing.music.analyzer_version"] =
+        project.canvas.clock.music.analyzer_version;
+    fields["global.timing.music.source_sha256"] =
+        project.canvas.clock.music.source_sha256;
+    fields["global.timing.music.source_basename"] =
+        project.canvas.clock.music.source_basename;
+    fields["global.timing.music.source_format"] =
+        project.canvas.clock.music.source_format;
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
         const std::string layer_prefix = "layer." + layer.uuid + ".";
@@ -1838,7 +2498,13 @@ bool semantic_fields(const ProjectConfig& project,
             return fail(error, "Could not build semantic layer diff.");
         }
         const std::string render_prefix = layer_prefix + "render.";
-        fields[render_prefix + "surface.obj_path"] = layer.render.surface.obj_path;
+        fields[render_prefix + "surface.obj_path"] =
+            layer.render.surface.obj_sha256.empty()
+                ? layer.render.surface.obj_path : std::string{};
+        fields[render_prefix + "surface.obj_sha256"] =
+            layer.render.surface.obj_sha256;
+        fields[render_prefix + "surface.obj_basename"] =
+            layer.render.surface.obj_basename;
         fields[render_prefix + "palette.name"] = layer.render.palette.name;
         for (std::size_t wave = 0U; wave < layer.render.waves.size(); ++wave) {
             fields[render_prefix + "waves." + std::to_string(wave) + ".name"] =
@@ -1867,6 +2533,172 @@ bool equivalent_path(const std::string& first, const std::string& second) {
     return !error && first_absolute == second_absolute;
 }
 
+bool sync_project_attachment_references(ProjectDocument& document,
+                                        std::string* error) {
+    if (document.attachments.size() > kMaximumProjectAttachmentReferences) {
+        return fail(error, "Project exceeds the attachment-reference limit.");
+    }
+    std::set<std::string> expected_obj_references;
+    for (LayerConfig& layer : document.project.layers) {
+        SurfaceConfig& surface = layer.render.surface;
+        const std::string reference_id = surface_obj_attachment_id(layer.uuid);
+        expected_obj_references.insert(reference_id);
+        auto existing = std::find_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&reference_id](const ProjectAttachment& attachment) {
+                return attachment.reference_id == reference_id;
+            });
+        if (surface.obj_path.empty()) {
+            if (!surface.obj_sha256.empty()
+                && existing != document.attachments.end()
+                && existing->sha256 == surface.obj_sha256
+                && existing->basename == surface.obj_basename
+                && !existing->local_path.empty()) {
+                surface.obj_path = existing->local_path;
+                continue;
+            }
+            surface.obj_sha256.clear();
+            surface.obj_basename.clear();
+            if (!detach_project_file(document, reference_id, error)) return false;
+            continue;
+        }
+        if (existing != document.attachments.end()
+            && existing->sha256 == surface.obj_sha256
+            && existing->basename == surface.obj_basename
+            && !existing->local_path.empty()
+            && equivalent_path(surface.obj_path, existing->local_path)) {
+            continue;
+        }
+        std::error_code status_error;
+        const fs::file_status source_status = fs::symlink_status(
+            detail::path_from_utf8(surface.obj_path), status_error);
+        if ((status_error || !fs::is_regular_file(source_status)
+            || fs::is_symlink(source_status)
+            || attachment_path_is_reparse_point(
+                detail::path_from_utf8(surface.obj_path)))
+            && existing != document.attachments.end()
+            && existing->sha256 == surface.obj_sha256
+            && existing->basename == surface.obj_basename
+            && !existing->local_path.empty()) {
+            surface.obj_path = existing->local_path;
+            continue;
+        }
+        ProjectAttachment attached;
+        if (!attach_project_file(document, reference_id, surface.obj_path,
+                                 &attached, error)) {
+            return false;
+        }
+        surface.obj_sha256 = attached.sha256;
+        surface.obj_basename = attached.basename;
+        // Render from the managed copy immediately. This also makes deleting or
+        // moving the selected original before Save harmless.
+        surface.obj_path = attached.local_path;
+    }
+    document.attachments.erase(
+        std::remove_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&expected_obj_references](const ProjectAttachment& attachment) {
+                return attachment.reference_id.rfind("layer.", 0U) == 0U
+                       && attachment.reference_id.size() > 12U
+                       && attachment.reference_id.compare(
+                              attachment.reference_id.size() - 12U, 12U,
+                              ".surface.obj") == 0
+                       && expected_obj_references.find(attachment.reference_id)
+                              == expected_obj_references.end();
+            }),
+        document.attachments.end());
+
+    const std::string& music_digest =
+        document.project.canvas.clock.music.source_sha256;
+    auto music = std::find_if(
+        document.attachments.begin(), document.attachments.end(),
+        [](const ProjectAttachment& attachment) {
+            return attachment.reference_id == kMusicSourceAttachmentId;
+        });
+    if (music_digest.empty()) {
+        if (!detach_project_file(document, kMusicSourceAttachmentId, error)) {
+            return false;
+        }
+    } else {
+        if (music == document.attachments.end()) {
+            const auto same_bytes = std::find_if(
+                document.attachments.begin(), document.attachments.end(),
+                [&music_digest](const ProjectAttachment& attachment) {
+                    return attachment.sha256 == music_digest;
+                });
+            if (same_bytes == document.attachments.end()) {
+                return fail(error,
+                            "Music analysis source has not been attached to the project.");
+            }
+            ProjectAttachment alias = *same_bytes;
+            alias.reference_id = kMusicSourceAttachmentId;
+            document.attachments.push_back(std::move(alias));
+            music = std::prev(document.attachments.end());
+        }
+        const MusicAnalysis& analysis = document.project.canvas.clock.music;
+        if (music->sha256 != analysis.source_sha256
+            || music->basename != analysis.source_basename) {
+            return fail(error,
+                        "Music analysis does not match its attached source file.");
+        }
+    }
+
+    std::set<std::string> reference_ids;
+    for (const ProjectAttachment& attachment : document.attachments) {
+        if (!valid_attachment_reference_id(attachment.reference_id)
+            || !canonical_hash(attachment.sha256)
+            || !valid_attachment_basename(attachment.basename)
+            || attachment.size_bytes > kMaximumProjectAttachmentBytes
+            || !reference_ids.insert(attachment.reference_id).second) {
+            return fail(error, "Project contains invalid attachment metadata.");
+        }
+    }
+    std::sort(document.attachments.begin(), document.attachments.end(),
+              [](const ProjectAttachment& left,
+                 const ProjectAttachment& right) {
+                  return left.reference_id < right.reference_id;
+              });
+    return true;
+}
+
+bool stage_attachment_assets(const ProjectDocument& document,
+                             detail::BundleFileSet& files,
+                             std::string* error) {
+    std::set<std::string> staged;
+    for (const ProjectAttachment& attachment : document.attachments) {
+        if (!staged.insert(attachment.sha256).second) continue;
+        const std::string asset_path = attachment_asset_path(attachment.sha256);
+        const auto existing = files.files.find(asset_path);
+        if (existing != files.files.end()) {
+            std::string actual;
+            if (existing->second.size() != attachment.size_bytes
+                || !detail::sha256_hex(existing->second, actual, error)
+                || actual != attachment.sha256) {
+                return fail(error,
+                            "Existing embedded asset does not match its content identity.");
+            }
+            continue;
+        }
+        if (attachment.local_path.empty()) {
+            return fail(error, "New project attachment has no readable local source.");
+        }
+        std::string ignored_basename;
+        std::string bytes;
+        std::string digest;
+        if (!read_attachment_source(attachment.local_path, ignored_basename,
+                                    bytes, digest, error)) {
+            return false;
+        }
+        if (digest != attachment.sha256
+            || bytes.size() != attachment.size_bytes) {
+            return fail(error,
+                        "Materialized attachment changed before it could be saved.");
+        }
+        files.files.emplace(asset_path, std::move(bytes));
+    }
+    return true;
+}
+
 bool target_exists(const std::string& path) {
     std::error_code error;
     return fs::exists(fs::symlink_status(detail::path_from_utf8(path), error));
@@ -1882,6 +2714,7 @@ bool save_with_reason(ProjectDocument& document,
     if (path.empty() || !valid_semantic_project_name(working.project.name)) {
         return fail(error, "Project name or save path is not portable.");
     }
+    if (!sync_project_attachment_references(working, error)) return false;
     const ValidationResult validation = validate(working.project);
     if (!validation.ok) {
         return fail(error, "Cannot save invalid project: " + validation.message);
@@ -1939,8 +2772,10 @@ bool save_with_reason(ProjectDocument& document,
         have_root = true;
     }
 
+    if (!stage_attachment_assets(working, files, error)) return false;
     std::string semantic_digest;
-    if (!project_content_digest(working.project, semantic_digest, error)) return false;
+    if (!project_content_digest(working.project, working.attachments,
+                                semantic_digest, error)) return false;
     const bool needs_version = versions.empty() || working.externally_modified
                                || root_external || working.legacy_import
                                || !reason_override.empty()
@@ -2015,7 +2850,8 @@ bool save_with_reason(ProjectDocument& document,
                      : working.legacy_import ? "legacy_import" : "save";
         }
         BundleVersionInfo new_version;
-        if (!build_version(working.project, number, parent_digest, reason,
+        if (!build_version(working.project, working.attachments,
+                           number, parent_digest, reason,
                            reverted_from, files, new_version,
                            semantic_digest, error)) return false;
         versions.push_back(new_version);
@@ -2144,18 +2980,26 @@ bool make_project_version_current(ProjectDocument& document,
                         "Project changed on disk since it was loaded; refusing stale current change.");
         }
         ProjectConfig project;
+        std::vector<ProjectAttachment> snapshot_attachments;
         BundleVersionInfo info;
         std::string semantic_digest;
         bool version_external = false;
         if (!load_snapshot(files, root, version, project, info, semantic_digest,
-                           version_external, error)) return false;
+                           version_external, error,
+                           &snapshot_attachments)) return false;
         if (root_external || version_external) {
             return fail(error, "Externally modified version must be promoted by Save, not made current in place.");
         }
         std::vector<BundleVersionInfo> versions;
         if (!collect_version_infos(files, root, versions, error)) return false;
         ProjectDocument updated = document;
+        if (!materialize_snapshot_attachments(
+                files, project, snapshot_attachments,
+                updated.attachment_cache, error)) {
+            return false;
+        }
         updated.project = std::move(project);
+        updated.attachments = std::move(snapshot_attachments);
         updated.current_version = version;
         updated.loaded_snapshot_digest = std::move(semantic_digest);
         updated.versions = versions;
@@ -2197,10 +3041,34 @@ bool revert_project_as_new(ProjectDocument& document,
         }
         const BundleVersionInfo* selected = find_version(document, version);
         if (selected == nullptr) return fail(error, "Requested revert version is unknown.");
+        detail::BundleFileSet files;
+        RootMetadata root;
+        bool root_external = false;
+        if (!read_document_source(document.source_path, files, root,
+                                  root_external, error)) return false;
+        std::string actual_state;
+        if (!detail::bundle_file_set_digest(files, actual_state, error)) return false;
+        if (document.loaded_bundle_state_digest.empty()
+            || actual_state != document.loaded_bundle_state_digest) {
+            return fail(error,
+                        "Project changed on disk since it was loaded; refusing stale revert.");
+        }
         ProjectConfig project;
-        if (!load_project_version(document, version, project, error)) return false;
+        std::vector<ProjectAttachment> snapshot_attachments;
+        BundleVersionInfo loaded_info;
+        std::string semantic_digest;
+        bool version_external = false;
+        if (!load_snapshot(files, root, version, project, loaded_info,
+                           semantic_digest, version_external, error,
+                           &snapshot_attachments)) return false;
         ProjectDocument candidate = document;
+        if (!materialize_snapshot_attachments(
+                files, project, snapshot_attachments,
+                candidate.attachment_cache, error)) {
+            return false;
+        }
         candidate.project = std::move(project);
+        candidate.attachments = std::move(snapshot_attachments);
         candidate.dirty = true;
         candidate.externally_modified = false;
         return save_with_reason(candidate, candidate.source_path, "revert",

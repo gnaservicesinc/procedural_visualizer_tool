@@ -169,13 +169,24 @@ void test_layer_codec_backward_compatibility() {
     original.palette = pvt::default_palette(2U);
     original.transform.flip_vertical = true;
     original.transform.mirror = pvt::MirrorMode::RightToLeft;
+    original.swings_enabled = false;
+    original.audio_reactive.enabled = true;
+    original.audio_reactive.synchronized_only = false;
+    original.audio_reactive.wave_source = pvt::MusicFeature::Bass;
+    original.audio_reactive.wave_amount = 0.64;
+    original.audio_reactive.effect_source = pvt::MusicFeature::Onset;
+    original.audio_reactive.effect_amount = 0.73;
+    original.audio_reactive.color_enabled = true;
+    original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
+    original.audio_reactive.color_amount_degrees = 38.0;
 
-    std::string version_two;
+    std::string version_three;
     std::string error;
-    CHECK(pvt::detail::serialize_layer_config(original, version_two, &error));
+    CHECK(pvt::detail::serialize_layer_config(original, version_three, &error));
+    CHECK(version_three.rfind("PVT_LAYER\t3\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
-        version_two, current_round_trip, &error));
+        version_three, current_round_trip, &error));
     CHECK(current_round_trip.swings.front().radius == 0.27);
     CHECK(current_round_trip.effects.front().space
           == pvt::EffectSpace::Surface);
@@ -197,13 +208,51 @@ void test_layer_codec_backward_compatibility() {
     }
     CHECK(current_round_trip.transform.mirror
           == pvt::MirrorMode::RightToLeft);
+    CHECK(!current_round_trip.swings_enabled);
+    CHECK(current_round_trip.audio_reactive.enabled);
+    CHECK(!current_round_trip.audio_reactive.synchronized_only);
+    CHECK(current_round_trip.audio_reactive.wave_source
+          == pvt::MusicFeature::Bass);
+    CHECK(current_round_trip.audio_reactive.effect_source
+          == pvt::MusicFeature::Onset);
+    CHECK(current_round_trip.audio_reactive.color_source
+          == pvt::MusicFeature::Midrange);
+
+    // PVT_LAYER v2 carried the PVT_SETUP v4 render subset. Strip every v3-only
+    // synchronization record while preserving all v2 spatial/palette data.
+    std::istringstream current_input(version_three);
+    std::ostringstream version_two_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_input, line)));
+    CHECK(line == "PVT_LAYER\t3");
+    version_two_output << "PVT_LAYER\t2\n";
+    while (std::getline(current_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v3_only = key == "rhythm.swings_enabled"
+                             || key.rfind("audio_reactive.", 0U) == 0U
+                             || key == "surface.obj_sha256"
+                             || key == "surface.obj_basename";
+        if (!v3_only) version_two_output << line << '\n';
+    }
+    const std::string version_two = version_two_output.str();
+    pvt::RenderData loaded_version_two = original;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_two, loaded_version_two, &error));
+    CHECK(loaded_version_two.swings_enabled);
+    CHECK(!loaded_version_two.audio_reactive.enabled);
+    CHECK(loaded_version_two.swings.front().radius == 0.27);
+    CHECK(loaded_version_two.effects.front().space
+          == pvt::EffectSpace::Surface);
+    CHECK(loaded_version_two.palette.enabled);
+    CHECK(loaded_version_two.transform.mirror
+          == pvt::MirrorMode::RightToLeft);
 
     // PVT_LAYER v1 carried the PVT_SETUP v3 render subset. Strip every v2-only
     // record to emulate a real legacy layer rather than merely changing the
     // header on a modern document.
     std::istringstream input(version_two);
     std::ostringstream legacy;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
     CHECK(line == "PVT_LAYER\t2");
     legacy << "PVT_LAYER\t1\n";
@@ -241,6 +290,108 @@ void test_layer_codec_backward_compatibility() {
     CHECK(!loaded.transform.flip_horizontal
           && !loaded.transform.flip_vertical);
     CHECK(loaded.transform.mirror == pvt::MirrorMode::None);
+    CHECK(loaded.swings_enabled);
+    CHECK(!loaded.audio_reactive.enabled);
+
+    // Failed loads are transactional even when a syntactically valid record is
+    // placed in the wrong layer/output block.
+    pvt::RenderData untouched = original;
+    untouched.phrase_warp = 0.123456;
+    const std::string malformed_layer =
+        version_three + "timing.clock.mode\tdefault\n";
+    CHECK(!pvt::detail::deserialize_layer_config(
+        malformed_layer, untouched, &error));
+    CHECK(untouched.phrase_warp == 0.123456);
+}
+
+void test_render_output_codec_backward_compatibility() {
+    pvt::ProjectConfig defaults = pvt::default_project();
+    pvt::CanvasLoopConfig canvas = defaults.canvas;
+    pvt::ExportConfig output = defaults.output;
+    canvas.width = 320;
+    canvas.height = 180;
+    canvas.total_frames = 144;
+    canvas.fps = 48.0;
+    canvas.clock.mode = pvt::ClockMode::Music;
+    canvas.clock.interpolation = pvt::ClockInterpolation::Smoothstep;
+    canvas.clock.fit = pvt::ClockFit::FitSequence;
+    canvas.clock.frame_interval = 6;
+    canvas.clock.time_interval_microseconds = 125000;
+    canvas.clock.meter.expression = "3+2+3/8";
+    canvas.clock.meter.bpm = 132.0;
+    canvas.clock.meter.tempo_note_denominator = 8;
+    canvas.clock.music_tempo = pvt::MusicTempoMode::Half;
+    canvas.clock.music_swing_policy = pvt::MusicSwingPolicy::SuppressGlobal;
+    canvas.clock.beat_offset_microseconds = 17000;
+    canvas.clock.phase_offset_degrees = 9.5;
+    canvas.clock.reverse = true;
+    canvas.clock.music.analyzer_version = "codec-test/1";
+    canvas.clock.music.source_sha256 = std::string(64U, 'b');
+    canvas.clock.music.source_basename = "meter test.wav";
+    canvas.clock.music.source_format = "wav-f32";
+    canvas.clock.music.source_frame_count = 96000U;
+    canvas.clock.music.source_sample_rate = 48000U;
+    canvas.clock.music.source_channel_count = 2U;
+    canvas.clock.music.duration_seconds = 2.0;
+    canvas.clock.music.detected_bpm = 132.0;
+    canvas.clock.music.tempo_confidence = 0.88;
+    canvas.clock.music.beat_times_seconds = {0.0, 0.4545, 0.9091, 1.3636};
+    canvas.clock.music.tempo_points = {{0.0, 132.0, 0.88}};
+    canvas.clock.music.feature_samples = {
+        {0.2F, 0.3F, 0.4F, 0.5F, 0.6F, 0.7F},
+        {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
+    };
+    output.filename_prefix = "music-sync_";
+
+    std::string version_two;
+    std::string error;
+    CHECK(pvt::detail::serialize_render_output_config(
+        canvas, output, version_two, &error));
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t2\n", 0U) == 0U);
+    pvt::CanvasLoopConfig round_trip;
+    pvt::ExportConfig round_trip_output;
+    CHECK(pvt::detail::deserialize_render_output_config(
+        version_two, round_trip, round_trip_output, &error));
+    CHECK(round_trip.width == 320 && round_trip.height == 180);
+    CHECK(round_trip.clock.mode == pvt::ClockMode::Music);
+    CHECK(round_trip.clock.interpolation
+          == pvt::ClockInterpolation::Smoothstep);
+    CHECK(round_trip.clock.music_swing_policy
+          == pvt::MusicSwingPolicy::SuppressGlobal);
+    CHECK(round_trip.clock.music.source_sha256 == std::string(64U, 'b'));
+    CHECK(round_trip.clock.music.beat_times_seconds.size() == 4U);
+    CHECK(round_trip_output.filename_prefix == "music-sync_");
+
+    std::istringstream input(version_two);
+    std::ostringstream legacy;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(input, line)));
+    CHECK(line == "PVT_RENDER_OUTPUT\t2");
+    legacy << "PVT_RENDER_OUTPUT\t1\n";
+    while (std::getline(input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v2_only = key.rfind("timing.clock.", 0U) == 0U
+                             || key.rfind("timing.music.", 0U) == 0U;
+        if (!v2_only) legacy << line << '\n';
+    }
+
+    pvt::CanvasLoopConfig loaded_legacy = canvas;
+    pvt::ExportConfig loaded_legacy_output;
+    CHECK(pvt::detail::deserialize_render_output_config(
+        legacy.str(), loaded_legacy, loaded_legacy_output, &error));
+    CHECK(loaded_legacy.width == 320 && loaded_legacy.height == 180);
+    CHECK(loaded_legacy.clock.mode == pvt::ClockMode::Default);
+    CHECK(loaded_legacy.clock.music.source_sha256.empty());
+    CHECK(loaded_legacy.clock.music.beat_times_seconds.empty());
+    CHECK(loaded_legacy_output.filename_prefix == "music-sync_");
+
+    loaded_legacy.width = 777;
+    const std::string malformed =
+        version_two + "audio_reactive.enabled\t1\n";
+    CHECK(!pvt::detail::deserialize_render_output_config(
+        malformed, loaded_legacy, loaded_legacy_output, &error));
+    CHECK(loaded_legacy.width == 777);
 }
 
 void test_sha_and_archive_guards(const fs::path& directory) {
@@ -255,7 +406,7 @@ void test_sha_and_archive_guards(const fs::path& directory) {
 
     pvt::detail::BundleFileSet oversized;
     oversized.root_name = "Guard";
-    oversized.files["metadata.txt"] = std::string(4U * 1024U * 1024U + 1U, 'x');
+    oversized.files["metadata.txt"] = std::string(8U * 1024U * 1024U + 1U, 'x');
     const fs::path rejected = directory / "oversized.zip";
     CHECK(!pvt::detail::write_bundle_file_set(as_utf8(rejected), oversized, &error));
     CHECK(!fs::exists(rejected));
@@ -361,6 +512,10 @@ void test_archive_compare_and_swap(const fs::path& directory) {
 void test_directory_versions_and_names(const fs::path& directory) {
     pvt::ProjectDocument document = pvt::default_project_document();
     document.project.name = "Fire: Night";
+    document.project.canvas.clock.mode = pvt::ClockMode::Time;
+    document.project.canvas.clock.interpolation = pvt::ClockInterpolation::Hold;
+    document.project.canvas.clock.time_interval_microseconds = 250000;
+    document.project.canvas.clock.meter.expression = "3+2+3/8";
     auto& initial_render = document.project.layers.front().render;
     initial_render.swings.front().center_x = 0.31;
     initial_render.swings.front().center_y = 0.69;
@@ -372,6 +527,9 @@ void test_directory_versions_and_names(const fs::path& directory) {
     initial_render.palette = pvt::default_palette(2U);
     initial_render.transform.flip_horizontal = true;
     initial_render.transform.mirror = pvt::MirrorMode::TopToBottom;
+    initial_render.swings_enabled = false;
+    initial_render.audio_reactive.wave_source = pvt::MusicFeature::Treble;
+    initial_render.audio_reactive.wave_amount = 0.57;
     const std::string opened = document.last_opened_utc;
     const fs::path bundle = directory
                             / pvt::detail::path_from_utf8(
@@ -390,6 +548,11 @@ void test_directory_versions_and_names(const fs::path& directory) {
     pvt::ProjectDocument loaded;
     CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
     CHECK(loaded.project.name == "Fire: Night");
+    CHECK(loaded.project.canvas.clock.mode == pvt::ClockMode::Time);
+    CHECK(loaded.project.canvas.clock.interpolation
+          == pvt::ClockInterpolation::Hold);
+    CHECK(loaded.project.canvas.clock.time_interval_microseconds == 250000);
+    CHECK(loaded.project.canvas.clock.meter.expression == "3+2+3/8");
     const auto& loaded_render = loaded.project.layers.front().render;
     CHECK(loaded_render.swings.front().center_x == 0.31);
     CHECK(loaded_render.swings.front().center_y == 0.69);
@@ -402,12 +565,20 @@ void test_directory_versions_and_names(const fs::path& directory) {
           == pvt::default_palette(2U).colors.size());
     CHECK(loaded_render.transform.flip_horizontal);
     CHECK(loaded_render.transform.mirror == pvt::MirrorMode::TopToBottom);
+    CHECK(!loaded_render.swings_enabled);
+    CHECK(loaded_render.audio_reactive.wave_source
+          == pvt::MusicFeature::Treble);
+    CHECK(loaded_render.audio_reactive.wave_amount == 0.57);
     loaded.project.layers[0].name = "Brighter base";
+    loaded.project.canvas.clock.reverse = true;
+    loaded.project.canvas.clock.meter.expression = "5+3/8";
+    loaded.project.canvas.clock.music.analyzer_version = "analysis % pass";
     loaded.project.output.filename_prefix = "ember % glow_";
     loaded.project.layers[0].render.waves[0].name = "Warm % core";
     loaded.project.layers[0].render.palette.name = "Night % Sky";
     loaded.project.layers[0].render.palette.enabled = false;
     loaded.project.layers[0].render.palette.colors[0].green = 0.123456789;
+    loaded.project.layers[0].render.swings_enabled = true;
     CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
     CHECK(report.created_version && report.version == 1U);
 
@@ -418,6 +589,29 @@ void test_directory_versions_and_names(const fs::path& directory) {
                       [](const pvt::BundleDiffEntry& value) {
                           return value.field == "global.output.filename_prefix"
                                  && value.after == "ember % glow_";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field == "global.timing.clock.reverse"
+                                 && value.before == "0" && value.after == "1";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field
+                                     == "global.timing.clock.meter.expression"
+                                 && value.after == "5+3/8";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field
+                                     == "global.timing.music.analyzer_version"
+                                 && value.after == "analysis % pass";
+                      }));
+    CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
+                      [](const pvt::BundleDiffEntry& value) {
+                          return value.field.find("render.rhythm.swings_enabled")
+                                     != std::string::npos
+                                 && value.before == "0" && value.after == "1";
                       }));
     CHECK(std::any_of(readable_differences.begin(), readable_differences.end(),
                       [](const pvt::BundleDiffEntry& value) {
@@ -966,7 +1160,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(pvt::validate_project_bundle(as_utf8(checksum_bundle), nullptr, &error));
 
     std::string root = read_bytes(checksum_bundle / "metadata.txt");
-    CHECK(replace_once(root, "project.last_changed_with_version\t4.0.1\n",
+    CHECK(replace_once(root, "project.last_changed_with_version\t5.0.0\n",
                        "project.last_changed_with_version\t99.0.0\n"));
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
@@ -1000,11 +1194,225 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(rejected.project.uuid == original_uuid);
 }
 
+std::size_t asset_entry_count(const pvt::detail::BundleFileSet& files) {
+    return static_cast<std::size_t>(std::count_if(
+        files.files.begin(), files.files.end(), [](const auto& entry) {
+            return entry.first.rfind("assets/", 0U) == 0U;
+        }));
+}
+
+void test_content_addressed_embedded_assets(const fs::path& directory) {
+    const std::string audio_bytes =
+        std::string("RIFF\x24\0\0\0WAVEfmt \x10\0\0\0", 20U)
+        + std::string("\x03\0\x02\0\x80\xbb\0\0\0\xee\x02\0\x08\0\x20\0", 16U)
+        + std::string("data\0\0\0\0", 8U);
+    const std::string obj_bytes =
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    const std::string image_bytes =
+        std::string("\x89PNG\r\n\x1a\n", 8U) + "portable-image-fixture";
+    const fs::path audio_source = directory / "source-track.wav";
+    const fs::path obj_source = directory / "source-mesh.obj";
+    const fs::path image_source = directory / "source-image.png";
+    CHECK(write_bytes(audio_source, audio_bytes));
+    CHECK(write_bytes(obj_source, obj_bytes));
+    CHECK(write_bytes(image_source, image_bytes));
+
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Embedded Assets";
+    std::string error;
+    pvt::ProjectAttachment music_attachment;
+    pvt::ProjectAttachment obj_attachment;
+    pvt::ProjectAttachment image_attachment;
+    CHECK(pvt::attach_project_file(
+        document, pvt::kMusicSourceAttachmentId, as_utf8(audio_source),
+        &music_attachment, &error));
+    CHECK(pvt::attach_project_file(
+        document,
+        pvt::surface_obj_attachment_id(document.project.layers.front().uuid),
+        as_utf8(obj_source), &obj_attachment, &error));
+    CHECK(pvt::attach_project_file(
+        document, "image.cover", as_utf8(image_source),
+        &image_attachment, &error));
+    // A second logical reference to identical bytes must not create a second
+    // root object.
+    CHECK(pvt::attach_project_file(
+        document, "audio.safety_copy", as_utf8(audio_source), nullptr, &error));
+
+    pvt::MusicAnalysis& music = document.project.canvas.clock.music;
+    music.analyzer_version = "bundle-test/1";
+    music.source_sha256 = music_attachment.sha256;
+    music.source_basename = music_attachment.basename;
+    music.source_format = "wav-f32";
+    music.source_frame_count = 48000U;
+    music.source_sample_rate = 48000U;
+    music.source_channel_count = 2U;
+    music.duration_seconds = 1.0;
+    music.detected_bpm = 120.0;
+    music.tempo_confidence = 0.9;
+    music.beat_times_seconds = {0.0, 0.5};
+    music.tempo_points = {{0.0, 120.0, 0.9}};
+    music.feature_samples = {
+        {0.5F, 0.4F, 0.3F, 0.2F, 0.8F, 1.0F},
+    };
+    pvt::SurfaceConfig& surface =
+        document.project.layers.front().render.surface;
+    surface.mapping = pvt::SurfaceMapping::CustomObj;
+    surface.obj_path = obj_attachment.local_path;
+    surface.obj_sha256 = obj_attachment.sha256;
+    surface.obj_basename = obj_attachment.basename;
+
+    // Registration owns a managed copy immediately, so all originals may move
+    // before the first save without losing the attachment.
+    std::error_code filesystem_error;
+    CHECK(fs::remove(audio_source, filesystem_error) && !filesystem_error);
+    filesystem_error.clear();
+    CHECK(fs::remove(obj_source, filesystem_error) && !filesystem_error);
+    filesystem_error.clear();
+    CHECK(fs::remove(image_source, filesystem_error) && !filesystem_error);
+
+    const fs::path bundle = directory / portable_root(document.project.name);
+    pvt::BundleSaveReport report;
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+    pvt::detail::BundleFileSet directory_files;
+    CHECK(pvt::detail::read_bundle_file_set(
+        as_utf8(bundle), directory_files, &error));
+    CHECK(asset_entry_count(directory_files) == 3U);
+    CHECK(directory_files.files.count("assets/" + music_attachment.sha256) == 1U);
+    CHECK(directory_files.files.count("assets/" + obj_attachment.sha256) == 1U);
+    CHECK(directory_files.files.count("assets/" + image_attachment.sha256) == 1U);
+    CHECK(read_bytes(bundle / "0" / "metadata.txt").rfind(
+              "PVT_VERSION\t2\n", 0U) == 0U);
+
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    CHECK(loaded.attachments.size() == 4U);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              pvt::project_attachment_path(loaded,
+                                           pvt::kMusicSourceAttachmentId)))
+          == audio_bytes);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              loaded.project.layers.front().render.surface.obj_path))
+          == obj_bytes);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              pvt::project_attachment_path(loaded, "image.cover")))
+          == image_bytes);
+
+    loaded.project.layers.front().name = "Second version";
+    CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 1U);
+    CHECK(pvt::detail::read_bundle_file_set(
+        as_utf8(bundle), directory_files, &error));
+    CHECK(asset_entry_count(directory_files) == 3U);
+
+    // Renaming/moving a source changes display metadata but reuses the same
+    // content object. Deleting it after Attach but before Save remains safe.
+    const fs::path renamed_audio = directory / "renamed-track.wav";
+    CHECK(write_bytes(renamed_audio, audio_bytes));
+    pvt::ProjectAttachment renamed_attachment;
+    CHECK(pvt::attach_project_file(
+        loaded, pvt::kMusicSourceAttachmentId, as_utf8(renamed_audio),
+        &renamed_attachment, &error));
+    CHECK(renamed_attachment.sha256 == music_attachment.sha256);
+    loaded.project.canvas.clock.music.source_sha256 = renamed_attachment.sha256;
+    loaded.project.canvas.clock.music.source_basename = renamed_attachment.basename;
+    filesystem_error.clear();
+    CHECK(fs::remove(renamed_audio, filesystem_error) && !filesystem_error);
+    CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 2U);
+    CHECK(pvt::detail::read_bundle_file_set(
+        as_utf8(bundle), directory_files, &error));
+    CHECK(asset_entry_count(directory_files) == 3U);
+
+    const std::string changed_audio_bytes = audio_bytes + "changed";
+    CHECK(write_bytes(renamed_audio, changed_audio_bytes));
+    pvt::ProjectAttachment changed_attachment;
+    CHECK(pvt::attach_project_file(
+        loaded, pvt::kMusicSourceAttachmentId, as_utf8(renamed_audio),
+        &changed_attachment, &error));
+    CHECK(changed_attachment.sha256 != music_attachment.sha256);
+    loaded.project.canvas.clock.music.source_sha256 = changed_attachment.sha256;
+    loaded.project.canvas.clock.music.source_basename = changed_attachment.basename;
+    filesystem_error.clear();
+    CHECK(fs::remove(renamed_audio, filesystem_error) && !filesystem_error);
+    CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 3U);
+    CHECK(pvt::detail::read_bundle_file_set(
+        as_utf8(bundle), directory_files, &error));
+    CHECK(asset_entry_count(directory_files) == 4U);
+    CHECK(directory_files.files.count("assets/" + music_attachment.sha256) == 1U);
+    CHECK(directory_files.files.count("assets/" + changed_attachment.sha256) == 1U);
+
+    // An independent ZIP copy carries the current referenced bytes without
+    // copying unreachable history assets.
+    CHECK(pvt::detach_project_file(loaded, "audio.safety_copy", &error));
+    pvt::ProjectDocument independent;
+    CHECK(pvt::make_independent_project_copy(loaded, independent, &error));
+    independent.project.name = "Embedded Assets ZIP";
+    const fs::path zip = directory / "embedded-assets.zip";
+    CHECK(pvt::save_project_document(independent, as_utf8(zip), &report, &error));
+    pvt::detail::BundleFileSet zip_files;
+    CHECK(pvt::detail::read_bundle_file_set(as_utf8(zip), zip_files, &error));
+    CHECK(zip_files.from_zip && asset_entry_count(zip_files) == 3U);
+    pvt::ProjectDocument zip_loaded;
+    CHECK(pvt::load_project_document(as_utf8(zip), zip_loaded, &error));
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              pvt::project_attachment_path(zip_loaded,
+                                           pvt::kMusicSourceAttachmentId)))
+          == changed_audio_bytes);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              zip_loaded.project.layers.front().render.surface.obj_path))
+          == obj_bytes);
+
+    // Digest/path corruption is rejected before a snapshot can be selected,
+    // for both unpacked and ZIP bundles, and destination loads are transactional.
+    const fs::path corrupt_directory = directory / "corrupt-assets";
+    filesystem_error.clear();
+    fs::copy(bundle, corrupt_directory, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    CHECK(write_bytes(corrupt_directory / "assets" / changed_attachment.sha256,
+                      "corrupt"));
+    pvt::ProjectDocument untouched = pvt::default_project_document();
+    const std::string untouched_uuid = untouched.project.uuid;
+    CHECK(!pvt::load_project_document(
+        as_utf8(corrupt_directory), untouched, &error));
+    CHECK(untouched.project.uuid == untouched_uuid);
+
+    pvt::detail::BundleFileSet corrupt_zip_files = zip_files;
+    corrupt_zip_files.files["assets/" + changed_attachment.sha256] = "corrupt";
+    const fs::path corrupt_zip = directory / "corrupt-assets.zip";
+    CHECK(pvt::detail::write_bundle_file_set(
+        as_utf8(corrupt_zip), corrupt_zip_files, &error));
+    CHECK(!pvt::load_project_document(as_utf8(corrupt_zip), untouched, &error));
+
+    pvt::detail::BundleFileSet hostile = zip_files;
+    hostile.files["assets/not-a-lowercase-sha256"] = "hostile";
+    const fs::path hostile_zip = directory / "hostile-asset.zip";
+    CHECK(pvt::detail::write_bundle_file_set(
+        as_utf8(hostile_zip), hostile, &error));
+    CHECK(!pvt::load_project_document(as_utf8(hostile_zip), untouched, &error));
+
+    // Oversized input is rejected from file metadata without allocating its
+    // contents. The sparse fixture keeps the test cheap on supported filesystems.
+    const fs::path oversized = directory / "oversized-asset.wav";
+    {
+        std::ofstream output(oversized, std::ios::binary | std::ios::trunc);
+        output.seekp(static_cast<std::streamoff>(
+            pvt::kMaximumProjectAttachmentBytes));
+        output.put('x');
+        CHECK(static_cast<bool>(output));
+    }
+    CHECK(!pvt::attach_project_file(
+        loaded, "oversized.asset", as_utf8(oversized), nullptr, &error));
+}
+
 } // namespace
 
 int main() {
     TemporaryDirectory temporary;
     test_layer_codec_backward_compatibility();
+    test_render_output_codec_backward_compatibility();
     test_sha_and_archive_guards(temporary.path());
     test_archive_compare_and_swap(temporary.path());
     test_directory_versions_and_names(temporary.path());
@@ -1014,6 +1422,7 @@ int main() {
     test_fallback_orphan_and_stale(temporary.path());
     test_complete_history_accounting(temporary.path());
     test_corrupt_history_and_root_metadata(temporary.path());
+    test_content_addressed_embedded_assets(temporary.path());
     if (failures != 0) {
         std::cerr << failures << " bundle test(s) failed.\n";
         return 1;

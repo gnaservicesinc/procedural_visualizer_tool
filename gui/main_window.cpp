@@ -1,6 +1,8 @@
 #include "main_window.h"
 
+#include "music_video_export.h"
 #include "preview_widget.h"
+#include "../src/audio_analysis.h"
 #include "../src/config_codec.h"
 #include "../src/project_bundle.h"
 
@@ -19,13 +21,16 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFuture>
 #include <QGroupBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -35,10 +40,12 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QRandomGenerator>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -76,7 +83,7 @@ constexpr int kMaximumUndoLimit = 5000;
 constexpr std::size_t kMaximumUndoHistoryBytes = 128U * 1024U * 1024U;
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "4.0.1"
+#  define PVT_PROGRAM_VERSION "5.0.0"
 #endif
 
 std::optional<std::vector<std::uint64_t>> numeric_version(std::string_view value) {
@@ -316,6 +323,63 @@ float linear_to_srgb(float value) {
     return 1.055F * std::pow(value, 1.0F / 2.4F) - 0.055F;
 }
 
+QString formatted_time(double seconds) {
+    if (!std::isfinite(seconds) || seconds < 0.0) return QStringLiteral("--:--.---");
+    const auto total_milliseconds = static_cast<qint64>(
+        std::llround(seconds * 1000.0));
+    const qint64 hours = total_milliseconds / 3600000;
+    const qint64 minutes = (total_milliseconds / 60000) % 60;
+    const qint64 whole_seconds = (total_milliseconds / 1000) % 60;
+    const qint64 milliseconds = total_milliseconds % 1000;
+    if (hours > 0) {
+        return QStringLiteral("%1:%2:%3.%4")
+            .arg(hours)
+            .arg(minutes, 2, 10, QLatin1Char('0'))
+            .arg(whole_seconds, 2, 10, QLatin1Char('0'))
+            .arg(milliseconds, 3, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2.%3")
+        .arg(minutes)
+        .arg(whole_seconds, 2, 10, QLatin1Char('0'))
+        .arg(milliseconds, 3, 10, QLatin1Char('0'));
+}
+
+QString video_filename_for_prefix(const std::string& prefix) {
+    QString base = QString::fromStdString(prefix);
+    while (base.endsWith(QLatin1Char('_')) || base.endsWith(QLatin1Char('-'))
+           || base.endsWith(QLatin1Char(' '))) {
+        base.chop(1);
+    }
+    if (base.isEmpty()) base = QStringLiteral("visualizer");
+    return base + QStringLiteral(".mp4");
+}
+
+std::vector<double> music_beats_for_ui(const pvt::ClockConfig& clock) {
+    std::vector<double> beats;
+    const double offset = static_cast<double>(clock.beat_offset_microseconds)
+                          / 1000000.0;
+    const auto& source = clock.music.beat_times_seconds;
+    if (clock.music_tempo == pvt::MusicTempoMode::Half) {
+        beats.reserve((source.size() + 1U) / 2U);
+        for (std::size_t index = 0U; index < source.size(); index += 2U) {
+            beats.push_back(source[index] + offset);
+        }
+    } else if (clock.music_tempo == pvt::MusicTempoMode::Double) {
+        beats.reserve(source.empty() ? 0U : source.size() * 2U - 1U);
+        for (std::size_t index = 0U; index < source.size(); ++index) {
+            beats.push_back(source[index] + offset);
+            if (index + 1U < source.size()) {
+                beats.push_back((source[index] + source[index + 1U]) * 0.5
+                                + offset);
+            }
+        }
+    } else {
+        beats.reserve(source.size());
+        for (const double beat : source) beats.push_back(beat + offset);
+    }
+    return beats;
+}
+
 QString wave_label(const pvt::WaveConfig& wave, std::size_t index) {
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(wave.name) + QStringLiteral("  [")
@@ -376,9 +440,44 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
         bytes = saturating_add(bytes, estimated_string_bytes(effect.name));
     }
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_path));
+    bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_sha256));
+    bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_basename));
     bytes = saturating_add(bytes, estimated_string_bytes(render.palette.name));
     bytes = saturating_add(
         bytes, render.palette.colors.capacity() * sizeof(pvt::PaletteColor));
+    return bytes;
+}
+
+std::size_t estimated_canvas_bytes(const pvt::CanvasLoopConfig& canvas) {
+    const auto& music = canvas.clock.music;
+    std::size_t bytes = sizeof(pvt::CanvasLoopConfig);
+    for (const std::string* value : {
+             &canvas.clock.meter.expression, &music.analyzer_version,
+             &music.source_sha256, &music.source_basename,
+             &music.source_format}) {
+        bytes = saturating_add(bytes, estimated_string_bytes(*value));
+    }
+    bytes = saturating_add(
+        bytes, music.beat_times_seconds.capacity() * sizeof(double));
+    bytes = saturating_add(
+        bytes, music.tempo_points.capacity() * sizeof(pvt::MusicTempoPoint));
+    bytes = saturating_add(
+        bytes, music.feature_samples.capacity() * sizeof(pvt::MusicFeatureSample));
+    return bytes;
+}
+
+std::size_t estimated_attachment_bytes(
+    const std::vector<pvt::ProjectAttachment>& attachments) {
+    std::size_t bytes = saturating_add(
+        sizeof(std::vector<pvt::ProjectAttachment>),
+        attachments.capacity() * sizeof(pvt::ProjectAttachment));
+    for (const auto& attachment : attachments) {
+        for (const std::string* value : {
+                 &attachment.reference_id, &attachment.sha256,
+                 &attachment.basename, &attachment.local_path}) {
+            bytes = saturating_add(bytes, estimated_string_bytes(*value));
+        }
+    }
     return bytes;
 }
 
@@ -393,6 +492,7 @@ std::size_t estimated_project_bytes(const pvt::ProjectConfig& project) {
     std::size_t bytes = sizeof(pvt::ProjectConfig);
     bytes = saturating_add(bytes, estimated_string_bytes(project.uuid));
     bytes = saturating_add(bytes, estimated_string_bytes(project.name));
+    bytes = saturating_add(bytes, estimated_canvas_bytes(project.canvas));
     bytes = saturating_add(bytes, estimated_output_bytes(project.output));
     bytes = saturating_add(bytes,
                            project.layers.capacity() * sizeof(pvt::LayerConfig));
@@ -402,6 +502,21 @@ std::size_t estimated_project_bytes(const pvt::ProjectConfig& project) {
         bytes = saturating_add(bytes, estimated_render_data_bytes(layer.render));
     }
     return bytes;
+}
+
+bool attachments_equal(const std::vector<pvt::ProjectAttachment>& left,
+                       const std::vector<pvt::ProjectAttachment>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0U; index < left.size(); ++index) {
+        const auto& a = left[index];
+        const auto& b = right[index];
+        if (a.reference_id != b.reference_id || a.sha256 != b.sha256
+            || a.basename != b.basename || a.size_bytes != b.size_bytes
+            || a.local_path != b.local_path) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool render_data_equal(const pvt::RenderData& left,
@@ -712,16 +827,21 @@ MainWindow::MainWindow(QWidget* parent)
     playback_timer_->setTimerType(Qt::PreciseTimer);
     preview_watcher_ = new QFutureWatcher<PreviewResult>(this);
     export_watcher_ = new QFutureWatcher<ExportResult>(this);
+    music_analysis_watcher_ = new QFutureWatcher<MusicAnalysisResult>(this);
     preview_cancel_ = std::make_shared<std::atomic_bool>(false);
+    music_analysis_cancel_ = std::make_shared<std::atomic_bool>(false);
 
     auto* central = new QWidget;
     auto* outer = new QVBoxLayout(central);
     auto* splitter = new QSplitter(Qt::Horizontal);
     preview_ = new PreviewWidget;
     tabs_ = new QTabWidget;
-    tabs_->addTab(createWavePage(), tr("Waves"));
-    tabs_->addTab(createSwingPage(), tr("Swings"));
-    tabs_->addTab(createEffectPage(), tr("Effects"));
+    wave_page_ = createWavePage();
+    synchronization_page_ = createSynchronizationPage();
+    effect_page_ = createEffectPage();
+    tabs_->addTab(wave_page_, tr("Waves"));
+    tabs_->addTab(synchronization_page_, tr("Synchronization"));
+    tabs_->addTab(effect_page_, tr("Effects"));
     tabs_->addTab(createLayerSettingsPage(), tr("Layer Render"));
     tabs_->addTab(createOutputPage(), tr("Output"));
     tabs_->addTab(createVersionsPage(), tr("Versions"));
@@ -737,6 +857,12 @@ MainWindow::MainWindow(QWidget* parent)
 
     status_ = new QLabel(tr("Ready"));
     statusBar()->addPermanentWidget(status_, 1);
+    export_progress_ = new QProgressBar;
+    export_progress_->setRange(0, 1000);
+    export_progress_->setValue(0);
+    export_progress_->setMaximumWidth(220);
+    export_progress_->hide();
+    statusBar()->addPermanentWidget(export_progress_);
     createToolbar();
 
     connect(preview_timer_, &QTimer::timeout, this, &MainWindow::startPreview);
@@ -758,9 +884,10 @@ MainWindow::MainWindow(QWidget* parent)
                 }
                 last_previewed_frame_ = result.frame;
                 preview_->setPreview(result.image);
+                const int frame_count = std::max(1, effectiveFrameCount());
                 status_->setText(tr("Preview frame %1/%2")
                                      .arg(result.frame + 1)
-                                     .arg(project_.canvas.total_frames));
+                                     .arg(frame_count));
             } else {
                 status_->setText(result.error);
             }
@@ -777,6 +904,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this, [this] {
         const ExportResult result = export_watcher_->result();
         export_active_ = false;
+        export_progress_->hide();
         if (close_after_export_) {
             close_after_export_ = false;
             QTimer::singleShot(0, this, &QWidget::close);
@@ -785,7 +913,9 @@ MainWindow::MainWindow(QWidget* parent)
         if (result.ok) {
             status_->setText(tr("Export complete"));
             QMessageBox::information(this, tr("Export complete"),
-                                     tr("The looping image sequence was exported successfully."));
+                                     result.video
+                                         ? tr("The music-synchronized MP4 video was exported successfully.")
+                                         : tr("The image sequence was exported successfully."));
         } else if (result.cancelled) {
             status_->setText(tr("Export cancelled"));
         } else {
@@ -793,6 +923,14 @@ MainWindow::MainWindow(QWidget* parent)
             QMessageBox::critical(this, tr("Export failed"), result.error);
         }
     });
+    connect(music_analysis_watcher_,
+            &QFutureWatcher<MusicAnalysisResult>::finished, this, [this] {
+                music_analysis_active_ = false;
+                finishMusicAnalysis(music_analysis_watcher_->result());
+                updateMusicTransactionGuards();
+                updateSynchronizationState();
+                updateExportAvailability();
+            });
 
     connectEditors();
     connect(undo_stack_, &QUndoStack::cleanChanged, this,
@@ -803,15 +941,21 @@ MainWindow::MainWindow(QWidget* parent)
     updateWindowTitle();
     updateCompatibilityWarning();
     restoreUserSettings();
+    qApp->installEventFilter(this);
     schedulePreview();
 }
 
 MainWindow::~MainWindow() {
+    qApp->removeEventFilter(this);
     if (preview_cancel_ != nullptr) {
         preview_cancel_->store(true, std::memory_order_relaxed);
     }
+    if (music_analysis_cancel_ != nullptr) {
+        music_analysis_cancel_->store(true, std::memory_order_relaxed);
+    }
     cancel_export_.store(true);
     preview_watcher_->waitForFinished();
+    music_analysis_watcher_->waitForFinished();
     export_watcher_->waitForFinished();
 }
 
@@ -827,8 +971,31 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
+    cancelMusicAnalysis();
     saveUserSettings();
     QMainWindow::closeEvent(event);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (event != nullptr
+        && (event->type() == QEvent::KeyPress
+            || event->type() == QEvent::KeyRelease)) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        auto* target = qobject_cast<QWidget*>(watched);
+        if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier
+            && target != nullptr && target->window() == this) {
+            QWidget* const focus = QApplication::focusWidget();
+            const bool editing_text = qobject_cast<QLineEdit*>(focus) != nullptr
+                                      || qobject_cast<QPlainTextEdit*>(focus) != nullptr;
+            if (!editing_text) {
+                if (event->type() == QEvent::KeyPress && !key->isAutoRepeat()) {
+                    togglePlayback();
+                }
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 QWidget* MainWindow::createWavePage() {
@@ -930,31 +1097,218 @@ QWidget* MainWindow::createWavePage() {
     return page;
 }
 
-QWidget* MainWindow::createSwingPage() {
-    auto* page = new QWidget;
+QWidget* MainWindow::createSynchronizationPage() {
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    auto* contents = new QWidget;
+    auto* layout = new QVBoxLayout(contents);
+
+    clock_group_ = new QGroupBox(tr("Clock — project-wide"));
+    auto* clock_layout = new QVBoxLayout(clock_group_);
+    auto* clock_help = new QLabel(
+        tr("The base clock drives every synchronized wave and effect in every layer. "
+           "Frame, Time, and Time Signature modes can hold or interpolate the calculated "
+           "clock between pulses; Music follows the embedded source's analyzed beat map."));
+    clock_help->setWordWrap(true);
+    clock_help->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    clock_layout->addWidget(clock_help);
+    clock_form_ = new QFormLayout;
+    clock_mode_ = new QComboBox;
+    clock_mode_->setObjectName(QStringLiteral("clockMode"));
+    for (const auto mode : {pvt::ClockMode::Default, pvt::ClockMode::Frame,
+                            pvt::ClockMode::Time, pvt::ClockMode::Meter,
+                            pvt::ClockMode::Music}) {
+        add_enum_item(clock_mode_, QString::fromUtf8(pvt::clock_mode_name(mode)), mode);
+    }
+    clock_interpolation_ = new QComboBox;
+    for (const auto value : {pvt::ClockInterpolation::Hold,
+                             pvt::ClockInterpolation::Linear,
+                             pvt::ClockInterpolation::Smoothstep}) {
+        add_enum_item(clock_interpolation_,
+                      QString::fromUtf8(pvt::clock_interpolation_name(value)), value);
+    }
+    clock_interpolation_->setToolTip(
+        tr("Interpolates the evaluated clock/parameters, not rendered frames."));
+    clock_fit_ = new QComboBox;
+    for (const auto value : {pvt::ClockFit::Exact, pvt::ClockFit::FitSequence}) {
+        add_enum_item(clock_fit_, QString::fromUtf8(pvt::clock_fit_name(value)), value);
+    }
+    clock_frame_interval_ = integer_editor(1, 1000000);
+    clock_frame_interval_->setObjectName(QStringLiteral("clockFrameInterval"));
+    clock_time_interval_ms_ = real_editor(0.001, 1000000000.0, 3, 1.0);
+    clock_time_interval_ms_->setSuffix(tr(" ms"));
+    meter_expression_ = new QLineEdit;
+    meter_expression_->setObjectName(QStringLiteral("meterExpression"));
+    meter_expression_->setMaxLength(256);
+    meter_expression_->setPlaceholderText(tr("Examples: 7/8, 3+2+3/8, 5/4 | 6/4, 4/3"));
+    meter_summary_ = new QLabel;
+    meter_summary_->setWordWrap(true);
+    meter_bpm_ = real_editor(1.0, 1000.0, 3, 1.0);
+    meter_bpm_->setSuffix(tr(" BPM"));
+    // Keep this aligned with the meter parser's bounded denominator domain.
+    meter_tempo_note_ = integer_editor(1, 1024);
+    meter_tempo_note_->setPrefix(tr("1/"));
+    clock_reverse_ = new QCheckBox(tr("Reverse clock direction"));
+    clock_phase_offset_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    clock_phase_offset_->setSuffix(QChar(0x00b0));
+    music_tempo_mode_ = new QComboBox;
+    for (const auto value : {pvt::MusicTempoMode::Half,
+                             pvt::MusicTempoMode::Detected,
+                             pvt::MusicTempoMode::Double}) {
+        add_enum_item(music_tempo_mode_,
+                      QString::fromUtf8(pvt::music_tempo_mode_name(value)), value);
+    }
+    music_beat_offset_ms_ = real_editor(-86400000.0, 86400000.0, 3, 1.0);
+    music_beat_offset_ms_->setSuffix(tr(" ms"));
+
+    clock_form_->addRow(tr("Source"), clock_mode_);
+    clock_form_->addRow(tr("Between pulses"), clock_interpolation_);
+    clock_form_->addRow(tr("Interval policy"), clock_fit_);
+    clock_form_->addRow(tr("Pulse every"), clock_frame_interval_);
+    clock_form_->addRow(tr("Pulse interval"), clock_time_interval_ms_);
+    clock_form_->addRow(tr("Meter"), meter_expression_);
+    clock_form_->addRow(tr("Parsed meter"), meter_summary_);
+    clock_form_->addRow(tr("Tempo"), meter_bpm_);
+    clock_form_->addRow(tr("Tempo note"), meter_tempo_note_);
+    clock_form_->addRow(clock_reverse_);
+    clock_form_->addRow(tr("Phase offset"), clock_phase_offset_);
+    clock_form_->addRow(tr("Music tempo"), music_tempo_mode_);
+    clock_form_->addRow(tr("Beat-grid offset"), music_beat_offset_ms_);
+    clock_layout->addLayout(clock_form_);
+
+    auto* music_group = new QGroupBox(tr("Music source — embedded with project"));
+    auto* music_layout = new QVBoxLayout(music_group);
+    music_source_ = new QLineEdit;
+    music_source_->setObjectName(QStringLiteral("musicSource"));
+    music_source_->setReadOnly(true);
+    music_source_->setPlaceholderText(tr("No analyzed music source"));
+    music_layout->addWidget(music_source_);
+    auto* music_buttons = new QHBoxLayout;
+    music_choose_ = new QPushButton(tr("Choose…"));
+    music_relink_ = new QPushButton(tr("Relink…"));
+    music_reanalyze_ = new QPushButton(tr("Reanalyze"));
+    music_clear_ = new QPushButton(tr("Clear"));
+    for (auto* button : {music_choose_, music_relink_, music_reanalyze_, music_clear_}) {
+        music_buttons->addWidget(button);
+    }
+    music_layout->addLayout(music_buttons);
+    music_summary_ = new QLabel;
+    music_summary_->setObjectName(QStringLiteral("musicSummary"));
+    music_summary_->setWordWrap(true);
+    music_summary_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    music_layout->addWidget(music_summary_);
+    music_error_ = new QLabel;
+    music_error_->setObjectName(QStringLiteral("musicError"));
+    music_error_->setWordWrap(true);
+    music_error_->setStyleSheet(
+        QStringLiteral("QLabel { color: #ffb4ab; background: #4a2020; padding: 5px; }"));
+    music_error_->hide();
+    music_layout->addWidget(music_error_);
+    auto* progress_row = new QHBoxLayout;
+    music_progress_ = new QProgressBar;
+    music_progress_->setObjectName(QStringLiteral("musicProgress"));
+    music_progress_->setRange(0, 1000);
+    music_progress_->setValue(0);
+    music_progress_->hide();
+    music_cancel_ = new QPushButton(tr("Cancel analysis"));
+    music_cancel_->hide();
+    progress_row->addWidget(music_progress_, 1);
+    progress_row->addWidget(music_cancel_);
+    music_layout->addLayout(progress_row);
+    clock_layout->addWidget(music_group);
+    layout->addWidget(clock_group_);
+
+    layout->addWidget(createSwingBlock());
+
+    audio_response_group_ = new QGroupBox(tr("Audio response — active layer"));
+    audio_response_group_->setCheckable(true);
+    audio_response_group_->setObjectName(QStringLiteral("audioResponseGroup"));
+    auto* audio_form = new QFormLayout(audio_response_group_);
+    audio_sync_only_ = new QCheckBox(tr("Only synchronized waves and effects"));
+    audio_waves_enabled_ = new QCheckBox(tr("Modulate wave amplitude"));
+    audio_wave_source_ = new QComboBox;
+    audio_wave_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    audio_effects_enabled_ = new QCheckBox(tr("Modulate effect strength"));
+    audio_effect_source_ = new QComboBox;
+    audio_effect_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    audio_color_enabled_ = new QCheckBox(tr("Modulate color hue"));
+    audio_color_source_ = new QComboBox;
+    audio_color_amount_ = real_editor(-3600.0, 3600.0, 2, 1.0);
+    audio_color_amount_->setSuffix(QChar(0x00b0));
+    // MusicFeature has an explicit byte-sized ABI. Discover every named value
+    // so analyzer upgrades automatically appear here without a second GUI list
+    // drifting out of sync.
+    for (int raw = 0; raw <= (std::numeric_limits<std::uint8_t>::max)(); ++raw) {
+        const auto feature = static_cast<pvt::MusicFeature>(raw);
+        const char* const name = pvt::music_feature_name(feature);
+        if (name == nullptr || std::string_view(name) == "Unknown") continue;
+        const QString label = QString::fromUtf8(name);
+        add_enum_item(audio_wave_source_, label, feature);
+        add_enum_item(audio_effect_source_, label, feature);
+        add_enum_item(audio_color_source_, label, feature);
+    }
+    audio_form->addRow(audio_sync_only_);
+    audio_form->addRow(audio_waves_enabled_);
+    audio_form->addRow(tr("Wave feature"), audio_wave_source_);
+    audio_form->addRow(tr("Wave amount"), audio_wave_amount_);
+    audio_form->addRow(audio_effects_enabled_);
+    audio_form->addRow(tr("Effect feature"), audio_effect_source_);
+    audio_form->addRow(tr("Effect amount"), audio_effect_amount_);
+    audio_form->addRow(audio_color_enabled_);
+    audio_form->addRow(tr("Color feature"), audio_color_source_);
+    audio_form->addRow(tr("Hue range"), audio_color_amount_);
+    layout->addWidget(audio_response_group_);
+    layout->addStretch();
+    scroll->setWidget(contents);
+
+    connect(music_choose_, &QPushButton::clicked, this, &MainWindow::chooseMusicSource);
+    connect(music_relink_, &QPushButton::clicked, this, &MainWindow::relinkMusicSource);
+    connect(music_reanalyze_, &QPushButton::clicked, this,
+            &MainWindow::reanalyzeMusicSource);
+    connect(music_clear_, &QPushButton::clicked, this, &MainWindow::clearMusicSource);
+    connect(music_cancel_, &QPushButton::clicked, this, [this] {
+        cancelMusicAnalysis(tr("Cancelling music analysis…"));
+    });
+    return scroll;
+}
+
+QWidget* MainWindow::createSwingBlock() {
+    swings_group_ = new QGroupBox(tr("Swings — active layer"));
+    swings_group_->setCheckable(true);
+    swings_group_->setObjectName(QStringLiteral("swingsGroup"));
+    auto* page = swings_group_;
     auto* layout = new QVBoxLayout(page);
     auto* explanation = new QLabel(
-        tr("Swing modulators reshape the shared synchronized clock. Add, remove, "
-           "duplicate, and reorder them to layer loop-safe rhythm variations. "
-           "Set a local radius above zero to place the numbered source/UV circle in the preview. "
-           "Localized Swings drive source waves and Texture effects; Mapped-object effects use "
-           "the global synchronized clock because projected screen points do not map to one UV."));
+        tr("Swing modulators reshape the synchronized clock. Add, duplicate, remove, "
+           "or reorder them for loop-safe rhythm. A Local radius above zero creates "
+           "the numbered source/UV circle in the preview. Localized Swings drive source "
+           "waves and Texture effects; Mapped-object effects use the global clock."));
     explanation->setWordWrap(true);
+    explanation->setObjectName(QStringLiteral("swingExplanation"));
+    // A vertically Preferred word-wrapped label may be compressed below its
+    // height-for-width by the stretchable list beneath it. Treat its wrapped
+    // size hint as a minimum so the final lines are never clipped.
+    explanation->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    explanation->setMinimumWidth(0);
+    explanation->setMinimumHeight(explanation->fontMetrics().lineSpacing() * 7);
     layout->addWidget(explanation);
 
     swing_list_ = new QListWidget;
     swing_list_->setAlternatingRowColors(true);
     layout->addWidget(swing_list_, 1);
 
-    auto* buttons = new QHBoxLayout;
+    auto* buttons = new QGridLayout;
     auto* add = new QPushButton(tr("Add"));
     auto* duplicate = new QPushButton(tr("Duplicate"));
     auto* remove = new QPushButton(tr("Remove"));
     auto* up = new QPushButton(tr("Up"));
     auto* down = new QPushButton(tr("Down"));
-    for (auto* button : {add, duplicate, remove, up, down}) {
-        buttons->addWidget(button);
-    }
+    buttons->addWidget(add, 0, 0);
+    buttons->addWidget(duplicate, 0, 1);
+    buttons->addWidget(remove, 0, 2);
+    buttons->addWidget(up, 1, 0);
+    buttons->addWidget(down, 1, 1);
+    buttons->setColumnStretch(2, 1);
     layout->addLayout(buttons);
 
     auto* properties = new QGroupBox(tr("Selected swing"));
@@ -1328,9 +1682,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
         tr("Custom OBJ surfaces use authored texture coordinates when present, "
            "or automatic box projection otherwise. Relative paths start from "
            "the application's working directory."));
-    auto* obj_browse = new QPushButton(tr("Browse…"));
+    surface_obj_browse_ = new QPushButton(tr("Browse…"));
     obj_path_layout->addWidget(surface_obj_path_, 1);
-    obj_path_layout->addWidget(obj_browse);
+    obj_path_layout->addWidget(surface_obj_browse_);
     surface_rotations_ = integer_editor(-1000, 1000);
     surface_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     surface_curvature_ = real_editor(0.0, 1.0);
@@ -1381,7 +1735,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     layout->addStretch();
     scroll->setWidget(contents);
 
-    connect(obj_browse, &QPushButton::clicked, this, [this] {
+    connect(surface_obj_browse_, &QPushButton::clicked, this, [this] {
         QString preferred;
         if (!surface_obj_path_->text().isEmpty()) {
             const QString absolute = QDir::isAbsolutePath(surface_obj_path_->text())
@@ -1395,8 +1749,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
             tr("Wavefront OBJ (*.obj);;All files (*)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
-            surface_obj_path_->setText(selected);
-            applyGlobalEditor(surface_obj_path_);
+            (void)setSurfaceObjSource(selected);
         }
     });
     connect(apply_preset, &QPushButton::clicked, this, [this] {
@@ -1427,16 +1780,27 @@ QWidget* MainWindow::createOutputPage() {
     height_ = integer_editor(16, 16384);
     block_size_ = integer_editor(1, 16384);
     frames_ = integer_editor(2, 1000000);
+    frames_->setObjectName(QStringLiteral("manualFrameCount"));
     fps_ = real_editor(1.0, 240.0, 3, 1.0);
+    effective_frames_ = new QLabel;
+    effective_frames_->setObjectName(QStringLiteral("effectiveFrameCount"));
+    effective_frames_->setWordWrap(true);
     canvas->addRow(tr("Width"), width_);
     canvas->addRow(tr("Height"), height_);
     canvas->addRow(tr("Block size"), block_size_);
-    canvas->addRow(tr("Frames per loop"), frames_);
+    canvas->addRow(tr("Manual frames"), frames_);
+    canvas->addRow(tr("Effective duration"), effective_frames_);
     canvas->addRow(tr("Playback FPS"), fps_);
     layout->addWidget(canvas_group);
 
     auto* output_group = new QGroupBox(tr("Export"));
     auto* output = new QFormLayout(output_group);
+    export_target_ = new QComboBox;
+    export_target_->setObjectName(QStringLiteral("exportTarget"));
+    export_target_->addItem(tr("Image sequence"), 0);
+    export_target_->addItem(tr("MP4 video with embedded music"), 1);
+    video_output_ = new QLabel;
+    video_output_->setWordWrap(true);
     bit_depth_ = new QComboBox;
     bit_depth_->addItem(tr("8-bit PNG"), 8);
     bit_depth_->addItem(tr("16-bit PNG"), 16);
@@ -1474,7 +1838,9 @@ QWidget* MainWindow::createOutputPage() {
     prefix_->setValidator(new Utf8TextValidator(TextRule::FilenamePrefix, prefix_));
     first_frame_ = integer_editor(0, 1000000000);
     filename_digits_ = integer_editor(1, 12);
-    overwrite_ = new QCheckBox(tr("Overwrite matching frames"));
+    overwrite_ = new QCheckBox(tr("Overwrite existing output"));
+    output->addRow(tr("Target"), export_target_);
+    output->addRow(tr("Video file"), video_output_);
     output->addRow(tr("Bit depth"), bit_depth_);
     output->addRow(tr("PNG compression (0 off, 9 max)"), png_compression_);
     output->addRow(dither_enabled_);
@@ -1499,6 +1865,9 @@ QWidget* MainWindow::createOutputPage() {
             updateOutputEditorValidity();
             applyGlobalEditor(output_directory_);
         }
+    });
+    connect(export_target_, &QComboBox::currentIndexChanged, this, [this] {
+        updateExportAvailability();
     });
     return scroll;
 }
@@ -1675,6 +2044,7 @@ void MainWindow::makeSelectedVersionCurrent() {
     // user's target before that refresh can change the selection.
     const auto version = version_list_->currentItem()->data(Qt::UserRole).toULongLong();
     if (!confirmDiscardChanges()) return;
+    cancelMusicAnalysis();
     pvt::BundleSaveReport report;
     std::string error;
     if (!pvt::make_project_version_current(*document_, version, &report, &error)) {
@@ -1709,6 +2079,7 @@ void MainWindow::revertSelectedVersion() {
         tr("Create a new version copied from version %1 and make it current?").arg(version),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (choice != QMessageBox::Yes) return;
+    cancelMusicAnalysis();
     pvt::BundleSaveReport report;
     std::string error;
     if (!pvt::revert_project_as_new(*document_, version, &report, &error)) {
@@ -1927,32 +2298,46 @@ QWidget* MainWindow::createTimeline() {
     auto* layout = new QHBoxLayout(widget);
     layout->setContentsMargins(0, 4, 0, 0);
     play_button_ = new QPushButton(tr("Play"));
+    previous_beat_ = new QPushButton(tr("Previous beat"));
+    next_beat_ = new QPushButton(tr("Next beat"));
     timeline_ = new QSlider(Qt::Horizontal);
-    timeline_->setRange(0, config_.total_frames - 1);
+    timeline_->setRange(0, std::max(1, effectiveFrameCount()) - 1);
     frame_label_ = new QLabel;
-    frame_label_->setMinimumWidth(90);
+    frame_label_->setMinimumWidth(230);
     layout->addWidget(play_button_);
+    layout->addWidget(previous_beat_);
+    layout->addWidget(next_beat_);
     layout->addWidget(new QLabel(tr("Frame")));
     layout->addWidget(timeline_, 1);
     layout->addWidget(frame_label_);
 
-    connect(play_button_, &QPushButton::clicked, this, [this] {
-        if (playback_timer_->isActive()) {
-            playback_timer_->stop();
-            play_button_->setText(tr("Play"));
-        } else {
-            playback_preview_advanced_ = false;
-            playback_timer_->start(std::max(1, static_cast<int>(std::lround(1000.0 / config_.fps))));
-            play_button_->setText(tr("Pause"));
-        }
-        schedulePreview();
-    });
+    connect(play_button_, &QPushButton::clicked,
+            this, &MainWindow::togglePlayback);
     connect(timeline_, &QSlider::valueChanged, this, [this](int frame) {
-        frame_label_->setText(tr("%1 / %2").arg(frame + 1).arg(config_.total_frames));
+        Q_UNUSED(frame);
+        updateTimelineReadout();
         schedulePreview();
     });
-    frame_label_->setText(tr("1 / %1").arg(config_.total_frames));
+    connect(previous_beat_, &QPushButton::clicked, this,
+            [this] { navigateToBeat(-1); });
+    connect(next_beat_, &QPushButton::clicked, this,
+            [this] { navigateToBeat(1); });
+    updateTimelineReadout();
     return widget;
+}
+
+void MainWindow::togglePlayback() {
+    if (playback_timer_ == nullptr || play_button_ == nullptr) return;
+    if (playback_timer_->isActive()) {
+        playback_timer_->stop();
+        play_button_->setText(tr("Play"));
+    } else {
+        playback_preview_advanced_ = false;
+        playback_timer_->start(std::max(
+            1, static_cast<int>(std::lround(1000.0 / config_.fps))));
+        play_button_->setText(tr("Pause"));
+    }
+    schedulePreview();
 }
 
 void MainWindow::createToolbar() {
@@ -1962,51 +2347,52 @@ void MainWindow::createToolbar() {
     auto* toolbar = addToolBar(tr("Project"));
     toolbar->setObjectName(QStringLiteral("projectToolbar"));
     toolbar->setMovable(false);
-    auto* new_action = new QAction(tr("New Project"), this);
-    auto* open_action = new QAction(tr("Open / Import…"), this);
-    auto* open_folder_action = new QAction(tr("Open Bundle Folder…"), this);
-    auto* save_action = new QAction(tr("Save…"), this);
-    auto* save_as_action = new QAction(tr("Save As…"), this);
-    new_action->setShortcut(QKeySequence::New);
-    open_action->setShortcut(QKeySequence::Open);
-    save_action->setShortcut(QKeySequence::Save);
-    save_as_action->setShortcut(QKeySequence::SaveAs);
-    file_menu->addActions({new_action, open_action, open_folder_action,
-                           save_action, save_as_action});
+    new_action_ = new QAction(tr("New Project"), this);
+    open_action_ = new QAction(tr("Open / Import…"), this);
+    open_folder_action_ = new QAction(tr("Open Bundle Folder…"), this);
+    save_action_ = new QAction(tr("Save…"), this);
+    save_as_action_ = new QAction(tr("Save As…"), this);
+    new_action_->setShortcut(QKeySequence::New);
+    open_action_->setShortcut(QKeySequence::Open);
+    save_action_->setShortcut(QKeySequence::Save);
+    save_as_action_->setShortcut(QKeySequence::SaveAs);
+    file_menu->addActions({new_action_, open_action_, open_folder_action_,
+                           save_action_, save_as_action_});
     file_menu->addSeparator();
-    toolbar->addAction(new_action);
-    toolbar->addAction(open_action);
-    toolbar->addAction(save_action);
+    toolbar->addAction(new_action_);
+    toolbar->addAction(open_action_);
+    toolbar->addAction(save_action_);
     toolbar->addSeparator();
-    auto* randomize_values_action = toolbar->addAction(tr("Randomize values"));
-    randomize_values_action->setToolTip(
+    randomize_values_action_ = toolbar->addAction(tr("Randomize values"));
+    randomize_values_action_->setToolTip(
         tr("Randomize bounded, loop-safe parameters while preserving each item's "
            "name, type, enabled state, and position in its stack."));
-    auto* randomize_mix_action = toolbar->addAction(tr("Randomize mix"));
-    randomize_mix_action->setToolTip(
+    randomize_mix_action_ = toolbar->addAction(tr("Randomize mix"));
+    randomize_mix_action_->setToolTip(
         tr("Create a new bounded mix of waves, swing waveforms, effect types, and "
            "enabled items."));
     toolbar->addSeparator();
-    auto* export_action = toolbar->addAction(tr("Export sequence"));
-    auto* cancel_action = toolbar->addAction(tr("Cancel export"));
-    cancel_action->setEnabled(false);
+    export_action_ = toolbar->addAction(tr("Export"));
+    cancel_export_action_ = toolbar->addAction(tr("Cancel export"));
+    cancel_export_action_->setEnabled(false);
     file_menu->addSeparator();
-    file_menu->addAction(export_action);
+    file_menu->addAction(export_action_);
 
-    auto* undo_action = undo_stack_->createUndoAction(this, tr("Undo"));
-    auto* redo_action = undo_stack_->createRedoAction(this, tr("Redo"));
-    undo_action->setShortcut(QKeySequence::Undo);
-    redo_action->setShortcut(QKeySequence::Redo);
-    edit_menu->addAction(undo_action);
-    edit_menu->addAction(redo_action);
+    undo_action_ = undo_stack_->createUndoAction(this, tr("Undo"));
+    redo_action_ = undo_stack_->createRedoAction(this, tr("Redo"));
+    undo_action_->setShortcut(QKeySequence::Undo);
+    redo_action_->setShortcut(QKeySequence::Redo);
+    edit_menu->addAction(undo_action_);
+    edit_menu->addAction(redo_action_);
     edit_menu->addSeparator();
     auto* undo_limit_action = edit_menu->addAction(tr("Undo History Limit…"));
     connect(undo_limit_action, &QAction::triggered, this, &MainWindow::editUndoLimit);
     view_menu->addAction(layers_dock_->toggleViewAction());
 
-    connect(new_action, &QAction::triggered, this, [this] {
+    connect(new_action_, &QAction::triggered, this, [this] {
         if (!documentReplacementAllowed()) return;
         if (!confirmDiscardChanges()) return;
+        cancelMusicAnalysis();
         project_ = pvt::default_project();
         active_layer_uuid_ = project_.layers.front().uuid;
         solo_layer_uuid_.reset();
@@ -2026,8 +2412,8 @@ void MainWindow::createToolbar() {
         updateWindowTitle();
         schedulePreview();
     });
-    connect(open_action, &QAction::triggered, this, &MainWindow::loadSetup);
-    connect(open_folder_action, &QAction::triggered, this, [this] {
+    connect(open_action_, &QAction::triggered, this, &MainWindow::loadSetup);
+    connect(open_folder_action_, &QAction::triggered, this, [this] {
         if (!documentReplacementAllowed()) return;
         if (!confirmDiscardChanges()) return;
         const QString path = QFileDialog::getExistingDirectory(
@@ -2044,13 +2430,13 @@ void MainWindow::createToolbar() {
             status_->setText(tr("Loaded %1").arg(path));
         }
     });
-    connect(save_action, &QAction::triggered, this, &MainWindow::saveSetup);
-    connect(save_as_action, &QAction::triggered, this, &MainWindow::saveSetupAs);
-    connect(randomize_values_action, &QAction::triggered, this,
+    connect(save_action_, &QAction::triggered, this, &MainWindow::saveSetup);
+    connect(save_as_action_, &QAction::triggered, this, &MainWindow::saveSetupAs);
+    connect(randomize_values_action_, &QAction::triggered, this,
             &MainWindow::randomizeExistingStackSettings);
-    connect(randomize_mix_action, &QAction::triggered, this,
+    connect(randomize_mix_action_, &QAction::triggered, this,
             &MainWindow::randomizeStackComposition);
-    connect(export_action, &QAction::triggered, this, [this, export_action, cancel_action] {
+    connect(export_action_, &QAction::triggered, this, [this] {
         if (export_watcher_->isRunning()) {
             return;
         }
@@ -2065,22 +2451,22 @@ void MainWindow::createToolbar() {
                                  QString::fromStdString(validation.message));
             return;
         }
-        export_action->setEnabled(false);
-        cancel_action->setEnabled(true);
+        export_action_->setEnabled(false);
+        cancel_export_action_->setEnabled(true);
         if (!startExport()) {
-            export_action->setEnabled(true);
-            cancel_action->setEnabled(false);
+            export_action_->setEnabled(true);
+            cancel_export_action_->setEnabled(false);
         }
     });
-    connect(cancel_action, &QAction::triggered, this, [this, cancel_action] {
+    connect(cancel_export_action_, &QAction::triggered, this, [this] {
         cancel_export_.store(true);
-        cancel_action->setEnabled(false);
+        cancel_export_action_->setEnabled(false);
         status_->setText(tr("Cancelling export…"));
     });
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this,
-            [export_action, cancel_action] {
-                export_action->setEnabled(true);
-                cancel_action->setEnabled(false);
+            [this] {
+                updateExportAvailability();
+                cancel_export_action_->setEnabled(false);
             });
 }
 
@@ -2133,6 +2519,8 @@ void MainWindow::connectEditors() {
     });
     connect(swing_enabled_, &QCheckBox::toggled, this,
             [this] { applySwingEditor(swing_enabled_); });
+    connect(swings_group_, &QGroupBox::toggled, this,
+            [this] { applySwingEditor(swings_group_); });
     connect(swing_waveform_, &QComboBox::currentIndexChanged, this,
             [this] { applySwingEditor(swing_waveform_); });
     connect(swing_cycles_, &QSpinBox::valueChanged, this,
@@ -2177,6 +2565,52 @@ void MainWindow::connectEditors() {
                 [this, editor] { applyEffectEditor(editor); });
     }
 
+    for (auto* editor : {clock_mode_, clock_interpolation_, clock_fit_,
+                         music_tempo_mode_}) {
+        connect(editor, &QComboBox::currentIndexChanged, this,
+                [this, editor] { applyClockEditor(editor); });
+    }
+    for (auto* editor : {clock_time_interval_ms_, meter_bpm_,
+                         clock_phase_offset_, music_beat_offset_ms_}) {
+        connect(editor, &QDoubleSpinBox::valueChanged, this,
+                [this, editor] { applyClockEditor(editor); });
+    }
+    for (auto* editor : {clock_frame_interval_, meter_tempo_note_}) {
+        connect(editor, &QSpinBox::valueChanged, this,
+                [this, editor] { applyClockEditor(editor); });
+    }
+    connect(clock_reverse_, &QCheckBox::toggled, this,
+            [this] { applyClockEditor(clock_reverse_); });
+    connect(meter_expression_, &QLineEdit::editingFinished, this,
+            [this] { applyClockEditor(meter_expression_); });
+    connect(meter_expression_, &QLineEdit::textEdited, this, [this] {
+        std::string description;
+        std::string error;
+        const bool valid = pvt::describe_meter(
+            meter_expression_->text().toStdString(), description, &error);
+        meter_summary_->setText(valid ? QString::fromStdString(description)
+                                      : QString::fromStdString(error));
+        meter_summary_->setStyleSheet(valid ? QString{} : QStringLiteral("color: #d32f2f;"));
+    });
+
+    connect(audio_response_group_, &QGroupBox::toggled, this,
+            [this] { applyAudioReactiveEditor(audio_response_group_); });
+    for (auto* editor : {audio_sync_only_, audio_waves_enabled_,
+                         audio_effects_enabled_, audio_color_enabled_}) {
+        connect(editor, &QCheckBox::toggled, this,
+                [this, editor] { applyAudioReactiveEditor(editor); });
+    }
+    for (auto* editor : {audio_wave_source_, audio_effect_source_,
+                         audio_color_source_}) {
+        connect(editor, &QComboBox::currentIndexChanged, this,
+                [this, editor] { applyAudioReactiveEditor(editor); });
+    }
+    for (auto* editor : {audio_wave_amount_, audio_effect_amount_,
+                         audio_color_amount_}) {
+        connect(editor, &QDoubleSpinBox::valueChanged, this,
+                [this, editor] { applyAudioReactiveEditor(editor); });
+    }
+
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_}) {
@@ -2216,10 +2650,15 @@ void MainWindow::connectEditors() {
             applyGlobalEditor(prefix_);
         }
     });
-    connect(surface_obj_path_, &QLineEdit::textEdited, this, [this] {
-        if (surface_obj_path_->hasAcceptableInput()) {
-            applyGlobalEditor(surface_obj_path_);
+    connect(surface_obj_path_, &QLineEdit::editingFinished, this, [this] {
+        if (!surface_obj_path_->hasAcceptableInput()) {
+            const QSignalBlocker blocker(surface_obj_path_);
+            surface_obj_path_->setText(
+                QString::fromStdString(config_.surface.obj_path));
+            status_->setText(tr("The custom OBJ path is invalid."));
+            return;
         }
+        (void)setSurfaceObjSource(surface_obj_path_->text());
     });
     connect(palette_name_, &QLineEdit::editingFinished, this, [this] {
         if (palette_name_->hasAcceptableInput()) {
@@ -2227,11 +2666,12 @@ void MainWindow::connectEditors() {
         }
     });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == 1) {
+        QWidget* page = tabs_->widget(index);
+        if (page == synchronization_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
-        } else if (index == 2) {
+        } else if (page == effect_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
-        } else if (index == 0) {
+        } else if (page == wave_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
         }
     });
@@ -2239,7 +2679,7 @@ void MainWindow::connectEditors() {
     connect(preview_, &PreviewWidget::waveSelected, this, [this](std::size_t index) {
         if (index < config_.waves.size()) {
             wave_list_->setCurrentRow(static_cast<int>(index));
-            tabs_->setCurrentIndex(0);
+            tabs_->setCurrentIndex(tabs_->indexOf(wave_page_));
         }
     });
     connect(preview_, &PreviewWidget::waveDragStarted, this,
@@ -2292,7 +2732,7 @@ void MainWindow::connectEditors() {
             [this](std::size_t index) {
                 if (index < config_.swings.size()) {
                     swing_list_->setCurrentRow(static_cast<int>(index));
-                    tabs_->setCurrentIndex(1);
+                    tabs_->setCurrentIndex(tabs_->indexOf(synchronization_page_));
                 }
             });
     connect(preview_, &PreviewWidget::swingDragStarted, this,
@@ -2342,7 +2782,7 @@ void MainWindow::connectEditors() {
             [this](std::size_t index) {
                 if (index < config_.effects.size()) {
                     effect_list_->setCurrentRow(static_cast<int>(index));
-                    tabs_->setCurrentIndex(2);
+                    tabs_->setCurrentIndex(tabs_->indexOf(effect_page_));
                 }
             });
     connect(preview_, &PreviewWidget::effectDragStarted, this,
@@ -2442,6 +2882,7 @@ void MainWindow::syncProjectGlobals() {
     project_.canvas.block_size = config_.block_size;
     project_.canvas.total_frames = config_.total_frames;
     project_.canvas.fps = config_.fps;
+    project_.canvas.clock = config_.clock;
     project_.output = config_.output;
 }
 
@@ -2532,7 +2973,7 @@ void MainWindow::addLayer() {
                              tr("The safety limit is %1 layers.").arg(pvt::kMaximumLayers));
         return;
     }
-    auto before = project_;
+    auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
     auto layer = pvt::default_layer(project_.layers.size());
     layer.uuid = pvt::generate_uuid();
@@ -2553,7 +2994,7 @@ void MainWindow::duplicateLayer() {
     if (source == nullptr || project_.layers.size() >= pvt::kMaximumLayers) {
         return;
     }
-    auto before = project_;
+    auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
     const auto source_index = static_cast<std::size_t>(
         std::distance(static_cast<const pvt::LayerConfig*>(project_.layers.data()),
@@ -2562,6 +3003,36 @@ void MainWindow::duplicateLayer() {
     layer.uuid = pvt::generate_uuid();
     layer.file_id = pvt::allocate_layer_file_id(project_);
     append_copy_suffix(layer.name);
+    if (!layer.render.surface.obj_sha256.empty()) {
+        if (document_ == nullptr) {
+            QMessageBox::critical(this, tr("Could not duplicate layer"),
+                                  tr("The project attachment registry is unavailable."));
+            return;
+        }
+        const pvt::ProjectAttachment* source_attachment =
+            pvt::find_project_attachment(
+                *document_, pvt::surface_obj_attachment_id(source->uuid));
+        if (source_attachment == nullptr || source_attachment->local_path.empty()) {
+            QMessageBox::critical(
+                this, tr("Could not duplicate layer"),
+                tr("The embedded custom OBJ source is unavailable."));
+            return;
+        }
+        const std::string source_attachment_path = source_attachment->local_path;
+        pvt::ProjectAttachment duplicate_attachment;
+        std::string attachment_error;
+        if (!pvt::attach_project_file(
+                *document_, pvt::surface_obj_attachment_id(layer.uuid),
+                source_attachment_path, &duplicate_attachment,
+                &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not duplicate layer"),
+                                  QString::fromStdString(attachment_error));
+            return;
+        }
+        layer.render.surface.obj_path = duplicate_attachment.local_path;
+        layer.render.surface.obj_sha256 = duplicate_attachment.sha256;
+        layer.render.surface.obj_basename = duplicate_attachment.basename;
+    }
     active_layer_uuid_ = layer.uuid;
     project_.layers.insert(project_.layers.begin()
                                + static_cast<std::ptrdiff_t>(source_index + 1U),
@@ -2582,10 +3053,20 @@ void MainWindow::removeLayer() {
     }
     auto* layer = activeLayer();
     if (layer == nullptr) return;
-    auto before = project_;
+    auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
     const auto index = static_cast<std::size_t>(
         std::distance(project_.layers.data(), layer));
+    if (document_ != nullptr) {
+        std::string detach_error;
+        if (!pvt::detach_project_file(
+                *document_, pvt::surface_obj_attachment_id(layer->uuid),
+                &detach_error)) {
+            QMessageBox::critical(this, tr("Could not remove layer"),
+                                  QString::fromStdString(detach_error));
+            return;
+        }
+    }
     project_.layers.erase(project_.layers.begin() + static_cast<std::ptrdiff_t>(index));
     const std::size_t replacement = std::min(index, project_.layers.size() - 1U);
     active_layer_uuid_ = project_.layers[replacement].uuid;
@@ -2606,7 +3087,7 @@ void MainWindow::moveActiveLayer(int direction) {
         std::distance(project_.layers.data(), layer));
     const auto target = index + direction;
     if (target < 0 || target >= static_cast<std::ptrdiff_t>(project_.layers.size())) return;
-    auto before = project_;
+    auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
     std::swap(project_.layers[static_cast<std::size_t>(index)],
               project_.layers[static_cast<std::size_t>(target)]);
@@ -2616,6 +3097,78 @@ void MainWindow::moveActiveLayer(int direction) {
     schedulePreview();
 }
 
+bool MainWindow::setSurfaceObjSource(const QString& source_path) {
+    if (populating_ || activeLayer() == nullptr) return false;
+    if (!source_path.isEmpty()
+        && source_path.toStdString() == config_.surface.obj_path) return true;
+    if (document_ == nullptr) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+        document_->project = project_;
+    }
+
+    auto before = captureActiveState();
+    const std::string reference_id =
+        pvt::surface_obj_attachment_id(active_layer_uuid_);
+    std::string attachment_error;
+    if (source_path.isEmpty()) {
+        if (!pvt::detach_project_file(*document_, reference_id,
+                                      &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not clear custom OBJ"),
+                                  QString::fromStdString(attachment_error));
+            return false;
+        }
+        config_.surface.obj_path.clear();
+        config_.surface.obj_sha256.clear();
+        config_.surface.obj_basename.clear();
+        if (config_.surface.mapping == pvt::SurfaceMapping::CustomObj) {
+            config_.surface.mapping = pvt::SurfaceMapping::Plane;
+        }
+    } else {
+        const QString resolved = QDir::isAbsolutePath(source_path)
+            ? QDir::cleanPath(source_path)
+            : QDir::cleanPath(
+                  QDir(startup_working_directory_).absoluteFilePath(source_path));
+        pvt::ProjectAttachment attached;
+        if (!pvt::attach_project_file(
+                *document_, reference_id, resolved.toStdString(), &attached,
+                &attachment_error)) {
+            const QSignalBlocker blocker(surface_obj_path_);
+            surface_obj_path_->setText(
+                QString::fromStdString(config_.surface.obj_path));
+            QMessageBox::critical(this, tr("Could not embed custom OBJ"),
+                                  QString::fromStdString(attachment_error));
+            return false;
+        }
+        config_.surface.obj_path = attached.local_path;
+        config_.surface.obj_sha256 = attached.sha256;
+        config_.surface.obj_basename = attached.basename;
+        config_.surface.mapping = pvt::SurfaceMapping::CustomObj;
+    }
+
+    syncActiveRender();
+    document_->project = project_;
+    document_->dirty = true;
+    {
+        const QSignalBlocker path_blocker(surface_obj_path_);
+        const QSignalBlocker mapping_blocker(surface_mapping_);
+        surface_obj_path_->setText(
+            QString::fromStdString(config_.surface.obj_path));
+        select_enum(surface_mapping_, config_.surface.mapping);
+    }
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    recordActiveStateChange(
+        source_path.isEmpty() ? tr("Clear custom OBJ")
+                              : tr("Embed custom OBJ"),
+        std::move(before));
+    status_->setText(source_path.isEmpty()
+        ? tr("Cleared the active layer's embedded custom OBJ.")
+        : tr("Embedded %1 for the active layer.")
+              .arg(QString::fromStdString(config_.surface.obj_basename)));
+    return true;
+}
+
 MainWindow::ActiveDocumentState MainWindow::captureActiveState() const {
     ActiveDocumentState state;
     if (const auto* layer = activeLayer()) {
@@ -2623,6 +3176,20 @@ MainWindow::ActiveDocumentState MainWindow::captureActiveState() const {
     }
     state.canvas = project_.canvas;
     state.output = project_.output;
+    if (document_ != nullptr) {
+        state.attachments = document_->attachments;
+        state.attachment_cache = document_->attachment_cache;
+    }
+    return state;
+}
+
+MainWindow::ProjectDocumentState MainWindow::captureProjectState() const {
+    ProjectDocumentState state;
+    state.project = project_;
+    if (document_ != nullptr) {
+        state.attachments = document_->attachments;
+        state.attachment_cache = document_->attachment_cache;
+    }
     return state;
 }
 
@@ -2634,6 +3201,13 @@ void MainWindow::restoreActiveState(const std::string& layer_uuid,
     }
     project_.canvas = state.canvas;
     project_.output = state.output;
+    if (document_ == nullptr) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+    }
+    document_->attachments = state.attachments;
+    document_->attachment_cache = state.attachment_cache;
+    document_->project = project_;
     if (findLayer(active_layer_uuid_) == nullptr) {
         active_layer_uuid_ = layer_uuid;
     }
@@ -2653,15 +3227,20 @@ void MainWindow::recordActiveStateChange(const QString& text,
     ActiveDocumentState after = captureActiveState();
     if (render_data_equal(before.render, after.render)
         && output_data_equal(before.canvas, before.output,
-                             after.canvas, after.output)) {
+                             after.canvas, after.output)
+        && attachments_equal(before.attachments, after.attachments)) {
         return;
     }
     const std::size_t before_bytes = saturating_add(
-        estimated_render_data_bytes(before.render),
-        estimated_output_bytes(before.output));
+        saturating_add(estimated_render_data_bytes(before.render),
+                       estimated_canvas_bytes(before.canvas)),
+        saturating_add(estimated_output_bytes(before.output),
+                       estimated_attachment_bytes(before.attachments)));
     const std::size_t after_bytes = saturating_add(
-        estimated_render_data_bytes(after.render),
-        estimated_output_bytes(after.output));
+        saturating_add(estimated_render_data_bytes(after.render),
+                       estimated_canvas_bytes(after.canvas)),
+        saturating_add(estimated_output_bytes(after.output),
+                       estimated_attachment_bytes(after.attachments)));
     const std::size_t payload_bytes = saturating_add(
         saturating_add(before_bytes, after_bytes),
         estimated_string_bytes(uuid));
@@ -2678,10 +3257,18 @@ void MainWindow::recordActiveStateChange(const QString& text,
     noteDocumentChange();
 }
 
-void MainWindow::restoreProjectState(const pvt::ProjectConfig& state,
+void MainWindow::restoreProjectState(const ProjectDocumentState& state,
                                      const std::string& active_uuid) {
+    cancelMusicAnalysis();
     restoring_undo_ = true;
-    project_ = state;
+    project_ = state.project;
+    if (document_ == nullptr) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+    }
+    document_->attachments = state.attachments;
+    document_->attachment_cache = state.attachment_cache;
+    document_->project = project_;
     if (project_.layers.empty()) {
         project_.layers.push_back(pvt::default_layer(0));
     }
@@ -2699,22 +3286,26 @@ void MainWindow::restoreProjectState(const pvt::ProjectConfig& state,
 }
 
 void MainWindow::recordProjectStateChange(const QString& text,
-                                          pvt::ProjectConfig before,
+                                          ProjectDocumentState before,
                                           const std::string& before_active_uuid) {
     if (restoring_undo_) return;
-    pvt::ProjectConfig after = project_;
-    if (project_config_equal(before, after)
+    ProjectDocumentState after = captureProjectState();
+    if (project_config_equal(before.project, after.project)
+        && attachments_equal(before.attachments, after.attachments)
         && before_active_uuid == active_layer_uuid_) {
         return;
     }
     const std::string after_active = active_layer_uuid_;
     const std::size_t payload_bytes = saturating_add(
-        saturating_add(estimated_project_bytes(before),
-                       estimated_project_bytes(after)),
+        saturating_add(
+            saturating_add(estimated_project_bytes(before.project),
+                           estimated_attachment_bytes(before.attachments)),
+            saturating_add(estimated_project_bytes(after.project),
+                           estimated_attachment_bytes(after.attachments))),
         saturating_add(estimated_string_bytes(before_active_uuid),
                        estimated_string_bytes(after_active)));
-    auto before_state = std::make_shared<pvt::ProjectConfig>(std::move(before));
-    auto after_state = std::make_shared<pvt::ProjectConfig>(std::move(after));
+    auto before_state = std::make_shared<ProjectDocumentState>(std::move(before));
+    auto after_state = std::make_shared<ProjectDocumentState>(std::move(after));
     recordUndo(text,
                [this, before_state, before_active_uuid] {
                    restoreProjectState(*before_state, before_active_uuid);
@@ -2879,6 +3470,12 @@ void MainWindow::restoreUserSettings() {
     }
     restoreGeometry(settings.value(QStringLiteral("ui/mainWindow/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("ui/mainWindow/state")).toByteArray());
+    if (export_target_ != nullptr) {
+        const int target = settings.value(
+            QStringLiteral("preferences/exportTarget"), 0).toInt();
+        const int index = export_target_->findData(target);
+        export_target_->setCurrentIndex(index >= 0 ? index : 0);
+    }
 }
 
 void MainWindow::saveUserSettings() {
@@ -2886,6 +3483,10 @@ void MainWindow::saveUserSettings() {
     settings.setValue(QStringLiteral("paths/lastDialogDirectory"), last_dialog_directory_);
     settings.setValue(QStringLiteral("ui/mainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("ui/mainWindow/state"), saveState());
+    if (export_target_ != nullptr) {
+        settings.setValue(QStringLiteral("preferences/exportTarget"),
+                          export_target_->currentData());
+    }
 }
 
 void MainWindow::editUndoLimit() {
@@ -2912,11 +3513,16 @@ void MainWindow::editUndoLimit() {
 }
 
 void MainWindow::refreshAll() {
+    if (music_error_ != nullptr && !music_analysis_active_) {
+        music_error_->hide();
+    }
     refreshWaveList();
     refreshSwingList();
     refreshEffectList();
     loadGlobalEditors();
     updateTimelineState();
+    updateSynchronizationState();
+    updateExportAvailability();
     preview_->setConfiguration(config_);
 }
 
@@ -2924,14 +3530,284 @@ void MainWindow::updateTimelineState() {
     if (timeline_ == nullptr || frame_label_ == nullptr) {
         return;
     }
+    QString frame_error;
+    int count = effectiveFrameCount(&frame_error);
+    if (count < 1) count = std::max(2, config_.total_frames);
     const QSignalBlocker blocker(timeline_);
-    timeline_->setMaximum(config_.total_frames - 1);
+    timeline_->setMaximum(count - 1);
     timeline_->setValue(std::min(timeline_->value(), timeline_->maximum()));
-    frame_label_->setText(
-        tr("%1 / %2").arg(timeline_->value() + 1).arg(config_.total_frames));
+    updateTimelineReadout();
     if (playback_timer_->isActive()) {
         playback_timer_->setInterval(
             std::max(1, static_cast<int>(std::lround(1000.0 / config_.fps))));
+    }
+}
+
+int MainWindow::effectiveFrameCount(QString* error) const {
+    std::string frame_error;
+    const int count = pvt::effective_frame_count(config_, &frame_error);
+    if (error != nullptr) *error = QString::fromStdString(frame_error);
+    return count;
+}
+
+bool MainWindow::musicRenderReady() const {
+    if (config_.clock.music.analyzer_version.empty()
+        || config_.clock.music.source_sha256.empty()) {
+        return false;
+    }
+    pvt::RenderConfig probe = config_;
+    probe.clock.mode = pvt::ClockMode::Music;
+    std::string error;
+    return pvt::effective_frame_count(probe, &error) > 0;
+}
+
+void MainWindow::updateTimelineReadout() {
+    if (timeline_ == nullptr || frame_label_ == nullptr) return;
+    const int count = std::max(1, timeline_->maximum() + 1);
+    const int frame = timeline_->value();
+    const double seconds = static_cast<double>(frame) / config_.fps;
+    QString text = tr("%1 / %2  ·  %3")
+                       .arg(frame + 1)
+                       .arg(count)
+                       .arg(formatted_time(seconds));
+    if (config_.clock.mode == pvt::ClockMode::Music && musicRenderReady()) {
+        const auto beats = music_beats_for_ui(config_.clock);
+        const auto found = std::upper_bound(beats.begin(), beats.end(), seconds);
+        if (found != beats.begin()) {
+            const auto beat = static_cast<std::size_t>(
+                std::distance(beats.begin(), found));
+            text.append(tr("  ·  Beat %1").arg(static_cast<qulonglong>(beat)));
+        }
+    }
+    frame_label_->setText(text);
+}
+
+void MainWindow::navigateToBeat(int direction) {
+    if (timeline_ == nullptr || direction == 0 || !musicRenderReady()) return;
+    const auto beats = music_beats_for_ui(config_.clock);
+    if (beats.empty()) return;
+    const double now = static_cast<double>(timeline_->value()) / config_.fps;
+    double destination = beats.front();
+    if (direction > 0) {
+        const auto next = std::upper_bound(beats.begin(), beats.end(), now + 1.0e-9);
+        destination = next == beats.end() ? beats.back() : *next;
+    } else {
+        const auto previous = std::lower_bound(beats.begin(), beats.end(), now - 1.0e-9);
+        if (previous == beats.begin()) {
+            destination = beats.front();
+        } else {
+            destination = *std::prev(previous);
+        }
+    }
+    timeline_->setValue(std::clamp(
+        static_cast<int>(std::llround(destination * config_.fps)),
+        timeline_->minimum(), timeline_->maximum()));
+}
+
+void MainWindow::updateSynchronizationState() {
+    if (clock_mode_ == nullptr) return;
+    const auto mode = config_.clock.mode;
+    const bool editable = !music_analysis_active_;
+    const bool pulse_clock = mode == pvt::ClockMode::Frame
+                             || mode == pvt::ClockMode::Time
+                             || mode == pvt::ClockMode::Meter
+                             || mode == pvt::ClockMode::Music;
+    clock_mode_->setEnabled(editable);
+    clock_interpolation_->setEnabled(editable && pulse_clock);
+    clock_fit_->setEnabled(editable
+                           && (mode == pvt::ClockMode::Frame
+                               || mode == pvt::ClockMode::Time
+                               || mode == pvt::ClockMode::Meter));
+    for (QWidget* editor : std::initializer_list<QWidget*>{
+             clock_frame_interval_, clock_time_interval_ms_, meter_expression_,
+             meter_bpm_, meter_tempo_note_, clock_reverse_,
+             clock_phase_offset_, music_tempo_mode_, music_beat_offset_ms_}) {
+        editor->setEnabled(editable);
+    }
+    swings_group_->setEnabled(editable);
+    audio_response_group_->setEnabled(editable);
+    clock_form_->setRowVisible(clock_frame_interval_, mode == pvt::ClockMode::Frame);
+    clock_form_->setRowVisible(clock_time_interval_ms_, mode == pvt::ClockMode::Time);
+    const bool meter = mode == pvt::ClockMode::Meter;
+    clock_form_->setRowVisible(meter_expression_, meter);
+    clock_form_->setRowVisible(meter_summary_, meter);
+    clock_form_->setRowVisible(meter_bpm_, meter);
+    clock_form_->setRowVisible(meter_tempo_note_, meter);
+    const bool music = mode == pvt::ClockMode::Music || music_analysis_active_;
+    clock_form_->setRowVisible(music_tempo_mode_, music);
+    clock_form_->setRowVisible(music_beat_offset_ms_, music);
+    const bool beat_navigation = mode == pvt::ClockMode::Music
+                                 && musicRenderReady();
+    if (previous_beat_ != nullptr) previous_beat_->setEnabled(beat_navigation);
+    if (next_beat_ != nullptr) next_beat_->setEnabled(beat_navigation);
+
+    std::string meter_description;
+    std::string meter_error;
+    const bool meter_valid = pvt::describe_meter(
+        config_.clock.meter.expression, meter_description, &meter_error);
+    meter_summary_->setText(QString::fromStdString(
+        meter_valid ? meter_description : meter_error));
+    meter_summary_->setStyleSheet(
+        meter_valid ? QString{} : QStringLiteral("color: #d32f2f;"));
+
+    if (frames_ != nullptr) {
+        const bool derived_music_frames = mode == pvt::ClockMode::Music
+                                          && musicRenderReady();
+        frames_->setEnabled(!derived_music_frames);
+        frames_->setToolTip(derived_music_frames
+            ? tr("This saved manual frame count is preserved but ignored while render-ready Music determines duration.")
+            : QString{});
+    }
+    if (effective_frames_ != nullptr) {
+        QString frame_error;
+        const int count = effectiveFrameCount(&frame_error);
+        if (count > 0) {
+            effective_frames_->setText(
+                tr("%1 frames · %2 at %3 FPS")
+                    .arg(count)
+                    .arg(formatted_time(static_cast<double>(count) / config_.fps))
+                    .arg(config_.fps, 0, 'f', 3));
+        } else {
+            effective_frames_->setText(frame_error);
+        }
+    }
+    const bool has_music = !config_.clock.music.source_sha256.empty();
+    music_relink_->setEnabled(has_music && !music_analysis_active_);
+    music_reanalyze_->setEnabled(has_music && !music_analysis_active_
+                                 && !currentMusicSourcePath().isEmpty());
+    music_clear_->setEnabled(has_music && !music_analysis_active_);
+    music_choose_->setEnabled(mode == pvt::ClockMode::Music
+                              && !music_analysis_active_);
+    music_cancel_->setVisible(music_analysis_active_);
+    music_progress_->setVisible(music_analysis_active_);
+    updateMusicSummary();
+}
+
+void MainWindow::updateMusicTransactionGuards() {
+    const bool editable = !music_analysis_active_;
+    for (QAction* action : {new_action_, open_action_, open_folder_action_,
+                            save_action_, save_as_action_,
+                            randomize_values_action_, randomize_mix_action_}) {
+        if (action != nullptr) action->setEnabled(editable);
+    }
+    if (undo_action_ != nullptr) {
+        undo_action_->setEnabled(editable && undo_stack_ != nullptr
+                                 && undo_stack_->canUndo());
+    }
+    if (redo_action_ != nullptr) {
+        redo_action_->setEnabled(editable && undo_stack_ != nullptr
+                                 && undo_stack_->canRedo());
+    }
+    if (layers_dock_ != nullptr) layers_dock_->setEnabled(editable);
+    if (surface_obj_path_ != nullptr) surface_obj_path_->setEnabled(editable);
+    if (surface_obj_browse_ != nullptr) surface_obj_browse_->setEnabled(editable);
+    if (tabs_ != nullptr) {
+        for (int index = 0; index < tabs_->count(); ++index) {
+            if (tabs_->widget(index) != synchronization_page_) {
+                tabs_->setTabEnabled(index, editable);
+            }
+        }
+    }
+    updateSynchronizationState();
+    updateExportAvailability();
+}
+
+void MainWindow::updateMusicSummary() {
+    if (music_summary_ == nullptr || music_source_ == nullptr) return;
+    const auto& music = config_.clock.music;
+    music_source_->setText(QString::fromStdString(music.source_basename));
+    if (music.source_sha256.empty()) {
+        music_summary_->setText(
+            tr("Choose a WAV, FLAC, or MP3 source. It will be analyzed first and then embedded by content in the project bundle."));
+        return;
+    }
+    QString frame_error;
+    pvt::RenderConfig music_probe = config_;
+    music_probe.clock.mode = pvt::ClockMode::Music;
+    std::string music_frame_error;
+    const int count = pvt::effective_frame_count(music_probe,
+                                                  &music_frame_error);
+    frame_error = QString::fromStdString(music_frame_error);
+    const double cfr_duration = count > 0
+                                    ? static_cast<double>(count) / config_.fps : 0.0;
+    const double rounding_ms = (cfr_duration - music.duration_seconds) * 1000.0;
+    const double feature_density = music.duration_seconds > 0.0
+        ? static_cast<double>(music.feature_samples.size()) / music.duration_seconds
+        : 0.0;
+    double minimum_tempo = music.detected_bpm;
+    double maximum_tempo = music.detected_bpm;
+    if (!music.tempo_points.empty()) {
+        const auto tempos = std::minmax_element(
+            music.tempo_points.begin(), music.tempo_points.end(),
+            [](const pvt::MusicTempoPoint& left,
+               const pvt::MusicTempoPoint& right) {
+                return left.bpm < right.bpm;
+            });
+        minimum_tempo = tempos.first->bpm;
+        maximum_tempo = tempos.second->bpm;
+    }
+    const QString tempo_map = music.tempo_points.empty()
+        ? tr("No adaptive tempo map")
+        : tr("%1 tempo point(s), %2–%3 BPM")
+              .arg(static_cast<qulonglong>(music.tempo_points.size()))
+              .arg(minimum_tempo, 0, 'f', 2)
+              .arg(maximum_tempo, 0, 'f', 2);
+    const QString rounding = QString(rounding_ms >= 0.0
+                                          ? QStringLiteral("+") : QString{})
+                             + QString::number(rounding_ms, 'f', 3);
+    music_summary_->setText(
+        tr("%1 · %2 Hz · %3 channel(s) · %4\n"
+           "Detected %5 BPM (%6% confidence) · %7 beat(s) · %8\n"
+           "%9 features/s · %10 effective frame(s) at %11 FPS · "
+           "whole-frame sequence overhang %12 ms (MP4 trims to the exact audio duration)")
+            .arg(QString::fromStdString(music.source_format))
+            .arg(music.source_sample_rate)
+            .arg(music.source_channel_count)
+            .arg(formatted_time(music.duration_seconds))
+            .arg(music.detected_bpm, 0, 'f', 2)
+            .arg(music.tempo_confidence * 100.0, 0, 'f', 0)
+            .arg(static_cast<qulonglong>(music.beat_times_seconds.size()))
+            .arg(tempo_map)
+            .arg(feature_density, 0, 'f', 1)
+            .arg(count > 0 ? QString::number(count) : tr("Invalid"))
+            .arg(config_.fps, 0, 'f', 3)
+            .arg(rounding));
+    if (currentMusicSourcePath().isEmpty()) {
+        music_error_->setText(
+            tr("The analyzed source is not available locally. Relink the matching file before MP4 export or reanalysis."));
+        music_error_->show();
+    } else if (count < 1 && !frame_error.isEmpty()) {
+        music_error_->setText(frame_error);
+        music_error_->show();
+    } else if (!music_analysis_active_) {
+        music_error_->hide();
+    }
+}
+
+void MainWindow::updateExportAvailability() {
+    if (export_target_ == nullptr || video_output_ == nullptr) return;
+    const bool video = export_target_->currentData().toInt() == 1;
+    video_output_->setVisible(video);
+    const QString directory = resolvedOutputDirectory(
+        QString::fromStdString(config_.output.output_directory));
+    video_output_->setText(QDir(directory).filePath(
+        video_filename_for_prefix(config_.output.filename_prefix)));
+    bit_depth_->setEnabled(!video);
+    png_compression_->setEnabled(!video && config_.output.bit_depth != 32);
+    dither_enabled_->setEnabled(!video && config_.output.bit_depth != 32);
+    dither_method_->setEnabled(!video && config_.output.bit_depth != 32
+                               && config_.output.dither_enabled);
+    write_alpha_->setEnabled(!video);
+    first_frame_->setEnabled(!video);
+    filename_digits_->setEnabled(!video);
+    if (export_action_ != nullptr && !export_active_) {
+        const bool ready = !video
+            || (config_.clock.mode == pvt::ClockMode::Music
+                && musicRenderReady() && !currentMusicSourcePath().isEmpty());
+        export_action_->setEnabled(ready && !music_analysis_active_);
+        export_action_->setToolTip(
+            ready ? QString{}
+                  : tr("MP4 export needs Music clock mode, complete analysis, and an available embedded music source."));
     }
 }
 
@@ -3301,6 +4177,32 @@ void MainWindow::loadGlobalEditors() {
     block_size_->setValue(config_.block_size);
     frames_->setValue(config_.total_frames);
     fps_->setValue(config_.fps);
+    select_enum(clock_mode_, config_.clock.mode);
+    select_enum(clock_interpolation_, config_.clock.interpolation);
+    select_enum(clock_fit_, config_.clock.fit);
+    clock_frame_interval_->setValue(config_.clock.frame_interval);
+    clock_time_interval_ms_->setValue(
+        static_cast<double>(config_.clock.time_interval_microseconds) / 1000.0);
+    meter_expression_->setText(QString::fromStdString(config_.clock.meter.expression));
+    meter_bpm_->setValue(config_.clock.meter.bpm);
+    meter_tempo_note_->setValue(config_.clock.meter.tempo_note_denominator);
+    clock_reverse_->setChecked(config_.clock.reverse);
+    clock_phase_offset_->setValue(config_.clock.phase_offset_degrees);
+    select_enum(music_tempo_mode_, config_.clock.music_tempo);
+    music_beat_offset_ms_->setValue(
+        static_cast<double>(config_.clock.beat_offset_microseconds) / 1000.0);
+    swings_group_->setChecked(config_.swings_enabled);
+    audio_response_group_->setChecked(config_.audio_reactive.enabled);
+    audio_sync_only_->setChecked(config_.audio_reactive.synchronized_only);
+    audio_waves_enabled_->setChecked(config_.audio_reactive.waves_enabled);
+    select_enum(audio_wave_source_, config_.audio_reactive.wave_source);
+    audio_wave_amount_->setValue(config_.audio_reactive.wave_amount);
+    audio_effects_enabled_->setChecked(config_.audio_reactive.effects_enabled);
+    select_enum(audio_effect_source_, config_.audio_reactive.effect_source);
+    audio_effect_amount_->setValue(config_.audio_reactive.effect_amount);
+    audio_color_enabled_->setChecked(config_.audio_reactive.color_enabled);
+    select_enum(audio_color_source_, config_.audio_reactive.color_source);
+    audio_color_amount_->setValue(config_.audio_reactive.color_amount_degrees);
     phrase_warp_->setValue(config_.phrase_warp);
     ghost_mix_->setValue(config_.ghost_mix);
     ghost_lag_->setValue(config_.ghost_lag_degrees);
@@ -3360,6 +4262,7 @@ void MainWindow::loadGlobalEditors() {
     overwrite_->setChecked(config_.output.overwrite_existing);
     populating_ = false;
     updateOutputEditorValidity();
+    updateSynchronizationState();
 }
 
 void MainWindow::refreshPaletteEditor() {
@@ -3521,6 +4424,15 @@ void MainWindow::applySwingEditor(const QObject* changed_editor) {
     if (populating_) {
         return;
     }
+    if (changed_editor == swings_group_) {
+        auto before = captureActiveState();
+        config_.swings_enabled = swings_group_->isChecked();
+        syncActiveRender();
+        preview_->setConfiguration(config_);
+        schedulePreview();
+        recordActiveStateChange(tr("Toggle swing block"), std::move(before));
+        return;
+    }
     const auto index = selectedSwingIndex();
     if (!index) {
         return;
@@ -3559,6 +4471,120 @@ void MainWindow::applySwingEditor(const QObject* changed_editor) {
                                   .arg(reinterpret_cast<quintptr>(changed_editor))
                             : QString{};
     recordActiveStateChange(tr("Edit swing"), std::move(before), key);
+}
+
+void MainWindow::applyClockEditor(const QObject* changed_editor) {
+    if (populating_) return;
+
+    auto before = captureActiveState();
+    if (changed_editor == clock_mode_) {
+        const auto requested = static_cast<pvt::ClockMode>(
+            clock_mode_->currentData().toInt());
+        if (requested == pvt::ClockMode::Music && !musicRenderReady()) {
+            {
+                const QSignalBlocker blocker(clock_mode_);
+                select_enum(clock_mode_, config_.clock.mode);
+            }
+            chooseMusicSource();
+            return;
+        }
+        config_.clock.mode = requested;
+    } else if (changed_editor == clock_interpolation_) {
+        config_.clock.interpolation = static_cast<pvt::ClockInterpolation>(
+            clock_interpolation_->currentData().toInt());
+    } else if (changed_editor == clock_fit_) {
+        config_.clock.fit = static_cast<pvt::ClockFit>(
+            clock_fit_->currentData().toInt());
+    } else if (changed_editor == clock_frame_interval_) {
+        config_.clock.frame_interval = clock_frame_interval_->value();
+    } else if (changed_editor == clock_time_interval_ms_) {
+        config_.clock.time_interval_microseconds = static_cast<std::int64_t>(
+            std::llround(clock_time_interval_ms_->value() * 1000.0));
+    } else if (changed_editor == meter_expression_) {
+        std::string description;
+        std::string meter_error;
+        const std::string expression = meter_expression_->text().toStdString();
+        if (!pvt::describe_meter(expression, description, &meter_error)) {
+            const QSignalBlocker blocker(meter_expression_);
+            meter_expression_->setText(
+                QString::fromStdString(config_.clock.meter.expression));
+            meter_summary_->setText(QString::fromStdString(meter_error));
+            meter_summary_->setStyleSheet(QStringLiteral("color: #d32f2f;"));
+            status_->setText(tr("The meter expression was not changed."));
+            return;
+        }
+        config_.clock.meter.expression = expression;
+    } else if (changed_editor == meter_bpm_) {
+        config_.clock.meter.bpm = meter_bpm_->value();
+    } else if (changed_editor == meter_tempo_note_) {
+        config_.clock.meter.tempo_note_denominator = meter_tempo_note_->value();
+    } else if (changed_editor == clock_reverse_) {
+        config_.clock.reverse = clock_reverse_->isChecked();
+    } else if (changed_editor == clock_phase_offset_) {
+        config_.clock.phase_offset_degrees = clock_phase_offset_->value();
+    } else if (changed_editor == music_tempo_mode_) {
+        config_.clock.music_tempo = static_cast<pvt::MusicTempoMode>(
+            music_tempo_mode_->currentData().toInt());
+    } else if (changed_editor == music_beat_offset_ms_) {
+        config_.clock.beat_offset_microseconds = static_cast<std::int64_t>(
+            std::llround(music_beat_offset_ms_->value() * 1000.0));
+    } else {
+        return;
+    }
+
+    syncProjectGlobals();
+    updateSynchronizationState();
+    updateTimelineState();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    const QString key = editor_change_is_continuous(changed_editor)
+                            ? QStringLiteral("clock:%1")
+                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            : QString{};
+    recordActiveStateChange(tr("Edit synchronized clock"), std::move(before), key);
+}
+
+void MainWindow::applyAudioReactiveEditor(const QObject* changed_editor) {
+    if (populating_) return;
+    auto before = captureActiveState();
+    auto& audio = config_.audio_reactive;
+    if (changed_editor == audio_response_group_) {
+        audio.enabled = audio_response_group_->isChecked();
+    } else if (changed_editor == audio_sync_only_) {
+        audio.synchronized_only = audio_sync_only_->isChecked();
+    } else if (changed_editor == audio_waves_enabled_) {
+        audio.waves_enabled = audio_waves_enabled_->isChecked();
+    } else if (changed_editor == audio_wave_source_) {
+        audio.wave_source = static_cast<pvt::MusicFeature>(
+            audio_wave_source_->currentData().toInt());
+    } else if (changed_editor == audio_wave_amount_) {
+        audio.wave_amount = audio_wave_amount_->value();
+    } else if (changed_editor == audio_effects_enabled_) {
+        audio.effects_enabled = audio_effects_enabled_->isChecked();
+    } else if (changed_editor == audio_effect_source_) {
+        audio.effect_source = static_cast<pvt::MusicFeature>(
+            audio_effect_source_->currentData().toInt());
+    } else if (changed_editor == audio_effect_amount_) {
+        audio.effect_amount = audio_effect_amount_->value();
+    } else if (changed_editor == audio_color_enabled_) {
+        audio.color_enabled = audio_color_enabled_->isChecked();
+    } else if (changed_editor == audio_color_source_) {
+        audio.color_source = static_cast<pvt::MusicFeature>(
+            audio_color_source_->currentData().toInt());
+    } else if (changed_editor == audio_color_amount_) {
+        audio.color_amount_degrees = audio_color_amount_->value();
+    } else {
+        return;
+    }
+    syncActiveRender();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    const QString key = editor_change_is_continuous(changed_editor)
+                            ? QStringLiteral("audio-response:%1:%2")
+                                  .arg(QString::fromStdString(active_layer_uuid_))
+                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            : QString{};
+    recordActiveStateChange(tr("Edit audio response"), std::move(before), key);
 }
 
 void MainWindow::applyEffectEditor(const QObject* changed_editor) {
@@ -3667,6 +4693,10 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     if (populating_) {
         return;
     }
+    if (changed_editor == surface_obj_path_) {
+        (void)setSurfaceObjSource(surface_obj_path_->text());
+        return;
+    }
     auto before = captureActiveState();
     bool affects_preview = true;
     if (changed_editor == width_) {
@@ -3738,11 +4768,6 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_mapping_) {
         config_.surface.mapping =
             static_cast<pvt::SurfaceMapping>(surface_mapping_->currentData().toInt());
-    } else if (changed_editor == surface_obj_path_) {
-        if (!surface_obj_path_->hasAcceptableInput()) {
-            return;
-        }
-        config_.surface.obj_path = surface_obj_path_->text().toStdString();
     } else if (changed_editor == surface_rotations_) {
         config_.surface.rotations_per_loop = surface_rotations_->value();
     } else if (changed_editor == surface_phase_) {
@@ -3837,7 +4862,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     png_compression_->setEnabled(config_.output.bit_depth != 32);
     if (changed_editor == frames_ || changed_editor == fps_) {
         updateTimelineState();
+        updateSynchronizationState();
     }
+    updateExportAvailability();
     if (affects_preview) {
         preview_->setConfiguration(config_);
         schedulePreview();
@@ -4120,6 +5147,304 @@ void MainWindow::rememberDialogLocation(const QString& selectedPath) {
     }
 }
 
+QString MainWindow::currentMusicSourcePath() const {
+    if (document_ == nullptr) return {};
+    return QString::fromStdString(pvt::project_attachment_path(
+        *document_, pvt::kMusicSourceAttachmentId));
+}
+
+void MainWindow::chooseMusicSource() {
+    if (music_analysis_active_) return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Choose music source"), usableDialogDirectory(),
+        tr("Supported audio (*.wav *.wave *.flac *.mp3);;WAV audio (*.wav *.wave);;FLAC audio (*.flac);;MP3 audio (*.mp3);;All files (*)"));
+    if (path.isEmpty()) return;
+    rememberDialogLocation(path);
+    (void)startMusicAnalysis(path, MusicAnalysisAction::Choose);
+}
+
+void MainWindow::relinkMusicSource() {
+    if (music_analysis_active_ || config_.clock.music.source_sha256.empty()) return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Relink embedded music source"), usableDialogDirectory(),
+        tr("Supported audio (*.wav *.wave *.flac *.mp3);;All files (*)"));
+    if (path.isEmpty()) return;
+    rememberDialogLocation(path);
+    (void)startMusicAnalysis(path, MusicAnalysisAction::Relink);
+}
+
+void MainWindow::reanalyzeMusicSource() {
+    if (music_analysis_active_) return;
+    const QString path = currentMusicSourcePath();
+    if (path.isEmpty()) {
+        music_error_->setText(
+            tr("The embedded music source is unavailable. Relink the matching file first."));
+        music_error_->show();
+        return;
+    }
+    (void)startMusicAnalysis(path, MusicAnalysisAction::Reanalyze);
+}
+
+bool MainWindow::startMusicAnalysis(const QString& source_path,
+                                    MusicAnalysisAction action) {
+    if (source_path.isEmpty() || music_analysis_watcher_ == nullptr
+        || music_analysis_watcher_->isRunning()) {
+        return false;
+    }
+    music_analysis_active_ = true;
+    const std::uint64_t generation = ++music_analysis_generation_;
+    const std::uint64_t revision = document_revision_;
+    auto cancel = std::make_shared<std::atomic_bool>(false);
+    music_analysis_cancel_ = cancel;
+    std::shared_ptr<pvt::ProjectDocument> staged_document;
+    try {
+        staged_document = std::make_shared<pvt::ProjectDocument>(
+            document_ != nullptr ? *document_
+                                 : pvt::default_project_document());
+        staged_document->project = project_;
+    } catch (const std::exception& exception) {
+        music_analysis_active_ = false;
+        music_error_->setText(
+            tr("Music analysis could not start: %1")
+                .arg(QString::fromUtf8(exception.what())));
+        music_error_->show();
+        updateMusicTransactionGuards();
+        return false;
+    } catch (...) {
+        music_analysis_active_ = false;
+        music_error_->setText(
+            tr("The project could not be staged for music analysis."));
+        music_error_->show();
+        updateMusicTransactionGuards();
+        return false;
+    }
+    music_progress_->setRange(0, 0);
+    music_progress_->show();
+    music_cancel_->show();
+    music_error_->hide();
+    status_->setText(action == MusicAnalysisAction::Relink
+                         ? tr("Verifying music source…")
+                         : tr("Analyzing music source…"));
+    updateMusicTransactionGuards();
+    updateSynchronizationState();
+
+    const pvt::MusicAnalysis existing = config_.clock.music;
+    try {
+        music_analysis_watcher_->setFuture(QtConcurrent::run(
+            [this, source_path, action, generation, revision, existing,
+             cancel, staged_document]() mutable {
+                MusicAnalysisResult result;
+                result.source_path = source_path;
+                result.action = action;
+                result.generation = generation;
+                result.document_revision = revision;
+                std::string error;
+                const auto progress =
+                    [this, generation, revision](std::uint64_t completed,
+                                                 std::uint64_t total) {
+                        QMetaObject::invokeMethod(
+                            this,
+                            [this, generation, revision, completed, total] {
+                                if (generation != music_analysis_generation_
+                                    || revision != document_revision_
+                                    || music_progress_ == nullptr) {
+                                    return;
+                                }
+                                if (total == 0U) {
+                                    music_progress_->setRange(0, 0);
+                                } else {
+                                    music_progress_->setRange(0, 1000);
+                                    music_progress_->setValue(static_cast<int>(
+                                        std::min<std::uint64_t>(
+                                            1000U, completed * 1000U / total)));
+                                }
+                            },
+                            Qt::QueuedConnection);
+                        return true;
+                    };
+                if (action == MusicAnalysisAction::Relink) {
+                    result.ok = pvt::audio::verify_music_source(
+                        source_path.toStdString(), existing.source_sha256,
+                        progress, cancel.get(), &error);
+                    result.verified_only = result.ok;
+                    result.analysis = existing;
+                } else {
+                    result.ok = pvt::audio::analyze_music_file(
+                        source_path.toStdString(), result.analysis,
+                        progress, cancel.get(), &error);
+                    if (result.ok && action == MusicAnalysisAction::Reanalyze
+                        && result.analysis.source_sha256
+                               != existing.source_sha256) {
+                        result.ok = false;
+                        error = "The embedded source changed while it was being reanalyzed.";
+                    }
+                }
+                if (result.ok && !cancel->load(std::memory_order_relaxed)) {
+                    QMetaObject::invokeMethod(
+                        this,
+                        [this, generation, revision] {
+                            if (generation != music_analysis_generation_
+                                || revision != document_revision_) return;
+                            status_->setText(tr("Embedding analyzed music in the project cache…"));
+                            music_progress_->setRange(0, 0);
+                        },
+                        Qt::QueuedConnection);
+                    if (!pvt::attach_project_file(
+                            *staged_document, pvt::kMusicSourceAttachmentId,
+                            source_path.toStdString(), &result.attached,
+                            &error)) {
+                        result.ok = false;
+                    } else if (result.attached.sha256
+                               != result.analysis.source_sha256) {
+                        result.ok = false;
+                        error = "The music source changed after analysis; the final bytes were rejected.";
+                    } else {
+                        result.staged_document = staged_document;
+                    }
+                }
+                if (result.ok && cancel->load(std::memory_order_relaxed)) {
+                    result.ok = false;
+                }
+                result.cancelled = !result.ok
+                    && cancel->load(std::memory_order_relaxed);
+                result.error = QString::fromStdString(error);
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        music_analysis_active_ = false;
+        music_error_->setText(
+            tr("Music analysis could not start: %1")
+                .arg(QString::fromUtf8(exception.what())));
+        music_error_->show();
+        updateMusicTransactionGuards();
+        updateSynchronizationState();
+        return false;
+    } catch (...) {
+        music_analysis_active_ = false;
+        music_error_->setText(tr("The background music-analysis task could not be created."));
+        music_error_->show();
+        updateMusicTransactionGuards();
+        updateSynchronizationState();
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::cancelMusicAnalysis(const QString& message) {
+    if (music_analysis_cancel_ != nullptr) {
+        music_analysis_cancel_->store(true, std::memory_order_relaxed);
+    }
+    if (music_analysis_active_) {
+        ++music_analysis_generation_;
+        if (!message.isEmpty() && status_ != nullptr) status_->setText(message);
+    }
+}
+
+void MainWindow::finishMusicAnalysis(const MusicAnalysisResult& result) {
+    music_progress_->hide();
+    music_cancel_->hide();
+    if (result.generation != music_analysis_generation_) {
+        return;
+    }
+    if (result.document_revision != document_revision_) {
+        music_error_->setText(
+            tr("The completed analysis was discarded because the project changed while it was running."));
+        music_error_->show();
+        status_->setText(tr("Discarded stale music analysis."));
+        return;
+    }
+    if (result.cancelled) {
+        status_->setText(tr("Music analysis cancelled; the previous source was kept."));
+        return;
+    }
+    if (!result.ok) {
+        music_error_->setText(
+            result.error.isEmpty() ? tr("Music analysis failed.") : result.error);
+        music_error_->show();
+        status_->setText(tr("Music analysis failed; the previous source was kept."));
+        return;
+    }
+
+    if (result.staged_document == nullptr
+        || result.attached.sha256 != result.analysis.source_sha256) {
+        music_error_->setText(
+            tr("The analyzed source did not produce a complete staged project attachment."));
+        music_error_->show();
+        status_->setText(tr("Rejected an incomplete music import transaction."));
+        return;
+    }
+
+    auto before = captureActiveState();
+    const bool first_music_source = config_.clock.music.source_sha256.empty();
+    auto committed_document =
+        std::make_unique<pvt::ProjectDocument>(*result.staged_document);
+    document_ = std::move(committed_document);
+    if (!result.verified_only) {
+        config_.clock.music = result.analysis;
+    }
+    config_.clock.music.source_sha256 = result.attached.sha256;
+    config_.clock.music.source_basename = result.attached.basename;
+    if (result.action == MusicAnalysisAction::Choose) {
+        // Importing a source opts the current layer into the behavior users
+        // selected Music for. This is a one-time default: later layer toggles
+        // and clock-mode changes never force Audio Response back on.
+        if (first_music_source) {
+            config_.audio_reactive.enabled = true;
+        }
+        config_.clock.mode = pvt::ClockMode::Music;
+        config_.clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+    }
+    syncActiveRender();
+    syncProjectGlobals();
+    document_->project = project_;
+    document_->dirty = true;
+    rememberDialogLocation(result.source_path);
+    recordActiveStateChange(
+        result.action == MusicAnalysisAction::Relink
+            ? tr("Relink embedded music")
+            : (result.action == MusicAnalysisAction::Reanalyze
+                   ? tr("Reanalyze embedded music")
+                   : tr("Embed music source")),
+        std::move(before));
+    loadGlobalEditors();
+    updateTimelineState();
+    updateExportAvailability();
+    music_error_->hide();
+    status_->setText(result.action == MusicAnalysisAction::Relink
+                         ? tr("Verified and embedded the relinked music source.")
+                         : tr("Analyzed and embedded %1.")
+                               .arg(QString::fromStdString(
+                                   config_.clock.music.source_basename)));
+}
+
+void MainWindow::clearMusicSource() {
+    if (music_analysis_active_ || config_.clock.music.source_sha256.empty()
+        || document_ == nullptr) {
+        return;
+    }
+    auto before = captureActiveState();
+    std::string error;
+    if (!pvt::detach_project_file(
+            *document_, pvt::kMusicSourceAttachmentId, &error)) {
+        QMessageBox::critical(this, tr("Could not clear music source"),
+                              QString::fromStdString(error));
+        return;
+    }
+    config_.clock.music = {};
+    if (config_.clock.mode == pvt::ClockMode::Music) {
+        config_.clock.mode = pvt::ClockMode::Default;
+    }
+    syncProjectGlobals();
+    document_->project = project_;
+    document_->dirty = true;
+    recordActiveStateChange(tr("Clear embedded music"), std::move(before));
+    loadGlobalEditors();
+    updateTimelineState();
+    updateExportAvailability();
+    music_error_->hide();
+    status_->setText(tr("Cleared the embedded music source; manual frames were preserved."));
+}
+
 void MainWindow::schedulePreview() {
     ++preview_generation_;
     if (preview_watcher_ && preview_watcher_->isRunning()) {
@@ -4286,18 +5611,192 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
 
 bool MainWindow::startExport() {
     cancel_export_.store(false);
-    status_->setText(tr("Exporting sequence…"));
+    const bool video = export_target_ != nullptr
+                       && export_target_->currentData().toInt() == 1;
+    status_->setText(video ? tr("Preparing MP4 export…")
+                           : tr("Exporting image sequence…"));
+    export_progress_->setRange(0, 1000);
+    export_progress_->setValue(0);
+    export_progress_->show();
     try {
         auto project = project_;
         project.output.output_directory =
             resolvedOutputDirectory(QString::fromStdString(project.output.output_directory))
                 .toStdString();
+        const QString audio_path = video ? currentMusicSourcePath() : QString{};
+        const pvt::MusicAnalysis music = project.canvas.clock.music;
+        const bool video_overwrite = project.output.overwrite_existing;
+        std::string frame_count_error;
+        const int video_frame_count = video
+            ? pvt::effective_frame_count(project.canvas, &frame_count_error)
+            : 0;
+        const QString video_destination = video
+            ? QDir(QString::fromStdString(project.output.output_directory))
+                  .filePath(video_filename_for_prefix(
+                      project.output.filename_prefix))
+            : QString{};
+        if (video && (project.canvas.clock.mode != pvt::ClockMode::Music
+                      || video_frame_count < 1 || audio_path.isEmpty())) {
+            export_progress_->hide();
+            status_->setText(tr("MP4 export is not ready"));
+            QMessageBox::warning(
+                this, tr("MP4 export is not ready"),
+                frame_count_error.empty()
+                    ? tr("Select Music clock mode with a complete, available embedded source first.")
+                    : QString::fromStdString(frame_count_error));
+            return false;
+        }
         export_active_ = true;
         export_watcher_->setFuture(QtConcurrent::run(
-            [this, project = std::move(project)] {
+            [this, project = std::move(project), video, audio_path,
+             music, video_frame_count, video_destination,
+             video_overwrite]() mutable {
                 ExportResult result;
+                result.video = video;
                 std::string error;
                 try {
+                    if (video) {
+                        const pvt::gui::FfmpegProbe ffmpeg =
+                            pvt::gui::probe_ffmpeg();
+                        if (!ffmpeg.available) {
+                            result.error = ffmpeg.error;
+                            return result;
+                        }
+                        if (cancel_export_.load(std::memory_order_relaxed)) {
+                            result.cancelled = true;
+                            return result;
+                        }
+
+                        QTemporaryDir frames_directory;
+                        if (!frames_directory.isValid()) {
+                            result.error = tr("Could not create temporary storage for rendered video frames.");
+                            return result;
+                        }
+                        const QString destination_directory =
+                            QFileInfo(video_destination).absolutePath();
+                        if (!QDir(destination_directory).exists()
+                            && !QDir().mkpath(destination_directory)) {
+                            result.error = tr("Could not create the MP4 output directory: %1")
+                                               .arg(destination_directory);
+                            return result;
+                        }
+
+                        constexpr int kVideoFrameDigits = 8;
+                        constexpr int kRenderProgressMaximum = 700;
+                        project.output.output_directory =
+                            frames_directory.path().toStdString();
+                        project.output.filename_prefix = "pvt_video_frame_";
+                        project.output.first_frame_number = 0;
+                        project.output.filename_digits = kVideoFrameDigits;
+                        project.output.bit_depth = 8;
+                        project.output.png_compression_level = 1;
+                        project.output.dither_enabled = false;
+                        // Preserve valid project compositing through RGBA PNG.
+                        // The mux helper composites alpha onto black before
+                        // producing opaque H.264 video.
+                        project.output.write_alpha = true;
+                        project.output.overwrite_existing = false;
+                        result.ok = pvt::render_project_sequence(
+                            project,
+                            [this](int completed, int total) {
+                                const int update_stride = std::max(1, total / 200);
+                                if (completed == 0 || completed == total
+                                    || completed % update_stride == 0) {
+                                    QMetaObject::invokeMethod(
+                                        this,
+                                        [this, completed, total] {
+                                            if (!export_active_) return;
+                                            status_->setText(
+                                                tr("Rendering video frame %1/%2…")
+                                                    .arg(completed).arg(total));
+                                            export_progress_->setValue(
+                                                total > 0
+                                                    ? completed
+                                                          * kRenderProgressMaximum
+                                                          / total
+                                                    : 0);
+                                        },
+                                        Qt::QueuedConnection);
+                                }
+                                return !cancel_export_.load(
+                                    std::memory_order_relaxed);
+                            },
+                            &cancel_export_, &error);
+                        if (!result.ok) {
+                            result.cancelled = cancel_export_.load(
+                                std::memory_order_relaxed);
+                            result.error = QString::fromStdString(error);
+                            return result;
+                        }
+
+                        pvt::gui::MusicVideoExportRequest request;
+                        request.sequence.directory = frames_directory.path();
+                        request.sequence.filename_prefix =
+                            QString::fromStdString(project.output.filename_prefix);
+                        request.sequence.first_frame_number = 0;
+                        request.sequence.filename_digits = kVideoFrameDigits;
+                        request.sequence.frame_count = video_frame_count;
+                        request.sequence.format = pvt::gui::RenderedImageFormat::Png;
+                        request.fps = project.canvas.fps;
+                        request.audio_sample_frame_count = music.source_frame_count;
+                        request.audio_sample_rate = music.source_sample_rate;
+                        request.audio_path = audio_path;
+                        request.expected_audio_sha256 =
+                            QString::fromStdString(music.source_sha256);
+                        request.destination_path = video_destination;
+                        request.overwrite_existing = video_overwrite;
+                        request.ffmpeg_executable = ffmpeg.executable;
+
+                        QString video_error;
+                        result.ok = pvt::gui::export_music_video(
+                            request,
+                            [this](pvt::gui::MusicVideoStage stage,
+                                   std::int64_t completed,
+                                   std::int64_t total) {
+                                int start = 700;
+                                int span = 50;
+                                QString message;
+                                switch (stage) {
+                                    case pvt::gui::MusicVideoStage::VerifyAudio:
+                                        message = tr("Verifying embedded music…");
+                                        break;
+                                    case pvt::gui::MusicVideoStage::Prepare:
+                                        start = 750;
+                                        message = tr("Checking rendered video frames…");
+                                        break;
+                                    case pvt::gui::MusicVideoStage::Encode:
+                                        start = 800;
+                                        span = 190;
+                                        message = tr("Encoding H.264/AAC video…");
+                                        break;
+                                    case pvt::gui::MusicVideoStage::Install:
+                                        start = 990;
+                                        span = 10;
+                                        message = tr("Installing finished MP4…");
+                                        break;
+                                }
+                                const int value = total > 0
+                                    ? start + static_cast<int>(
+                                          std::clamp<std::int64_t>(completed, 0, total)
+                                          * span / total)
+                                    : start;
+                                QMetaObject::invokeMethod(
+                                    this,
+                                    [this, value, message = std::move(message)] {
+                                        if (!export_active_) return;
+                                        status_->setText(message);
+                                        export_progress_->setValue(value);
+                                    },
+                                    Qt::QueuedConnection);
+                                return !cancel_export_.load(
+                                    std::memory_order_relaxed);
+                            },
+                            &cancel_export_, &video_error);
+                        result.cancelled = !result.ok
+                            && cancel_export_.load(std::memory_order_relaxed);
+                        result.error = std::move(video_error);
+                        return result;
+                    }
                     result.ok = pvt::render_project_sequence(
                         project,
                         [this](int completed, int total) {
@@ -4311,6 +5810,10 @@ bool MainWindow::startExport() {
                                             status_->setText(tr("Exporting frame %1/%2…")
                                                                  .arg(completed)
                                                                  .arg(total));
+                                            export_progress_->setValue(
+                                                total > 0
+                                                    ? completed * 1000 / total
+                                                    : 0);
                                         }
                                     },
                                     Qt::QueuedConnection);
@@ -4329,12 +5832,14 @@ bool MainWindow::startExport() {
             }));
     } catch (const std::exception& exception) {
         export_active_ = false;
+        export_progress_->hide();
         status_->setText(tr("Export could not start"));
         QMessageBox::critical(this, tr("Export could not start"),
                               QString::fromUtf8(exception.what()));
         return false;
     } catch (...) {
         export_active_ = false;
+        export_progress_->hide();
         status_->setText(tr("Export could not start"));
         QMessageBox::critical(this, tr("Export could not start"),
                               tr("The background export task could not be created."));
@@ -4348,6 +5853,7 @@ bool MainWindow::loadSetupFile(const QString& path, QString* error) {
 }
 
 bool MainWindow::loadProjectPath(const QString& path, QString* error) {
+    cancelMusicAnalysis();
     pvt::ProjectDocument loaded;
     std::string load_error;
     const QFileInfo source_info(path);
@@ -4495,6 +6001,238 @@ bool MainWindow::runSmokeChecks(QString* error) {
         if (status_ != nullptr) status_->setText(original_status);
         schedulePreview();
     });
+
+    if (tabs_ == nullptr || tabs_->count() != 6
+        || tabs_->indexOf(wave_page_) < 0
+        || tabs_->indexOf(synchronization_page_) < 0
+        || tabs_->indexOf(effect_page_) < 0
+        || tabs_->tabText(tabs_->indexOf(synchronization_page_))
+               != tr("Synchronization")
+        || tabs_->indexOf(synchronization_page_)
+               == tabs_->indexOf(wave_page_)
+        || swings_group_ == nullptr || swings_group_->parentWidget() == nullptr
+        || audio_response_group_ == nullptr
+        || audio_wave_source_->count() < 6
+        || audio_wave_source_->count() != audio_effect_source_->count()
+        || audio_wave_source_->count() != audio_color_source_->count()) {
+        if (error != nullptr) {
+            *error = tr("The Synchronization tab or its active-layer routing blocks were not constructed correctly.");
+        }
+        return false;
+    }
+
+    const pvt::ProjectConfig synchronization_project = project_;
+    const pvt::RenderConfig synchronization_config = config_;
+    const std::string synchronization_layer = active_layer_uuid_;
+    const auto set_clock_mode_for_smoke = [this](pvt::ClockMode mode) {
+        config_.clock.mode = mode;
+        const QSignalBlocker blocker(clock_mode_);
+        select_enum(clock_mode_, mode);
+        updateSynchronizationState();
+    };
+    set_clock_mode_for_smoke(pvt::ClockMode::Default);
+    if (clock_interpolation_->isEnabled()
+        || !clock_frame_interval_->isHidden()
+        || !clock_time_interval_ms_->isHidden()
+        || !meter_expression_->isHidden()
+        || music_choose_->isEnabled()) {
+        if (error != nullptr) {
+            *error = tr("Default clock mode did not hide pulse-only controls.");
+        }
+        return false;
+    }
+    set_clock_mode_for_smoke(pvt::ClockMode::Frame);
+    if (clock_frame_interval_->isHidden()
+        || !clock_time_interval_ms_->isHidden()
+        || !meter_expression_->isHidden()) {
+        if (error != nullptr) {
+            *error = tr("Frame clock mode did not expose only its frame interval.");
+        }
+        return false;
+    }
+    set_clock_mode_for_smoke(pvt::ClockMode::Time);
+    if (!clock_frame_interval_->isHidden()
+        || clock_time_interval_ms_->isHidden()
+        || !meter_expression_->isHidden()) {
+        if (error != nullptr) {
+            *error = tr("Time clock mode did not expose only its elapsed-time interval.");
+        }
+        return false;
+    }
+    set_clock_mode_for_smoke(pvt::ClockMode::Meter);
+    if (!clock_frame_interval_->isHidden()
+        || !clock_time_interval_ms_->isHidden()
+        || meter_expression_->isHidden() || meter_bpm_->isHidden()
+        || meter_tempo_note_->isHidden()) {
+        if (error != nullptr) {
+            *error = tr("Meter clock mode did not expose its meter and tempo controls.");
+        }
+        return false;
+    }
+
+    pvt::MusicAnalysis synthetic_music;
+    synthetic_music.analyzer_version = "gui-smoke-v1";
+    synthetic_music.source_sha256 = std::string(64U, 'a');
+    synthetic_music.source_basename = "synthetic.wav";
+    synthetic_music.source_format = "WAV float32";
+    synthetic_music.source_frame_count = 60000U;
+    synthetic_music.source_sample_rate = 48000U;
+    synthetic_music.source_channel_count = 2U;
+    synthetic_music.duration_seconds = 1.25;
+    synthetic_music.detected_bpm = 120.0;
+    synthetic_music.tempo_confidence = 0.8;
+    synthetic_music.beat_times_seconds = {0.0, 0.5, 1.0};
+    synthetic_music.tempo_points = {{0.0, 120.0, 0.8}};
+    synthetic_music.feature_samples.resize(4U);
+    config_.total_frames = 17;
+    config_.fps = 24.0;
+    config_.clock.music = synthetic_music;
+    config_.clock.mode = pvt::ClockMode::Music;
+    syncProjectGlobals();
+    loadGlobalEditors();
+    updateTimelineState();
+    if (effectiveFrameCount() != 30 || frames_->value() != 17
+        || frames_->isEnabled() || timeline_->maximum() != 29
+        || !frame_label_->text().contains(QStringLiteral("/ 30"))
+        || !music_choose_->isEnabled()
+        || !previous_beat_->isEnabled() || !next_beat_->isEnabled()) {
+        if (error != nullptr) {
+            *error = tr("Render-ready Music did not preserve manual frames while deriving the exact timeline length.");
+        }
+        return false;
+    }
+    timeline_->setValue(0);
+    navigateToBeat(1);
+    if (timeline_->value() != 12
+        || !frame_label_->text().contains(tr("Beat 2"))) {
+        if (error != nullptr) {
+            *error = tr("Music beat navigation or the time/beat readout was incorrect.");
+        }
+        return false;
+    }
+
+    // A first successful import should make Music visibly useful without an
+    // extra layer toggle. Once the user turns Audio Response off, ordinary
+    // clock-mode changes must preserve that explicit choice.
+    config_.clock.music = {};
+    config_.audio_reactive.enabled = false;
+    syncActiveRender();
+    syncProjectGlobals();
+    MusicAnalysisResult imported_result;
+    imported_result.ok = true;
+    imported_result.analysis = synthetic_music;
+    imported_result.analysis.source_sha256 = std::string(64U, 'b');
+    imported_result.action = MusicAnalysisAction::Choose;
+    imported_result.generation = music_analysis_generation_;
+    imported_result.document_revision = document_revision_;
+    imported_result.attached.sha256 = imported_result.analysis.source_sha256;
+    imported_result.attached.basename = imported_result.analysis.source_basename;
+    imported_result.staged_document =
+        std::make_shared<pvt::ProjectDocument>(*document_);
+    finishMusicAnalysis(imported_result);
+    if (config_.clock.mode != pvt::ClockMode::Music
+        || !config_.audio_reactive.enabled || activeLayer() == nullptr
+        || !activeLayer()->render.audio_reactive.enabled
+        || !audio_response_group_->isChecked()) {
+        if (error != nullptr) {
+            *error = tr("A first music import did not enable Audio Response for the active layer.");
+        }
+        return false;
+    }
+    audio_response_group_->setChecked(false);
+    const int default_clock = clock_mode_->findData(
+        static_cast<int>(pvt::ClockMode::Default));
+    const int music_clock = clock_mode_->findData(
+        static_cast<int>(pvt::ClockMode::Music));
+    clock_mode_->setCurrentIndex(default_clock);
+    clock_mode_->setCurrentIndex(music_clock);
+    if (config_.audio_reactive.enabled || audio_response_group_->isChecked()) {
+        if (error != nullptr) {
+            *error = tr("Returning to Music overrode the user's Audio Response choice.");
+        }
+        return false;
+    }
+    MusicAnalysisResult replacement_result = imported_result;
+    replacement_result.analysis.source_sha256 = std::string(64U, 'c');
+    replacement_result.attached.sha256 = replacement_result.analysis.source_sha256;
+    replacement_result.generation = music_analysis_generation_;
+    replacement_result.document_revision = document_revision_;
+    replacement_result.staged_document =
+        std::make_shared<pvt::ProjectDocument>(*document_);
+    finishMusicAnalysis(replacement_result);
+    if (config_.audio_reactive.enabled || audio_response_group_->isChecked()) {
+        if (error != nullptr) {
+            *error = tr("Replacing music overrode the user's Audio Response choice.");
+        }
+        return false;
+    }
+
+    const std::string music_digest_before_stale =
+        config_.clock.music.source_sha256;
+    MusicAnalysisResult stale_result;
+    stale_result.ok = true;
+    stale_result.analysis = synthetic_music;
+    stale_result.analysis.source_sha256 = std::string(64U, 'b');
+    stale_result.action = MusicAnalysisAction::Choose;
+    stale_result.generation = music_analysis_generation_ + 1U;
+    stale_result.document_revision = document_revision_;
+    finishMusicAnalysis(stale_result);
+    stale_result.generation = music_analysis_generation_;
+    stale_result.document_revision = document_revision_ + 1U;
+    finishMusicAnalysis(stale_result);
+    if (config_.clock.music.source_sha256 != music_digest_before_stale) {
+        if (error != nullptr) {
+            *error = tr("A stale music-analysis completion changed the active project.");
+        }
+        return false;
+    }
+
+    project_ = synchronization_project;
+    config_ = synchronization_config;
+    active_layer_uuid_ = synchronization_layer;
+    loadActiveConfiguration();
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    ++document_revision_;
+    refreshLayerList();
+    refreshAll();
+
+    const bool original_swings_enabled = config_.swings_enabled;
+    swings_group_->setChecked(!original_swings_enabled);
+    if (config_.swings_enabled == original_swings_enabled
+        || activeLayer() == nullptr
+        || activeLayer()->render.swings_enabled != config_.swings_enabled) {
+        if (error != nullptr) {
+            *error = tr("The active-layer Swings master toggle was not synchronized.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.swings_enabled != original_swings_enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore the active-layer Swings master toggle.");
+        }
+        return false;
+    }
+    const bool original_audio_enabled = config_.audio_reactive.enabled;
+    audio_response_group_->setChecked(!original_audio_enabled);
+    if (config_.audio_reactive.enabled == original_audio_enabled
+        || activeLayer() == nullptr
+        || activeLayer()->render.audio_reactive.enabled
+               != config_.audio_reactive.enabled) {
+        if (error != nullptr) {
+            *error = tr("The active-layer Audio Response toggle was not synchronized.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.audio_reactive.enabled != original_audio_enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore the active-layer Audio Response toggle.");
+        }
+        return false;
+    }
+
     const QString path = directory.filePath(QStringLiteral("round-trip.pvt"));
     std::string save_error;
     if (!pvt::save_setup(expected, path.toStdString(), &save_error)) {
@@ -4793,9 +6531,39 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
     }
     frames_->setValue(12);
-    if (config_.total_frames != 12 || !frame_label_->text().endsWith(QStringLiteral("/ 12"))) {
+    if (config_.total_frames != 12
+        || !frame_label_->text().contains(QStringLiteral(" / 12"))) {
         if (error != nullptr) {
             *error = tr("The GUI timeline did not follow a frame-count edit.");
+        }
+        return false;
+    }
+
+    const bool swings_checked_before_space = swings_group_->isChecked();
+    swings_group_->setFocus(Qt::OtherFocusReason);
+    QKeyEvent space_press(QEvent::KeyPress, Qt::Key_Space,
+                          Qt::NoModifier, QStringLiteral(" "));
+    QKeyEvent space_release(QEvent::KeyRelease, Qt::Key_Space,
+                            Qt::NoModifier, QStringLiteral(" "));
+    QCoreApplication::sendEvent(swings_group_, &space_press);
+    QCoreApplication::sendEvent(swings_group_, &space_release);
+    if (!playback_timer_->isActive()
+        || swings_group_->isChecked() != swings_checked_before_space) {
+        if (error != nullptr) {
+            *error = tr("Space did not start playback without toggling the focused group.");
+        }
+        return false;
+    }
+    QKeyEvent second_space_press(QEvent::KeyPress, Qt::Key_Space,
+                                 Qt::NoModifier, QStringLiteral(" "));
+    QKeyEvent second_space_release(QEvent::KeyRelease, Qt::Key_Space,
+                                   Qt::NoModifier, QStringLiteral(" "));
+    QCoreApplication::sendEvent(swings_group_, &second_space_press);
+    QCoreApplication::sendEvent(swings_group_, &second_space_release);
+    if (playback_timer_->isActive()
+        || swings_group_->isChecked() != swings_checked_before_space) {
+        if (error != nullptr) {
+            *error = tr("Space did not pause playback without toggling the focused group.");
         }
         return false;
     }
@@ -4925,6 +6693,155 @@ bool MainWindow::runSmokeChecks(QString* error) {
     updateCompatibilityWarning();
     refreshLayerList();
     refreshAll();
+
+    // Embedded resources are part of the document state, not path-only render
+    // settings. Exercise immediate caching, attachment-aware Undo/Redo, clear,
+    // and concurrent materialization through two copied documents that share
+    // the synchronized immutable-byte cache used by music-analysis staging.
+    const QString obj_path = directory.filePath(
+        QStringLiteral("attachment smoke.obj"));
+    const QByteArray obj_bytes(
+        "v -1 -1 0\n"
+        "v 1 -1 0\n"
+        "v 0 1 0\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 0.5 1\n"
+        "f 1/1 2/2 3/3\n");
+    QFile obj_file(obj_path);
+    if (!obj_file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || obj_file.write(obj_bytes) != obj_bytes.size()
+        || !obj_file.flush()) {
+        if (error != nullptr) {
+            *error = tr("Could not create the embedded-attachment smoke fixture.");
+        }
+        return false;
+    }
+    obj_file.close();
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    const std::string obj_reference =
+        pvt::surface_obj_attachment_id(active_layer_uuid_);
+    if (!setSurfaceObjSource(obj_path)) {
+        if (error != nullptr) {
+            *error = tr("The GUI could not embed a custom OBJ immediately.");
+        }
+        return false;
+    }
+    const pvt::ProjectAttachment* embedded_obj =
+        pvt::find_project_attachment(*document_, obj_reference);
+    if (embedded_obj == nullptr || embedded_obj->sha256.empty()
+        || embedded_obj->basename != "attachment smoke.obj"
+        || embedded_obj->local_path.empty()
+        || !QFileInfo::exists(QString::fromStdString(embedded_obj->local_path))
+        || config_.surface.obj_sha256 != embedded_obj->sha256
+        || config_.surface.obj_path != embedded_obj->local_path
+        || config_.surface.mapping != pvt::SurfaceMapping::CustomObj
+        || undo_stack_->count() != 1) {
+        if (error != nullptr) {
+            *error = tr("Custom OBJ embedding did not update render and attachment state atomically.");
+        }
+        return false;
+    }
+
+    const QString concurrent_obj_path = directory.filePath(
+        QStringLiteral("concurrent cache.obj"));
+    const QByteArray concurrent_obj_bytes = obj_bytes + QByteArray("# second digest\n");
+    QFile concurrent_obj_file(concurrent_obj_path);
+    if (!concurrent_obj_file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || concurrent_obj_file.write(concurrent_obj_bytes)
+               != concurrent_obj_bytes.size()
+        || !concurrent_obj_file.flush()) {
+        if (error != nullptr) {
+            *error = tr("Could not create the concurrent attachment smoke fixture.");
+        }
+        return false;
+    }
+    concurrent_obj_file.close();
+    struct ConcurrentAttachmentResult {
+        bool ok = false;
+        std::string path;
+        std::string error;
+    };
+    const auto attach_concurrently =
+        [concurrent_obj_path](pvt::ProjectDocument candidate,
+                              std::string reference) {
+            ConcurrentAttachmentResult result;
+            pvt::ProjectAttachment attached;
+            result.ok = pvt::attach_project_file(
+                candidate, reference, concurrent_obj_path.toStdString(),
+                &attached, &result.error);
+            result.path = std::move(attached.local_path);
+            return result;
+        };
+    auto first_attach = QtConcurrent::run(
+        attach_concurrently, *document_, std::string("smoke.concurrent.one"));
+    auto second_attach = QtConcurrent::run(
+        attach_concurrently, *document_, std::string("smoke.concurrent.two"));
+    first_attach.waitForFinished();
+    second_attach.waitForFinished();
+    const ConcurrentAttachmentResult first_result = first_attach.result();
+    const ConcurrentAttachmentResult second_result = second_attach.result();
+    if (!first_result.ok || !second_result.ok || first_result.path.empty()
+        || first_result.path != second_result.path
+        || !QFileInfo::exists(QString::fromStdString(first_result.path))) {
+        if (error != nullptr) {
+            *error = tr("Copied documents could not safely share concurrent attachment materialization: %1 %2")
+                         .arg(QString::fromStdString(first_result.error),
+                              QString::fromStdString(second_result.error));
+        }
+        return false;
+    }
+
+    undo_stack_->undo();
+    if (pvt::find_project_attachment(*document_, obj_reference) != nullptr
+        || !config_.surface.obj_sha256.empty()
+        || !config_.surface.obj_path.empty()
+        || config_.surface.mapping == pvt::SurfaceMapping::CustomObj) {
+        if (error != nullptr) {
+            *error = tr("Undo did not remove both custom OBJ render metadata and its attachment reference.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    embedded_obj = pvt::find_project_attachment(*document_, obj_reference);
+    if (embedded_obj == nullptr || embedded_obj->sha256.empty()
+        || config_.surface.obj_sha256 != embedded_obj->sha256
+        || config_.surface.obj_path != embedded_obj->local_path) {
+        if (error != nullptr) {
+            *error = tr("Redo did not restore the embedded custom OBJ attachment.");
+        }
+        return false;
+    }
+    if (!setSurfaceObjSource(QString{})) {
+        if (error != nullptr) *error = tr("The embedded custom OBJ could not be cleared.");
+        return false;
+    }
+    if (pvt::find_project_attachment(*document_, obj_reference) != nullptr
+        || !config_.surface.obj_sha256.empty()) {
+        if (error != nullptr) {
+            *error = tr("Clearing a custom OBJ left attachment or digest state behind.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (pvt::find_project_attachment(*document_, obj_reference) == nullptr
+        || config_.surface.obj_sha256.empty()) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore a cleared custom OBJ attachment.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    if (pvt::find_project_attachment(*document_, obj_reference) != nullptr
+        || !config_.surface.obj_sha256.empty()) {
+        if (error != nullptr) {
+            *error = tr("Redo did not clear the custom OBJ attachment again.");
+        }
+        return false;
+    }
+    clearUndoHistory(false);
+    undo_stack_->setClean();
 
     const std::string original_layer_label_name = project_.layers.front().name;
     project_.layers.front().name = "literal %2 %3 %4";
@@ -5658,12 +7575,18 @@ bool MainWindow::saveIndependentRenamedCopy(
         snapshot.canvas.block_size = config_.block_size;
         snapshot.canvas.total_frames = config_.total_frames;
         snapshot.canvas.fps = config_.fps;
+        snapshot.canvas.clock = config_.clock;
         snapshot.output = config_.output;
         snapshot.name = project_name;
 
         copy = std::make_unique<pvt::ProjectDocument>();
         std::string copy_error;
-        if (!pvt::make_independent_project_copy(snapshot, *copy, &copy_error)) {
+        pvt::ProjectDocument copy_source = document_ != nullptr
+                                               ? *document_
+                                               : pvt::default_project_document();
+        copy_source.project = snapshot;
+        if (!pvt::make_independent_project_copy(
+                copy_source, *copy, &copy_error)) {
             return fail_copy(QString::fromStdString(copy_error));
         }
 
@@ -5734,6 +7657,7 @@ bool MainWindow::saveIndependentRenamedCopy(
     static_assert(std::is_nothrow_move_assignable_v<std::string>);
     static_assert(
         std::is_nothrow_move_assignable_v<std::optional<std::string>>);
+    cancelMusicAnalysis();
     document_ = std::move(copy);
     project_ = std::move(opened_project);
     config_ = std::move(opened_config);

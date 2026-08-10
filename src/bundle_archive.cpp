@@ -49,10 +49,26 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr std::size_t kMaximumBundleEntries = 32768U;
-constexpr std::size_t kMaximumBundleBytes = 256U * 1024U * 1024U;
-constexpr std::size_t kMaximumBundleFileBytes = 4U * 1024U * 1024U;
+constexpr std::size_t kMaximumBundleBytes =
+    std::size_t{1024} * 1024U * 1024U;
+// Layer setup entries can contain the bounded 8192-sample rich music cache.
+// Project metadata itself retains its stricter 4 MiB parser limit.
+constexpr std::size_t kMaximumMetadataFileBytes = 8U * 1024U * 1024U;
+constexpr std::size_t kMaximumAssetFileBytes =
+    std::size_t{512} * 1024U * 1024U;
 constexpr std::size_t kMaximumArchivePathBytes = 4096U;
 constexpr std::uint64_t kMaximumCompressionRatio = 1000U;
+
+bool path_is_reparse_point(const fs::path& path) {
+#if defined(_WIN32)
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES
+           && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U;
+#else
+    (void)path;
+    return false;
+#endif
+}
 
 class Sha256 {
 public:
@@ -361,6 +377,26 @@ bool safe_archive_path(const std::string& path) {
     return true;
 }
 
+bool lowercase_sha256_component(std::string_view value) {
+    return value.size() == 64U
+           && std::all_of(value.begin(), value.end(), [](char character) {
+                  return (character >= '0' && character <= '9')
+                         || (character >= 'a' && character <= 'f');
+              });
+}
+
+bool asset_entry_path(std::string_view path) {
+    constexpr std::string_view prefix = "assets/";
+    return path.size() == prefix.size() + 64U
+           && path.substr(0U, prefix.size()) == prefix
+           && lowercase_sha256_component(path.substr(prefix.size()));
+}
+
+std::size_t entry_size_limit(std::string_view path) {
+    return asset_entry_path(path) ? kMaximumAssetFileBytes
+                                  : kMaximumMetadataFileBytes;
+}
+
 bool validate_file_set(const BundleFileSet& files, std::string* error) {
     if (files.root_name.empty() || files.root_name.find('/') != std::string::npos
         || !safe_archive_path(files.root_name)) {
@@ -379,11 +415,14 @@ bool validate_file_set(const BundleFileSet& files, std::string* error) {
             || !folded_paths.insert(lower_ascii(entry.first)).second) {
             return fail(error, "Bundle contains an unsafe or case-colliding path.");
         }
-        if (entry.second.size() > kMaximumBundleFileBytes) {
-            return fail(error, "Bundle entry exceeds the 4 MiB file limit.");
+        if (entry.second.size() > entry_size_limit(entry.first)) {
+            return fail(error,
+                        asset_entry_path(entry.first)
+                            ? "Bundle asset exceeds the 512 MiB file limit."
+                            : "Bundle non-asset entry exceeds the 8 MiB file limit.");
         }
         if (total_bytes > kMaximumBundleBytes - entry.second.size()) {
-            return fail(error, "Bundle exceeds the 256 MiB expanded-size limit.");
+            return fail(error, "Bundle exceeds the 1 GiB expanded-size limit.");
         }
         total_bytes += entry.second.size();
     }
@@ -411,17 +450,19 @@ std::string unique_suffix() {
 }
 
 bool read_regular_file(const fs::path& path,
+                       std::size_t maximum_bytes,
                        std::string& bytes,
                        std::string* error) {
     std::error_code status_error;
     const fs::file_status status = fs::symlink_status(path, status_error);
-    if (status_error || !fs::is_regular_file(status)) {
+    if (status_error || fs::is_symlink(status) || path_is_reparse_point(path)
+        || !fs::is_regular_file(status)) {
         return fail(error, "Bundle entry is not a regular file: '"
                                + path_to_utf8(path) + "'.");
     }
     const std::uintmax_t size = fs::file_size(path, status_error);
-    if (status_error || size > kMaximumBundleFileBytes) {
-        return fail(error, "Bundle entry is unreadable or exceeds the 4 MiB limit: '"
+    if (status_error || size > maximum_bytes) {
+        return fail(error, "Bundle entry is unreadable or exceeds its size limit: '"
                                + path_to_utf8(path) + "'.");
     }
     std::ifstream input(path, std::ios::binary);
@@ -589,6 +630,7 @@ bool update_existing_directory(const fs::path& destination,
     }
 
     std::set<std::string> new_versions;
+    std::vector<const std::pair<const std::string, std::string>*> new_assets;
     for (const auto& entry : desired.files) {
         const auto old = existing.files.find(entry.first);
         if (old != existing.files.end()) {
@@ -605,6 +647,10 @@ bool update_existing_directory(const fs::path& destination,
             || entry.first == "current") {
             continue; // Repair a missing root control file atomically below.
         }
+        if (asset_entry_path(entry.first)) {
+            new_assets.push_back(&entry);
+            continue;
+        }
         std::string version;
         if (!top_level_numeric(entry.first, version)) {
             return fail(error, "Save introduced an unexpected root entry '"
@@ -614,6 +660,40 @@ bool update_existing_directory(const fs::path& destination,
     }
     if (new_versions.size() > 1U) {
         return fail(error, "A save may commit at most one new version directory.");
+    }
+
+    // Assets are immutable and content-addressed. Install them before the new
+    // version so a crash can leave only harmless unreferenced bytes, never a
+    // committed manifest whose dependency is absent.
+    if (!new_assets.empty()) {
+        const fs::path assets_directory = destination / "assets";
+        std::error_code filesystem_error;
+        const fs::file_status assets_status =
+            fs::symlink_status(assets_directory, filesystem_error);
+        if (filesystem_error) {
+            filesystem_error.clear();
+            if (!fs::create_directory(assets_directory, filesystem_error)
+                || filesystem_error) {
+                return fail(error, "Could not create bundle asset directory.");
+            }
+        } else if (!fs::is_directory(assets_status)
+                   || fs::is_symlink(assets_status)) {
+            return fail(error, "Bundle asset path is not a regular directory.");
+        }
+        for (const auto* entry : new_assets) {
+            const fs::path target =
+                destination / path_from_utf8(entry->first);
+            const fs::file_status target_status =
+                fs::symlink_status(target, filesystem_error);
+            if (!filesystem_error && fs::exists(target_status)) {
+                return fail(error, "Bundle asset appeared during save; refusing overwrite.");
+            }
+            filesystem_error.clear();
+            if (!write_atomic_file(target, entry->second, error)) {
+                return false;
+            }
+        }
+        (void)flush_path(assets_directory);
     }
 
     if (!new_versions.empty()) {
@@ -784,10 +864,14 @@ bool read_zip(const std::string& path,
             if (!folded_paths.insert(folded).second) {
                 return fail(error, "Project ZIP contains duplicate or case-colliding paths.");
             }
+            const std::size_t maximum_entry_bytes = entry_size_limit(relative);
             if (info->uncompressed_size < 0
                 || static_cast<std::uint64_t>(info->uncompressed_size)
-                       > kMaximumBundleFileBytes) {
-                return fail(error, "Project ZIP entry exceeds the 4 MiB file limit.");
+                       > maximum_entry_bytes) {
+                return fail(error,
+                            asset_entry_path(relative)
+                                ? "Project ZIP asset exceeds the 512 MiB file limit."
+                                : "Project ZIP non-asset entry exceeds the 8 MiB file limit.");
             }
             if (info->compressed_size <= 0 && info->uncompressed_size > 0) {
                 return fail(error, "Project ZIP entry has an invalid compressed size.");
@@ -797,14 +881,14 @@ bool read_zip(const std::string& path,
             const std::uint64_t minimum_compressed =
                 (expanded + kMaximumCompressionRatio - 1U)
                 / kMaximumCompressionRatio;
-            if (info->compressed_size > 0
+            if (!asset_entry_path(relative) && info->compressed_size > 0
                 && static_cast<std::uint64_t>(info->compressed_size)
                        < minimum_compressed) {
                 return fail(error, "Project ZIP entry exceeds the compression-ratio limit.");
             }
             const std::size_t size = static_cast<std::size_t>(info->uncompressed_size);
             if (total_bytes > kMaximumBundleBytes - size) {
-                return fail(error, "Project ZIP exceeds the 256 MiB expanded-size limit.");
+                return fail(error, "Project ZIP exceeds the 1 GiB expanded-size limit.");
             }
             std::string bytes(size, '\0');
             if (mz_zip_reader_entry_open(reader.handle) != MZ_OK) {
@@ -1007,7 +1091,8 @@ bool read_bundle_file_set(const std::string& path,
         const fs::path native = path_from_utf8(path);
         std::error_code status_error;
         const fs::file_status status = fs::symlink_status(native, status_error);
-        if (status_error || fs::is_symlink(status)) {
+        if (status_error || fs::is_symlink(status)
+            || path_is_reparse_point(native)) {
             return fail(error, "Bundle source is missing or is a symbolic link.");
         }
         if (fs::is_regular_file(status)) {
@@ -1030,7 +1115,8 @@ bool read_bundle_file_set(const std::string& path,
         while (!status_error && iterator != end) {
             const fs::path entry_path = iterator->path();
             const fs::file_status entry_status = fs::symlink_status(entry_path, status_error);
-            if (status_error || fs::is_symlink(entry_status)) {
+            if (status_error || fs::is_symlink(entry_status)
+                || path_is_reparse_point(entry_path)) {
                 return fail(error, "Unpacked bundle contains a symbolic link or unreadable entry.");
             }
             if (fs::is_directory(entry_status)) {
@@ -1050,11 +1136,12 @@ bool read_bundle_file_set(const std::string& path,
                 return fail(error, "Unpacked bundle contains an unsafe or colliding path.");
             }
             std::string bytes;
-            if (!read_regular_file(entry_path, bytes, error)) {
+            if (!read_regular_file(entry_path, entry_size_limit(relative),
+                                   bytes, error)) {
                 return false;
             }
             if (total_bytes > kMaximumBundleBytes - bytes.size()) {
-                return fail(error, "Unpacked bundle exceeds the 256 MiB size limit.");
+                return fail(error, "Unpacked bundle exceeds the 1 GiB size limit.");
             }
             total_bytes += bytes.size();
             candidate.files.emplace(relative, std::move(bytes));

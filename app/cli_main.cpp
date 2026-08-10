@@ -1,4 +1,5 @@
 #include "procedural_visualizer_tool.h"
+#include "audio_analysis.h"
 #include "project_bundle.h"
 
 #include <algorithm>
@@ -348,6 +349,19 @@ bool prompt_enum(const std::string& heading, Enum& value,
         }
         std::cout << "Choose one of the listed numbers.\n";
     }
+}
+
+std::vector<std::pair<pvt::MusicFeature, std::string>> music_feature_choices() {
+    std::vector<std::pair<pvt::MusicFeature, std::string>> choices;
+    for (int raw = 0;
+         raw <= static_cast<int>((std::numeric_limits<std::uint8_t>::max)());
+         ++raw) {
+        const auto feature = static_cast<pvt::MusicFeature>(raw);
+        const char* const name = pvt::music_feature_name(feature);
+        if (name == nullptr || std::string(name) == "Unknown") continue;
+        choices.emplace_back(feature, name);
+    }
+    return choices;
 }
 
 bool palettes_equal(const pvt::PaletteConfig& left,
@@ -768,28 +782,130 @@ bool configure_swing(RenderConfig& config, std::size_t index) {
                           swing.radius, 0.0, 10.0);
 }
 
-void configure_rhythm(RenderConfig& config) {
-    std::cout << "\n-- Rhythm, starting colors, and post-effects quantization --\n";
-    if (!prompt_real("Phrase warp amount", config.phrase_warp, 0.0, 2.0)
-        || !prompt_real("Ghost mix", config.ghost_mix, 0.0, 1.0)
-        || !prompt_real("Ghost lag (degrees)", config.ghost_lag_degrees, -360.0, 360.0)
-        || !prompt_int("Hue rotations per loop", config.hue_cycles, -100, 100)
-        || !prompt_real("Color saturation", config.saturation, 0.0, 1.0)
-        || !prompt_bool("Post-effects quantization enabled", config.quantization.enabled)
-        || !prompt_int("Post-effects quantization levels", config.quantization.levels, 2, 65536)
-        || !prompt_real("Post-effects quantization mix", config.quantization.mix, 0.0, 1.0)
-        || !prompt_enum("Post-effects quantization mode", config.quantization.mode,
-                       {{pvt::QuantizationMode::Rgb, "RGB channels"},
-                        {pvt::QuantizationMode::Luminance, "Luminance"},
-                        {pvt::QuantizationMode::Hue, "Hue"}})) {
-        return;
+bool prompt_meter_expression(std::string& expression) {
+    for (;;) {
+        std::string input;
+        if (!read_line("Meter (examples: 7/8, 3+2+3/8, 5/4 | 6/4) ["
+                           + expression + "]: ",
+                       input)) {
+            return false;
+        }
+        if (input.empty()) {
+            return true;
+        }
+        std::string description;
+        std::string error;
+        if (input.size() <= 256U
+            && pvt::describe_meter(input, description, &error)) {
+            g_prompt_changed = g_prompt_changed || expression != input;
+            expression = std::move(input);
+            std::cout << "Meter: " << description << '\n';
+            return true;
+        }
+        std::cout << "Invalid meter: " << error << '\n';
+    }
+}
+
+bool analyze_music_interactive(pvt::ClockConfig& clock,
+                               pvt::AudioReactiveConfig& response,
+                               ProjectDocument& document) {
+    std::cout << "Cached music: "
+              << (clock.music.source_sha256.empty()
+                      ? "none"
+                      : clock.music.source_basename + " | "
+                            + std::to_string(clock.music.duration_seconds)
+                            + " s | " + std::to_string(clock.music.detected_bpm)
+                            + " BPM")
+              << '\n';
+    std::string path;
+    if (!read_line("Music file to analyze (Enter keeps cached analysis, c clears): ", path)) {
+        return false;
+    }
+    if (path.empty()) {
+        return true;
+    }
+    if (path == "c" || path == "C") {
+        if (!clock.music.source_sha256.empty()) {
+            ProjectDocument candidate = document;
+            std::string detach_error;
+            if (!pvt::detach_project_file(
+                    candidate, pvt::kMusicSourceAttachmentId, &detach_error)) {
+                std::cout << "Could not clear the embedded music source: "
+                          << detach_error << '\n';
+                return true;
+            }
+            document = std::move(candidate);
+            clock.music = {};
+            g_prompt_changed = true;
+        }
+        return true;
+    }
+    if (!valid_output_directory(path)) {
+        std::cout << "The music path is empty, too long, or contains control characters.\n";
+        return true;
     }
 
+    pvt::MusicAnalysis analysis;
+    std::string error;
+    unsigned last_percent = 101U;
+    std::cout << "Analyzing music…" << std::flush;
+    const bool ok = pvt::audio::analyze_music_file(
+        path, analysis,
+        [&last_percent](std::uint64_t completed, std::uint64_t total) {
+            const unsigned percent = total == 0U
+                                         ? 0U
+                                         : static_cast<unsigned>(
+                                               std::min<long double>(
+                                                   100.0L,
+                                                   static_cast<long double>(completed)
+                                                       * 100.0L
+                                                       / static_cast<long double>(total)));
+            if (percent != last_percent) {
+                std::cout << '\r' << "Analyzing music… " << percent << '%' << std::flush;
+                last_percent = percent;
+            }
+            return true;
+        },
+        nullptr, &error);
+    if (!ok) {
+        std::cout << "\rMusic analysis failed; cached analysis is unchanged: "
+                  << error << "\n";
+        return true;
+    }
+    ProjectDocument candidate = document;
+    pvt::ProjectAttachment attached;
+    if (!pvt::attach_project_file(candidate, pvt::kMusicSourceAttachmentId,
+                                  path, &attached, &error)) {
+        std::cout << "\rMusic was analyzed, but its source could not be embedded; "
+                     "the previous music remains unchanged: "
+                  << error << "\n";
+        return true;
+    }
+    if (attached.sha256 != analysis.source_sha256) {
+        std::cout << "\rThe music file changed while it was being analyzed. "
+                     "Please select it again; the previous music remains unchanged.\n";
+        return true;
+    }
+    std::cout << "\rAnalyzed " << analysis.source_basename << ": "
+              << analysis.duration_seconds << " s, " << analysis.detected_bpm
+              << " BPM, " << analysis.beat_times_seconds.size() << " beat(s).\n";
+    const bool first_music_source = clock.music.source_sha256.empty();
+    document = std::move(candidate);
+    clock.music = std::move(analysis);
+    clock.mode = pvt::ClockMode::Music;
+    clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+    if (first_music_source) response.enabled = true;
+    g_prompt_changed = true;
+    return true;
+}
+
+void configure_swings(RenderConfig& config) {
+    if (!prompt_bool("Enable the authored swing block", config.swings_enabled)) {
+        return;
+    }
     for (;;) {
-        std::cout << "\nStarting palette: "
-                  << (config.palette.enabled ? config.palette.name : "disabled")
-                  << " (" << config.palette.colors.size() << " color(s))\n"
-                  << "Swing modulators (" << config.swings.size() << "):\n";
+        std::cout << "\nSwing modulators (" << config.swings.size() << "):"
+                  << (config.swings_enabled ? "\n" : " disabled as a block\n");
         for (std::size_t i = 0; i < config.swings.size(); ++i) {
             const auto& swing = config.swings[i];
             std::cout << "  " << (i + 1) << ") " << (swing.enabled ? "on  " : "off ")
@@ -798,16 +914,10 @@ void configure_rhythm(RenderConfig& config) {
                       << " | radius " << swing.radius << '\n';
         }
         std::string input;
-        if (!read_line("Number to edit, p palette, a to add, d N to delete, "
+        if (!read_line("Number to edit, a to add, d N to delete, "
                        "m FROM TO to move, or b [b]: ", input)
             || input.empty() || input == "b" || input == "B") {
             return;
-        }
-        if (input == "p" || input == "P") {
-            if (!configure_palette(config)) {
-                return;
-            }
-            continue;
         }
         if (input == "a" || input == "A") {
             if (config.swings.size() >= pvt::kMaximumSwings) {
@@ -852,6 +962,150 @@ void configure_rhythm(RenderConfig& config) {
     }
 }
 
+void configure_color(RenderConfig& config) {
+    std::cout << "\n-- Starting colors and post-effects quantization --\n";
+    if (!prompt_real("Phrase warp amount", config.phrase_warp, 0.0, 2.0)
+        || !prompt_real("Ghost mix", config.ghost_mix, 0.0, 1.0)
+        || !prompt_real("Ghost lag (degrees)", config.ghost_lag_degrees, -360.0, 360.0)
+        || !prompt_int("Hue rotations per loop", config.hue_cycles, -100, 100)
+        || !prompt_real("Color saturation", config.saturation, 0.0, 1.0)
+        || !prompt_bool("Post-effects quantization enabled", config.quantization.enabled)
+        || !prompt_int("Post-effects quantization levels", config.quantization.levels, 2, 65536)
+        || !prompt_real("Post-effects quantization mix", config.quantization.mix, 0.0, 1.0)
+        || !prompt_enum("Post-effects quantization mode", config.quantization.mode,
+                       {{pvt::QuantizationMode::Rgb, "RGB channels"},
+                        {pvt::QuantizationMode::Luminance, "Luminance"},
+                        {pvt::QuantizationMode::Hue, "Hue"}})) {
+        return;
+    }
+
+    configure_palette(config);
+}
+
+void configure_synchronization(RenderConfig& config,
+                               ProjectDocument& document) {
+    std::cout << "\n-- Synchronization --\n"
+              << "The base clock is calculated first; authored swings are a reversible "
+                 "layer on top.\n";
+    if (!prompt_enum("Base clock", config.clock.mode,
+                     {{pvt::ClockMode::Default, "Default seamless loop"},
+                      {pvt::ClockMode::Frame, "Pulse every N frames"},
+                      {pvt::ClockMode::Time, "Pulse every N milliseconds"},
+                      {pvt::ClockMode::Meter, "Tempo and meter"},
+                      {pvt::ClockMode::Music, "Detected music beats"}})
+        || !prompt_enum("Between calculated pulses", config.clock.interpolation,
+                        {{pvt::ClockInterpolation::Hold,
+                          "Hold synchronized clock state until the next pulse"},
+                         {pvt::ClockInterpolation::Linear, "Linear interpolation"},
+                         {pvt::ClockInterpolation::Smoothstep,
+                          "Smooth eased interpolation"}})
+        || !prompt_bool("Reverse the base clock", config.clock.reverse)
+        || !prompt_real("Clock phase offset (degrees)",
+                        config.clock.phase_offset_degrees, -36000.0, 36000.0)) {
+        return;
+    }
+
+    if (config.clock.mode == pvt::ClockMode::Frame) {
+        if (!prompt_int("Frames per pulse", config.clock.frame_interval, 1, 1000000)
+            || !prompt_enum("Interval fit", config.clock.fit,
+                            {{pvt::ClockFit::Exact,
+                              "Exact interval (partial final interval allowed)"},
+                             {pvt::ClockFit::FitSequence,
+                              "Fit whole pulse intervals to the sequence"}})) {
+            return;
+        }
+    } else if (config.clock.mode == pvt::ClockMode::Time) {
+        double milliseconds =
+            static_cast<double>(config.clock.time_interval_microseconds) / 1000.0;
+        const double before = milliseconds;
+        if (!prompt_real("Milliseconds per pulse", milliseconds, 0.001, 86400000.0)
+            || !prompt_enum("Interval fit", config.clock.fit,
+                            {{pvt::ClockFit::Exact,
+                              "Exact interval (partial final interval allowed)"},
+                             {pvt::ClockFit::FitSequence,
+                              "Fit whole pulse intervals to the sequence"}})) {
+            return;
+        }
+        const auto next = static_cast<std::int64_t>(std::llround(milliseconds * 1000.0));
+        if (before != milliseconds
+            || config.clock.time_interval_microseconds != next) {
+            config.clock.time_interval_microseconds = next;
+            g_prompt_changed = true;
+        }
+    } else if (config.clock.mode == pvt::ClockMode::Meter) {
+        if (!prompt_meter_expression(config.clock.meter.expression)
+            || !prompt_real("Tempo (BPM)", config.clock.meter.bpm, 1.0, 1000.0)
+            || !prompt_int("BPM note denominator (4 quarter, 8 eighth, etc.)",
+                           config.clock.meter.tempo_note_denominator, 1, 1024)
+            || !prompt_enum("Interval fit", config.clock.fit,
+                            {{pvt::ClockFit::Exact,
+                              "Exact tempo (partial final measure allowed)"},
+                             {pvt::ClockFit::FitSequence,
+                              "Fit whole measures to the sequence"}})) {
+            return;
+        }
+    } else if (config.clock.mode == pvt::ClockMode::Music) {
+        if (!analyze_music_interactive(config.clock, config.audio_reactive,
+                                       document)
+            || !prompt_enum("Beat interpretation", config.clock.music_tempo,
+                            {{pvt::MusicTempoMode::Half, "Half-time"},
+                             {pvt::MusicTempoMode::Detected, "Detected tempo"},
+                             {pvt::MusicTempoMode::Double, "Double-time"}})) {
+            return;
+        }
+        double offset_ms =
+            static_cast<double>(config.clock.beat_offset_microseconds) / 1000.0;
+        const double before = offset_ms;
+        if (!prompt_real("Beat offset (milliseconds)", offset_ms,
+                         -86400000.0, 86400000.0)) {
+            return;
+        }
+        const auto next = static_cast<std::int64_t>(std::llround(offset_ms * 1000.0));
+        if (before != offset_ms || config.clock.beat_offset_microseconds != next) {
+            config.clock.beat_offset_microseconds = next;
+            g_prompt_changed = true;
+        }
+
+        auto& response = config.audio_reactive;
+        if (!prompt_bool("Let music features alter this layer", response.enabled)) {
+            return;
+        }
+        if (response.enabled
+            && (!prompt_bool("Limit response to synchronized waves/effects",
+                             response.synchronized_only)
+                || !prompt_bool("Drive wave values", response.waves_enabled)
+                || !prompt_enum("Wave feature", response.wave_source,
+                                music_feature_choices())
+                || !prompt_real("Wave response amount", response.wave_amount,
+                                -1.0, 4.0)
+                || !prompt_bool("Drive effect values", response.effects_enabled)
+                || !prompt_enum("Effect feature", response.effect_source,
+                                music_feature_choices())
+                || !prompt_real("Effect response amount", response.effect_amount,
+                                -1.0, 4.0)
+                || !prompt_bool("Shift hue from a music feature", response.color_enabled)
+                || !prompt_enum("Hue feature", response.color_source,
+                                music_feature_choices())
+                || !prompt_real("Maximum hue shift (degrees)",
+                                response.color_amount_degrees, -3600.0, 3600.0))) {
+            return;
+        }
+    }
+
+    std::string count_error;
+    const int count = pvt::effective_frame_count(config, &count_error);
+    if (count > 0) {
+        std::cout << "Effective export: " << count << " frame(s), "
+                  << static_cast<double>(count) / config.fps << " seconds at "
+                  << config.fps << " FPS.\n";
+    } else {
+        std::cout << "Clock needs attention: " << count_error << '\n';
+    }
+
+    std::cout << "\n-- Authored swings for the active layer --\n";
+    configure_swings(config);
+}
+
 void configure_canvas(RenderConfig& config) {
     std::cout << "\n-- Canvas and timing --\n";
     prompt_int("Width", config.width, 16, 16384);
@@ -861,7 +1115,9 @@ void configure_canvas(RenderConfig& config) {
     prompt_int("Frames per loop", config.total_frames, 2, 1000000);
 }
 
-void configure_surface(RenderConfig& config) {
+void configure_surface(RenderConfig& config,
+                       ProjectDocument& document,
+                       const std::string& layer_uuid) {
     std::cout << "\n-- Surface and procedural features --\n";
     prompt_bool("Coordinate displacement", config.displacement_enabled);
     prompt_real("Displacement strength", config.displacement, 0.0, 1000.0);
@@ -881,9 +1137,29 @@ void configure_surface(RenderConfig& config) {
                  {pvt::SurfaceMapping::Cube, "Cube"},
                  {pvt::SurfaceMapping::CustomObj, "Custom OBJ"}});
     if (config.surface.mapping == pvt::SurfaceMapping::CustomObj) {
+        const std::string previous_path = config.surface.obj_path;
+        const bool changed_before_path_prompt = g_prompt_changed;
         if (!prompt_text("OBJ file path", config.surface.obj_path,
                          kMaximumPathBytes)) {
             return;
+        }
+        if (config.surface.obj_path != previous_path) {
+            ProjectDocument candidate = document;
+            pvt::ProjectAttachment attached;
+            std::string error;
+            if (!pvt::attach_project_file(
+                    candidate, pvt::surface_obj_attachment_id(layer_uuid),
+                    config.surface.obj_path, &attached, &error)) {
+                std::cout << "Could not embed that OBJ; the previous object remains: "
+                          << error << '\n';
+                config.surface.obj_path = previous_path;
+                g_prompt_changed = changed_before_path_prompt;
+                return;
+            }
+            document = std::move(candidate);
+            config.surface.obj_path = attached.local_path;
+            config.surface.obj_sha256 = attached.sha256;
+            config.surface.obj_basename = attached.basename;
         }
     }
     prompt_int("Surface rotations per loop", config.surface.rotations_per_loop, -1000, 1000);
@@ -1026,7 +1302,7 @@ void warn_if_created_by_newer_version(const ProjectDocument& document) {
 #ifdef PVT_PROGRAM_VERSION
     const std::string current = PVT_PROGRAM_VERSION;
 #else
-    const std::string current = "4.0.1";
+    const std::string current = "5.0.0";
 #endif
     const bool newer_created = version_is_newer(document.created_with_version, current);
     const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
@@ -1060,6 +1336,7 @@ void commit_active_render(CliState& state, const RenderConfig& config, bool chan
     project.canvas.block_size = config.block_size;
     project.canvas.total_frames = config.total_frames;
     project.canvas.fps = config.fps;
+    project.canvas.clock = config.clock;
     project.output = config.output;
     project.layers.at(state.active_layer).render =
         static_cast<const pvt::RenderData&>(config);
@@ -1391,19 +1668,29 @@ void print_summary(const CliState& state) {
     const auto& project = state.document.project;
     const auto& layer = project.layers.at(state.active_layer);
     const auto validation = pvt::validate(project);
+    std::string frame_count_error;
+    const int frame_count = pvt::effective_frame_count(project.canvas,
+                                                        &frame_count_error);
     std::cout << "\n============================================================\n"
               << " " << project.name << " — Procedural Visualizer Tool\n"
               << "============================================================\n"
               << "Canvas: " << project.canvas.width << 'x' << project.canvas.height
               << " | block " << project.canvas.block_size << " | "
-              << project.canvas.total_frames << " frames at " << project.canvas.fps
-              << " fps\n"
+              << (frame_count > 0 ? frame_count : project.canvas.total_frames)
+              << " effective frames at " << project.canvas.fps << " fps | clock "
+              << pvt::clock_mode_name(project.canvas.clock.mode)
+              << (frame_count > 0 && frame_count != project.canvas.total_frames
+                      ? " (manual frame count retained: "
+                            + std::to_string(project.canvas.total_frames) + ")"
+                      : "")
+              << "\n"
               << "Layers: " << project.layers.size() << " | editing " << layer.name
               << " (" << (layer.enabled ? "on" : "off") << ", "
               << pvt::blend_mode_name(layer.blend_mode) << ", opacity "
               << layer.opacity << ")\n"
               << "Active stack: " << layer.render.waves.size() << " wave(s), "
-              << layer.render.swings.size() << " swing(s), "
+              << layer.render.swings.size() << " swing(s) "
+              << (layer.render.swings_enabled ? "enabled" : "disabled") << ", "
               << layer.render.effects.size() << " effect(s) | alpha modulation "
               << (layer.render.alpha.enabled ? "on" : "off")
               << " | starting palette "
@@ -1433,20 +1720,23 @@ void print_summary(const CliState& state) {
               << " MiB\n" << std::defaultfloat << std::setprecision(6);
     if (!validation.ok) {
         std::cout << "Project needs attention: " << validation.message << "\n";
+    } else if (frame_count < 0) {
+        std::cout << "Clock needs attention: " << frame_count_error << "\n";
     }
     std::cout << "\n1) Project name and layers\n"
-              << "2) Canvas and timing (global)\n"
-              << "3) Waves for active layer\n"
-              << "4) Effects for active layer\n"
-              << "5) Surface, transforms, and procedural features for active layer\n"
-              << "6) Rhythm, swings, palette, color, and quantization for active layer\n"
-              << "7) Procedural alpha modulation for active layer\n"
-              << "8) Export settings (global)\n"
-              << "9) Save project bundle\n"
-              << "10) Open bundle, directory, or legacy .pvt\n"
-              << "11) Version history\n"
-              << "12) Restore new-project defaults\n"
-              << "13) Render composite sequence (press Enter)\n"
+              << "2) Canvas size, FPS, and retained manual frame count (global)\n"
+              << "3) Synchronization, music response, and swings\n"
+              << "4) Waves for active layer\n"
+              << "5) Effects for active layer\n"
+              << "6) Surface, transforms, and procedural features for active layer\n"
+              << "7) Palette, color, and quantization for active layer\n"
+              << "8) Procedural alpha modulation for active layer\n"
+              << "9) Export settings (global)\n"
+              << "10) Save project bundle\n"
+              << "11) Open bundle, directory, or legacy .pvt\n"
+              << "12) Version history\n"
+              << "13) Restore new-project defaults\n"
+              << "14) Render composite sequence (press Enter)\n"
               << "0) Quit\n";
 }
 
@@ -1454,18 +1744,18 @@ bool interactive_menu(CliState& state) {
     for (;;) {
         print_summary(state);
         std::string input;
-        if (!read_line("Choice [13]: ", input)) {
+        if (!read_line("Choice [14]: ", input)) {
             if (state.document.dirty) {
                 std::cerr << "Input ended; the unsaved project was not written.\n";
             }
             return true;
         }
         if (input.empty()) {
-            input = "13";
+            input = "14";
         }
         long long choice = 0;
-        if (!parse_integer(input, 0, 13, choice)) {
-            std::cout << "Choose a menu number from 0 through 13.\n";
+        if (!parse_integer(input, 0, 14, choice)) {
+            std::cout << "Choose a menu number from 0 through 14.\n";
             continue;
         }
         if (choice == 0) {
@@ -1478,29 +1768,36 @@ bool interactive_menu(CliState& state) {
             configure_project_and_layers(state);
             continue;
         }
-        if (choice >= 2 && choice <= 8) {
+        if (choice >= 2 && choice <= 9) {
             RenderConfig config = active_render_config(state);
             g_prompt_changed = false;
             switch (choice) {
                 case 2: configure_canvas(config); break;
-                case 3: configure_waves(config); break;
-                case 4: configure_effects(config); break;
-                case 5: configure_surface(config); break;
-                case 6: configure_rhythm(config); break;
-                case 7: configure_alpha(config); break;
-                case 8: configure_export(config); break;
+                case 3:
+                    configure_synchronization(config, state.document);
+                    break;
+                case 4: configure_waves(config); break;
+                case 5: configure_effects(config); break;
+                case 6:
+                    configure_surface(
+                        config, state.document,
+                        state.document.project.layers.at(state.active_layer).uuid);
+                    break;
+                case 7: configure_color(config); break;
+                case 8: configure_alpha(config); break;
+                case 9: configure_export(config); break;
                 default: break;
             }
             commit_active_render(state, config, g_prompt_changed);
             continue;
         }
         switch (choice) {
-            case 9:
+            case 10:
                 if (!save_project_interactive(state)) {
                     return true;
                 }
                 break;
-            case 10: {
+            case 11: {
                 if (!resolve_unsaved_changes(state, "open another project")) {
                     break;
                 }
@@ -1526,10 +1823,10 @@ bool interactive_menu(CliState& state) {
                 }
                 break;
             }
-            case 11:
+            case 12:
                 manage_versions(state);
                 break;
-            case 12:
+            case 13:
                 if (!resolve_unsaved_changes(state, "start a new project")) {
                     break;
                 }
@@ -1537,7 +1834,7 @@ bool interactive_menu(CliState& state) {
                 state.active_layer = 0;
                 std::cout << "Started a new project with default fire settings.\n";
                 break;
-            case 13: {
+            case 14: {
                 std::string error;
                 if (pvt::render_project_sequence(
                         state.document.project,
@@ -1576,6 +1873,14 @@ void print_help(const char* program) {
         << "Render and output options:\n"
         << "  --render (or --defaults)\n"
         << "  --width N --height N --block-size N --frames N --fps N\n"
+        << "  --clock default|frame|time|meter|music\n"
+        << "  --clock-interpolation hold|linear|smoothstep\n"
+        << "  --clock-fit exact|sequence --pulse-frames N --pulse-ms N\n"
+        << "  --meter TEXT --bpm N --tempo-note N --clock-phase N\n"
+        << "  --reverse-clock --forward-clock\n"
+        << "  --music FILE --music-tempo half|detected|double\n"
+        << "  --beat-offset-ms N --audio-reactive --no-audio-reactive\n"
+        << "  --swings --no-swings             Active-layer authored swing block\n"
         << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
         << "  --workers 0.." << pvt::kMaximumSequenceWorkers
         << "  (0 auto, 1 sequential)\n"
@@ -1593,6 +1898,9 @@ void print_help(const char* program) {
         << "Normal saves never overwrite an imported legacy .pvt. The explicit\n"
         << "--save-legacy escape hatch is rejected for multi-layer projects.\n"
         << "PNG compression defaults to 5 (0 is off, 9 is maximum).\n"
+        << "--music stores analysis plus an integrity-checked bundled source asset. "
+           "A first import enables Audio Response for the active layer; a later "
+           "--no-audio-reactive explicitly overrides that default.\n"
         << "Float EXR output ignores PNG compression and dithering. "
            "Unspecified values keep their defaults.\n";
 }
@@ -1604,6 +1912,12 @@ bool option_takes_value(const std::string& option) {
            || option == "--layer-opacity" || option == "--width"
            || option == "--height" || option == "--block-size" || option == "--frames"
            || option == "--fps" || option == "--waves" || option == "--bit-depth"
+           || option == "--clock" || option == "--clock-interpolation"
+           || option == "--clock-fit" || option == "--pulse-frames"
+           || option == "--pulse-ms" || option == "--meter" || option == "--bpm"
+           || option == "--tempo-note" || option == "--clock-phase"
+           || option == "--music" || option == "--music-tempo"
+           || option == "--beat-offset-ms"
            || option == "--png-compression" || option == "--workers"
            || option == "--obj"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
@@ -1634,6 +1948,65 @@ bool parse_blend_mode(const std::string& text, pvt::BlendMode& mode) {
         mode = pvt::BlendMode::Multiply;
     } else if (value == "add") {
         mode = pvt::BlendMode::Add;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool parse_clock_mode(const std::string& text, pvt::ClockMode& mode) {
+    const std::string value = lower_ascii(text);
+    if (value == "default") {
+        mode = pvt::ClockMode::Default;
+    } else if (value == "frame") {
+        mode = pvt::ClockMode::Frame;
+    } else if (value == "time") {
+        mode = pvt::ClockMode::Time;
+    } else if (value == "meter" || value == "time-signature") {
+        mode = pvt::ClockMode::Meter;
+    } else if (value == "music") {
+        mode = pvt::ClockMode::Music;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool parse_clock_interpolation(const std::string& text,
+                               pvt::ClockInterpolation& interpolation) {
+    const std::string value = lower_ascii(text);
+    if (value == "hold" || value == "static") {
+        interpolation = pvt::ClockInterpolation::Hold;
+    } else if (value == "linear") {
+        interpolation = pvt::ClockInterpolation::Linear;
+    } else if (value == "smooth" || value == "smoothstep") {
+        interpolation = pvt::ClockInterpolation::Smoothstep;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool parse_clock_fit(const std::string& text, pvt::ClockFit& fit) {
+    const std::string value = lower_ascii(text);
+    if (value == "exact") {
+        fit = pvt::ClockFit::Exact;
+    } else if (value == "sequence" || value == "fit" || value == "fit-sequence") {
+        fit = pvt::ClockFit::FitSequence;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool parse_music_tempo(const std::string& text, pvt::MusicTempoMode& tempo) {
+    const std::string value = lower_ascii(text);
+    if (value == "half" || value == "half-time") {
+        tempo = pvt::MusicTempoMode::Half;
+    } else if (value == "detected" || value == "normal") {
+        tempo = pvt::MusicTempoMode::Detected;
+    } else if (value == "double" || value == "double-time") {
+        tempo = pvt::MusicTempoMode::Double;
     } else {
         return false;
     }
@@ -1802,6 +2175,38 @@ int main(int argc, char** argv) {
             mark_changed(state.document.project.output.dither_enabled, false);
             continue;
         }
+        if (option == "--reverse-clock") {
+            mark_changed(state.document.project.canvas.clock.reverse, true);
+            continue;
+        }
+        if (option == "--forward-clock") {
+            mark_changed(state.document.project.canvas.clock.reverse, false);
+            continue;
+        }
+        if (option == "--swings") {
+            mark_changed(
+                state.document.project.layers.at(state.active_layer).render.swings_enabled,
+                true);
+            continue;
+        }
+        if (option == "--no-swings") {
+            mark_changed(
+                state.document.project.layers.at(state.active_layer).render.swings_enabled,
+                false);
+            continue;
+        }
+        if (option == "--audio-reactive") {
+            mark_changed(state.document.project.layers.at(state.active_layer)
+                             .render.audio_reactive.enabled,
+                         true);
+            continue;
+        }
+        if (option == "--no-audio-reactive") {
+            mark_changed(state.document.project.layers.at(state.active_layer)
+                             .render.audio_reactive.enabled,
+                         false);
+            continue;
+        }
         if (!option_takes_value(option)) {
             std::cerr << "Unknown option '" << option << "'. Use --help for usage.\n";
             return EXIT_FAILURE;
@@ -1886,6 +2291,123 @@ int main(int argc, char** argv) {
                 config.fps = real;
                 return true;
             });
+        } else if (option == "--clock") {
+            pvt::ClockMode mode;
+            if (!parse_clock_mode(value, mode)) {
+                std::cerr << "Clock mode must be default, frame, time, meter, or music.\n";
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.canvas.clock.mode, mode);
+        } else if (option == "--clock-interpolation") {
+            pvt::ClockInterpolation interpolation;
+            if (!parse_clock_interpolation(value, interpolation)) {
+                std::cerr << "Clock interpolation must be hold, linear, or smoothstep.\n";
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.canvas.clock.interpolation,
+                         interpolation);
+        } else if (option == "--clock-fit") {
+            pvt::ClockFit fit;
+            if (!parse_clock_fit(value, fit)) {
+                std::cerr << "Clock fit must be exact or sequence.\n";
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.canvas.clock.fit, fit);
+        } else if (option == "--pulse-frames"
+                   && parse_integer(value, 1, 1000000, integer)) {
+            mark_changed(state.document.project.canvas.clock.frame_interval,
+                         static_cast<int>(integer));
+        } else if (option == "--pulse-ms"
+                   && parse_real(value, 0.001, 86400000.0, real)) {
+            mark_changed(state.document.project.canvas.clock.time_interval_microseconds,
+                         static_cast<std::int64_t>(std::llround(real * 1000.0)));
+        } else if (option == "--meter") {
+            std::string description;
+            std::string meter_error;
+            if (value.size() > 256U
+                || !pvt::describe_meter(value, description, &meter_error)) {
+                std::cerr << "Invalid meter: " << meter_error << '\n';
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.canvas.clock.meter.expression, value);
+        } else if (option == "--bpm" && parse_real(value, 1.0, 1000.0, real)) {
+            mark_changed(state.document.project.canvas.clock.meter.bpm, real);
+        } else if (option == "--tempo-note"
+                   && parse_integer(value, 1, 1024, integer)) {
+            mark_changed(state.document.project.canvas.clock.meter.tempo_note_denominator,
+                         static_cast<int>(integer));
+        } else if (option == "--clock-phase"
+                   && parse_real(value, -36000.0, 36000.0, real)) {
+            mark_changed(state.document.project.canvas.clock.phase_offset_degrees, real);
+        } else if (option == "--music") {
+            if (!valid_output_directory(value)) {
+                std::cerr << "Music path is empty, too long, or contains controls.\n";
+                return EXIT_FAILURE;
+            }
+            pvt::MusicAnalysis analysis;
+            std::string analysis_error;
+            unsigned last_percent = 101U;
+            if (!pvt::audio::analyze_music_file(
+                    value, analysis,
+                    [&last_percent](std::uint64_t completed, std::uint64_t total) {
+                        const unsigned percent = total == 0U
+                                                     ? 0U
+                                                     : static_cast<unsigned>(
+                                                           std::min<long double>(
+                                                               100.0L,
+                                                               static_cast<long double>(completed)
+                                                                   * 100.0L
+                                                                   / static_cast<long double>(total)));
+                        if (percent != last_percent) {
+                            std::cerr << '\r' << "Analyzing music… " << percent << '%'
+                                      << std::flush;
+                            last_percent = percent;
+                        }
+                        return true;
+                    },
+                    nullptr, &analysis_error)) {
+                std::cerr << "\rCould not analyze music: " << analysis_error << '\n';
+                return EXIT_FAILURE;
+            }
+            std::cerr << "\rAnalyzed " << analysis.source_basename << ": "
+                      << analysis.duration_seconds << " s, " << analysis.detected_bpm
+                      << " BPM, " << analysis.beat_times_seconds.size() << " beat(s).\n";
+            ProjectDocument candidate = state.document;
+            pvt::ProjectAttachment attached;
+            if (!pvt::attach_project_file(
+                    candidate, pvt::kMusicSourceAttachmentId, value,
+                    &attached, &analysis_error)) {
+                std::cerr << "Could not embed the analyzed music source: "
+                          << analysis_error << '\n';
+                return EXIT_FAILURE;
+            }
+            if (attached.sha256 != analysis.source_sha256) {
+                std::cerr << "The music source changed while it was being analyzed; "
+                             "run the command again.\n";
+                return EXIT_FAILURE;
+            }
+            auto& clock = candidate.project.canvas.clock;
+            const bool first_music_source = clock.music.source_sha256.empty();
+            clock.music = std::move(analysis);
+            clock.mode = pvt::ClockMode::Music;
+            clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+            if (first_music_source) {
+                candidate.project.layers.at(state.active_layer)
+                    .render.audio_reactive.enabled = true;
+            }
+            candidate.dirty = true;
+            state.document = std::move(candidate);
+        } else if (option == "--music-tempo") {
+            pvt::MusicTempoMode tempo;
+            if (!parse_music_tempo(value, tempo)) {
+                std::cerr << "Music tempo must be half, detected, or double.\n";
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.canvas.clock.music_tempo, tempo);
+        } else if (option == "--beat-offset-ms"
+                   && parse_real(value, -86400000.0, 86400000.0, real)) {
+            mark_changed(state.document.project.canvas.clock.beat_offset_microseconds,
+                         static_cast<std::int64_t>(std::llround(real * 1000.0)));
         } else if (option == "--waves" && parse_integer(value, 0,
                                                           pvt::kMaximumWaves, integer)) {
             mutate_active([&](RenderConfig& config) {
@@ -1910,15 +2432,31 @@ int main(int argc, char** argv) {
                                     integer)) {
             render_options.worker_count = static_cast<std::size_t>(integer);
         } else if (option == "--obj" && valid_output_directory(value)) {
+            ProjectDocument candidate = state.document;
+            pvt::ProjectAttachment attached;
+            std::string attachment_error;
+            const std::string reference_id = pvt::surface_obj_attachment_id(
+                candidate.project.layers.at(state.active_layer).uuid);
+            if (!pvt::attach_project_file(candidate, reference_id, value,
+                                          &attached, &attachment_error)) {
+                std::cerr << "Could not embed the custom OBJ: "
+                          << attachment_error << '\n';
+                return EXIT_FAILURE;
+            }
+            state.document = std::move(candidate);
             mutate_active([&](RenderConfig& config) {
                 const bool changed = !config.surface.enabled
                                      || config.surface.mapping
                                             != pvt::SurfaceMapping::CustomObj
-                                     || config.surface.obj_path != value
+                                     || config.surface.obj_path != attached.local_path
+                                     || config.surface.obj_sha256 != attached.sha256
+                                     || config.surface.obj_basename != attached.basename
                                      || !config.output.write_alpha;
                 config.surface.enabled = true;
                 config.surface.mapping = pvt::SurfaceMapping::CustomObj;
-                config.surface.obj_path = value;
+                config.surface.obj_path = attached.local_path;
+                config.surface.obj_sha256 = attached.sha256;
+                config.surface.obj_basename = attached.basename;
                 config.output.write_alpha = true;
                 return changed;
             });

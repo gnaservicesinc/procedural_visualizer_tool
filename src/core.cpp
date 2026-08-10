@@ -4,12 +4,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <new>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -24,6 +26,11 @@ constexpr std::size_t kMaximumPeakBytes = std::size_t{1} << 30;
 constexpr std::size_t kMaximumNameBytes = 256;
 constexpr std::size_t kMaximumPathBytes = 4096;
 constexpr std::size_t kMaximumPrefixBytes = 128;
+constexpr std::size_t kMaximumMeterExpressionBytes = 256;
+constexpr std::size_t kMaximumMeterMeasures = 32;
+constexpr std::size_t kMaximumMeterGroups = 256;
+constexpr int kMaximumMeterValue = 1024;
+constexpr double kMaximumMusicDurationSeconds = 1000000.0;
 
 struct Color {
     double r = 0.0;
@@ -219,6 +226,555 @@ bool valid_enum(MirrorMode value) {
     return false;
 }
 
+bool valid_enum(ClockMode value) {
+    switch (value) {
+        case ClockMode::Default:
+        case ClockMode::Frame:
+        case ClockMode::Time:
+        case ClockMode::Meter:
+        case ClockMode::Music:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(ClockInterpolation value) {
+    switch (value) {
+        case ClockInterpolation::Hold:
+        case ClockInterpolation::Linear:
+        case ClockInterpolation::Smoothstep:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(ClockFit value) {
+    switch (value) {
+        case ClockFit::Exact:
+        case ClockFit::FitSequence:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(MusicTempoMode value) {
+    switch (value) {
+        case MusicTempoMode::Half:
+        case MusicTempoMode::Detected:
+        case MusicTempoMode::Double:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(MusicFeature value) {
+    switch (value) {
+        case MusicFeature::Energy:
+        case MusicFeature::Bass:
+        case MusicFeature::Midrange:
+        case MusicFeature::Treble:
+        case MusicFeature::Onset:
+        case MusicFeature::Beat:
+        case MusicFeature::SpectralCentroid:
+        case MusicFeature::SpectralFlatness:
+        case MusicFeature::ChromaHue:
+        case MusicFeature::ChromaStrength:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(MusicSwingPolicy value) {
+    switch (value) {
+        case MusicSwingPolicy::SuppressAll:
+        case MusicSwingPolicy::SuppressGlobal:
+        case MusicSwingPolicy::KeepAll:
+            return true;
+    }
+    return false;
+}
+
+struct MeterGroup {
+    int numerator = 1;
+    int denominator = 4;
+};
+
+struct ParsedMeter {
+    std::vector<std::vector<MeterGroup>> measures;
+    std::vector<MeterGroup> pulse_pattern;
+    std::string canonical;
+};
+
+bool parse_meter_integer(std::string_view text, std::size_t& position,
+                         int& value, std::string& message) {
+    while (position < text.size()
+           && std::isspace(static_cast<unsigned char>(text[position])) != 0) {
+        ++position;
+    }
+    const std::size_t first = position;
+    unsigned int parsed = 0U;
+    while (position < text.size()
+           && text[position] >= '0' && text[position] <= '9') {
+        const unsigned int digit =
+            static_cast<unsigned int>(text[position] - '0');
+        if (parsed > (static_cast<unsigned int>(kMaximumMeterValue) - digit)
+                         / 10U) {
+            message = "Meter values must be between 1 and 1024.";
+            return false;
+        }
+        parsed = parsed * 10U + digit;
+        ++position;
+    }
+    if (position == first || parsed == 0U) {
+        message = "Each meter numerator group and denominator must be a positive integer.";
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+void skip_meter_space(std::string_view text, std::size_t& position) {
+    while (position < text.size()
+           && std::isspace(static_cast<unsigned char>(text[position])) != 0) {
+        ++position;
+    }
+}
+
+bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
+                            std::string& message) {
+    parsed = ParsedMeter{};
+    if (expression.empty() || expression.size() > kMaximumMeterExpressionBytes) {
+        message = "Meter expression must contain 1 to 256 bytes.";
+        return false;
+    }
+
+    std::size_t position = 0U;
+    std::ostringstream canonical;
+    while (true) {
+        if (parsed.measures.size() >= kMaximumMeterMeasures) {
+            message = "Meter expression contains more than 32 mixed measures.";
+            return false;
+        }
+        skip_meter_space(expression, position);
+        std::vector<int> numerators;
+        int numerator = 0;
+        if (!parse_meter_integer(expression, position, numerator, message)) {
+            return false;
+        }
+        numerators.push_back(numerator);
+        skip_meter_space(expression, position);
+        while (position < expression.size() && expression[position] == '+') {
+            ++position;
+            if (numerators.size() >= kMaximumMeterGroups) {
+                message = "Meter expression contains too many additive groups.";
+                return false;
+            }
+            if (!parse_meter_integer(expression, position, numerator, message)) {
+                return false;
+            }
+            numerators.push_back(numerator);
+            skip_meter_space(expression, position);
+        }
+        if (position >= expression.size() || expression[position] != '/') {
+            message = "Each meter measure must use numerator/denominator syntax.";
+            return false;
+        }
+        ++position;
+        int denominator = 0;
+        if (!parse_meter_integer(expression, position, denominator, message)) {
+            return false;
+        }
+        skip_meter_space(expression, position);
+
+        std::vector<MeterGroup> measure;
+        if (numerators.size() == 1U) {
+            // A plain 7/8 describes seven denominator-note pulses. Additive
+            // spelling such as 3+2+2/8 deliberately preserves larger groups.
+            if (static_cast<std::size_t>(numerators.front())
+                    > kMaximumMeterGroups - parsed.pulse_pattern.size()) {
+                message = "Meter expression expands to more than 256 pulses.";
+                return false;
+            }
+            measure.reserve(static_cast<std::size_t>(numerators.front()));
+            for (int index = 0; index < numerators.front(); ++index) {
+                measure.push_back({1, denominator});
+            }
+        } else {
+            if (numerators.size()
+                > kMaximumMeterGroups - parsed.pulse_pattern.size()) {
+                message = "Meter expression expands to more than 256 pulses.";
+                return false;
+            }
+            measure.reserve(numerators.size());
+            for (const int group : numerators) {
+                measure.push_back({group, denominator});
+            }
+        }
+        parsed.pulse_pattern.insert(parsed.pulse_pattern.end(),
+                                    measure.begin(), measure.end());
+        parsed.measures.push_back(std::move(measure));
+
+        if (parsed.measures.size() > 1U) {
+            canonical << " | ";
+        }
+        for (std::size_t index = 0U; index < numerators.size(); ++index) {
+            if (index != 0U) canonical << '+';
+            canonical << numerators[index];
+        }
+        canonical << '/' << denominator;
+
+        if (position == expression.size()) {
+            break;
+        }
+        if (expression[position] != '|') {
+            message = "Mixed meter measures must be separated with '|'.";
+            return false;
+        }
+        ++position;
+        skip_meter_space(expression, position);
+        if (position == expression.size()) {
+            message = "Meter expression cannot end with a mixed-measure separator.";
+            return false;
+        }
+    }
+    parsed.canonical = canonical.str();
+    return true;
+}
+
+bool valid_lower_hex_digest(const std::string& value) {
+    if (value.size() != 64U) return false;
+    return std::all_of(value.begin(), value.end(), [](char character) {
+        return (character >= '0' && character <= '9')
+               || (character >= 'a' && character <= 'f');
+    });
+}
+
+bool valid_music_basename(const std::string& value) {
+    return valid_path_text(value, kMaximumPathBytes, false)
+           && value.find('/') == std::string::npos
+           && value.find('\\') == std::string::npos
+           && value != "." && value != "..";
+}
+
+bool effective_frame_count_impl(int stored_count, double fps,
+                                const ClockConfig& clock, int& result,
+                                std::string& message) {
+    if (stored_count < 2 || stored_count > kMaximumFrames) {
+        message = "Frame count must be between 2 and 1000000.";
+        return false;
+    }
+    if (!finite_in_range(fps, 1.0, 240.0)) {
+        message = "FPS must be finite and between 1 and 240.";
+        return false;
+    }
+    if (clock.mode != ClockMode::Music) {
+        result = stored_count;
+        return true;
+    }
+    if (clock.music.schema_version != 1U
+        || clock.music.analyzer_version.empty()
+        || !valid_lower_hex_digest(clock.music.source_sha256)
+        || !valid_music_basename(clock.music.source_basename)
+        || clock.music.source_format.empty()
+        || clock.music.source_frame_count == 0U
+        || clock.music.source_sample_rate == 0U
+        || clock.music.source_channel_count == 0U
+        || clock.music.beat_times_seconds.empty()
+        || !std::isfinite(clock.music.duration_seconds)) {
+        message = "Music clock requires complete cached analysis before rendering.";
+        return false;
+    }
+    long double duration = static_cast<long double>(clock.music.duration_seconds);
+    if (clock.music.source_frame_count != 0U
+        && clock.music.source_sample_rate != 0U) {
+        duration = static_cast<long double>(clock.music.source_frame_count)
+                   / static_cast<long double>(clock.music.source_sample_rate);
+    }
+    if (!(duration > 0.0L)
+        || duration > static_cast<long double>(kMaximumMusicDurationSeconds)) {
+        message = "Music analysis must contain a positive bounded duration.";
+        return false;
+    }
+    const long double frames =
+        std::ceil(duration * static_cast<long double>(fps));
+    if (!(frames >= 1.0L)
+        || frames > static_cast<long double>(kMaximumFrames)) {
+        message = "Music duration and FPS require more than 1000000 frames.";
+        return false;
+    }
+    result = static_cast<int>(frames);
+    return true;
+}
+
+struct TimelineSample {
+    double normalized_phase = 0.0;
+    MusicFeatureSample music;
+};
+
+double interpolated_position(double position,
+                             ClockInterpolation interpolation) {
+    const double whole = std::floor(position);
+    const double fraction = position - whole;
+    switch (interpolation) {
+        case ClockInterpolation::Hold:
+            return whole;
+        case ClockInterpolation::Linear:
+            return position;
+        case ClockInterpolation::Smoothstep:
+            return whole + smoothstep(fraction);
+    }
+    return position;
+}
+
+MusicFeatureSample mix_music_sample(const MusicFeatureSample& first,
+                                    const MusicFeatureSample& second,
+                                    double amount) {
+    const auto blend = [amount](float left, float right) {
+        return static_cast<float>(mix_value(static_cast<double>(left),
+                                            static_cast<double>(right), amount));
+    };
+    MusicFeatureSample result;
+    result.energy = blend(first.energy, second.energy);
+    result.bass = blend(first.bass, second.bass);
+    result.midrange = blend(first.midrange, second.midrange);
+    result.treble = blend(first.treble, second.treble);
+    result.onset = blend(first.onset, second.onset);
+    result.beat = blend(first.beat, second.beat);
+    result.spectral_centroid = blend(first.spectral_centroid,
+                                     second.spectral_centroid);
+    result.spectral_flatness = blend(first.spectral_flatness,
+                                     second.spectral_flatness);
+    // Hue is circular: 0.99 and 0.01 are close, not opposite ends of a ramp.
+    double hue_delta = static_cast<double>(second.chroma_hue)
+                       - static_cast<double>(first.chroma_hue);
+    if (hue_delta > 0.5) {
+        hue_delta -= 1.0;
+    } else if (hue_delta < -0.5) {
+        hue_delta += 1.0;
+    }
+    double hue = static_cast<double>(first.chroma_hue) + amount * hue_delta;
+    hue -= std::floor(hue);
+    result.chroma_hue = static_cast<float>(hue);
+    result.chroma_strength = blend(first.chroma_strength,
+                                   second.chroma_strength);
+    return result;
+}
+
+MusicFeatureSample music_features_at(const MusicAnalysis& analysis,
+                                     double time_seconds) {
+    if (analysis.feature_samples.empty()
+        || !(analysis.duration_seconds > 0.0)) {
+        return {};
+    }
+    if (analysis.feature_samples.size() == 1U) {
+        return analysis.feature_samples.front();
+    }
+    const double position = clamp_value(
+        time_seconds / analysis.duration_seconds, 0.0, 1.0)
+        * static_cast<double>(analysis.feature_samples.size() - 1U);
+    const std::size_t first = static_cast<std::size_t>(std::floor(position));
+    const std::size_t second = std::min(first + 1U,
+                                        analysis.feature_samples.size() - 1U);
+    return mix_music_sample(analysis.feature_samples[first],
+                            analysis.feature_samples[second],
+                            position - static_cast<double>(first));
+}
+
+double apply_clock_transform(double phase, const ClockConfig& clock) {
+    const double direction = clock.reverse ? -phase : phase;
+    return wrap_unit(direction + clock.phase_offset_degrees / 360.0);
+}
+
+double meter_position_at(const std::vector<double>& pulse_seconds,
+                         double cycle_seconds, double time_seconds) {
+    if (pulse_seconds.empty() || !(cycle_seconds > 0.0)) return 0.0;
+    const double cycles = std::floor(time_seconds / cycle_seconds);
+    double within = time_seconds - cycles * cycle_seconds;
+    // Floating remainder at a negative exact boundary can equal cycle_seconds.
+    if (within >= cycle_seconds) {
+        within = 0.0;
+    } else if (within < 0.0) {
+        within += cycle_seconds;
+    }
+    double elapsed = 0.0;
+    for (std::size_t index = 0U; index < pulse_seconds.size(); ++index) {
+        const double next = elapsed + pulse_seconds[index];
+        if (within < next || index + 1U == pulse_seconds.size()) {
+            const double fraction = clamp_value(
+                (within - elapsed) / pulse_seconds[index], 0.0, 1.0);
+            return cycles * static_cast<double>(pulse_seconds.size())
+                   + static_cast<double>(index) + fraction;
+        }
+        elapsed = next;
+    }
+    return (cycles + 1.0) * static_cast<double>(pulse_seconds.size());
+}
+
+std::vector<double> music_anchors(const ClockConfig& clock) {
+    std::vector<double> selected;
+    selected.reserve(clock.music.beat_times_seconds.size() * 2U + 2U);
+    selected.push_back(0.0);
+    const auto& beats = clock.music.beat_times_seconds;
+    if (clock.music_tempo == MusicTempoMode::Half) {
+        for (std::size_t index = 0U; index < beats.size(); index += 2U) {
+            selected.push_back(beats[index]);
+        }
+    } else {
+        for (std::size_t index = 0U; index < beats.size(); ++index) {
+            selected.push_back(beats[index]);
+            if (clock.music_tempo == MusicTempoMode::Double
+                && index + 1U < beats.size()) {
+                selected.push_back(0.5 * (beats[index] + beats[index + 1U]));
+            }
+        }
+    }
+    selected.push_back(clock.music.duration_seconds);
+    std::sort(selected.begin(), selected.end());
+    selected.erase(std::unique(selected.begin(), selected.end(),
+                               [](double left, double right) {
+                                   return std::fabs(left - right) <= 1.0e-12;
+                               }),
+                   selected.end());
+    return selected;
+}
+
+TimelineSample resolve_timeline_sample(const RenderConfig& config,
+                                       int frame_index) {
+    int frame_count = config.total_frames;
+    std::string ignored;
+    (void)effective_frame_count_impl(config.total_frames, config.fps,
+                                     config.clock, frame_count, ignored);
+    int frame = frame_index % frame_count;
+    if (frame < 0) frame += frame_count;
+
+    TimelineSample result;
+    const double direct_phase = static_cast<double>(frame)
+                                / static_cast<double>(frame_count);
+    if (config.clock.mode == ClockMode::Default) {
+        result.normalized_phase = apply_clock_transform(direct_phase,
+                                                        config.clock);
+        return result;
+    }
+
+    const double duration = static_cast<double>(frame_count) / config.fps;
+    const double time_seconds = static_cast<double>(frame) / config.fps;
+    double phase = direct_phase;
+
+    if (config.clock.mode == ClockMode::Frame) {
+        double interval = static_cast<double>(config.clock.frame_interval);
+        double normalization = static_cast<double>(frame_count) / interval;
+        if (config.clock.fit == ClockFit::FitSequence) {
+            const double pulses = std::max(1.0, std::round(normalization));
+            interval = static_cast<double>(frame_count) / pulses;
+            normalization = pulses;
+        }
+        phase = interpolated_position(static_cast<double>(frame) / interval,
+                                      config.clock.interpolation)
+                / normalization;
+    } else if (config.clock.mode == ClockMode::Time) {
+        double interval = static_cast<double>(
+            config.clock.time_interval_microseconds) / 1000000.0;
+        double normalization = duration / interval;
+        if (config.clock.fit == ClockFit::FitSequence) {
+            const double pulses = std::max(1.0, std::round(normalization));
+            interval = duration / pulses;
+            normalization = pulses;
+        }
+        phase = interpolated_position(time_seconds / interval,
+                                      config.clock.interpolation)
+                / normalization;
+    } else if (config.clock.mode == ClockMode::Meter) {
+        ParsedMeter meter;
+        std::string ignored_meter_error;
+        (void)parse_meter_expression(config.clock.meter.expression, meter,
+                                     ignored_meter_error);
+        std::vector<double> pulse_seconds;
+        pulse_seconds.reserve(meter.pulse_pattern.size());
+        double cycle_seconds = 0.0;
+        for (const MeterGroup& group : meter.pulse_pattern) {
+            const double seconds = 60.0 / config.clock.meter.bpm
+                * static_cast<double>(group.numerator)
+                * static_cast<double>(config.clock.meter.tempo_note_denominator)
+                / static_cast<double>(group.denominator);
+            pulse_seconds.push_back(seconds);
+            cycle_seconds += seconds;
+        }
+        if (config.clock.fit == ClockFit::FitSequence) {
+            const double cycles = std::max(1.0,
+                                           std::round(duration / cycle_seconds));
+            const double scale = duration / (cycles * cycle_seconds);
+            for (double& seconds : pulse_seconds) seconds *= scale;
+            cycle_seconds *= scale;
+        }
+        const double offset = static_cast<double>(
+            config.clock.beat_offset_microseconds) / 1000000.0;
+        const double start_position = meter_position_at(
+            pulse_seconds, cycle_seconds, offset);
+        const double current_position = meter_position_at(
+            pulse_seconds, cycle_seconds, time_seconds + offset);
+        const double end_position = meter_position_at(
+            pulse_seconds, cycle_seconds, duration + offset);
+        const double denominator = end_position - start_position;
+        phase = (interpolated_position(current_position,
+                                       config.clock.interpolation)
+                 - interpolated_position(start_position,
+                                         config.clock.interpolation))
+                / denominator;
+    } else if (config.clock.mode == ClockMode::Music) {
+        const std::vector<double> anchors = music_anchors(config.clock);
+        const double offset = static_cast<double>(
+            config.clock.beat_offset_microseconds) / 1000000.0;
+        const double music_time = clamp_value(time_seconds + offset, 0.0,
+                                              config.clock.music.duration_seconds);
+        const auto upper = std::upper_bound(anchors.begin(), anchors.end(),
+                                            music_time);
+        const std::size_t second = upper == anchors.end()
+                                       ? anchors.size() - 1U
+                                       : static_cast<std::size_t>(upper
+                                                                  - anchors.begin());
+        const std::size_t first = second == 0U ? 0U : second - 1U;
+        const double span = anchors[second] - anchors[first];
+        double amount = span > 0.0
+                            ? (music_time - anchors[first]) / span
+                            : 0.0;
+        if (config.clock.interpolation == ClockInterpolation::Hold) {
+            amount = 0.0;
+        } else if (config.clock.interpolation
+                   == ClockInterpolation::Smoothstep) {
+            amount = smoothstep(amount);
+        }
+        phase = (static_cast<double>(first) + amount)
+                / static_cast<double>(anchors.size() - 1U);
+        // Beat anchors drive only the base motion clock. The independently
+        // authored audio-reactive routes consume the dense analysis envelope
+        // at the actual frame timestamp, retaining within-beat transients.
+        result.music = music_features_at(config.clock.music, music_time);
+    }
+
+    result.normalized_phase = apply_clock_transform(phase, config.clock);
+    return result;
+}
+
+double music_feature_value(const MusicFeatureSample& sample,
+                           MusicFeature feature) {
+    switch (feature) {
+        case MusicFeature::Energy: return sample.energy;
+        case MusicFeature::Bass: return sample.bass;
+        case MusicFeature::Midrange: return sample.midrange;
+        case MusicFeature::Treble: return sample.treble;
+        case MusicFeature::Onset: return sample.onset;
+        case MusicFeature::Beat: return sample.beat;
+        case MusicFeature::SpectralCentroid: return sample.spectral_centroid;
+        case MusicFeature::SpectralFlatness: return sample.spectral_flatness;
+        // A pitch hue without tonal evidence is arbitrary (especially during
+        // silence/noise), so palette routing fades it out by confidence.
+        case MusicFeature::ChromaHue:
+            return sample.chroma_hue * sample.chroma_strength;
+        case MusicFeature::ChromaStrength: return sample.chroma_strength;
+    }
+    return 0.0;
+}
+
 bool effect_has_render_work(const EffectConfig& effect) {
     if (!effect.enabled || effect.intensity <= 0.0) {
         return false;
@@ -302,6 +858,60 @@ Color hsl_to_linear_rgb(double hue, double saturation, double lightness) {
             1.0};
 }
 
+double linear_to_srgb_for_hue(double value) {
+    value = clamp_value(value, 0.0, 1.0);
+    return value <= 0.0031308
+               ? 12.92 * value
+               : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
+}
+
+Color rotate_linear_hue(Color color, double degrees) {
+    if (std::abs(degrees) <= 1.0e-12) return color;
+    const double red = linear_to_srgb_for_hue(color.r);
+    const double green = linear_to_srgb_for_hue(color.g);
+    const double blue = linear_to_srgb_for_hue(color.b);
+    const double maximum = std::max(red, std::max(green, blue));
+    const double minimum = std::min(red, std::min(green, blue));
+    const double delta = maximum - minimum;
+    if (delta <= 1.0e-12) return color;
+
+    double hue = 0.0;
+    if (maximum == red) {
+        hue = std::fmod((green - blue) / delta, 6.0);
+    } else if (maximum == green) {
+        hue = (blue - red) / delta + 2.0;
+    } else {
+        hue = (red - green) / delta + 4.0;
+    }
+    hue = wrap_unit(hue / 6.0 + degrees / 360.0);
+    const double saturation = maximum > 1.0e-12 ? delta / maximum : 0.0;
+    const double chroma = maximum * saturation;
+    const double sector = hue * 6.0;
+    const double intermediate =
+        chroma * (1.0 - std::fabs(std::fmod(sector, 2.0) - 1.0));
+    const double match = maximum - chroma;
+    double rotated_red = 0.0;
+    double rotated_green = 0.0;
+    double rotated_blue = 0.0;
+    if (sector < 1.0) {
+        rotated_red = chroma; rotated_green = intermediate;
+    } else if (sector < 2.0) {
+        rotated_red = intermediate; rotated_green = chroma;
+    } else if (sector < 3.0) {
+        rotated_green = chroma; rotated_blue = intermediate;
+    } else if (sector < 4.0) {
+        rotated_green = intermediate; rotated_blue = chroma;
+    } else if (sector < 5.0) {
+        rotated_red = intermediate; rotated_blue = chroma;
+    } else {
+        rotated_red = chroma; rotated_blue = intermediate;
+    }
+    color.r = srgb_to_linear(rotated_red + match);
+    color.g = srgb_to_linear(rotated_green + match);
+    color.b = srgb_to_linear(rotated_blue + match);
+    return color;
+}
+
 double evaluate_waveform(Waveform waveform, double phase, double shape) {
     const double sine = std::sin(phase);
     switch (waveform) {
@@ -359,6 +969,9 @@ MotionClockState prepare_motion_clock(const RenderConfig& config,
     MotionClockState state;
     state.global_phase = loop_phase
                          + config.phrase_warp * std::sin(loop_phase);
+    if (!config.swings_enabled) {
+        return state;
+    }
     for (const SwingConfig& swing : config.swings) {
         if (!swing.enabled) {
             continue;
@@ -411,7 +1024,8 @@ double wave_coordinate(const WaveConfig& wave, double x, double y,
 }
 
 double wave_height(const RenderConfig& config, double x, double y,
-                   double loop_phase, double motion_phase) {
+                   double loop_phase, double motion_phase,
+                   const MusicFeatureSample& music) {
     double height = 0.0;
     for (const WaveConfig& wave : config.waves) {
         if (!wave.enabled) {
@@ -419,7 +1033,17 @@ double wave_height(const RenderConfig& config, double x, double y,
         }
         const double clock = wave.synchronized ? motion_phase : loop_phase;
         const double phase = static_cast<double>(wave.cycles_per_loop) * clock;
-        height += wave.amplitude
+        double amplitude = wave.amplitude;
+        if (config.audio_reactive.enabled
+            && config.audio_reactive.waves_enabled
+            && (!config.audio_reactive.synchronized_only
+                || wave.synchronized)) {
+            amplitude *= std::max(
+                0.0, 1.0 + config.audio_reactive.wave_amount
+                               * music_feature_value(
+                                   music, config.audio_reactive.wave_source));
+        }
+        height += amplitude
                   * std::sin(kTau * wave.spatial_frequency
                                  * wave_coordinate(wave, x, y, config)
                              - phase + radians(wave.phase_degrees));
@@ -665,6 +1289,51 @@ const float* Image::pixel(int x, int y) const {
         return nullptr;
     }
     return pixels.data() + index;
+}
+
+int effective_frame_count(const CanvasLoopConfig& canvas,
+                          std::string* error) {
+    int result = -1;
+    std::string message;
+    if (!effective_frame_count_impl(canvas.total_frames, canvas.fps,
+                                    canvas.clock, result, message)) {
+        set_error(error, message);
+        return -1;
+    }
+    set_error(error, std::string{});
+    return result;
+}
+
+int effective_frame_count(const RenderConfig& config,
+                          std::string* error) {
+    int result = -1;
+    std::string message;
+    if (!effective_frame_count_impl(config.total_frames, config.fps,
+                                    config.clock, result, message)) {
+        set_error(error, message);
+        return -1;
+    }
+    set_error(error, std::string{});
+    return result;
+}
+
+bool describe_meter(const std::string& expression,
+                    std::string& description,
+                    std::string* error) {
+    ParsedMeter parsed;
+    std::string message;
+    if (!parse_meter_expression(expression, parsed, message)) {
+        set_error(error, message);
+        return false;
+    }
+    std::ostringstream summary;
+    summary << parsed.canonical << " (" << parsed.measures.size()
+            << (parsed.measures.size() == 1U ? " measure, " : " measures, ")
+            << parsed.pulse_pattern.size()
+            << (parsed.pulse_pattern.size() == 1U ? " pulse)" : " pulses)");
+    description = summary.str();
+    set_error(error, std::string{});
+    return true;
 }
 
 const char* effect_type_name(EffectType value) {
@@ -930,6 +1599,7 @@ ProjectConfig default_project() {
     project.canvas.block_size = legacy.block_size;
     project.canvas.total_frames = legacy.total_frames;
     project.canvas.fps = legacy.fps;
+    project.canvas.clock = legacy.clock;
     project.output = legacy.output;
     project.layers.push_back(default_layer(0));
     return project;
@@ -945,6 +1615,7 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
     config.block_size = canvas.block_size;
     config.total_frames = canvas.total_frames;
     config.fps = canvas.fps;
+    config.clock = canvas.clock;
     config.output = output;
     return config;
 }
@@ -1013,6 +1684,144 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
     }
     if (!finite_in_range(config.fps, 1.0, 240.0)) {
         return invalid_result("FPS must be finite and between 1 and 240.");
+    }
+    if (!valid_enum(config.clock.mode)
+        || !valid_enum(config.clock.interpolation)
+        || !valid_enum(config.clock.fit)
+        || !valid_enum(config.clock.music_tempo)
+        || !valid_enum(config.clock.music_swing_policy)) {
+        return invalid_result("The synchronized clock contains an unknown mode or policy.");
+    }
+    if (config.clock.frame_interval < 1
+        || config.clock.frame_interval > kMaximumFrames
+        || config.clock.time_interval_microseconds < 1
+        || config.clock.time_interval_microseconds > INT64_C(1000000000000)
+        || config.clock.beat_offset_microseconds < INT64_C(-86400000000)
+        || config.clock.beat_offset_microseconds > INT64_C(86400000000)
+        || !finite_in_range(config.clock.phase_offset_degrees,
+                            -36000.0, 36000.0)) {
+        return invalid_result("Clock intervals, offset, or phase are outside their allowed range.");
+    }
+    ParsedMeter parsed_meter;
+    std::string meter_error;
+    if (!finite_in_range(config.clock.meter.bpm, 1.0, 1000.0)
+        || config.clock.meter.tempo_note_denominator < 1
+        || config.clock.meter.tempo_note_denominator > kMaximumMeterValue
+        || !parse_meter_expression(config.clock.meter.expression,
+                                   parsed_meter, meter_error)) {
+        return invalid_result(meter_error.empty()
+                                  ? "Meter tempo values are outside their allowed range."
+                                  : "Invalid meter expression: " + meter_error);
+    }
+
+    const MusicAnalysis& music = config.clock.music;
+    if (music.schema_version != 1U
+        || music.analyzer_version.size() > kMaximumNameBytes
+        || (!music.analyzer_version.empty()
+            && !valid_name(music.analyzer_version))
+        || (!music.source_sha256.empty()
+            && !valid_lower_hex_digest(music.source_sha256))
+        || (!music.source_basename.empty()
+            && !valid_music_basename(music.source_basename))
+        || music.source_format.size() > 64U
+        || (!music.source_format.empty() && !valid_name(music.source_format))
+        || music.source_sample_rate > 768000U
+        || music.source_channel_count > 64U
+        || !finite_in_range(music.duration_seconds, 0.0,
+                            kMaximumMusicDurationSeconds)
+        || !finite_in_range(music.detected_bpm, 0.0, 1000.0)
+        || !finite_in_range(music.tempo_confidence, 0.0, 1.0)
+        || music.beat_times_seconds.size() > kMaximumMusicBeats
+        || music.tempo_points.size() > kMaximumMusicTempoPoints
+        || music.feature_samples.size() > kMaximumMusicFeatureSamples) {
+        return invalid_result("Music analysis metadata is invalid or exceeds its safety limits.");
+    }
+    double previous_beat = -1.0;
+    for (const double beat : music.beat_times_seconds) {
+        if (!std::isfinite(beat) || beat < 0.0
+            || beat > music.duration_seconds || beat <= previous_beat) {
+            return invalid_result(
+                "Music beat times must be finite, strictly increasing, and within the source duration.");
+        }
+        previous_beat = beat;
+    }
+    double previous_tempo_time = -1.0;
+    for (const MusicTempoPoint& tempo : music.tempo_points) {
+        if (!std::isfinite(tempo.time_seconds) || tempo.time_seconds < 0.0
+            || tempo.time_seconds > music.duration_seconds
+            || tempo.time_seconds <= previous_tempo_time
+            || !finite_in_range(tempo.bpm, 1.0, 1000.0)
+            || !finite_in_range(tempo.confidence, 0.0, 1.0)) {
+            return invalid_result(
+                "Music tempo points must be ordered and contain bounded time, BPM, and confidence values.");
+        }
+        previous_tempo_time = tempo.time_seconds;
+    }
+    for (const MusicFeatureSample& sample : music.feature_samples) {
+        if (!finite_in_range(sample.energy, 0.0, 1.0)
+            || !finite_in_range(sample.bass, 0.0, 1.0)
+            || !finite_in_range(sample.midrange, 0.0, 1.0)
+            || !finite_in_range(sample.treble, 0.0, 1.0)
+            || !finite_in_range(sample.onset, 0.0, 1.0)
+            || !finite_in_range(sample.beat, 0.0, 1.0)
+            || !finite_in_range(sample.spectral_centroid, 0.0, 1.0)
+            || !finite_in_range(sample.spectral_flatness, 0.0, 1.0)
+            || !finite_in_range(sample.chroma_hue, 0.0, 1.0)
+            || !finite_in_range(sample.chroma_strength, 0.0, 1.0)) {
+            return invalid_result(
+                "Music feature samples must contain finite normalized values from 0 to 1.");
+        }
+    }
+    if (music.source_frame_count != 0U
+        && music.source_sample_rate == 0U) {
+        return invalid_result(
+            "Music source frame count requires a nonzero sample rate.");
+    }
+    if (music.source_sample_rate != 0U) {
+        const long double source_duration =
+            static_cast<long double>(music.source_frame_count)
+            / static_cast<long double>(music.source_sample_rate);
+        if (source_duration
+            > static_cast<long double>(kMaximumMusicDurationSeconds)) {
+            return invalid_result("Music source frame count exceeds the duration limit.");
+        }
+        if (music.source_frame_count != 0U) {
+            const double tolerance = std::max(
+                1.0 / static_cast<double>(music.source_sample_rate), 1.0e-6);
+            if (std::fabs(static_cast<double>(source_duration)
+                          - music.duration_seconds) > tolerance) {
+                return invalid_result(
+                    "Music duration does not agree with its decoded frame count and sample rate.");
+            }
+        }
+    }
+    if (config.clock.mode == ClockMode::Music) {
+        int resolved_count = 0;
+        std::string frame_error;
+        if (music.analyzer_version.empty()
+            || !valid_lower_hex_digest(music.source_sha256)
+            || !valid_music_basename(music.source_basename)
+            || music.source_format.empty()
+            || music.source_frame_count == 0U
+            || music.source_sample_rate == 0U
+            || music.source_channel_count == 0U
+            || music.beat_times_seconds.empty()
+            || !effective_frame_count_impl(config.total_frames, config.fps,
+                                            config.clock, resolved_count,
+                                            frame_error)) {
+            return invalid_result(frame_error.empty()
+                                      ? "Music clock requires complete bounded cached analysis."
+                                      : frame_error);
+        }
+    }
+    if (!valid_enum(config.audio_reactive.wave_source)
+        || !valid_enum(config.audio_reactive.effect_source)
+        || !valid_enum(config.audio_reactive.color_source)
+        || !finite_in_range(config.audio_reactive.wave_amount, -1.0, 10.0)
+        || !finite_in_range(config.audio_reactive.effect_amount, -1.0, 10.0)
+        || !finite_in_range(config.audio_reactive.color_amount_degrees,
+                            -3600.0, 3600.0)) {
+        return invalid_result("Audio-reactive routing contains an invalid source or amount.");
     }
     if (config.waves.size() > kMaximumWaves) {
         return invalid_result("The configuration contains too many waves.");
@@ -1121,7 +1930,16 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
                                           && effect_uses_edge_mode(effect.type)
                                           && effect.edge_mode == EdgeMode::Alpha);
         if (active_glow) {
-            logarithmic_color_bound += std::log1p(effect.intensity);
+            double maximum_intensity = effect.intensity;
+            if (config.audio_reactive.enabled
+                && config.audio_reactive.effects_enabled
+                && (!config.audio_reactive.synchronized_only
+                    || effect.synchronized)) {
+                maximum_intensity *= std::max(
+                    0.0, 1.0 + std::max(0.0,
+                                       config.audio_reactive.effect_amount));
+            }
+            logarithmic_color_bound += std::log1p(maximum_intensity);
         }
     }
     if (logarithmic_color_bound
@@ -1186,11 +2004,19 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
     }
     if ((!config.surface.obj_path.empty()
          && !valid_path_text(config.surface.obj_path, kMaximumPathBytes, false))
+        || (config.surface.obj_sha256.empty()
+                != config.surface.obj_basename.empty())
+        || (!config.surface.obj_sha256.empty()
+            && (!valid_lower_hex_digest(config.surface.obj_sha256)
+                || config.surface.obj_basename.size()
+                       > kMaximumAttachmentBasenameBytes
+                || !valid_music_basename(config.surface.obj_basename)))
         || (surface_has_render_work(config.surface)
             && config.surface.mapping == SurfaceMapping::CustomObj
-            && config.surface.obj_path.empty())) {
+            && config.surface.obj_path.empty()
+            && config.surface.obj_sha256.empty())) {
         return invalid_result(
-            "An active custom OBJ surface requires a valid, non-empty OBJ file path.");
+            "A custom OBJ surface requires a valid runtime path or embedded attachment identity.");
     }
     if (include_export) {
         const bool has_transparent_surface =
@@ -1348,7 +2174,8 @@ double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
 }
 
 void generate_base_image(const RenderConfig& config, double loop_phase,
-                         const MotionClockState& motion_clock, Image& image,
+                         const MotionClockState& motion_clock,
+                         const MusicFeatureSample& music, Image& image,
                          const std::atomic_bool* cancel) {
     throw_if_cancelled(cancel);
     ensure_image(image, config.width, config.height);
@@ -1396,16 +2223,19 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             const double ghost_phase = motion_phase
                                        - radians(config.ghost_lag_degrees);
             const double height_here = wave_height(config, block_x, block_y,
-                                                   loop_phase, motion_phase);
+                                                   loop_phase, motion_phase,
+                                                   music);
             const double height_right = wave_height(config,
                                                      block_x + config.block_size,
                                                      block_y,
                                                      loop_phase,
-                                                     motion_phase_right);
+                                                     motion_phase_right,
+                                                     music);
             const double height_down = wave_height(config, block_x,
                                                     block_y + config.block_size,
                                                     loop_phase,
-                                                    motion_phase_down);
+                                                    motion_phase_down,
+                                                    music);
             const double slope_x = height_right - height_here;
             const double slope_y = height_down - height_here;
             const double displacement = config.displacement_enabled
@@ -1446,6 +2276,13 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                            + config.ghost_mix * ghost_signal;
             const double hue = (combined_signal + 1.45) * 260.0
                                + 360.0 * config.hue_cycles * (loop_phase / kTau);
+            const double audio_hue_shift =
+                config.audio_reactive.enabled
+                        && config.audio_reactive.color_enabled
+                    ? config.audio_reactive.color_amount_degrees
+                          * music_feature_value(
+                              music, config.audio_reactive.color_source)
+                    : 0.0;
 
             double lightness = 0.40;
             if (config.lighting_enabled) {
@@ -1459,6 +2296,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             Color base;
             if (starting_palette.empty()) {
                 base = hsl_to_linear_rgb(hue, config.saturation, lightness);
+                base = rotate_linear_hue(base, audio_hue_shift);
             } else {
                 // Choose an authored source color before procedural slope
                 // lighting. Otherwise a one-color palette would accidentally
@@ -1466,6 +2304,10 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 base = nearest_starting_color(
                     hsl_to_linear_rgb(hue, config.saturation, 0.40),
                     starting_palette);
+                // Audio hue response transforms the selected authored color,
+                // rather than merely changing which fixed palette entry wins.
+                // This keeps even a one-color starting palette visibly musical.
+                base = rotate_linear_hue(base, audio_hue_shift);
                 if (config.lighting_enabled) {
                     const double lighting_scale = lightness / 0.40;
                     base.r *= lighting_scale;
@@ -2342,37 +3184,54 @@ void apply_layer_transform(Image& image,
 
 } // namespace
 
-bool render_frame_at_phase_cancellable(const RenderConfig& config,
-                                       double normalized_phase,
-                                       Image& destination,
-                                       const std::atomic_bool* cancel,
-                                       std::string* error) {
+namespace {
+
+bool render_frame_at_timeline_sample_cancellable(
+    const RenderConfig& config, const TimelineSample& timeline,
+    Image& destination, const std::atomic_bool* cancel,
+    bool configuration_already_validated, std::string* error) {
     try {
         throw_if_cancelled(cancel);
-        const ValidationResult validation = validate_impl(config, false);
-        if (!validation.ok) {
-            set_error(error, validation.message);
-            return false;
+        if (!configuration_already_validated) {
+            const ValidationResult validation = validate_impl(config, false);
+            if (!validation.ok) {
+                set_error(error, validation.message);
+                return false;
+            }
         }
-        if (!std::isfinite(normalized_phase)) {
+        if (!std::isfinite(timeline.normalized_phase)) {
             set_error(error, "Normalized render phase must be finite.");
             return false;
         }
 
-        const double loop_phase = kTau * wrap_unit(normalized_phase);
+        const double loop_phase =
+            kTau * wrap_unit(timeline.normalized_phase);
         const MotionClockState motion_clock =
             prepare_motion_clock(config, loop_phase);
         Image current;
         Image scratch;
         Image auxiliary;
-        generate_base_image(config, loop_phase, motion_clock, current, cancel);
+        generate_base_image(config, loop_phase, motion_clock, timeline.music,
+                            current, cancel);
 
         const auto apply_effect_stage = [&](EffectSpace stage) {
-            for (const EffectConfig& effect : config.effects) {
+            for (const EffectConfig& authored_effect : config.effects) {
                 throw_if_cancelled(cancel);
-                if (effect.space != stage || !effect_has_render_work(effect)) {
+                if (authored_effect.space != stage) {
                     continue;
                 }
+                EffectConfig effect = authored_effect;
+                if (config.audio_reactive.enabled
+                    && config.audio_reactive.effects_enabled
+                    && (!config.audio_reactive.synchronized_only
+                        || effect.synchronized)) {
+                    effect.intensity *= std::max(
+                        0.0, 1.0 + config.audio_reactive.effect_amount
+                                       * music_feature_value(
+                                           timeline.music,
+                                           config.audio_reactive.effect_source));
+                }
+                if (!effect_has_render_work(effect)) continue;
                 const double phase = effect_phase(
                     config, effect, loop_phase, motion_clock);
                 if (effect.type == EffectType::Glow) {
@@ -2440,6 +3299,26 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
     }
 }
 
+} // namespace
+
+bool render_frame_at_phase_cancellable(const RenderConfig& config,
+                                       double normalized_phase,
+                                       Image& destination,
+                                       const std::atomic_bool* cancel,
+                                       std::string* error) {
+    TimelineSample direct;
+    direct.normalized_phase = normalized_phase;
+    if (config.clock.mode == ClockMode::Music
+        && config.clock.music.duration_seconds > 0.0
+        && std::isfinite(normalized_phase)) {
+        direct.music = music_features_at(
+            config.clock.music,
+            wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
+    }
+    return render_frame_at_timeline_sample_cancellable(
+        config, direct, destination, cancel, false, error);
+}
+
 bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
                            Image& destination, std::string* error) {
     return render_frame_at_phase_cancellable(config, normalized_phase,
@@ -2454,19 +3333,15 @@ bool render_frame_cancellable(const RenderConfig& config, int frame_index,
         set_error(error, "Rendering was cancelled; destination was unchanged.");
         return false;
     }
-    if (config.total_frames <= 0) {
-        set_error(error, "Frame count must be positive.");
+    const ValidationResult validation = validate_impl(config, false);
+    if (!validation.ok) {
+        set_error(error, validation.message);
         return false;
     }
-    int wrapped_frame = frame_index % config.total_frames;
-    if (wrapped_frame < 0) {
-        wrapped_frame += config.total_frames;
-    }
-    return render_frame_at_phase_cancellable(
-        config,
-        static_cast<double>(wrapped_frame)
-            / static_cast<double>(config.total_frames),
-        destination, cancel, error);
+    const TimelineSample timeline = resolve_timeline_sample(config,
+                                                            frame_index);
+    return render_frame_at_timeline_sample_cancellable(
+        config, timeline, destination, cancel, true, error);
 }
 
 bool render_frame(const RenderConfig& config, int frame_index,

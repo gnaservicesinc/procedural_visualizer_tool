@@ -350,6 +350,7 @@ bool composite_pixels(const Image& source, Image& destination,
 
 bool render_project_at_phase_validated(const ProjectConfig& project,
                                        double normalized_phase,
+                                       const int* synchronized_frame,
                                        Image& destination,
                                        const std::atomic_bool* cancel,
                                        std::string* error) {
@@ -386,9 +387,13 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
             apply_global_config(project.canvas, layer_output, layer.render);
         Image layer_image;
         std::string layer_error;
-        if (!render_frame_at_phase_cancellable(render, normalized_phase,
-                                               layer_image, cancel,
-                                               &layer_error)) {
+        const bool rendered = synchronized_frame == nullptr
+            ? render_frame_at_phase_cancellable(render, normalized_phase,
+                                                layer_image, cancel,
+                                                &layer_error)
+            : render_frame_cancellable(render, *synchronized_frame,
+                                       layer_image, cancel, &layer_error);
+        if (!rendered) {
             if (cancelled(cancel)) {
                 return fail(error, "Project rendering was cancelled while rendering layer "
                                        + std::to_string(index + 1U) + ".");
@@ -652,6 +657,7 @@ bool render_project_frame_at_phase(const ProjectConfig& project,
             return fail(error, "Project rendering was cancelled.");
         }
         return render_project_at_phase_validated(project, normalized_phase,
+                                                 nullptr,
                                                  destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");
@@ -672,9 +678,17 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
         if (!validation.ok) {
             return fail(error, validation.message);
         }
-        int wrapped_frame = frame_index % project.canvas.total_frames;
+        std::string frame_count_error;
+        const int frame_count = effective_frame_count(project.canvas,
+                                                      &frame_count_error);
+        if (frame_count < 1) {
+            return fail(error, frame_count_error.empty()
+                                   ? "Project clock has no renderable frames."
+                                   : frame_count_error);
+        }
+        int wrapped_frame = frame_index % frame_count;
         if (wrapped_frame < 0) {
-            wrapped_frame += project.canvas.total_frames;
+            wrapped_frame += frame_count;
         }
         if (cancelled(cancel)) {
             return fail(error, "Project rendering was cancelled.");
@@ -682,7 +696,8 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
         return render_project_at_phase_validated(
             project,
             static_cast<double>(wrapped_frame)
-                / static_cast<double>(project.canvas.total_frames),
+                / static_cast<double>(frame_count),
+            &wrapped_frame,
             destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");

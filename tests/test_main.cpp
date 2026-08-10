@@ -92,6 +92,28 @@ void make_small(pvt::RenderConfig& config) {
     config.fps = 24.0;
 }
 
+pvt::ClockConfig ready_music_clock(double duration_seconds = 1.0,
+                                   std::uint32_t sample_rate = 1000U) {
+    pvt::ClockConfig clock;
+    clock.mode = pvt::ClockMode::Music;
+    clock.music.analyzer_version = "test-analyzer-1";
+    clock.music.source_sha256 = std::string(64U, 'a');
+    clock.music.source_basename = "test-track.wav";
+    clock.music.source_format = "wav-f32";
+    clock.music.source_sample_rate = sample_rate;
+    clock.music.source_frame_count = static_cast<std::uint64_t>(
+        std::llround(duration_seconds * static_cast<double>(sample_rate)));
+    clock.music.source_channel_count = 2U;
+    clock.music.duration_seconds =
+        static_cast<double>(clock.music.source_frame_count)
+        / static_cast<double>(sample_rate);
+    clock.music.detected_bpm = 120.0;
+    clock.music.tempo_confidence = 0.9;
+    clock.music.beat_times_seconds = {
+        0.0, 0.5 * clock.music.duration_seconds};
+    return clock;
+}
+
 double mean_absolute_difference(const pvt::Image& a, const pvt::Image& b) {
     CHECK(a.pixels.size() == b.pixels.size());
     if (a.pixels.size() != b.pixels.size() || a.pixels.empty()) {
@@ -268,6 +290,234 @@ void test_defaults_and_dynamic_collections() {
     }
     CHECK(pvt::validate(config).ok);
     CHECK(pvt::render_frame(config, 3, image, &error));
+}
+
+void test_synchronized_clocks_and_music() {
+    pvt::RenderConfig config = pvt::default_config();
+    make_small(config);
+    std::string error;
+    CHECK(config.audio_reactive.color_source == pvt::MusicFeature::Energy);
+
+    // Default mode is the historical frame/phase mapping exactly, including
+    // the existing swing stack and every later render stage.
+    pvt::Image default_frame;
+    pvt::Image direct_phase;
+    CHECK(pvt::render_frame(config, 5, default_frame, &error));
+    CHECK(pvt::render_frame_at_phase(
+        config, 5.0 / static_cast<double>(config.total_frames),
+        direct_phase, &error));
+    CHECK(default_frame.pixels == direct_phase.pixels);
+
+    // Free waves bypass swing, but still consume the held base clock.
+    for (pvt::WaveConfig& wave : config.waves) wave.synchronized = false;
+    config.clock.mode = pvt::ClockMode::Frame;
+    config.clock.frame_interval = 3;
+    config.clock.interpolation = pvt::ClockInterpolation::Hold;
+    pvt::Image held_zero;
+    pvt::Image held_one;
+    pvt::Image held_two;
+    pvt::Image next_pulse;
+    CHECK(pvt::render_frame(config, 0, held_zero, &error));
+    CHECK(pvt::render_frame(config, 1, held_one, &error));
+    CHECK(pvt::render_frame(config, 2, held_two, &error));
+    CHECK(pvt::render_frame(config, 3, next_pulse, &error));
+    CHECK(held_zero.pixels == held_one.pixels);
+    CHECK(held_zero.pixels == held_two.pixels);
+    CHECK(held_zero.pixels != next_pulse.pixels);
+
+    pvt::RenderConfig fit_clock = config;
+    fit_clock.total_frames = 10;
+    fit_clock.clock.frame_interval = 3;
+    fit_clock.clock.fit = pvt::ClockFit::FitSequence;
+    CHECK(pvt::render_frame(fit_clock, 0, held_zero, &error));
+    CHECK(pvt::render_frame(fit_clock, 3, held_one, &error));
+    CHECK(held_zero.pixels == held_one.pixels);
+    fit_clock.clock.fit = pvt::ClockFit::Exact;
+    CHECK(pvt::render_frame(fit_clock, 3, next_pulse, &error));
+    CHECK(held_zero.pixels != next_pulse.pixels);
+
+    config.clock.interpolation = pvt::ClockInterpolation::Linear;
+    pvt::Image frame_linear;
+    CHECK(pvt::render_frame(config, 1, frame_linear, &error));
+    CHECK(pvt::render_frame_at_phase(
+        config, 1.0 / static_cast<double>(config.total_frames),
+        direct_phase, &error));
+    CHECK(frame_linear.pixels == direct_phase.pixels);
+    config.clock.interpolation = pvt::ClockInterpolation::Smoothstep;
+    pvt::Image frame_smooth;
+    CHECK(pvt::render_frame(config, 1, frame_smooth, &error));
+    CHECK(frame_smooth.pixels != frame_linear.pixels);
+
+    // Elapsed-time pulses are FPS-independent: both frames below represent
+    // the same 125 ms instant in equal-duration sequences.
+    config.clock.mode = pvt::ClockMode::Time;
+    config.clock.interpolation = pvt::ClockInterpolation::Hold;
+    config.clock.time_interval_microseconds = 125000;
+    pvt::Image time_24;
+    CHECK(pvt::render_frame(config, 3, time_24, &error));
+    pvt::RenderConfig high_fps = config;
+    high_fps.fps = 48.0;
+    high_fps.total_frames = 24;
+    pvt::Image time_48;
+    CHECK(pvt::render_frame(high_fps, 6, time_48, &error));
+    CHECK(time_24.pixels == time_48.pixels);
+    CHECK(pvt::render_frame(config, 4, held_one, &error));
+    CHECK(time_24.pixels == held_one.pixels);
+
+    std::string meter_description;
+    CHECK(pvt::describe_meter("7/8", meter_description, &error));
+    CHECK(meter_description.find("7 pulses") != std::string::npos);
+    CHECK(pvt::describe_meter("3+2+3/8 | 5/4", meter_description, &error));
+    CHECK(pvt::describe_meter("4/3 | 6/7", meter_description, &error));
+    CHECK(!pvt::describe_meter("3++2/8", meter_description, &error));
+    CHECK(!pvt::describe_meter("7/0", meter_description, &error));
+    CHECK(!pvt::describe_meter("7/8 |", meter_description, &error));
+
+    config.clock.mode = pvt::ClockMode::Meter;
+    config.clock.interpolation = pvt::ClockInterpolation::Hold;
+    config.clock.meter.expression = "7/8";
+    config.clock.meter.bpm = 120.0;
+    config.clock.meter.tempo_note_denominator = 4;
+    CHECK(pvt::render_frame(config, 0, held_zero, &error));
+    CHECK(pvt::render_frame(config, 5, held_one, &error));
+    CHECK(pvt::render_frame(config, 6, next_pulse, &error));
+    CHECK(held_zero.pixels == held_one.pixels);
+    CHECK(held_zero.pixels != next_pulse.pixels);
+
+    pvt::RenderConfig music = pvt::default_config();
+    make_small(music);
+    music.fps = 10.0;
+    music.clock = ready_music_clock();
+    music.clock.interpolation = pvt::ClockInterpolation::Linear;
+    music.clock.music.beat_times_seconds = {0.1, 0.3, 0.9};
+    CHECK(pvt::validate(music).ok);
+    CHECK(pvt::effective_frame_count(music, &error) == 10);
+    CHECK(music.total_frames == 12);
+
+    // Beat ordinal, not wall-clock fraction, drives music phase. These two
+    // instants are midpoints of differently sized beat intervals.
+    pvt::Image music_frame;
+    pvt::Image expected_music_phase;
+    CHECK(pvt::render_frame(music, 2, music_frame, &error));
+    CHECK(pvt::render_frame_at_phase(music, 0.375,
+                                     expected_music_phase, &error));
+    CHECK(music_frame.pixels == expected_music_phase.pixels);
+    CHECK(pvt::render_frame(music, 6, music_frame, &error));
+    CHECK(pvt::render_frame_at_phase(music, 0.625,
+                                     expected_music_phase, &error));
+    CHECK(music_frame.pixels == expected_music_phase.pixels);
+
+    music.clock.interpolation = pvt::ClockInterpolation::Hold;
+    CHECK(pvt::render_frame(music, 2, music_frame, &error));
+    CHECK(pvt::render_frame_at_phase(music, 0.25,
+                                     expected_music_phase, &error));
+    CHECK(music_frame.pixels == expected_music_phase.pixels);
+
+    // The dense opt-in audio envelope remains accurate between beat anchors,
+    // even while Hold freezes the base motion clock.
+    music.clock.music.beat_times_seconds = {0.0, 1.0};
+    music.clock.music.feature_samples.assign(11U, {});
+    music.clock.music.feature_samples[5U].energy = 1.0F;
+    music.audio_reactive.enabled = true;
+    music.audio_reactive.waves_enabled = false;
+    music.audio_reactive.effects_enabled = false;
+    music.audio_reactive.color_enabled = true;
+    music.audio_reactive.color_source = pvt::MusicFeature::Energy;
+    music.audio_reactive.color_amount_degrees = 180.0;
+    pvt::Image before_spike;
+    pvt::Image at_spike;
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+
+    // Hue response is applied to the selected source color, so even a fixed
+    // one-color starting palette must visibly follow the music envelope.
+    music.palette.enabled = true;
+    music.palette.name = "Audio hue regression";
+    music.palette.colors = {{1.0, 0.0, 0.0}};
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+    music.palette = {};
+
+    music.audio_reactive.color_enabled = false;
+    music.audio_reactive.waves_enabled = true;
+    music.audio_reactive.wave_source = pvt::MusicFeature::Energy;
+    music.audio_reactive.wave_amount = 1.0;
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+
+    music.audio_reactive.waves_enabled = false;
+    music.audio_reactive.effects_enabled = true;
+    music.audio_reactive.effect_source = pvt::MusicFeature::Energy;
+    music.audio_reactive.effect_amount = 1.0;
+    const auto ripple = std::find_if(
+        music.effects.begin(), music.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::Ripple;
+        });
+    CHECK(ripple != music.effects.end());
+    if (ripple != music.effects.end()) ripple->enabled = true;
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+
+    // The master toggle is authoritative in Music mode. Legacy policy values
+    // remain loadable but no longer suppress authored swings behind the GUI's
+    // checkbox.
+    music.audio_reactive.enabled = false;
+    music.clock.interpolation = pvt::ClockInterpolation::Linear;
+    music.clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+    pvt::Image kept_swing;
+    pvt::Image legacy_policy_swing;
+    CHECK(music.swings.front().enabled);
+    CHECK(pvt::render_frame(music, 3, kept_swing, &error));
+    music.clock.music_swing_policy = pvt::MusicSwingPolicy::SuppressAll;
+    CHECK(pvt::render_frame(music, 3, legacy_policy_swing, &error));
+    CHECK(kept_swing.pixels == legacy_policy_swing.pixels);
+    CHECK(music.swings.front().enabled);
+    music.swings.front().radius = 0.5;
+    music.clock.music_swing_policy = pvt::MusicSwingPolicy::SuppressGlobal;
+    CHECK(pvt::render_frame(music, 3, kept_swing, &error));
+    music.clock.music_swing_policy = pvt::MusicSwingPolicy::SuppressAll;
+    CHECK(pvt::render_frame(music, 3, legacy_policy_swing, &error));
+    CHECK(kept_swing.pixels == legacy_policy_swing.pixels);
+    music.swings_enabled = false;
+    CHECK(pvt::render_frame(music, 3, direct_phase, &error));
+    CHECK(direct_phase.pixels != legacy_policy_swing.pixels);
+    CHECK(music.swings.front().enabled);
+
+    pvt::RenderConfig duration = music;
+    duration.clock = ready_music_clock(1.01);
+    duration.fps = 24.0;
+    CHECK(pvt::effective_frame_count(duration, &error) == 25);
+    CHECK(duration.total_frames == 12);
+
+    pvt::RenderConfig invalid = pvt::default_config();
+    make_small(invalid);
+    invalid.clock.mode = pvt::ClockMode::Frame;
+    invalid.clock.frame_interval = 0;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = pvt::default_config();
+    make_small(invalid);
+    invalid.clock.mode = pvt::ClockMode::Time;
+    invalid.clock.time_interval_microseconds = 0;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = pvt::default_config();
+    make_small(invalid);
+    invalid.clock.mode = pvt::ClockMode::Meter;
+    invalid.clock.meter.expression = "3+0/8";
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = pvt::default_config();
+    make_small(invalid);
+    invalid.clock.mode = pvt::ClockMode::Music;
+    CHECK(!pvt::validate(invalid).ok);
+
+    CHECK(std::string(pvt::clock_mode_name(pvt::ClockMode::Music)) == "Music");
+    CHECK(std::string(pvt::clock_interpolation_name(
+              pvt::ClockInterpolation::Smoothstep)) == "Smoothstep");
+    CHECK(std::string(pvt::music_feature_name(pvt::MusicFeature::Bass))
+          == "Bass");
 }
 
 void test_determinism_and_seam_continuity() {
@@ -1107,6 +1357,47 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.output.png_compression_level = 3;
     original.output.dither_method = pvt::DitherMethod::FloydSteinberg;
     original.output.output_directory = "output folder/%safe";
+    original.clock.mode = pvt::ClockMode::Music;
+    original.clock.interpolation = pvt::ClockInterpolation::Smoothstep;
+    original.clock.fit = pvt::ClockFit::FitSequence;
+    original.clock.frame_interval = 7;
+    original.clock.time_interval_microseconds = 375000;
+    original.clock.meter.expression = "3+2+3/8 | 5/4";
+    original.clock.meter.bpm = 137.5;
+    original.clock.meter.tempo_note_denominator = 8;
+    original.clock.music_tempo = pvt::MusicTempoMode::Double;
+    original.clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+    original.clock.beat_offset_microseconds = -25000;
+    original.clock.phase_offset_degrees = 11.25;
+    original.clock.reverse = true;
+    original.clock.music.analyzer_version = "pvt-test/1";
+    original.clock.music.source_sha256 = std::string(64U, 'a');
+    original.clock.music.source_basename = "track % alpha.wav";
+    original.clock.music.source_format = "wav-f32";
+    original.clock.music.source_frame_count = 96000U;
+    original.clock.music.source_sample_rate = 48000U;
+    original.clock.music.source_channel_count = 2U;
+    original.clock.music.duration_seconds = 2.0;
+    original.clock.music.detected_bpm = 137.5;
+    original.clock.music.tempo_confidence = 0.91;
+    original.clock.music.beat_times_seconds = {0.125, 0.5625, 1.0, 1.4375};
+    original.clock.music.tempo_points = {
+        {0.0, 137.5, 0.91}, {1.0, 141.0, 0.84},
+    };
+    original.clock.music.feature_samples = {
+        {0.1F, 0.2F, 0.3F, 0.4F, 0.5F, 0.6F},
+        {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
+    };
+    original.swings_enabled = false;
+    original.audio_reactive.enabled = true;
+    original.audio_reactive.synchronized_only = false;
+    original.audio_reactive.wave_source = pvt::MusicFeature::Bass;
+    original.audio_reactive.wave_amount = 0.61;
+    original.audio_reactive.effect_source = pvt::MusicFeature::Onset;
+    original.audio_reactive.effect_amount = 0.72;
+    original.audio_reactive.color_enabled = true;
+    original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
+    original.audio_reactive.color_amount_degrees = 42.0;
 
     const fs::path first = directory / "first.pvt";
     const fs::path second = directory / "second.pvt";
@@ -1169,15 +1460,33 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     }
     CHECK(loaded.transform.flip_horizontal);
     CHECK(loaded.transform.mirror == pvt::MirrorMode::BottomToTop);
+    CHECK(loaded.clock.mode == pvt::ClockMode::Music);
+    CHECK(loaded.clock.interpolation == pvt::ClockInterpolation::Smoothstep);
+    CHECK(loaded.clock.fit == pvt::ClockFit::FitSequence);
+    CHECK(loaded.clock.meter.expression == "3+2+3/8 | 5/4");
+    CHECK(loaded.clock.music_tempo == pvt::MusicTempoMode::Double);
+    CHECK(loaded.clock.music_swing_policy == pvt::MusicSwingPolicy::KeepAll);
+    CHECK(loaded.clock.music.source_sha256 == std::string(64U, 'a'));
+    CHECK(loaded.clock.music.source_basename == "track % alpha.wav");
+    CHECK(loaded.clock.music.beat_times_seconds
+          == original.clock.music.beat_times_seconds);
+    CHECK(loaded.clock.music.tempo_points.size() == 2U);
+    CHECK(loaded.clock.music.feature_samples.size() == 2U);
+    CHECK(!loaded.swings_enabled);
+    CHECK(loaded.audio_reactive.enabled);
+    CHECK(loaded.audio_reactive.wave_source == pvt::MusicFeature::Bass);
+    CHECK(loaded.audio_reactive.color_amount_degrees == 42.0);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
 
-    // Version 2 predates the independent export-alpha flag. Legacy files map
-    // it from the render alpha setting instead of silently losing that state.
-    const auto version_four_bytes = read_bytes(first);
-    std::string version_three(version_four_bytes.begin(), version_four_bytes.end());
-    CHECK(version_three.rfind("PVT_SETUP\t4\n", 0U) == 0U);
-    version_three.replace(0U, std::string("PVT_SETUP\t4").size(), "PVT_SETUP\t3");
+    // Version 4 predates synchronization and audio response. Remove every v5
+    // record to emulate a real older file; all new fields receive neutral
+    // defaults rather than leaking the destination's previous state.
+    const auto version_five_bytes = read_bytes(first);
+    std::string version_four(version_five_bytes.begin(), version_five_bytes.end());
+    CHECK(version_four.rfind("PVT_SETUP\t5\n", 0U) == 0U);
+    version_four.replace(0U, std::string("PVT_SETUP\t5").size(),
+                         "PVT_SETUP\t4");
     const auto erase_record = [](std::string& setup, const std::string& key) {
         const std::string prefix = key + "\t";
         const std::size_t position = setup.find(prefix);
@@ -1189,6 +1498,46 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
             setup.erase(position, newline + 1U - position);
         }
     };
+    const auto erase_records_with_prefix = [](std::string& setup,
+                                              const std::string& prefix) {
+        std::size_t position = 0U;
+        while ((position = setup.find(prefix, position)) != std::string::npos) {
+            if (position != 0U && setup[position - 1U] != '\n') {
+                position += prefix.size();
+                continue;
+            }
+            const std::size_t newline = setup.find('\n', position);
+            CHECK(newline != std::string::npos);
+            if (newline == std::string::npos) return;
+            setup.erase(position, newline + 1U - position);
+        }
+    };
+    erase_records_with_prefix(version_four, "timing.clock.");
+    erase_records_with_prefix(version_four, "timing.music.");
+    erase_record(version_four, "rhythm.swings_enabled");
+    erase_records_with_prefix(version_four, "audio_reactive.");
+    erase_record(version_four, "surface.obj_sha256");
+    erase_record(version_four, "surface.obj_basename");
+
+    const fs::path version_four_setup = directory / "version-four.pvt";
+    {
+        std::ofstream output(version_four_setup, std::ios::binary);
+        output.write(version_four.data(),
+                     static_cast<std::streamsize>(version_four.size()));
+    }
+    auto loaded_version_four = original;
+    CHECK(pvt::load_setup(version_four_setup.string(), loaded_version_four, &error));
+    CHECK(loaded_version_four.clock.mode == pvt::ClockMode::Default);
+    CHECK(loaded_version_four.clock.music.source_sha256.empty());
+    CHECK(loaded_version_four.clock.music.beat_times_seconds.empty());
+    CHECK(loaded_version_four.swings_enabled);
+    CHECK(!loaded_version_four.audio_reactive.enabled);
+
+    // Version 2 predates the independent export-alpha flag. Legacy files map
+    // it from the render alpha setting instead of silently losing that state.
+    std::string version_three = version_four;
+    CHECK(version_three.rfind("PVT_SETUP\t4\n", 0U) == 0U);
+    version_three.replace(0U, std::string("PVT_SETUP\t4").size(), "PVT_SETUP\t3");
     for (std::size_t index = 0U; index < original.swings.size(); ++index) {
         for (const char* field : {"center_x", "center_y", "radius"}) {
             erase_record(version_three, "swings." + std::to_string(index)
@@ -1293,6 +1642,29 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(pvt::save_setup(loaded, float_round_trip.string(), &error));
     CHECK(read_bytes(float_setup) == read_bytes(float_round_trip));
 
+    std::string oversized_analysis(version_five_bytes.begin(),
+                                   version_five_bytes.end());
+    const std::string feature_count = "timing.music.feature_samples.count\t2\n";
+    const std::size_t feature_count_at = oversized_analysis.find(feature_count);
+    CHECK(feature_count_at != std::string::npos);
+    if (feature_count_at != std::string::npos) {
+        oversized_analysis.replace(
+            feature_count_at, feature_count.size(),
+            "timing.music.feature_samples.count\t"
+                + std::to_string(pvt::kMaximumMusicFeatureSamples + 1U) + "\n");
+    }
+    const fs::path oversized_setup = directory / "oversized-analysis.pvt";
+    {
+        std::ofstream output(oversized_setup, std::ios::binary);
+        output.write(oversized_analysis.data(),
+                     static_cast<std::streamsize>(oversized_analysis.size()));
+    }
+    loaded.width = 555;
+    loaded.clock.mode = pvt::ClockMode::Frame;
+    CHECK(!pvt::load_setup(oversized_setup.string(), loaded, &error));
+    CHECK(loaded.width == 555);
+    CHECK(loaded.clock.mode == pvt::ClockMode::Frame);
+
     const auto unchanged = read_bytes(second);
     const int width_before = loaded.width;
     const fs::path malformed = directory / "malformed.pvt";
@@ -1303,6 +1675,35 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(!pvt::load_setup(malformed.string(), loaded, &error));
     CHECK(loaded.width == width_before);
     CHECK(read_bytes(second) == unchanged);
+}
+
+void test_maximum_music_analysis_setup(const fs::path& directory) {
+    pvt::RenderConfig original = pvt::default_config();
+    make_small(original);
+    const pvt::MusicFeatureSample sample{
+        0.125F, 0.25F, 0.375F, 0.5F, 0.625F, 0.75F,
+    };
+    original.clock.music.feature_samples.assign(
+        pvt::kMaximumMusicFeatureSamples, sample);
+
+    const fs::path first = directory / "maximum-analysis.pvt";
+    const fs::path second = directory / "maximum-analysis-roundtrip.pvt";
+    std::string error;
+    CHECK(pvt::save_setup(original, first.string(), &error));
+    const std::vector<unsigned char> first_bytes = read_bytes(first);
+    CHECK(first_bytes.size() > 2U * 1024U * 1024U);
+    CHECK(first_bytes.size() <= pvt::kMaximumSetupBytes);
+
+    pvt::RenderConfig loaded;
+    CHECK(pvt::load_setup(first.string(), loaded, &error));
+    CHECK(loaded.clock.music.feature_samples.size()
+          == pvt::kMaximumMusicFeatureSamples);
+    if (!loaded.clock.music.feature_samples.empty()) {
+        CHECK(loaded.clock.music.feature_samples.front().energy == sample.energy);
+        CHECK(loaded.clock.music.feature_samples.back().beat == sample.beat);
+    }
+    CHECK(pvt::save_setup(loaded, second.string(), &error));
+    CHECK(read_bytes(second) == first_bytes);
 }
 
 void check_png_header(const fs::path& path, int bit_depth, int color_type) {
@@ -1729,6 +2130,33 @@ void test_sequence_preflight(const fs::path& directory) {
     CHECK(!fs::exists(directory / "in-frame-cancel" / "heavy_0000.png"));
     CHECK(!has_temporary_output(directory / "in-frame-cancel"));
 
+    // Music duration replaces only the effective export count. The manually
+    // authored count remains intact for switching back to another clock.
+    pvt::RenderConfig music_sequence = pvt::default_config();
+    make_small(music_sequence);
+    music_sequence.width = 16;
+    music_sequence.height = 16;
+    music_sequence.total_frames = 2;
+    music_sequence.fps = 24.0;
+    music_sequence.clock = ready_music_clock(0.11);
+    music_sequence.output.output_directory =
+        (directory / "music-effective-count").string();
+    music_sequence.output.filename_prefix = "music_";
+    music_sequence.output.png_compression_level = 0;
+    progress_values.clear();
+    CHECK(pvt::effective_frame_count(music_sequence, &error) == 3);
+    CHECK(pvt::render_sequence(
+        music_sequence,
+        [&progress_values](int completed, int total) {
+            CHECK(total == 3);
+            progress_values.push_back(completed);
+            return true;
+        }, nullptr, &error));
+    CHECK(progress_values == std::vector<int>({1, 2, 3}));
+    CHECK(music_sequence.total_frames == 2);
+    CHECK(fs::exists(directory / "music-effective-count" / "music_0002.png"));
+    CHECK(!fs::exists(directory / "music-effective-count" / "music_0003.png"));
+
     // A literal dot remains relative to the caller's working directory, and
     // sibling temporary output must stay there rather than drifting to root.
     const fs::path previous_working_directory = fs::current_path();
@@ -1763,6 +2191,7 @@ int main(int argc, char** argv) {
     CHECK(!ignored);
 
     test_defaults_and_dynamic_collections();
+    test_synchronized_clocks_and_music();
     test_image_access_and_transactional_render();
     test_cancellable_single_layer_render();
     test_determinism_and_seam_continuity();
@@ -1772,6 +2201,7 @@ int main(int argc, char** argv) {
     test_palettes_transforms_and_spatial_stages();
     test_validation_limits();
     test_setup_round_trip_and_transaction(test_directory);
+    test_maximum_music_analysis_setup(test_directory);
     test_image_formats_and_dither(test_directory);
     test_sequence_preflight(test_directory);
 
