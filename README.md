@@ -144,11 +144,13 @@ values** keeps the current layer's stack structure and types while varying its
 settings; **Randomize mix** creates a new bounded mix. File dialogs remember
 their last usable folder and otherwise begin in the home folder.
 
-Every GUI field edit and structural move participates in session undo/redo. The
-step limit, rendering backend, window layout, and dialog locations are stored
-with the platform's normal per-user settings service (`QSettings`); these
-preferences are not placed inside a portable project. A separate hard 128 MiB
-snapshot budget prevents a
+Every GUI field edit and structural move participates in session undo/redo.
+**Settings > Application Settings…** (also available from the main toolbar)
+provides extensible General and Rendering pages for program-wide preferences.
+The undo step limit, rendering backend, window layout, and dialog locations are
+stored with the platform's normal per-user settings service (`QSettings`), so
+they persist across projects and relaunches and are never placed inside a
+portable project. A separate hard 128 MiB snapshot budget prevents a
 large, high-layer document from turning a generous step limit into unbounded
 memory growth; if history must be trimmed, the document remains correctly dirty.
 Saved-version history is separate from session undo.

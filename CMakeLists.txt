@@ -287,6 +287,8 @@ if(PVT_BUILD_QT_GUI)
     qt_standard_project_setup()
 
     qt_add_executable(ProceduralVisualizerToolGui MACOSX_BUNDLE
+        gui/application_settings_dialog.cpp
+        gui/application_settings_dialog.h
         gui/main.cpp
         gui/main_window.cpp
         gui/main_window.h

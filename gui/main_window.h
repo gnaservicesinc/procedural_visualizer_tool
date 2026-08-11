@@ -10,7 +10,6 @@
 #include <QString>
 
 #include <atomic>
-#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -161,7 +160,7 @@ private:
     bool confirmDiscardChanges();
     void restoreUserSettings();
     void saveUserSettings();
-    void editUndoLimit();
+    void showApplicationSettings();
     bool documentReplacementAllowed(QString* error = nullptr);
     void refreshVersionsPage();
     void refreshVersionDiff();
@@ -323,7 +322,7 @@ private:
     QAction* randomize_mix_action_ = nullptr;
     QAction* undo_action_ = nullptr;
     QAction* redo_action_ = nullptr;
-    std::array<QAction*, 3U> render_backend_actions_{};
+    QAction* settings_action_ = nullptr;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;

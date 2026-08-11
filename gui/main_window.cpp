@@ -1,5 +1,6 @@
 #include "main_window.h"
 
+#include "application_settings_dialog.h"
 #include "preview_widget.h"
 #include "../src/audio_analysis.h"
 #include "../src/config_codec.h"
@@ -8,7 +9,6 @@
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAction>
-#include <QActionGroup>
 #include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
@@ -29,7 +29,6 @@
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
@@ -2388,7 +2387,10 @@ void MainWindow::togglePlayback() {
 void MainWindow::createToolbar() {
     auto* file_menu = menuBar()->addMenu(tr("&File"));
     auto* edit_menu = menuBar()->addMenu(tr("&Edit"));
+    edit_menu->setObjectName(QStringLiteral("editMenu"));
     auto* view_menu = menuBar()->addMenu(tr("&View"));
+    auto* settings_menu = menuBar()->addMenu(tr("&Settings"));
+    settings_menu->setObjectName(QStringLiteral("settingsMenu"));
     auto* toolbar = addToolBar(tr("Project"));
     toolbar->setObjectName(QStringLiteral("projectToolbar"));
     toolbar->setMovable(false);
@@ -2429,50 +2431,16 @@ void MainWindow::createToolbar() {
     redo_action_->setShortcut(QKeySequence::Redo);
     edit_menu->addAction(undo_action_);
     edit_menu->addAction(redo_action_);
-    edit_menu->addSeparator();
-    auto* undo_limit_action = edit_menu->addAction(tr("Undo History Limit…"));
-    connect(undo_limit_action, &QAction::triggered, this, &MainWindow::editUndoLimit);
-    auto* backend_menu = edit_menu->addMenu(tr("Rendering Backend"));
-    auto* backend_group = new QActionGroup(this);
-    backend_group->setExclusive(true);
-    const std::array<std::pair<pvt::RenderBackend, QString>, 3U> backends = {{
-        {pvt::RenderBackend::Cpu, tr("CPU")},
-        {pvt::RenderBackend::CpuAndGpu, tr("CPU + GPU (Recommended)")},
-        {pvt::RenderBackend::Gpu, tr("GPU (Strict)")}}};
-    for (const auto& entry : backends) {
-        const pvt::RenderBackend backend = entry.first;
-        auto* action = backend_menu->addAction(entry.second);
-        action->setCheckable(true);
-        action->setData(static_cast<int>(backend));
-        backend_group->addAction(action);
-        render_backend_actions_[static_cast<std::size_t>(backend)] = action;
-        connect(action, &QAction::triggered, this, [this, backend](bool checked) {
-            if (!checked || render_backend_ == backend) return;
-            render_backend_ = backend;
-            QSettings().setValue(QStringLiteral("preferences/renderBackend"),
-                                 static_cast<int>(backend));
-            if (preview_cancel_ != nullptr) {
-                preview_cancel_->store(true, std::memory_order_relaxed);
-            }
-            status_->setText(tr("Rendering backend: %1")
-                                 .arg(QString::fromUtf8(
-                                     pvt::render_backend_name(backend))));
-            schedulePreview();
-        });
-    }
-    render_backend_actions_[static_cast<std::size_t>(
-        pvt::RenderBackend::CpuAndGpu)]->setChecked(true);
-    render_backend_actions_[static_cast<std::size_t>(
-        pvt::RenderBackend::Cpu)]->setToolTip(
-            tr("Use the deterministic reference renderer only."));
-    render_backend_actions_[static_cast<std::size_t>(
-        pvt::RenderBackend::CpuAndGpu)]->setToolTip(
-            tr("Render a bounded CPU lane beside Metal where supported; automatically "
-               "fall back to CPU for unsupported work or a Metal failure."));
-    render_backend_actions_[static_cast<std::size_t>(
-        pvt::RenderBackend::Gpu)]->setToolTip(
-            tr("Require Metal. Report unavailable or unsupported work instead of "
-               "silently falling back to CPU."));
+    settings_action_ = new QAction(tr("Application Settings…"), this);
+    settings_action_->setObjectName(QStringLiteral("applicationSettingsAction"));
+    settings_action_->setShortcut(QKeySequence::Preferences);
+    settings_action_->setToolTip(
+        tr("Configure preferences that apply to every project and persist across relaunches."));
+    settings_menu->addAction(settings_action_);
+    toolbar->addSeparator();
+    toolbar->addAction(settings_action_);
+    connect(settings_action_, &QAction::triggered,
+            this, &MainWindow::showApplicationSettings);
     view_menu->addAction(layers_dock_->toggleViewAction());
 
     connect(new_action_, &QAction::triggered, this, [this] {
@@ -3556,11 +3524,6 @@ void MainWindow::restoreUserSettings() {
                               && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
                           ? static_cast<pvt::RenderBackend>(saved_backend)
                           : pvt::RenderBackend::CpuAndGpu;
-    const std::size_t backend_index = static_cast<std::size_t>(render_backend_);
-    if (backend_index < render_backend_actions_.size()
-        && render_backend_actions_[backend_index] != nullptr) {
-        render_backend_actions_[backend_index]->setChecked(true);
-    }
     const QString saved_directory = settings.value(QStringLiteral("paths/lastDialogDirectory"))
                                         .toString();
     if (!existing_writable_directory(saved_directory, true).isEmpty()) {
@@ -3575,31 +3538,62 @@ void MainWindow::saveUserSettings() {
     settings.setValue(QStringLiteral("paths/lastDialogDirectory"), last_dialog_directory_);
     settings.setValue(QStringLiteral("ui/mainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("ui/mainWindow/state"), saveState());
+    if (undo_stack_ != nullptr) {
+        settings.setValue(QStringLiteral("preferences/undoLimit"),
+                          undo_stack_->undoLimit());
+    }
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(render_backend_));
 }
 
-void MainWindow::editUndoLimit() {
-    const int current = undo_stack_ != nullptr ? undo_stack_->undoLimit() : kDefaultUndoLimit;
-    bool accepted = false;
-    const int requested = QInputDialog::getInt(
-        this, tr("Undo history limit"), tr("Maximum undo steps"), current,
-        kMinimumUndoLimit, kMaximumUndoLimit, 10, &accepted);
-    if (!accepted || requested == current || undo_stack_ == nullptr) return;
-    if (undo_stack_->count() > 0) {
-        const bool had_unsaved_changes = !undo_stack_->isClean();
+void MainWindow::showApplicationSettings() {
+    if (undo_stack_ == nullptr) return;
+    const int current_undo_limit = undo_stack_->undoLimit();
+    const pvt::RenderBackend current_backend = render_backend_;
+    ApplicationSettingsDialog dialog(current_undo_limit, current_backend, this);
+    configure_readable_layouts(&dialog);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const int requested_undo_limit = dialog.undoLimit();
+    const pvt::RenderBackend requested_backend = dialog.renderBackend();
+    const bool undo_limit_changed = requested_undo_limit != current_undo_limit;
+    const bool backend_changed = requested_backend != current_backend;
+    if (!undo_limit_changed && !backend_changed) return;
+
+    if (undo_limit_changed && undo_stack_->count() > 0) {
         const auto choice = QMessageBox::question(
             this, tr("Clear undo history?"),
-            tr("Changing the limit clears this session’s undo and redo history. Continue?"),
+            tr("Applying the new history limit clears this session's undo and redo "
+               "history. Other settings in this dialog will also be applied. Continue?"),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (choice != QMessageBox::Yes) return;
-        baseline_dirty_ = baseline_dirty_ || had_unsaved_changes;
-        clearUndoHistory(false);
     }
-    undo_stack_->setUndoLimit(requested);
-    QSettings().setValue(QStringLiteral("preferences/undoLimit"), requested);
-    undo_stack_->setClean();
-    updateWindowTitle();
+
+    if (undo_limit_changed) {
+        clearUndoHistory(true);
+        undo_stack_->setUndoLimit(requested_undo_limit);
+        undo_stack_->setClean();
+        updateWindowTitle();
+    }
+    if (backend_changed) {
+        render_backend_ = requested_backend;
+        if (preview_cancel_ != nullptr) {
+            preview_cancel_->store(true, std::memory_order_relaxed);
+        }
+        schedulePreview();
+    }
+
+    QSettings settings;
+    settings.setValue(QStringLiteral("preferences/undoLimit"),
+                      requested_undo_limit);
+    settings.setValue(QStringLiteral("preferences/renderBackend"),
+                      static_cast<int>(requested_backend));
+    settings.sync();
+    status_->setText(
+        tr("Application settings saved — %1 undo steps, %2 rendering")
+            .arg(requested_undo_limit)
+            .arg(QString::fromUtf8(
+                pvt::render_backend_name(requested_backend))));
 }
 
 void MainWindow::refreshAll() {
@@ -5816,33 +5810,72 @@ bool MainWindow::loadProjectPath(const QString& path, QString* error) {
 }
 
 bool MainWindow::runSmokeChecks(QString* error) {
-    std::size_t checked_backend_actions = 0U;
-    for (std::size_t index = 0U; index < render_backend_actions_.size();
-         ++index) {
-        const QAction* action = render_backend_actions_[index];
-        if (action == nullptr || !action->isCheckable()
-            || action->data().toInt() != static_cast<int>(index)) {
+    const auto* settings_menu =
+        findChild<QMenu*>(QStringLiteral("settingsMenu"));
+    const auto* edit_menu = findChild<QMenu*>(QStringLiteral("editMenu"));
+    const auto* project_toolbar =
+        findChild<QToolBar*>(QStringLiteral("projectToolbar"));
+    if (settings_action_ == nullptr || settings_menu == nullptr
+        || edit_menu == nullptr || project_toolbar == nullptr
+        || !settings_menu->actions().contains(settings_action_)
+        || !project_toolbar->actions().contains(settings_action_)) {
+        if (error != nullptr) {
+            *error = tr("Application Settings is not reachable from both the menu bar and toolbar.");
+        }
+        return false;
+    }
+    for (const QAction* action : edit_menu->actions()) {
+        if (action->text() == tr("Undo History Limit…")
+            || (action->menu() != nullptr
+                && action->menu()->title() == tr("Rendering Backend"))) {
             if (error != nullptr) {
-                *error = tr("A rendering backend choice is missing or malformed.");
+                *error = tr("A program preference is still exposed in the Edit menu.");
             }
             return false;
         }
-        if (action->isChecked()) {
-            ++checked_backend_actions;
-            if (index != static_cast<std::size_t>(render_backend_)) {
-                if (error != nullptr) {
-                    *error = tr("The checked rendering backend does not match its saved setting.");
-                }
-                return false;
-            }
-        }
     }
-    if (checked_backend_actions != 1U
+
+    QSettings saved_settings;
+    const int expected_undo_limit = std::clamp(
+        saved_settings.value(QStringLiteral("preferences/undoLimit"),
+                             kDefaultUndoLimit).toInt(),
+        kMinimumUndoLimit, kMaximumUndoLimit);
+    const int saved_backend = saved_settings.value(
+        QStringLiteral("preferences/renderBackend"),
+        static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
+    const pvt::RenderBackend expected_backend =
+        saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
+                && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
+            ? static_cast<pvt::RenderBackend>(saved_backend)
+            : pvt::RenderBackend::CpuAndGpu;
+    if (undo_stack_ == nullptr || undo_stack_->undoLimit() != expected_undo_limit
+        || render_backend_ != expected_backend
         || frameRenderOptions().backend != render_backend_) {
         if (error != nullptr) {
-            *error = tr("Rendering backend selection is not exclusive or did not reach preview options.");
+            *error = tr("Application preferences were not restored from per-user settings.");
         }
         return false;
+    }
+
+    {
+        ApplicationSettingsDialog settings_dialog(
+            expected_undo_limit, expected_backend, this);
+        configure_readable_layouts(&settings_dialog);
+        const auto* tabs = settings_dialog.findChild<QTabWidget*>(
+            QStringLiteral("applicationSettingsTabs"));
+        const auto* undo_limit = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("undoLimitPreference"));
+        const auto* backend = settings_dialog.findChild<QComboBox*>(
+            QStringLiteral("renderBackendPreference"));
+        if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
+            || backend == nullptr || backend->count() != 3
+            || settings_dialog.undoLimit() != expected_undo_limit
+            || settings_dialog.renderBackend() != expected_backend) {
+            if (error != nullptr) {
+                *error = tr("The extensible Application Settings dialog is incomplete or malformed.");
+            }
+            return false;
+        }
     }
     if (findChild<QComboBox*>(QStringLiteral("exportTarget")) != nullptr) {
         if (error != nullptr) {
