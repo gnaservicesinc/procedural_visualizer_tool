@@ -1,5 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
+#include "frame_renderer_internal.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -12,6 +14,7 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -419,6 +422,218 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
     return true;
 }
 
+bool render_project_with_backend_validated(
+    const ProjectConfig& project,
+    double normalized_phase,
+    const int* synchronized_frame,
+    const FrameRenderOptions& options,
+    Image& destination,
+    const std::atomic_bool* cancel,
+    std::string* error) {
+    if (options.backend == RenderBackend::Cpu) {
+        return render_project_at_phase_validated(
+            project, normalized_phase, synchronized_frame,
+            destination, cancel, error);
+    }
+
+    std::size_t pixel_count = 0U;
+    std::size_t component_count = 0U;
+    if (!checked_multiply(static_cast<std::size_t>(project.canvas.width),
+                          static_cast<std::size_t>(project.canvas.height),
+                          pixel_count)
+        || !checked_multiply(pixel_count, 4U, component_count)) {
+        return fail(error,
+                    "Project canvas dimensions overflow the pixel buffer size.");
+    }
+    Image accumulator;
+    accumulator.width = project.canvas.width;
+    accumulator.height = project.canvas.height;
+    accumulator.pixels.assign(component_count, 0.0F);
+
+    ExportConfig layer_output = project.output;
+    layer_output.write_alpha = true;
+    std::vector<std::size_t> contributing;
+    contributing.reserve(project.layers.size());
+    for (std::size_t index = 0U; index < project.layers.size(); ++index) {
+        if (project.layers[index].enabled && project.layers[index].opacity > 0.0) {
+            contributing.push_back(index);
+        }
+    }
+
+    const auto materialize = [&](std::size_t index) {
+        return apply_global_config(project.canvas, layer_output,
+                                   project.layers[index].render);
+    };
+    const auto render_one = [&](std::size_t index,
+                                const FrameRenderOptions& selected,
+                                Image& image,
+                                std::string& layer_error) {
+        const RenderConfig render = materialize(index);
+        return synchronized_frame == nullptr
+            ? render_frame_at_phase(render, normalized_phase, selected,
+                                    image, cancel, &layer_error)
+            : render_frame(render, *synchronized_frame, selected,
+                           image, cancel, &layer_error);
+    };
+    const auto composite_one = [&](std::size_t index, const Image& image) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Project rendering was cancelled between layers.");
+        }
+        const LayerConfig& layer = project.layers[index];
+        if (!composite_pixels(image, accumulator, layer.blend_mode,
+                              layer.opacity, cancel)) {
+            return fail(error,
+                        "Project rendering was cancelled while compositing layer "
+                            + std::to_string(index + 1U) + ".");
+        }
+        return true;
+    };
+    const auto contextual_failure = [&](std::size_t index,
+                                         const std::string& layer_error) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Project rendering was cancelled while rendering layer "
+                            + std::to_string(index + 1U) + ".");
+        }
+        return fail(error,
+                    "Could not render layer " + std::to_string(index + 1U)
+                        + " ('" + project.layers[index].name + "'): "
+                        + layer_error);
+    };
+
+    if (options.backend == RenderBackend::Gpu) {
+        for (const std::size_t index : contributing) {
+            Image image;
+            std::string layer_error;
+            if (!render_one(index, options, image, layer_error)) {
+                return contextual_failure(index, layer_error);
+            }
+            if (!composite_one(index, image)) return false;
+        }
+        destination = std::move(accumulator);
+        return true;
+    }
+
+    // Hybrid preview rendering uses one reference CPU lane beside one Metal
+    // lane. Results are retained only for the current pair and composited in
+    // paint order, so parallelism cannot reorder alpha/blend semantics or grow
+    // memory with the layer count.
+    std::string metal_device;
+    std::string metal_status;
+    const bool metal_available = detail::metal_backend_available(
+        &metal_device, &metal_status);
+    FrameRenderOptions cpu_options = options;
+    cpu_options.backend = RenderBackend::Cpu;
+    FrameRenderOptions gpu_options = options;
+    gpu_options.backend = RenderBackend::Gpu;
+
+    for (std::size_t position = 0U; position < contributing.size();) {
+        const std::size_t first_index = contributing[position];
+        if (position + 1U >= contributing.size()) {
+            Image image;
+            std::string layer_error;
+            FrameRenderOptions selected = options;
+            if (!render_one(first_index, selected, image, layer_error)) {
+                return contextual_failure(first_index, layer_error);
+            }
+            if (!composite_one(first_index, image)) return false;
+            ++position;
+            continue;
+        }
+
+        const std::size_t second_index = contributing[position + 1U];
+        const RenderConfig first_render = materialize(first_index);
+        const RenderConfig second_render = materialize(second_index);
+        std::string ignored_reason;
+        const bool first_gpu = metal_available
+                               && detail::metal_backend_supports(
+                                      first_render, &ignored_reason);
+        const bool second_gpu = metal_available
+                                && detail::metal_backend_supports(
+                                       second_render, &ignored_reason);
+        if (!first_gpu && !second_gpu) {
+            for (const std::size_t index : {first_index, second_index}) {
+                Image image;
+                std::string layer_error;
+                if (!render_one(index, cpu_options, image, layer_error)) {
+                    return contextual_failure(index, layer_error);
+                }
+                if (!composite_one(index, image)) return false;
+            }
+            position += 2U;
+            continue;
+        }
+
+        // Prefer the second layer for Metal when either is supported. This
+        // lets the CPU start the bottom layer immediately while the GPU works
+        // independently, then preserves bottom-to-top compositing below.
+        const bool gpu_is_second = second_gpu;
+        const std::size_t cpu_index = gpu_is_second ? first_index : second_index;
+        const std::size_t gpu_index = gpu_is_second ? second_index : first_index;
+        const ValidationResult cpu_validation = validate(materialize(cpu_index));
+        const ValidationResult gpu_validation = validate(materialize(gpu_index));
+        std::size_t concurrent_peak = 0U;
+        const bool bounded_pair = cpu_validation.ok && gpu_validation.ok
+            && checked_add(cpu_validation.estimated_peak_bytes,
+                           gpu_validation.estimated_peak_bytes,
+                           concurrent_peak)
+            && concurrent_peak <= kMaximumProjectPeakBytes;
+        if (!bounded_pair) {
+            // Memory safety outranks concurrency. Still use Metal for supported
+            // work, but complete and release one layer before starting the next.
+            for (const std::size_t index : {first_index, second_index}) {
+                Image image;
+                std::string layer_error;
+                const bool supported = index == first_index ? first_gpu : second_gpu;
+                const FrameRenderOptions& selected = supported
+                                                         ? gpu_options
+                                                         : cpu_options;
+                if (!render_one(index, selected, image, layer_error)) {
+                    return contextual_failure(index, layer_error);
+                }
+                if (!composite_one(index, image)) return false;
+            }
+            position += 2U;
+            continue;
+        }
+
+        Image cpu_image;
+        Image gpu_image;
+        std::string cpu_error;
+        std::string gpu_error;
+        bool cpu_ok = false;
+        std::thread cpu_worker([&] {
+            cpu_ok = render_one(cpu_index, cpu_options, cpu_image, cpu_error);
+        });
+        const bool gpu_ok = render_one(gpu_index, gpu_options,
+                                       gpu_image, gpu_error);
+        cpu_worker.join();
+        if (!cpu_ok) return contextual_failure(cpu_index, cpu_error);
+        if (!gpu_ok) {
+            // Hybrid mode remains resilient even if a Metal command fails
+            // after capability checks. Retry that layer through the reference
+            // path after the other lane has joined and released its buffers.
+            gpu_image = {};
+            if (!render_one(gpu_index, cpu_options, gpu_image, gpu_error)) {
+                return contextual_failure(gpu_index, gpu_error);
+            }
+        }
+        const Image& first_image = first_index == cpu_index
+                                       ? cpu_image : gpu_image;
+        const Image& second_image = second_index == cpu_index
+                                        ? cpu_image : gpu_image;
+        if (!composite_one(first_index, first_image)
+            || !composite_one(second_index, second_image)) {
+            return false;
+        }
+        position += 2U;
+    }
+
+    destination = std::move(accumulator);
+    return true;
+}
+
 std::uint64_t mix_entropy(std::uint64_t& state) {
     state += UINT64_C(0x9e3779b97f4a7c15);
     std::uint64_t value = state;
@@ -706,6 +921,76 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
                            + std::string(exception.what()));
     } catch (...) {
         return fail(error, "Project rendering failed with an unknown error.");
+    }
+}
+
+bool render_project_frame_at_phase(
+    const ProjectConfig& project,
+    double normalized_phase,
+    const FrameRenderOptions& options,
+    Image& destination,
+    const std::atomic_bool* cancel,
+    std::string* error) {
+    clear_error(error);
+    try {
+        const ValidationResult validation = validate(project);
+        if (!validation.ok) return fail(error, validation.message);
+        if (!std::isfinite(normalized_phase)) {
+            return fail(error,
+                        "Normalized project render phase must be finite.");
+        }
+        if (cancelled(cancel)) {
+            return fail(error, "Project rendering was cancelled.");
+        }
+        return render_project_with_backend_validated(
+            project, normalized_phase, nullptr, options,
+            destination, cancel, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Project rendering ran out of memory.");
+    } catch (const std::exception& exception) {
+        return fail(error, "Project rendering failed: "
+                               + std::string(exception.what()));
+    } catch (...) {
+        return fail(error,
+                    "Project rendering failed with an unknown error.");
+    }
+}
+
+bool render_project_frame(const ProjectConfig& project, int frame_index,
+                          const FrameRenderOptions& options,
+                          Image& destination,
+                          const std::atomic_bool* cancel,
+                          std::string* error) {
+    clear_error(error);
+    try {
+        const ValidationResult validation = validate(project);
+        if (!validation.ok) return fail(error, validation.message);
+        std::string frame_count_error;
+        const int frame_count = effective_frame_count(project.canvas,
+                                                      &frame_count_error);
+        if (frame_count < 1) {
+            return fail(error, frame_count_error.empty()
+                                   ? "Project clock has no renderable frames."
+                                   : frame_count_error);
+        }
+        int wrapped_frame = frame_index % frame_count;
+        if (wrapped_frame < 0) wrapped_frame += frame_count;
+        if (cancelled(cancel)) {
+            return fail(error, "Project rendering was cancelled.");
+        }
+        return render_project_with_backend_validated(
+            project,
+            static_cast<double>(wrapped_frame)
+                / static_cast<double>(frame_count),
+            &wrapped_frame, options, destination, cancel, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Project rendering ran out of memory.");
+    } catch (const std::exception& exception) {
+        return fail(error, "Project rendering failed: "
+                               + std::string(exception.what()));
+    } catch (...) {
+        return fail(error,
+                    "Project rendering failed with an unknown error.");
     }
 }
 

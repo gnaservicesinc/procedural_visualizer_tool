@@ -9,6 +9,9 @@ include(CMakePackageConfigHelpers)
 option(PVT_BUILD_CLI "Build the command-line renderer" ON)
 option(PVT_BUILD_QT_GUI "Build the Qt 6 interactive GUI" OFF)
 option(PVT_BUILD_EXAMPLES "Build the C++ library API example" OFF)
+option(PVT_ENABLE_METAL "Build the optional Apple Metal rendering backend" ON)
+set(PVT_METAL_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../3rd_party/metal-cpp"
+    CACHE PATH "Directory containing Apple's metal-cpp headers")
 
 function(pvt_enable_warnings target)
     if(MSVC)
@@ -26,6 +29,8 @@ add_library(ProceduralVisualizerTool
     src/composite.cpp
     src/config_io.cpp
     src/core.cpp
+    src/frame_renderer.cpp
+    src/frame_renderer_internal.h
     src/image_io.cpp
     src/obj_mesh.cpp
     src/obj_mesh.h
@@ -34,6 +39,38 @@ add_library(ProceduralVisualizerTool
     src/path_utf8.h
     src/windows_file_install.h
 )
+
+set(PVT_METAL_BACKEND_ENABLED OFF)
+if(APPLE AND PVT_ENABLE_METAL)
+    if(EXISTS "${PVT_METAL_CPP_DIR}/Metal/Metal.hpp"
+       AND EXISTS "${PVT_METAL_CPP_DIR}/Foundation/Foundation.hpp")
+        set(PVT_METAL_BACKEND_ENABLED ON)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/metal_kernels.metal")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/metal_kernels.metal"
+             PVT_METAL_KERNEL_SOURCE)
+        configure_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/metal_kernels_source.h.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/metal_kernels_source.h"
+            @ONLY)
+        target_sources(ProceduralVisualizerTool PRIVATE src/metal_backend.cpp)
+        target_include_directories(ProceduralVisualizerTool SYSTEM PRIVATE
+            "${PVT_METAL_CPP_DIR}")
+        target_include_directories(ProceduralVisualizerTool PRIVATE
+            "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(ProceduralVisualizerTool PRIVATE
+            "-framework Foundation" "-framework Metal")
+        target_compile_definitions(ProceduralVisualizerTool PRIVATE
+            PVT_HAS_METAL_BACKEND=1)
+    else()
+        message(WARNING
+            "PVT_ENABLE_METAL is ON, but metal-cpp was not found at "
+            "${PVT_METAL_CPP_DIR}; building the CPU fallback only")
+    endif()
+endif()
+if(NOT PVT_METAL_BACKEND_ENABLED)
+    target_sources(ProceduralVisualizerTool PRIVATE src/metal_backend_stub.cpp)
+endif()
 add_library(ProceduralVisualizerTool::ProceduralVisualizerTool
     ALIAS ProceduralVisualizerTool)
 
@@ -306,6 +343,16 @@ if(BUILD_TESTING)
     pvt_enable_warnings(pvt_project_composite_tests)
     add_test(NAME pvt_project_composite COMMAND pvt_project_composite_tests)
 
+    add_executable(pvt_metal_backend_tests tests/metal_backend_test.cpp)
+    target_compile_features(pvt_metal_backend_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_metal_backend_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_metal_backend_tests PRIVATE
+        ProceduralVisualizerTool::ProceduralVisualizerTool)
+    target_compile_definitions(pvt_metal_backend_tests PRIVATE
+        PVT_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    pvt_enable_warnings(pvt_metal_backend_tests)
+    add_test(NAME pvt_metal_backend COMMAND pvt_metal_backend_tests)
+
     add_executable(pvt_bundle_tests tests/bundle_test.cpp)
     target_compile_features(pvt_bundle_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_bundle_tests PROPERTIES CXX_EXTENSIONS NO)
@@ -353,6 +400,16 @@ if(BUILD_TESTING)
                 -DPROGRAM=$<TARGET_FILE:render9>
                 -DTEST_CASE=invalid-compression
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
+        add_test(NAME pvt_cli_rejects_bad_backend
+            COMMAND ${CMAKE_COMMAND}
+                -DPROGRAM=$<TARGET_FILE:render9>
+                -DTEST_CASE=invalid-backend
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
+        add_test(NAME pvt_cli_rejects_bad_gpu_bound
+            COMMAND ${CMAKE_COMMAND}
+                -DPROGRAM=$<TARGET_FILE:render9>
+                -DTEST_CASE=invalid-gpu-bound
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_eof_aborts_save
             COMMAND ${CMAKE_COMMAND}
                 -DPROGRAM=$<TARGET_FILE:render9>
@@ -399,6 +456,11 @@ if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI)
     install(FILES third_party/btt/LICENSE
         DESTINATION ${CMAKE_INSTALL_DOCDIR}
         RENAME BEAT-AND-TEMPO-TRACKING-LICENSE)
+endif()
+if(PVT_METAL_BACKEND_ENABLED AND EXISTS "${PVT_METAL_CPP_DIR}/LICENSE")
+    install(FILES "${PVT_METAL_CPP_DIR}/LICENSE"
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}
+        RENAME METAL-CPP-LICENSE)
 endif()
 install(EXPORT ProceduralVisualizerToolTargets
     FILE ProceduralVisualizerToolTargets.cmake

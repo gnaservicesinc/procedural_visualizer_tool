@@ -10,6 +10,7 @@
 #include <QString>
 
 #include <atomic>
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -214,7 +215,9 @@ private:
                                          std::uint64_t generation,
                                          std::uint64_t documentRevision,
                                          int test_delay_ms,
+                                         pvt::FrameRenderOptions renderOptions,
                                          const std::shared_ptr<std::atomic_bool>& cancel);
+    pvt::FrameRenderOptions frameRenderOptions() const;
     void randomizeExistingStackSettings();
     void randomizeStackComposition();
     QString resolvedOutputDirectory(const QString& path) const;
@@ -264,6 +267,7 @@ private:
     bool export_active_ = false;
     bool close_after_export_ = false;
     bool playback_preview_advanced_ = false;
+    pvt::RenderBackend render_backend_ = pvt::RenderBackend::CpuAndGpu;
     int last_previewed_frame_ = -1;
     int preview_test_delay_ms_ = 0;
     QString independent_copy_test_path_;
@@ -319,6 +323,7 @@ private:
     QAction* randomize_mix_action_ = nullptr;
     QAction* undo_action_ = nullptr;
     QAction* redo_action_ = nullptr;
+    std::array<QAction*, 3U> render_backend_actions_{};
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;

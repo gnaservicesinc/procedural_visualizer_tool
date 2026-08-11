@@ -1,0 +1,12 @@
+#ifndef PVT_METAL_KERNELS_SOURCE_H
+#define PVT_METAL_KERNELS_SOURCE_H
+
+namespace pvt::detail {
+
+inline constexpr char kMetalKernelSource[] = R"PVT_METAL(
+@PVT_METAL_KERNEL_SOURCE@
+)PVT_METAL";
+
+} // namespace pvt::detail
+
+#endif

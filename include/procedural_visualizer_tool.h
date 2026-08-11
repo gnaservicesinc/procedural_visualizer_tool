@@ -34,6 +34,7 @@ constexpr std::size_t kBuiltInPaletteCount = 6;
 // spectral samples in the human-diffable text format.
 constexpr std::size_t kMaximumSetupBytes = 8U * 1024U * 1024U;
 constexpr std::size_t kMaximumSequenceWorkers = 256;
+constexpr std::size_t kMaximumGpuFramesInFlight = 8;
 constexpr std::size_t kMaximumMusicFeatureSamples = 8192;
 constexpr std::size_t kMaximumMusicBeats = 4096;
 constexpr std::size_t kMaximumMusicTempoPoints = 256;
@@ -117,6 +118,15 @@ enum class BlendMode : std::uint8_t {
     Subtract,
     Multiply,
     Add
+};
+
+// Rendering execution policy is deliberately separate from project/setup
+// state. It is a host preference, not authored artwork, so changing devices or
+// diagnosing a driver issue never dirties a project or changes its bundle.
+enum class RenderBackend : std::uint8_t {
+    Cpu = 0,
+    CpuAndGpu,
+    Gpu
 };
 
 // The default clock preserves the original seamless normalized-loop behavior.
@@ -522,6 +532,25 @@ struct ValidationResult {
     std::size_t estimated_peak_bytes = 0;
 };
 
+struct FrameRenderOptions {
+    // CPU remains the library/API compatibility default. Applications can opt
+    // into CpuAndGpu, which uses Metal where supported and falls back to the
+    // reference CPU renderer. Gpu is strict: it reports unavailable or
+    // unsupported work instead of silently using the CPU.
+    RenderBackend backend = RenderBackend::Cpu;
+    // Metal work is admitted before its frame buffers are allocated. This
+    // bound therefore limits both queued command buffers and GPU-visible frame
+    // working sets. Zero selects the conservative default of two.
+    std::size_t maximum_gpu_frames_in_flight = 0;
+};
+
+struct RendererCapabilities {
+    bool metal_compiled = false;
+    bool metal_available = false;
+    std::string metal_device_name;
+    std::string metal_status;
+};
+
 using ProgressCallback = std::function<bool(int completed_frames, int total_frames)>;
 
 // Sequence rendering execution policy. `worker_count == 0` selects the host's
@@ -539,6 +568,7 @@ using ProgressCallback = std::function<bool(int completed_frames, int total_fram
 struct SequenceRenderOptions {
     std::size_t worker_count = 0;
     std::size_t memory_budget_bytes = 0;
+    FrameRenderOptions frame;
 };
 
 PVT_API RenderConfig default_config();
@@ -584,6 +614,18 @@ PVT_API bool render_frame(const RenderConfig& config,
                           int frame_index,
                           Image& destination,
                           std::string* error = nullptr);
+PVT_API bool render_frame_at_phase(const RenderConfig& config,
+                                   double normalized_phase,
+                                   const FrameRenderOptions& options,
+                                   Image& destination,
+                                   const std::atomic_bool* cancel = nullptr,
+                                   std::string* error = nullptr);
+PVT_API bool render_frame(const RenderConfig& config,
+                          int frame_index,
+                          const FrameRenderOptions& options,
+                          Image& destination,
+                          const std::atomic_bool* cancel = nullptr,
+                          std::string* error = nullptr);
 
 // Cancellable counterparts for a single layer. The legacy entry points above
 // remain source-compatible and behave as if `cancel` were null. Cancellation
@@ -620,6 +662,21 @@ PVT_API bool render_project_frame(const ProjectConfig& project,
                                   Image& destination,
                                   const std::atomic_bool* cancel = nullptr,
                                   std::string* error = nullptr);
+PVT_API bool render_project_frame_at_phase(
+    const ProjectConfig& project,
+    double normalized_phase,
+    const FrameRenderOptions& options,
+    Image& destination,
+    const std::atomic_bool* cancel = nullptr,
+    std::string* error = nullptr);
+PVT_API bool render_project_frame(const ProjectConfig& project,
+                                  int frame_index,
+                                  const FrameRenderOptions& options,
+                                  Image& destination,
+                                  const std::atomic_bool* cancel = nullptr,
+                                  std::string* error = nullptr);
+
+PVT_API RendererCapabilities renderer_capabilities();
 
 PVT_API bool write_image(const std::string& path,
                          const Image& image,
@@ -663,6 +720,7 @@ PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
 PVT_API const char* mirror_mode_name(MirrorMode value);
 PVT_API const char* blend_mode_name(BlendMode value);
+PVT_API const char* render_backend_name(RenderBackend value);
 PVT_API const char* clock_mode_name(ClockMode value);
 PVT_API const char* clock_interpolation_name(ClockInterpolation value);
 PVT_API const char* clock_fit_name(ClockFit value);

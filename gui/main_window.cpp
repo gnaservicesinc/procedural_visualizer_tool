@@ -8,6 +8,7 @@
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
@@ -2431,6 +2432,47 @@ void MainWindow::createToolbar() {
     edit_menu->addSeparator();
     auto* undo_limit_action = edit_menu->addAction(tr("Undo History Limit…"));
     connect(undo_limit_action, &QAction::triggered, this, &MainWindow::editUndoLimit);
+    auto* backend_menu = edit_menu->addMenu(tr("Rendering Backend"));
+    auto* backend_group = new QActionGroup(this);
+    backend_group->setExclusive(true);
+    const std::array<std::pair<pvt::RenderBackend, QString>, 3U> backends = {{
+        {pvt::RenderBackend::Cpu, tr("CPU")},
+        {pvt::RenderBackend::CpuAndGpu, tr("CPU + GPU (Recommended)")},
+        {pvt::RenderBackend::Gpu, tr("GPU (Strict)")}}};
+    for (const auto& entry : backends) {
+        const pvt::RenderBackend backend = entry.first;
+        auto* action = backend_menu->addAction(entry.second);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(backend));
+        backend_group->addAction(action);
+        render_backend_actions_[static_cast<std::size_t>(backend)] = action;
+        connect(action, &QAction::triggered, this, [this, backend](bool checked) {
+            if (!checked || render_backend_ == backend) return;
+            render_backend_ = backend;
+            QSettings().setValue(QStringLiteral("preferences/renderBackend"),
+                                 static_cast<int>(backend));
+            if (preview_cancel_ != nullptr) {
+                preview_cancel_->store(true, std::memory_order_relaxed);
+            }
+            status_->setText(tr("Rendering backend: %1")
+                                 .arg(QString::fromUtf8(
+                                     pvt::render_backend_name(backend))));
+            schedulePreview();
+        });
+    }
+    render_backend_actions_[static_cast<std::size_t>(
+        pvt::RenderBackend::CpuAndGpu)]->setChecked(true);
+    render_backend_actions_[static_cast<std::size_t>(
+        pvt::RenderBackend::Cpu)]->setToolTip(
+            tr("Use the deterministic reference renderer only."));
+    render_backend_actions_[static_cast<std::size_t>(
+        pvt::RenderBackend::CpuAndGpu)]->setToolTip(
+            tr("Render a bounded CPU lane beside Metal where supported; automatically "
+               "fall back to CPU for unsupported work or a Metal failure."));
+    render_backend_actions_[static_cast<std::size_t>(
+        pvt::RenderBackend::Gpu)]->setToolTip(
+            tr("Require Metal. Report unavailable or unsupported work instead of "
+               "silently falling back to CPU."));
     view_menu->addAction(layers_dock_->toggleViewAction());
 
     connect(new_action_, &QAction::triggered, this, [this] {
@@ -3507,6 +3549,18 @@ bool MainWindow::documentReplacementAllowed(QString* error) {
 
 void MainWindow::restoreUserSettings() {
     QSettings settings;
+    const int saved_backend = settings.value(
+        QStringLiteral("preferences/renderBackend"),
+        static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
+    render_backend_ = saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
+                              && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
+                          ? static_cast<pvt::RenderBackend>(saved_backend)
+                          : pvt::RenderBackend::CpuAndGpu;
+    const std::size_t backend_index = static_cast<std::size_t>(render_backend_);
+    if (backend_index < render_backend_actions_.size()
+        && render_backend_actions_[backend_index] != nullptr) {
+        render_backend_actions_[backend_index]->setChecked(true);
+    }
     const QString saved_directory = settings.value(QStringLiteral("paths/lastDialogDirectory"))
                                         .toString();
     if (!existing_writable_directory(saved_directory, true).isEmpty()) {
@@ -3521,6 +3575,8 @@ void MainWindow::saveUserSettings() {
     settings.setValue(QStringLiteral("paths/lastDialogDirectory"), last_dialog_directory_);
     settings.setValue(QStringLiteral("ui/mainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("ui/mainWindow/state"), saveState());
+    settings.setValue(QStringLiteral("preferences/renderBackend"),
+                      static_cast<int>(render_backend_));
 }
 
 void MainWindow::editUndoLimit() {
@@ -5490,6 +5546,15 @@ void MainWindow::schedulePreview() {
     }
 }
 
+pvt::FrameRenderOptions MainWindow::frameRenderOptions() const {
+    pvt::FrameRenderOptions options;
+    options.backend = render_backend_;
+    // Two shared working sets let Metal overlap submission without letting a
+    // fast playback timer or frame-parallel export build an unbounded queue.
+    options.maximum_gpu_frames_in_flight = 2U;
+    return options;
+}
+
 void MainWindow::startPreview() {
     if (preview_watcher_->isRunning()) {
         preview_deferred_ = true;
@@ -5501,13 +5566,15 @@ void MainWindow::startPreview() {
         const int frame = timeline_->value();
         const std::uint64_t generation = preview_generation_;
         const std::uint64_t revision = document_revision_;
+        const pvt::FrameRenderOptions render_options = frameRenderOptions();
         auto cancel = std::make_shared<std::atomic_bool>(false);
         preview_cancel_ = cancel;
         preview_watcher_->setFuture(QtConcurrent::run(
             [project = std::move(project), frame, generation, revision,
-             test_delay_ms = preview_test_delay_ms_, cancel]() mutable {
+             test_delay_ms = preview_test_delay_ms_, render_options,
+             cancel]() mutable {
                 return generatePreview(std::move(project), frame, generation, revision,
-                                       test_delay_ms, cancel);
+                                       test_delay_ms, render_options, cancel);
             }));
     } catch (const std::exception& exception) {
         status_->setText(
@@ -5535,6 +5602,7 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
                                                        std::uint64_t generation,
                                                        std::uint64_t document_revision,
                                                        int test_delay_ms,
+                                                       pvt::FrameRenderOptions render_options,
                                                        const std::shared_ptr<std::atomic_bool>& cancel) {
     PreviewResult result;
     result.frame = frame;
@@ -5587,7 +5655,7 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
             1, static_cast<int>(std::lround(project.canvas.block_size * scale)));
         pvt::Image image;
         std::string error;
-        if (!pvt::render_project_frame(project, frame, image,
+        if (!pvt::render_project_frame(project, frame, render_options, image,
                                        cancel != nullptr ? cancel.get() : nullptr,
                                        &error)) {
             result.error = QString::fromStdString(error);
@@ -5639,17 +5707,20 @@ bool MainWindow::startExport() {
     export_progress_->show();
     try {
         auto project = project_;
+        pvt::SequenceRenderOptions render_options;
+        render_options.frame = frameRenderOptions();
         project.output.output_directory =
             resolvedOutputDirectory(QString::fromStdString(project.output.output_directory))
                 .toStdString();
         export_active_ = true;
         export_watcher_->setFuture(QtConcurrent::run(
-            [this, project = std::move(project)]() mutable {
+            [this, project = std::move(project), render_options]() mutable {
                 ExportResult result;
                 std::string error;
                 try {
                     result.ok = pvt::render_project_sequence(
                         project,
+                        render_options,
                         [this](int completed, int total) {
                             const int update_stride = std::max(1, total / 200);
                             if (completed == 0 || completed == total
@@ -5745,6 +5816,34 @@ bool MainWindow::loadProjectPath(const QString& path, QString* error) {
 }
 
 bool MainWindow::runSmokeChecks(QString* error) {
+    std::size_t checked_backend_actions = 0U;
+    for (std::size_t index = 0U; index < render_backend_actions_.size();
+         ++index) {
+        const QAction* action = render_backend_actions_[index];
+        if (action == nullptr || !action->isCheckable()
+            || action->data().toInt() != static_cast<int>(index)) {
+            if (error != nullptr) {
+                *error = tr("A rendering backend choice is missing or malformed.");
+            }
+            return false;
+        }
+        if (action->isChecked()) {
+            ++checked_backend_actions;
+            if (index != static_cast<std::size_t>(render_backend_)) {
+                if (error != nullptr) {
+                    *error = tr("The checked rendering backend does not match its saved setting.");
+                }
+                return false;
+            }
+        }
+    }
+    if (checked_backend_actions != 1U
+        || frameRenderOptions().backend != render_backend_) {
+        if (error != nullptr) {
+            *error = tr("Rendering backend selection is not exclusive or did not reach preview options.");
+        }
+        return false;
+    }
     if (findChild<QComboBox*>(QStringLiteral("exportTarget")) != nullptr) {
         if (error != nullptr) {
             *error = tr("The removed MP4 export target is still exposed by the GUI.");
@@ -6478,7 +6577,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     auto cancelled_preview_token = std::make_shared<std::atomic_bool>(true);
     const PreviewResult cancelled_preview = generatePreview(
         previewProjectSnapshot(), 0, preview_generation_, document_revision_, 25,
-        cancelled_preview_token);
+        frameRenderOptions(), cancelled_preview_token);
     if (!cancelled_preview.image.isNull()
         || !cancelled_preview.error.contains(tr("cancel"), Qt::CaseInsensitive)) {
         if (error != nullptr) {

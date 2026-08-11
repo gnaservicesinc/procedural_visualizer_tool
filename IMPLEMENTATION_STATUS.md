@@ -157,7 +157,7 @@ consumers do not inherit minizip requirements.
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
 | 30 | Per-layer starting palettes | Complete | 1-256 embedded sRGB source colors, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
 | 31 | Transform layer | Complete (requested scope) | Directional horizontal/vertical/four-way mirrors plus horizontal and vertical flips run after surface mapping and before mapped-object effects and post-effects quantization. This is not a general move/scale/rotate affine transform. |
-| 32 | Metal GPU acceleration | Deferred - designed | Add a backend-neutral frame renderer with CPU reference/fallback, Metal resource/pipeline management, bounded scheduling, cancellation, and image/alpha/seam parity tests; no Metal backend exists yet. |
+| 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling intentionally remains CPU-only. |
 | 33 | Layer starting image | Partially complete - asset foundation | Generic image bytes can already be registered, bounded, checksummed, deduplicated, embedded, and recovered after original deletion. The layer source-mode schema/decoder/rendering/editor remain deferred. |
 | 34 | Closed reusable motion paths | Deferred - designed | Store named closed cubic paths separately from per-wave/effect/object bindings; use at least three nodes, handle modes, bounded arc-length LUT sampling, independent sync/phase/direction, and a dedicated editor. |
 | 35 | Synchronization tab and clock controls | Complete | Global Default/Frame/Time/Meter/Music clock, Hold/Linear/Smoothstep parameter interpolation, fit/exact spacing, direction/phase/beat offset, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. Music no longer adds a redundant swing-suppression control or popup. |
@@ -172,8 +172,14 @@ consumers do not inherit minizip requirements.
   parameter interpolation, audio-response routing, periodic/spatial phases,
   staged effects, palettes, transforms, float RGBA layer rendering,
   quantization, alpha, and analytic surface mappings.
+- `src/frame_renderer.cpp` / `src/metal_backend.cpp` / `src/metal_kernels.metal`:
+  backend-neutral dispatch, CPU fallback, cached metal-cpp resources and compute
+  pipelines, bounded admission, transactional cancellation, and GPU kernels for
+  base generation, ordered effects, analytic surfaces, transforms, and
+  quantization. Non-Apple/disabled builds use `src/metal_backend_stub.cpp`.
 - `src/composite.cpp`: project/layer validation, UUIDs, linear-light blend modes,
-  bounded sequential compositing, and project frame rendering.
+  bounded ordered compositing, hybrid CPU/Metal layer pairing, and project frame
+  rendering.
 - `src/obj_mesh.cpp` / `src/obj_surface.cpp`: bounded Wavefront parsing/cache and
   perspective, two-sided, layered custom-mesh rasterization.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG

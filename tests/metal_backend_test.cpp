@@ -1,0 +1,353 @@
+#include "procedural_visualizer_tool.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+
+int failures = 0;
+
+#define CHECK(condition)                                                        \
+    do {                                                                        \
+        if (!(condition)) {                                                     \
+            std::cerr << "CHECK failed at " << __FILE__ << ':' << __LINE__     \
+                      << ": " #condition "\n";                                \
+            ++failures;                                                        \
+        }                                                                       \
+    } while (false)
+
+struct Difference {
+    double maximum_rgb = 0.0;
+    double mean_rgb = 0.0;
+    double maximum_alpha = 0.0;
+    double mean_alpha = 0.0;
+};
+
+Difference difference(const pvt::Image& first, const pvt::Image& second) {
+    Difference result;
+    if (first.width != second.width || first.height != second.height
+        || first.pixels.size() != second.pixels.size()
+        || first.pixels.empty()) {
+        result.maximum_rgb = result.maximum_alpha = 1.0e30;
+        result.mean_rgb = result.mean_alpha = 1.0e30;
+        return result;
+    }
+    std::size_t rgb_count = 0U;
+    std::size_t alpha_count = 0U;
+    for (std::size_t offset = 0U; offset < first.pixels.size(); offset += 4U) {
+        for (std::size_t channel = 0U; channel < 3U; ++channel) {
+            const double value = std::fabs(
+                static_cast<double>(first.pixels[offset + channel])
+                - static_cast<double>(second.pixels[offset + channel]));
+            result.maximum_rgb = std::max(result.maximum_rgb, value);
+            result.mean_rgb += value;
+            ++rgb_count;
+        }
+        const double alpha = std::fabs(
+            static_cast<double>(first.pixels[offset + 3U])
+            - static_cast<double>(second.pixels[offset + 3U]));
+        result.maximum_alpha = std::max(result.maximum_alpha, alpha);
+        result.mean_alpha += alpha;
+        ++alpha_count;
+    }
+    result.mean_rgb /= static_cast<double>(rgb_count);
+    result.mean_alpha /= static_cast<double>(alpha_count);
+    return result;
+}
+
+void check_close(const pvt::Image& cpu, const pvt::Image& gpu,
+                 double maximum_rgb, double mean_rgb,
+                 double maximum_alpha, double mean_alpha,
+                 const char* label) {
+    const Difference value = difference(cpu, gpu);
+    if (value.maximum_rgb > maximum_rgb || value.mean_rgb > mean_rgb
+        || value.maximum_alpha > maximum_alpha
+        || value.mean_alpha > mean_alpha) {
+        std::cerr << label << " parity: max RGB " << value.maximum_rgb
+                  << ", mean RGB " << value.mean_rgb
+                  << ", max alpha " << value.maximum_alpha
+                  << ", mean alpha " << value.mean_alpha << '\n';
+        ++failures;
+    }
+}
+
+pvt::RenderConfig parity_config() {
+    pvt::RenderConfig config = pvt::default_config();
+    config.width = 96;
+    config.height = 64;
+    config.block_size = 4;
+    config.total_frames = 17;
+    config.output.write_alpha = true;
+    config.alpha.enabled = true;
+    config.alpha.minimum = 0.15;
+    config.alpha.maximum = 0.92;
+    config.alpha.spatial_frequency = 2.75;
+    config.alpha.cycles_per_loop = 3;
+    config.alpha.phase_degrees = 17.0;
+    config.palette = pvt::default_palette(2U);
+    config.palette.enabled = true;
+    config.swings.push_back(pvt::default_swing(1U));
+    config.swings.back().id = pvt::allocate_id(config);
+    config.swings.back().radius = 0.42;
+    config.swings.back().center_x = 0.31;
+    config.swings.back().center_y = 0.67;
+    config.transform.flip_horizontal = true;
+    config.quantization.enabled = true;
+    config.quantization.mode = pvt::QuantizationMode::Luminance;
+    config.quantization.levels = 13;
+    config.quantization.mix = 0.45;
+    return config;
+}
+
+void test_backend_contract() {
+    const pvt::RendererCapabilities capabilities =
+        pvt::renderer_capabilities();
+    CHECK(!capabilities.metal_status.empty());
+    if (capabilities.metal_available) {
+        CHECK(capabilities.metal_compiled);
+        CHECK(!capabilities.metal_device_name.empty());
+    }
+
+    pvt::RenderConfig config = parity_config();
+    pvt::FrameRenderOptions cpu_options;
+    cpu_options.backend = pvt::RenderBackend::Cpu;
+    pvt::FrameRenderOptions hybrid_options;
+    hybrid_options.backend = pvt::RenderBackend::CpuAndGpu;
+    pvt::FrameRenderOptions gpu_options;
+    gpu_options.backend = pvt::RenderBackend::Gpu;
+    gpu_options.maximum_gpu_frames_in_flight = 1U;
+    std::string error;
+    pvt::Image cpu;
+    CHECK(pvt::render_frame(config, 6, cpu_options, cpu, nullptr, &error));
+    if (!capabilities.metal_available) {
+        pvt::Image hybrid;
+        CHECK(pvt::render_frame(config, 6, hybrid_options, hybrid, nullptr,
+                                &error));
+        CHECK(cpu.pixels == hybrid.pixels);
+        pvt::Image unchanged = cpu;
+        CHECK(!pvt::render_frame(config, 6, gpu_options, unchanged, nullptr,
+                                 &error));
+        CHECK(unchanged.pixels == cpu.pixels);
+        return;
+    }
+
+    pvt::Image gpu;
+    CHECK(pvt::render_frame(config, 6, gpu_options, gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
+                "base/palette/alpha/transform/quantization");
+
+    const std::vector<pvt::EffectType> effect_types = {
+        pvt::EffectType::EndlessZoom,
+        pvt::EffectType::Ripple,
+        pvt::EffectType::Shake,
+        pvt::EffectType::FlagWave,
+        pvt::EffectType::Glow,
+        pvt::EffectType::BlockScale};
+    for (const pvt::EffectType type : effect_types) {
+        pvt::RenderConfig single_effect = parity_config();
+        single_effect.effects.clear();
+        single_effect.quantization.enabled = false;
+        single_effect.transform = {};
+        pvt::EffectConfig effect = pvt::default_effect(type);
+        effect.id = pvt::allocate_id(single_effect);
+        effect.enabled = true;
+        effect.intensity = type == pvt::EffectType::Glow ? 0.8 : 0.65;
+        effect.area_radius = 0.58;
+        if (type == pvt::EffectType::Glow) {
+            effect.radius_pixels = 5.0;
+            effect.threshold = 0.2;
+            effect.soft_knee = 0.4;
+        } else if (type == pvt::EffectType::BlockScale) {
+            effect.magnitude = 0.7;
+            effect.frequency = 2.2;
+            effect.secondary = 5.0;
+        } else {
+            effect.edge_mode = pvt::EdgeMode::Alpha;
+        }
+        // Exercise both effect stages across the set, not only texture-space
+        // kernels. Their compute code is shared but buffer ordering is not.
+        if (type == pvt::EffectType::FlagWave
+            || type == pvt::EffectType::BlockScale) {
+            effect.space = pvt::EffectSpace::Surface;
+        }
+        single_effect.effects.push_back(effect);
+        CHECK(pvt::render_frame_at_phase(single_effect, 0.37, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(single_effect, 0.37, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("single effect ")
+                                  + pvt::effect_type_name(type);
+        check_close(cpu, gpu, 0.20, 0.018, 0.035, 0.002,
+                    label.c_str());
+    }
+
+    pvt::RenderConfig quantized = parity_config();
+    quantized.effects.clear();
+    quantized.transform.flip_horizontal = false;
+    quantized.transform.flip_vertical = true;
+    quantized.transform.mirror = pvt::MirrorMode::FourWay;
+    const std::vector<pvt::QuantizationMode> quantization_modes = {
+        pvt::QuantizationMode::Rgb,
+        pvt::QuantizationMode::Luminance,
+        pvt::QuantizationMode::Hue};
+    for (const pvt::QuantizationMode mode : quantization_modes) {
+        quantized.quantization.mode = mode;
+        CHECK(pvt::render_frame(quantized, 8, cpu_options,
+                                cpu, nullptr, &error));
+        CHECK(pvt::render_frame(quantized, 8, gpu_options,
+                                gpu, nullptr, &error));
+        const std::string label = std::string("quantization ")
+                                  + pvt::quantization_mode_name(mode);
+        check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
+                    label.c_str());
+    }
+
+    // Coordinate stages and glow exercise every shared-buffer direction and
+    // retain straight-alpha coverage through the Metal blur pipeline.
+    config = parity_config();
+    config.quantization.enabled = false;
+    config.transform.flip_horizontal = false;
+    config.effects[1].enabled = true; // Ripple
+    config.effects[1].edge_mode = pvt::EdgeMode::Alpha;
+    config.effects[2].enabled = true; // Shake
+    config.effects[2].area_radius = 0.55;
+    config.effects[4].enabled = true; // Glow
+    config.effects[4].intensity = 0.8;
+    config.effects[4].radius_pixels = 5.0;
+    config.effects[4].threshold = 0.2;
+    config.effects[4].soft_knee = 0.4;
+    CHECK(pvt::render_frame(config, 5, cpu_options, cpu, nullptr, &error));
+    CHECK(pvt::render_frame(config, 5, gpu_options, gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.18, 0.02, 0.025, 0.0015,
+                "coordinate/glow/straight-alpha");
+
+    // Exact endpoints wrap by definition; near-endpoint samples ensure both
+    // implementations approach the same seam instead of only rendering phase
+    // zero twice.
+    config.effects[4].enabled = false;
+    pvt::Image cpu_before;
+    pvt::Image cpu_after;
+    pvt::Image gpu_before;
+    pvt::Image gpu_after;
+    CHECK(pvt::render_frame_at_phase(config, 1.0e-6, cpu_options,
+                                     cpu_after, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0 - 1.0e-6, cpu_options,
+                                     cpu_before, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0e-6, gpu_options,
+                                     gpu_after, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0 - 1.0e-6, gpu_options,
+                                     gpu_before, nullptr, &error));
+    check_close(cpu_before, gpu_before, 0.18, 0.02, 0.025, 0.0015,
+                "near seam before");
+    check_close(cpu_after, gpu_after, 0.18, 0.02, 0.025, 0.0015,
+                "near seam after");
+    const Difference cpu_seam = difference(cpu_before, cpu_after);
+    const Difference gpu_seam = difference(gpu_before, gpu_after);
+    CHECK(std::fabs(cpu_seam.mean_rgb - gpu_seam.mean_rgb) < 0.002);
+    CHECK(std::fabs(cpu_seam.mean_alpha - gpu_seam.mean_alpha) < 0.0005);
+
+    // All built-in analytic surfaces remain close to the CPU reference,
+    // including their straight-alpha front/rear coverage. Custom OBJ geometry
+    // intentionally stays on the bounded CPU rasterizer in hybrid mode.
+    config.surface.enabled = true;
+    config.surface.curvature = 0.78;
+    config.surface.lighting = 0.65;
+    config.surface.phase_degrees = 23.0;
+    config.surface.rotations_per_loop = 2;
+    config.output.write_alpha = true;
+    const std::vector<std::pair<pvt::SurfaceMapping, const char*>> surfaces = {
+        {pvt::SurfaceMapping::Plane, "plane surface"},
+        {pvt::SurfaceMapping::Cylinder, "cylinder surface"},
+        {pvt::SurfaceMapping::Sphere, "sphere surface"},
+        {pvt::SurfaceMapping::Cube, "cube surface"}};
+    for (const auto& surface : surfaces) {
+        config.surface.mapping = surface.first;
+        CHECK(pvt::render_frame(config, 4, cpu_options, cpu, nullptr, &error));
+        CHECK(pvt::render_frame(config, 4, gpu_options, gpu, nullptr, &error));
+        check_close(cpu, gpu, 0.24, 0.018, 0.06, 0.0025,
+                    surface.second);
+    }
+
+    config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+    config.surface.obj_path =
+        PVT_TEST_SOURCE_DIR "/tests/assets/obj/closed_cube.obj";
+    pvt::Image sentinel = cpu;
+    CHECK(!pvt::render_frame(config, 4, gpu_options, sentinel, nullptr,
+                             &error));
+    CHECK(error.find("OBJ") != std::string::npos);
+    CHECK(sentinel.pixels == cpu.pixels);
+    pvt::Image fallback;
+    pvt::Image reference;
+    CHECK(pvt::render_frame(config, 4, hybrid_options, fallback, nullptr,
+                            &error));
+    CHECK(pvt::render_frame(config, 4, cpu_options, reference, nullptr,
+                            &error));
+    CHECK(fallback.pixels == reference.pixels);
+
+    std::atomic_bool cancel {true};
+    sentinel = cpu;
+    config.surface.enabled = false;
+    CHECK(!pvt::render_frame(config, 3, gpu_options, sentinel, &cancel,
+                             &error));
+    CHECK(sentinel.pixels == cpu.pixels);
+
+    gpu_options.maximum_gpu_frames_in_flight =
+        pvt::kMaximumGpuFramesInFlight + 1U;
+    CHECK(!pvt::render_frame(config, 3, gpu_options, sentinel, nullptr,
+                             &error));
+}
+
+void test_hybrid_project_parity() {
+    const auto capabilities = pvt::renderer_capabilities();
+    if (!capabilities.metal_available) return;
+    pvt::ProjectConfig project = pvt::default_project();
+    project.canvas.width = 96;
+    project.canvas.height = 64;
+    project.canvas.block_size = 4;
+    project.output.write_alpha = true;
+    project.layers.front().render = parity_config();
+    pvt::LayerConfig upper = pvt::default_layer(1U);
+    upper.file_id = pvt::allocate_layer_file_id(project);
+    upper.opacity = 0.55;
+    upper.blend_mode = pvt::BlendMode::Overlay;
+    upper.render.alpha.enabled = true;
+    upper.render.alpha.minimum = 0.2;
+    upper.render.alpha.maximum = 0.8;
+    upper.render.effects[1].enabled = true;
+    project.layers.push_back(std::move(upper));
+
+    pvt::FrameRenderOptions cpu_options;
+    cpu_options.backend = pvt::RenderBackend::Cpu;
+    pvt::FrameRenderOptions hybrid_options;
+    hybrid_options.backend = pvt::RenderBackend::CpuAndGpu;
+    hybrid_options.maximum_gpu_frames_in_flight = 1U;
+    pvt::Image cpu;
+    pvt::Image hybrid;
+    std::string error;
+    CHECK(pvt::render_project_frame(project, 7, cpu_options, cpu, nullptr,
+                                    &error));
+    CHECK(pvt::render_project_frame(project, 7, hybrid_options, hybrid,
+                                    nullptr, &error));
+    check_close(cpu, hybrid, 0.16, 0.014, 0.006, 0.0005,
+                "hybrid layered project");
+}
+
+} // namespace
+
+int main() {
+    test_backend_contract();
+    test_hybrid_project_parity();
+    if (failures != 0) {
+        std::cerr << failures << " Metal backend test(s) failed.\n";
+        return EXIT_FAILURE;
+    }
+    std::cout << "Metal backend availability, fallback, cancellation, alpha, "
+                 "image, layer, and seam parity tests passed.\n";
+    return EXIT_SUCCESS;
+}

@@ -1087,6 +1087,22 @@ bool select_sequence_worker_count(const SequenceRenderOptions& options,
     return true;
 }
 
+std::size_t backend_adjusted_peak_bytes(
+    std::size_t reference_peak_bytes,
+    const SequenceRenderOptions& options) {
+    // Hybrid project rendering can hold one CPU and one Metal layer working
+    // set concurrently. Count that pair in the existing aggregate sequence
+    // budget so frame-level workers cannot multiply hidden per-layer memory.
+    if (options.frame.backend != RenderBackend::CpuAndGpu) {
+        return reference_peak_bytes;
+    }
+    std::size_t adjusted = 0U;
+    if (!checked_multiply(reference_peak_bytes, 2U, &adjusted)) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return adjusted;
+}
+
 enum class FrameFailureStage {
     None,
     Render,
@@ -1367,13 +1383,14 @@ bool render_sequence_impl(const RenderConfig& config,
     }
 
     return render_prepared_sequence(
-        total_frames, output_config, validation.estimated_peak_bytes,
+        total_frames, output_config,
+        backend_adjusted_peak_bytes(validation.estimated_peak_bytes, options),
         options, progress, cancel, "Rendering", "frame",
-        [&config](int frame_index, Image& image,
+        [&config, &options](int frame_index, Image& image,
                   const std::atomic_bool* worker_cancel,
                   std::string* frame_error) {
-            return render_frame_cancellable(config, frame_index, image,
-                                            worker_cancel, frame_error);
+            return render_frame(config, frame_index, options.frame, image,
+                                worker_cancel, frame_error);
         },
         error);
 }
@@ -1452,13 +1469,14 @@ bool render_project_sequence_impl(const ProjectConfig& project,
 
     return render_prepared_sequence(
         total_frames, output_config,
-        validation.estimated_peak_bytes, options, progress, cancel,
+        backend_adjusted_peak_bytes(validation.estimated_peak_bytes, options),
+        options, progress, cancel,
         "Project rendering", "project frame",
-        [&project](int frame_index, Image& image,
+        [&project, &options](int frame_index, Image& image,
                    const std::atomic_bool* worker_cancel,
                    std::string* frame_error) {
-            return render_project_frame(project, frame_index, image,
-                                        worker_cancel, frame_error);
+            return render_project_frame(project, frame_index, options.frame,
+                                        image, worker_cancel, frame_error);
         },
         error);
 }

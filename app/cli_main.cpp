@@ -1836,8 +1836,11 @@ bool interactive_menu(CliState& state) {
                 break;
             case 14: {
                 std::string error;
+                pvt::SequenceRenderOptions render_options;
+                render_options.frame.backend = pvt::RenderBackend::CpuAndGpu;
                 if (pvt::render_project_sequence(
                         state.document.project,
+                        render_options,
                         [](int completed, int total) {
                             std::cout << '\r' << "Rendered " << completed << '/' << total
                                       << std::flush;
@@ -1884,6 +1887,9 @@ void print_help(const char* program) {
         << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
         << "  --workers 0.." << pvt::kMaximumSequenceWorkers
         << "  (0 auto, 1 sequential)\n"
+        << "  --backend cpu|cpu+gpu|gpu          Rendering policy (default cpu+gpu)\n"
+        << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
+        << "  (0 uses the bounded default of 2)\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping and final alpha)\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
         << "  --output-dir PATH --prefix TEXT --start-frame N --digits N\n"
@@ -1919,6 +1925,7 @@ bool option_takes_value(const std::string& option) {
            || option == "--music" || option == "--music-tempo"
            || option == "--beat-offset-ms"
            || option == "--png-compression" || option == "--workers"
+           || option == "--backend" || option == "--gpu-in-flight"
            || option == "--obj"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
            || option == "--start-frame" || option == "--digits";
@@ -1948,6 +1955,22 @@ bool parse_blend_mode(const std::string& text, pvt::BlendMode& mode) {
         mode = pvt::BlendMode::Multiply;
     } else if (value == "add") {
         mode = pvt::BlendMode::Add;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool parse_render_backend(const std::string& text,
+                          pvt::RenderBackend& backend) {
+    const std::string value = lower_ascii(text);
+    if (value == "cpu") {
+        backend = pvt::RenderBackend::Cpu;
+    } else if (value == "cpu+gpu" || value == "cpu-gpu"
+               || value == "hybrid" || value == "auto") {
+        backend = pvt::RenderBackend::CpuAndGpu;
+    } else if (value == "gpu" || value == "metal") {
+        backend = pvt::RenderBackend::Gpu;
     } else {
         return false;
     }
@@ -2090,6 +2113,7 @@ int quick_self_test() {
 int main(int argc, char** argv) {
     CliState state;
     pvt::SequenceRenderOptions render_options;
+    render_options.frame.backend = pvt::RenderBackend::CpuAndGpu;
     bool render_now = false;
     bool loaded_document = false;
     bool save_default = false;
@@ -2431,6 +2455,20 @@ int main(int argc, char** argv) {
                                         pvt::kMaximumSequenceWorkers),
                                     integer)) {
             render_options.worker_count = static_cast<std::size_t>(integer);
+        } else if (option == "--backend") {
+            pvt::RenderBackend backend;
+            if (!parse_render_backend(value, backend)) {
+                std::cerr << "Rendering backend must be cpu, cpu+gpu, or gpu.\n";
+                return EXIT_FAILURE;
+            }
+            render_options.frame.backend = backend;
+        } else if (option == "--gpu-in-flight"
+                   && parse_integer(
+                          value, 0,
+                          static_cast<long long>(pvt::kMaximumGpuFramesInFlight),
+                          integer)) {
+            render_options.frame.maximum_gpu_frames_in_flight =
+                static_cast<std::size_t>(integer);
         } else if (option == "--obj" && valid_output_directory(value)) {
             ProjectDocument candidate = state.document;
             pvt::ProjectAttachment attached;

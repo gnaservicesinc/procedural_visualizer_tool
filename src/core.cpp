@@ -1,5 +1,6 @@
 #include "procedural_visualizer_tool.h"
 
+#include "frame_renderer_internal.h"
 #include "obj_surface.h"
 
 #include <algorithm>
@@ -3300,6 +3301,139 @@ bool render_frame_at_timeline_sample_cancellable(
 }
 
 } // namespace
+
+namespace detail {
+namespace {
+
+bool prepare_frame_for_backend_timeline(const RenderConfig& config,
+                                        const TimelineSample& timeline,
+                                        PreparedFrame& prepared,
+                                        std::string* error) {
+    if (!std::isfinite(timeline.normalized_phase)) {
+        set_error(error, "Normalized render phase must be finite.");
+        return false;
+    }
+    const ValidationResult validation = validate_impl(config, false);
+    if (!validation.ok) {
+        set_error(error, validation.message);
+        return false;
+    }
+
+    PreparedFrame candidate;
+    candidate.loop_phase = kTau * wrap_unit(timeline.normalized_phase);
+    const MotionClockState motion_clock =
+        prepare_motion_clock(config, candidate.loop_phase);
+    candidate.global_motion_phase = motion_clock.global_phase;
+    candidate.spatial_swings.reserve(motion_clock.spatial_swing_count);
+    for (std::size_t index = 0U;
+         index < motion_clock.spatial_swing_count; ++index) {
+        const SpatialSwingSample& swing = motion_clock.spatial_swings[index];
+        candidate.spatial_swings.push_back(
+            {swing.center_x, swing.center_y, swing.radius,
+             swing.contribution});
+    }
+
+    const double wave_response =
+        config.audio_reactive.enabled
+                && config.audio_reactive.waves_enabled
+            ? music_feature_value(timeline.music,
+                                  config.audio_reactive.wave_source)
+            : 0.0;
+    candidate.waves.reserve(config.waves.size());
+    for (const WaveConfig& wave : config.waves) {
+        if (!wave.enabled) {
+            continue;
+        }
+        double amplitude = wave.amplitude;
+        if (config.audio_reactive.enabled
+            && config.audio_reactive.waves_enabled
+            && (!config.audio_reactive.synchronized_only
+                || wave.synchronized)) {
+            amplitude *= std::max(
+                0.0, 1.0 + config.audio_reactive.wave_amount * wave_response);
+        }
+        candidate.waves.push_back(
+            {wave.x_percent * 0.01 * static_cast<double>(config.width),
+             wave.y_percent * 0.01 * static_cast<double>(config.height),
+             amplitude, wave.spatial_frequency,
+             radians(wave.phase_degrees), wave.direction,
+             wave.cycles_per_loop, wave.synchronized});
+    }
+
+    if (config.audio_reactive.enabled
+        && config.audio_reactive.color_enabled) {
+        candidate.audio_hue_shift_degrees =
+            config.audio_reactive.color_amount_degrees
+            * music_feature_value(timeline.music,
+                                  config.audio_reactive.color_source);
+    }
+
+    const std::vector<Color> palette =
+        prepare_starting_palette(config.palette);
+    candidate.starting_palette.reserve(palette.size());
+    for (const Color& color : palette) {
+        candidate.starting_palette.push_back(
+            {color.r, color.g, color.b, color.a});
+    }
+
+    candidate.effects.reserve(config.effects.size());
+    for (const EffectConfig& authored : config.effects) {
+        EffectConfig effect = authored;
+        if (config.audio_reactive.enabled
+            && config.audio_reactive.effects_enabled
+            && (!config.audio_reactive.synchronized_only
+                || effect.synchronized)) {
+            effect.intensity *= std::max(
+                0.0, 1.0 + config.audio_reactive.effect_amount
+                               * music_feature_value(
+                                     timeline.music,
+                                     config.audio_reactive.effect_source));
+        }
+        if (!effect_has_render_work(effect)) {
+            continue;
+        }
+        candidate.effects.push_back(
+            {effect.type, effect.space, effect.edge_mode,
+             effect_phase(config, effect, candidate.loop_phase,
+                          motion_clock),
+             effect.intensity, effect.magnitude, effect.frequency,
+             effect.secondary, effect.center_x, effect.center_y,
+             radians(effect.angle_degrees), effect.radius_pixels,
+             effect.threshold, effect.soft_knee, effect.area_radius});
+    }
+
+    prepared = std::move(candidate);
+    set_error(error, std::string{});
+    return true;
+}
+
+} // namespace
+
+bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
+                                        double normalized_phase,
+                                        PreparedFrame& prepared,
+                                        std::string* error) {
+    TimelineSample timeline;
+    timeline.normalized_phase = normalized_phase;
+    if (config.clock.mode == ClockMode::Music
+        && config.clock.music.duration_seconds > 0.0
+        && std::isfinite(normalized_phase)) {
+        timeline.music = music_features_at(
+            config.clock.music,
+            wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
+    }
+    return prepare_frame_for_backend_timeline(config, timeline, prepared,
+                                              error);
+}
+
+bool prepare_frame_for_backend(const RenderConfig& config, int frame_index,
+                               PreparedFrame& prepared,
+                               std::string* error) {
+    return prepare_frame_for_backend_timeline(
+        config, resolve_timeline_sample(config, frame_index), prepared, error);
+}
+
+} // namespace detail
 
 bool render_frame_at_phase_cancellable(const RenderConfig& config,
                                        double normalized_phase,

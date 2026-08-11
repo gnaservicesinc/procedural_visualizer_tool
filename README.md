@@ -17,6 +17,12 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
   beat/spectral analyzer. WAV (including IEEE 32-bit float), FLAC, and MP3 are
   accepted. These private targets are omitted from a core-library-only build.
 - Qt 6.5 or newer with Widgets and Concurrent components for the optional GUI.
+- On Apple platforms, the optional Metal backend uses Apple's header-only
+  [metal-cpp](https://developer.apple.com/metal/cpp/) from
+  `../3rd_party/metal-cpp` plus the system Foundation and Metal frameworks. Set
+  `PVT_ENABLE_METAL=OFF` for an explicitly CPU-only build, or
+  point `PVT_METAL_CPP_DIR` at another metal-cpp checkout. Other platforms build
+  the same public backend API with the CPU fallback.
 
 ## Quick start
 
@@ -119,13 +125,18 @@ bundle and native non-macOS executable names.
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
+- CPU, CPU + GPU, and strict GPU frame backends. CPU + GPU is the application
+  default: it runs adjacent project layers through bounded CPU and Metal lanes
+  where possible, then preserves bottom-to-top compositing order. Strict GPU
+  reports unavailable or unsupported work. Custom OBJ depth peeling remains on
+  the CPU; hybrid mode falls back automatically for it.
 
 The GUI includes a topmost-first Layers dock, project naming, per-layer blend and
 opacity controls, a session-only **Solo** preview, draggable center handles for
 waves, swings, and centered effects with visible radius rings, ordered
 wave/swing/effect editors, palette and transform controls, type-aware effect
 controls, a live checkerboard alpha preview, a continuously updating timeline,
-and background composite/video export with cooperative cancellation. The
+and background composite export with cooperative cancellation. The
 **Synchronization** tab owns the global Clock block plus the selected layer's
 Swing and Audio Response blocks. The Output tab is global while the Layer Render
 tab always edits the selected layer. **Randomize
@@ -134,9 +145,10 @@ settings; **Randomize mix** creates a new bounded mix. File dialogs remember
 their last usable folder and otherwise begin in the home folder.
 
 Every GUI field edit and structural move participates in session undo/redo. The
-step limit, window layout, and dialog locations are stored with the platform's
-normal per-user settings service (`QSettings`); these preferences are not placed
-inside a portable project. A separate hard 128 MiB snapshot budget prevents a
+step limit, rendering backend, window layout, and dialog locations are stored
+with the platform's normal per-user settings service (`QSettings`); these
+preferences are not placed inside a portable project. A separate hard 128 MiB
+snapshot budget prevents a
 large, high-layer document from turning a generous step limit into unbounded
 memory growth; if history must be trimmed, the document remains correctly dirty.
 Saved-version history is separate from session undo.
@@ -199,13 +211,33 @@ does not force it back on. Swings remain governed by their own active-layer
 checkbox and can be mixed with audio response. A relink must match the cached
 digest; reanalyze is the explicit way to accept changed audio.
 
-## Parallel sequence export
+## Parallel sequence export and Metal
 
-Sequence exports use a bounded CPU worker pool. Each worker renders and encodes
-an independent frame; completed files are still installed atomically in
+Sequence exports use a bounded frame worker pool. Each worker renders and
+encodes an independent frame; completed files are still installed atomically in
 ascending frame order, and progress callbacks run serially on the calling
 thread. This keeps collision protection, deterministic filenames, cancellation,
 and callback behavior compatible with the former sequential exporter.
+
+The CLI and GUI default to **CPU + GPU**. A multi-layer frame pairs one CPU lane
+with one Metal lane when both layers are supported, while single layers and any
+remaining supported layer use Metal. CPU rendering remains the reference and is
+used automatically when Metal is unavailable, a Metal operation fails, or a
+custom OBJ surface requires the bounded CPU rasterizer. **GPU (Strict)** never
+hides such a fallback: every contributing layer must use Metal, while final
+linear-light project compositing remains on the CPU. The installed library's
+legacy overloads retain CPU as their compatibility default; callers opt into
+acceleration with
+`FrameRenderOptions` or `SequenceRenderOptions::frame`.
+
+Metal compiles the embedded shader source once per process, caches its command
+queue and compute pipelines, and admits at most two frames by default (hard
+limit eight) before allocating their three shared float-RGBA working buffers.
+The device's recommended working-set size and the existing aggregate sequence
+memory budget provide additional bounds. Cancellation prevents queued work from
+being submitted and keeps the destination transactional. A command buffer that
+has already reached the GPU is allowed to finish; its result is discarded when
+cancellation is observed.
 
 The GUI and the default library overload select workers automatically. The CLI
 can choose the upper bound explicitly:
@@ -217,6 +249,11 @@ can choose the upper bound explicitly:
 # Reproducible sequential reference, or an explicit bounded pool
 ./build/render9 --render --workers 1
 ./build/render9 --render --workers 12
+
+# Manual backend selection and optional Metal admission bound
+./build/render9 --render --backend cpu
+./build/render9 --render --backend cpu+gpu --gpu-in-flight 2
+./build/render9 --render --backend gpu
 ```
 
 The requested value is capped by the frame count, the reported hardware
@@ -517,8 +554,9 @@ The public header is `include/procedural_visualizer_tool.h`. It exposes:
 - float RGBA layer/project rendering by frame index or normalized phase;
 - bounded linear-light blend compositing, individual PNG/EXR writing, and
   composite sequence export;
-- a bounded `SequenceRenderOptions` CPU worker policy, ordered atomic output,
-  and serialized progress/cancellation callbacks; and
+- backend-neutral CPU/CPU+GPU/GPU frame options and Metal capability reporting;
+- a bounded `SequenceRenderOptions` worker policy, ordered atomic output, and
+  serialized progress/cancellation callbacks; and
 - backward-compatible transactional `.pvt` setup save/load.
 
 Bundle/version persistence is an internal application helper, not installed
@@ -588,8 +626,11 @@ rejection, adaptive beat/tempo changes, dense transient and spectral/pitch
 features, music-clock interpolation and response routing,
 8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
 deterministic dithering, byte-identical one/four-worker sequence output,
-callback/cancel behavior, sequence collision preflight, Unicode paths, and the
-public library API. It also exercises CLI help, option rejection, and the
+callback/cancel behavior, sequence collision preflight, Unicode paths,
+CPU/Metal base/effect/analytic-surface image and straight-alpha parity,
+near-seam parity, strict-backend errors, hybrid fallback, bounded admission,
+transactional cancellation, and the public library API. It also exercises CLI
+help, option rejection, and the
 multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's
 offscreen platform, exercises project/layer/bundle/synchronization state, verifies
 that Play installs advancing completed preview frames, and checks adaptive UI
@@ -600,14 +641,6 @@ layout behavior.
 The following requests are deliberately not represented as half-working fields
 or external-path shortcuts:
 
-- **Metal acceleration:** rendering is currently CPU-only. A future macOS Metal
-  implementation should sit behind a backend-neutral frame-render interface,
-  with the current CPU renderer retained as the reference and fallback. Backend
-  selection, pipeline/resource caching, bounded GPU memory, cancellation, and
-  CPU/Metal image/alpha/seam parity need to be designed and tested together.
-  The existing frame worker scheduler should choose an appropriate CPU or GPU
-  execution policy rather than layering ad-hoc Metal versions into individual
-  effects.
 - **Layer starting images:** the bounded, checksummed, readable attachment
   store is implemented and can already retain generic image attachments. The
   remaining work is the actual layer source-mode schema, decoder/cache, GUI,
@@ -630,17 +663,17 @@ or external-path shortcuts:
 
 ## Current boundary
 
-Plane, cylinder, sphere, and cube mappings use analytic CPU intersections;
-custom OBJ mapping uses a bounded cached parser and CPU rasterizer. OBJ materials
+Plane, cylinder, sphere, and cube mappings have analytic CPU and Metal paths;
+custom OBJ mapping uses a bounded cached CPU parser and rasterizer. OBJ materials
 and textures are intentionally not loaded because the procedural frame supplies
-the surface image. Cooperative cancellation is checked within base rendering,
-effects, surface mapping, quantization, layer compositing, and OBJ rasterization.
-An image encoder already writing one atomic output file is allowed to finish that
-file before cancellation returns. Music, custom OBJ, and registered generic
-attachments are embedded under their content identity and exact original
-filename; starting-image rendering is not yet implemented. Metal rendering and
-reusable path animation remain planned
-work as described above. See
+the surface image. Cooperative cancellation is checked within CPU rendering,
+Metal admission, effects, surface mapping, quantization, layer compositing, and
+OBJ rasterization. An in-flight GPU command buffer or image encoder already
+writing one atomic output file is allowed to finish, but its result is discarded
+before destination installation when cancellation is observed. Music, custom
+OBJ, and registered generic attachments are embedded under their content
+identity and exact original filename; starting-image rendering is not yet
+implemented. Reusable path animation remains planned work as described above. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 
 This project is licensed under GPLv3. Applications distributed with the library
