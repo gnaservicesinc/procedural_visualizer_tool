@@ -354,15 +354,26 @@ Midnight Bonfire/
   assets/
     <sha256-of-music-or-obj-or-other-attachment>/
       original-filename.ext
+    <sha256-of-music-analysis>/
+      music_analysis.txt
   0/
     metadata.txt
     render_output.txt
+    music_analysis.txt
     0.pvt
     1.pvt
 ```
 
-`render_output.txt` holds global canvas/clock/export settings. Each numbered
-`.pvt` stores only one layer's render data. Version metadata stores the project
+`render_output.txt` holds the small global canvas/clock/export settings, while
+the small per-version `music_analysis.txt` is a checksum reference to a shared,
+content-addressed analysis object. The large time-varying feature table is
+therefore stored once when multiple versions use identical analysis, but each
+version remains independently reconstructable: there is no base snapshot or
+delta chain that can be invalidated by deleting an older version. Exact legacy
+snapshots with embedded analysis are compacted on their next Save without
+discarding history; direct/manual edits are either preserved or promoted through
+the normal external-edit path. Each numbered `.pvt` stores only one layer's
+render data. Version metadata stores the project
 display name, program/time, layer UUIDs, stable file IDs, order, names, enabled
 states, blend modes, opacity, attachment references, and SHA-256 digests. Root
 assets use collision-safe content-identity directories, but the asset itself
@@ -385,7 +396,10 @@ portable across ZIP extractors and avoids archive symlink hazards. A changed Sav
 appends the next numeric directory, then replaces root metadata/current through
 checked atomic file operations (a ZIP replaces the whole outer archive);
 old snapshots are immutable and gaps are valid. A no-change Save validates the
-entire bundle and creates no version. **Make Current** changes root bookkeeping
+entire bundle and creates no version. When rewriting a ZIP, already validated,
+unchanged entries retain their compressed bytes rather than being recompressed;
+the completed temporary archive is still read back and compared with the exact
+desired file set before installation. **Make Current** changes root bookkeeping
 and the pointer but never alters a numbered snapshot;
 **Revert as New** copies the selected snapshot into a new highest-numbered
 version, so even a rollback can itself be rolled back. Semantic diffs follow
@@ -398,8 +412,11 @@ aliases keep valid descendants connected even if an ancestor was edited or
 deleted outside the application. Saves are serialized with a hidden sibling
 advisory lock (`.<bundle>.pvt-save.lock`) and compare the complete expected
 on-disk digest while holding that lock, so cooperating processes cannot erase a
-newer save. The lock file contains no project data and may safely remain beside
-the bundle between sessions.
+newer save. The lock file contains no project data and intentionally remains
+beside the bundle between sessions. Its presence does not mean a save is active;
+the operating-system lock state does. Removing it after unlock would be unsafe,
+because a waiting process and a new process could then lock different file
+identities while writing the same project.
 
 Load is read-only and transactional. It tries the valid `current` snapshot first,
 then numeric directories from highest to lowest until one validates. Missing or
@@ -419,7 +436,9 @@ per-file/expanded size, path length, compression ratio, metadata records, layers
 and versions; reject traversal, absolute/drive/UNC paths, NUL or malformed UTF-8,
 case-colliding duplicates, encrypted/multidisk archives, symlinks and special
 files, unsupported compression, unexpected tree entries, CRC failures, and
-unparseable or invalid typed values. ZIP replacement and new directory-version commits use
+unparseable or invalid typed values. Unpacked bundles ignore regular `.DS_Store`
+files because Finder can create them merely by browsing a directory; ZIP bundles
+remain exact and do not allow such extra entries. ZIP replacement and new directory-version commits use
 checked sibling staging and atomic rename operations. Save also refuses a stale
 or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted

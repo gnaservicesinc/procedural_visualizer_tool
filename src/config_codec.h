@@ -9,6 +9,8 @@ namespace pvt::detail {
 
 inline constexpr std::uint32_t kLayerConfigFormatVersion = 3U;
 inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 2U;
+inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 1U;
+inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 1U;
 
 // In-memory access to the installed legacy codec. These are exported only so
 // the non-installed bundle helper can reuse the exact parser when the main
@@ -39,6 +41,27 @@ bool deserialize_render_output_config(const std::string& serialized,
                                       CanvasLoopConfig& canvas,
                                       ExportConfig& output,
                                       std::string* error = nullptr);
+
+// Project bundles split the potentially large, deterministic analysis table
+// from the small per-version render/output file. Legacy setup and render/output
+// readers continue to accept the original embedded representation.
+bool serialize_music_analysis_config(const MusicAnalysis& analysis,
+                                     std::string& serialized,
+                                     std::string* error = nullptr);
+bool deserialize_music_analysis_config(const std::string& serialized,
+                                       MusicAnalysis& analysis,
+                                       std::string* error = nullptr);
+
+bool serialize_split_render_output_config(const CanvasLoopConfig& canvas,
+                                          const ExportConfig& output,
+                                          std::string& serialized,
+                                          std::string* error = nullptr);
+bool deserialize_split_render_output_config(
+    const std::string& serialized,
+    const std::string& music_analysis,
+    CanvasLoopConfig& canvas,
+    ExportConfig& output,
+    std::string* error = nullptr);
 
 } // namespace pvt::detail
 

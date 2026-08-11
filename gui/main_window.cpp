@@ -7744,7 +7744,14 @@ bool MainWindow::saveProjectPath(const QString& path) {
     refreshVersionsPage();
     updateWindowTitle();
     if (report.validated_only) {
-        status_->setText(tr("No changes; validated the complete bundle at %1").arg(path));
+        if (report.compacted_storage) {
+            status_->setText(
+                tr("No project changes; validated and compacted shared music analysis at %1")
+                    .arg(path));
+        } else {
+            status_->setText(
+                tr("No changes; validated the complete bundle at %1").arg(path));
+        }
     } else if (report.promoted_external_change) {
         status_->setText(tr("Saved external changes/integrity mismatch as version %1 in %2")
                              .arg(report.version).arg(path));

@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-09
+Last updated: 2026-08-11
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -25,8 +25,12 @@ RGB/RGBA channel selection is global output data. Adding a second layer enables
 final alpha without changing either layer's art.
 
 Normal Save now creates a versioned ZIP or unpacked project bundle. Each numbered
-snapshot owns its `render_output.txt`, layer `.pvt` files, and checksummed
-metadata. Root metadata and its separate SHA-256 sidecar index immutable versions;
+snapshot owns a small `render_output.txt`, an optional checksum reference to a
+shared content-addressed music-analysis object, layer `.pvt` files, and
+checksummed metadata. Identical multi-megabyte analysis tables are stored once,
+without history deltas or a dependency on the oldest version. Exact legacy
+snapshots are compacted transactionally on their next Save. Root metadata and
+its separate SHA-256 sidecar index immutable versions;
 `current` is a portable checksummed text pointer rather than a filesystem
 symlink. Changed saves append, no-change saves fully validate, Make Current only
 changes root bookkeeping/pointer state (never a snapshot), and Revert creates a
@@ -41,6 +45,9 @@ and lineage aliases keep descendants valid when an ancestor is externally
 changed or removed. A hidden sibling OS advisory lock plus an expected whole-tree
 digest comparison serializes cooperating writers and closes the stale-save
 check/commit window without placing machine-specific lock state inside bundles.
+The empty lock sidecar intentionally persists: ownership is represented by the
+OS lock, and unlinking the shared file could split concurrent writers across
+different inodes.
 
 The sanitized archive/directory root is selected on first Save/Save As and then
 stays stable for that associated bundle when the user chooses to keep its
@@ -55,8 +62,19 @@ The ZIP/directory boundary is hostile-input hardened: traversal, absolute or
 platform-special paths, malformed UTF-8/NUL, collisions, symlinks/special files,
 encryption/multidisk/unsupported compression, expansion ratios, counts, sizes,
 unexpected records, checksums, UUIDs, enums, and values are bounded and checked.
+Regular Finder `.DS_Store` files are ignored only in unpacked bundles so browsing
+a directory project cannot make it unloadable; link/special-file checks remain.
 New directory snapshots and ZIP replacements use sibling staging/atomic rename;
-stale or divergent destinations are refused.
+stale or divergent destinations are refused. ZIP updates raw-copy validated
+unchanged compressed entries and read back the complete temporary archive before
+installation, avoiding repeated compression of large attachments and history.
+
+On the reported 23-version Cody Fire fixture, shared analysis reduced the ZIP
+from 90,408,835 to 68,864,205 bytes and the logical bundle from roughly 179 MiB
+to 74,609,085 bytes. A reproduced clean CLI load-and-save fell from 49.97 to
+7.36 seconds; the one-time migration took 17.19 seconds. The remaining ZIP size
+is dominated by the already single-copy, poorly compressible 69,120,154-byte
+WAV attachment.
 
 All registered files now use a generic readable attachment store. Music, custom
 OBJ meshes, images, and future attachment types are copied into a managed cache
@@ -145,8 +163,8 @@ consumers do not inherit minizip requirements.
 | 17 | Full render-config layers | Complete | Global canvas/export data is split from per-layer render data; layer switches cannot overwrite global output state. Stable UUIDs/file IDs survive names and reorders. |
 | 18 | Layer compositing | Complete | Sequential bounded float-RGBA compositing implements all 11 requested modes plus opacity; only one layer frame and one accumulator are retained. |
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
-| 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, per-version global output, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
-| 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
+| 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
+| 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
 | 22 | Legacy compatibility without overwrite | Complete | Setup v1-v4 imports into a new unsaved one-layer project; setup v5 adds clock/music/audio-response and attachment identity data. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; an extensible Application Settings dialog exposes the step limit and rendering backend from a top-level menu and toolbar, while the hard 128 MiB history budget and all UI preferences live in per-user `QSettings`, outside bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |

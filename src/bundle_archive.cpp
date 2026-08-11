@@ -377,6 +377,13 @@ bool safe_archive_path(const std::string& path) {
     return true;
 }
 
+bool ignored_unpacked_metadata_path(std::string_view path) {
+    const std::size_t slash = path.find_last_of('/');
+    const std::string_view basename =
+        slash == std::string_view::npos ? path : path.substr(slash + 1U);
+    return basename == ".DS_Store";
+}
+
 bool lowercase_sha256_component(std::string_view value) {
     return value.size() == 64U
            && std::all_of(value.begin(), value.end(), [](char character) {
@@ -626,6 +633,16 @@ bool top_level_numeric(std::string_view path, std::string& number) {
     return true;
 }
 
+bool supported_transactional_update(std::string_view path) {
+    std::string number;
+    if (!top_level_numeric(path, number)) return false;
+    const std::size_t slash = path.find('/');
+    if (slash == std::string_view::npos) return false;
+    const std::string_view filename = path.substr(slash + 1U);
+    return filename == "render_output.txt"
+           || filename == "music_analysis.txt";
+}
+
 bool update_existing_directory(const fs::path& destination,
                                const BundleFileSet& desired,
                                std::string* error) {
@@ -636,6 +653,14 @@ bool update_existing_directory(const fs::path& destination,
 
     std::set<std::string> new_versions;
     std::vector<const std::pair<const std::string, std::string>*> new_assets;
+    std::vector<const std::pair<const std::string, std::string>*> updates;
+    for (const std::string& path : desired.transactional_updates) {
+        if (!supported_transactional_update(path)
+            || desired.files.find(path) == desired.files.end()) {
+            return fail(error,
+                        "Bundle save requested an invalid transactional update path.");
+        }
+    }
     for (const auto& entry : desired.files) {
         const auto old = existing.files.find(entry.first);
         if (old != existing.files.end()) {
@@ -643,8 +668,12 @@ bool update_existing_directory(const fs::path& destination,
                 && entry.first != "metadata.txt"
                 && entry.first != "metadata.sha256"
                 && entry.first != "current") {
-                return fail(error, "Save would overwrite immutable bundle entry '"
-                                       + entry.first + "'.");
+                if (desired.transactional_updates.find(entry.first)
+                    == desired.transactional_updates.end()) {
+                    return fail(error, "Save would overwrite immutable bundle entry '"
+                                           + entry.first + "'.");
+                }
+                updates.push_back(&entry);
             }
             continue;
         }
@@ -654,6 +683,11 @@ bool update_existing_directory(const fs::path& destination,
         }
         if (asset_entry_path(entry.first)) {
             new_assets.push_back(&entry);
+            continue;
+        }
+        if (desired.transactional_updates.find(entry.first)
+            != desired.transactional_updates.end()) {
+            updates.push_back(&entry);
             continue;
         }
         std::string version;
@@ -676,7 +710,7 @@ bool update_existing_directory(const fs::path& destination,
         std::error_code filesystem_error;
         const fs::file_status assets_status =
             fs::symlink_status(assets_directory, filesystem_error);
-        if (filesystem_error) {
+        if (filesystem_error || !fs::exists(assets_status)) {
             filesystem_error.clear();
             if (!fs::create_directory(assets_directory, filesystem_error)
                 || filesystem_error) {
@@ -693,7 +727,7 @@ bool update_existing_directory(const fs::path& destination,
             if (target_parent != assets_directory) {
                 const fs::file_status parent_status =
                     fs::symlink_status(target_parent, filesystem_error);
-                if (filesystem_error) {
+                if (filesystem_error || !fs::exists(parent_status)) {
                     filesystem_error.clear();
                     if (!fs::create_directory(target_parent, filesystem_error)
                         || filesystem_error) {
@@ -719,6 +753,19 @@ bool update_existing_directory(const fs::path& destination,
         }
         (void)flush_path(assets_directory);
     }
+
+    // A format compaction installs shared objects first, then its small
+    // per-version references. Each individual file replacement is atomic; a
+    // crash before root checksum promotion remains loadable as an external
+    // edit and is recoverable by the normal save path.
+    for (const auto* entry : updates) {
+        if (!write_atomic_file(
+                destination / path_from_utf8(entry->first),
+                entry->second, error)) {
+            return false;
+        }
+    }
+    if (!updates.empty()) (void)flush_path(destination);
 
     if (!new_versions.empty()) {
         const std::string version = *new_versions.begin();
@@ -953,6 +1000,7 @@ bool read_zip(const std::string& path,
 
 bool write_zip(const fs::path& destination,
                const BundleFileSet& files,
+               const BundleFileSet* reusable,
                std::string* error) {
     fs::path directory = destination.parent_path();
     if (directory.empty()) {
@@ -967,10 +1015,45 @@ bool write_zip(const fs::path& destination,
         return fail(error, "Could not create temporary project ZIP.");
     }
     writer.open = true;
+    ZipReaderGuard source;
+    bool source_open = false;
+    if (reusable != nullptr && reusable->root_name == files.root_name
+        && source.handle != nullptr) {
+        if (mz_zip_reader_open_file(source.handle,
+                                    path_to_utf8(destination).c_str()) != MZ_OK) {
+            (void)mz_zip_writer_close(writer.handle);
+            writer.open = false;
+            std::error_code ignored;
+            fs::remove(temporary, ignored);
+            return fail(error,
+                        "Could not reopen the validated ZIP for unchanged-entry reuse.");
+        }
+        source_open = true;
+    }
     mz_zip_writer_set_compress_method(writer.handle, MZ_COMPRESS_METHOD_DEFLATE);
     mz_zip_writer_set_compress_level(writer.handle, MZ_COMPRESS_LEVEL_DEFAULT);
     for (const auto& entry : files.files) {
         const std::string archive_path = files.root_name + "/" + entry.first;
+        bool copied = false;
+        if (source_open) {
+            const auto old = reusable->files.find(entry.first);
+            if (old != reusable->files.end() && old->second == entry.second) {
+                if (mz_zip_reader_locate_entry(source.handle,
+                                               archive_path.c_str(), 0)
+                        != MZ_OK
+                    || mz_zip_writer_copy_from_reader(writer.handle,
+                                                      source.handle) != MZ_OK) {
+                    (void)mz_zip_writer_close(writer.handle);
+                    writer.open = false;
+                    std::error_code ignored;
+                    fs::remove(temporary, ignored);
+                    return fail(error,
+                                "Could not raw-copy an unchanged validated ZIP entry.");
+                }
+                copied = true;
+            }
+        }
+        if (copied) continue;
         mz_zip_file info{};
         info.version_madeby = MZ_VERSION_MADEBY;
         info.compression_method = MZ_COMPRESS_METHOD_DEFLATE;
@@ -995,6 +1078,19 @@ bool write_zip(const fs::path& destination,
         return fail(error, "Could not finalize temporary project ZIP.");
     }
     writer.open = false;
+    // Release the old archive before replacing it. Windows does not permit an
+    // open file to be atomically renamed over, even though POSIX platforms do.
+    if (source_open) {
+        if (mz_zip_reader_close(source.handle) != MZ_OK) {
+            mz_zip_reader_delete(&source.handle);
+            std::error_code ignored;
+            fs::remove(temporary, ignored);
+            return fail(error,
+                        "Could not close the validated source ZIP after entry reuse.");
+        }
+        mz_zip_reader_delete(&source.handle);
+        source_open = false;
+    }
     if (!flush_path(temporary)) {
         std::error_code ignored;
         fs::remove(temporary, ignored);
@@ -1155,8 +1251,17 @@ bool read_bundle_file_set(const std::string& path,
                 return fail(error, "Could not resolve unpacked bundle entry path.");
             }
             const std::string relative = path_to_generic_utf8(relative_native);
-            if (!safe_archive_path(relative)
-                || !folded_paths.insert(lower_ascii(relative)).second) {
+            if (!safe_archive_path(relative)) {
+                return fail(error, "Unpacked bundle contains an unsafe entry path.");
+            }
+            // Finder creates this out-of-band metadata file merely by browsing
+            // a directory. It is not project state and must not make an
+            // unpacked bundle unloadable. Type/link checks above still apply.
+            if (ignored_unpacked_metadata_path(relative)) {
+                ++iterator;
+                continue;
+            }
+            if (!folded_paths.insert(lower_ascii(relative)).second) {
                 return fail(error, "Unpacked bundle contains an unsafe or colliding path.");
             }
             std::string bytes;
@@ -1210,6 +1315,7 @@ bool write_bundle_file_set_impl(const std::string& path,
         std::error_code status_error;
         const fs::file_status status = fs::symlink_status(destination, status_error);
         const bool exists = !status_error && fs::exists(status);
+        std::optional<BundleFileSet> observed_files;
         if (exists && fs::is_symlink(status)) {
             return fail(error, "Bundle destination is a symbolic link.");
         }
@@ -1239,6 +1345,7 @@ bool write_bundle_file_set_impl(const std::string& path,
                     return fail(error,
                                 "Project changed before commit; refusing stale overwrite.");
                 }
+                observed_files = std::move(observed);
             } else if (!expected_state_digest.empty()) {
                 return fail(error,
                             "A new project save cannot have an expected state digest.");
@@ -1248,7 +1355,9 @@ bool write_bundle_file_set_impl(const std::string& path,
             if (exists && !fs::is_regular_file(status)) {
                 return fail(error, "ZIP bundle destination is not a regular file.");
             }
-            return write_zip(destination, files, error);
+            return write_zip(destination, files,
+                             observed_files ? &*observed_files : nullptr,
+                             error);
         }
         if (exists) {
             if (!fs::is_directory(status)) {

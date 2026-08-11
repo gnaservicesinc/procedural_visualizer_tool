@@ -61,7 +61,7 @@ constexpr std::size_t kMaximumVersions = 4096U;
 constexpr std::size_t kMaximumLineageAliases = 8192U;
 constexpr std::size_t kMaximumProjectNameBytes = 256U;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
-constexpr std::uint32_t kProjectVersionFormatVersion = 3U;
+constexpr std::uint32_t kProjectVersionFormatVersion = 4U;
 
 struct RootMetadata {
     struct PreservedVersion {
@@ -94,6 +94,7 @@ struct VersionManifest {
     BundleVersionInfo info;
     std::string project_name;
     std::string render_output_digest;
+    std::string music_analysis_digest;
     std::vector<LayerConfig> layers;
     std::vector<std::string> layer_digests;
     std::vector<ProjectAttachment> attachments;
@@ -613,6 +614,10 @@ std::string attachment_asset_path(const ProjectAttachment& attachment,
                : legacy_attachment_asset_path(attachment.sha256);
 }
 
+std::string music_analysis_asset_path(std::string_view digest) {
+    return "assets/" + std::string(digest) + "/music_analysis.txt";
+}
+
 std::string safe_cache_extension(const std::string& basename) {
     const std::size_t dot = basename.find_last_of('.');
     if (dot == std::string::npos || dot + 1U == basename.size()
@@ -1054,6 +1059,71 @@ bool parse_current(const std::string& bytes, std::uint64_t& version,
            && records.empty() && canonical_hash(digest);
 }
 
+bool serialize_music_analysis_reference(std::string_view digest,
+                                        std::string& bytes,
+                                        std::string* error) {
+    if (!canonical_hash(std::string(digest))) {
+        return fail(error, "Cannot reference invalid music-analysis content.");
+    }
+    TextBuilder builder("PVT_MUSIC_ANALYSIS_REF", 1U);
+    builder.add("sha256", std::string(digest));
+    bytes = builder.bytes();
+    return builder.ok();
+}
+
+bool parse_music_analysis_reference(const std::string& bytes,
+                                    std::string& digest,
+                                    std::string* error) {
+    Records records;
+    return parse_text(bytes, "PVT_MUSIC_ANALYSIS_REF", 1U, records, error)
+           && take(records, "sha256", digest, error)
+           && records.empty() && canonical_hash(digest);
+}
+
+bool split_render_output_and_music(
+    const CanvasLoopConfig& canvas, const ExportConfig& output,
+    std::string& render_output, std::string& analysis_bytes,
+    std::string& analysis_digest, std::string* error) {
+    if (!detail::serialize_music_analysis_config(
+            canvas.clock.music, analysis_bytes, error)) return false;
+    MusicAnalysis empty_analysis;
+    std::string empty_bytes;
+    if (!detail::serialize_music_analysis_config(
+            empty_analysis, empty_bytes, error)) return false;
+    if (analysis_bytes == empty_bytes) {
+        analysis_bytes.clear();
+        analysis_digest.clear();
+        return detail::serialize_render_output_config(
+            canvas, output, render_output, error);
+    }
+    if (!detail::sha256_hex(analysis_bytes, analysis_digest, error)) {
+        return false;
+    }
+    return detail::serialize_split_render_output_config(
+        canvas, output, render_output, error);
+}
+
+bool stage_music_analysis(
+    detail::BundleFileSet& files, const std::string& analysis_bytes,
+    const std::string& analysis_digest, std::string* error) {
+    if (analysis_digest.empty()) {
+        if (analysis_bytes.empty()) return true;
+        return fail(error,
+                    "Shared music analysis bytes are missing their content identity.");
+    }
+    const std::string path = music_analysis_asset_path(analysis_digest);
+    const auto existing = files.files.find(path);
+    if (existing != files.files.end()) {
+        if (existing->second != analysis_bytes) {
+            return fail(error,
+                        "Existing shared music analysis does not match its content identity.");
+        }
+        return true;
+    }
+    files.files.emplace(path, analysis_bytes);
+    return true;
+}
+
 bool serialize_version_manifest(const VersionManifest& manifest,
                                 std::string& bytes,
                                 std::string* error) {
@@ -1070,6 +1140,7 @@ bool serialize_version_manifest(const VersionManifest& manifest,
     builder.string("version.reverted_from_digest", manifest.reverted_from_digest);
     builder.string("project.name", manifest.project_name);
     builder.add("render_output.sha256", manifest.render_output_digest);
+    builder.string("music_analysis.sha256", manifest.music_analysis_digest);
     builder.integer("layers.count", manifest.layers.size());
     for (std::size_t index = 0U; index < manifest.layers.size(); ++index) {
         const LayerConfig& layer = manifest.layers[index];
@@ -1124,6 +1195,9 @@ bool parse_version_manifest(const std::string& bytes,
     } else if (bytes.rfind("PVT_VERSION\t3\n", 0U) == 0U
                || bytes.rfind("PVT_VERSION\t3\r\n", 0U) == 0U) {
         format_version = 3U;
+    } else if (bytes.rfind("PVT_VERSION\t4\n", 0U) == 0U
+               || bytes.rfind("PVT_VERSION\t4\r\n", 0U) == 0U) {
+        format_version = 4U;
     } else {
         return fail(error, "Unsupported version metadata format.");
     }
@@ -1145,6 +1219,9 @@ bool parse_version_manifest(const std::string& bytes,
         || !take_string(records, "project.name", candidate.project_name, error)
         || !take(records, "render_output.sha256",
                  candidate.render_output_digest, error)) return false;
+    if (format_version >= 4U
+        && !take_string(records, "music_analysis.sha256",
+                        candidate.music_analysis_digest, error)) return false;
     std::size_t count = 0U;
     if (!take_integer(records, "layers.count", count, error)
         || count == 0U || count > kMaximumLayers) {
@@ -1220,7 +1297,9 @@ bool parse_version_manifest(const std::string& bytes,
         || !canonical_timestamp(candidate.info.saved_utc)
         || !valid_semantic_project_name(candidate.project_name)
         || candidate.info.reason.empty() || candidate.info.saved_with_version.empty()
-        || !canonical_hash(candidate.render_output_digest)) {
+        || !canonical_hash(candidate.render_output_digest)
+        || (!candidate.music_analysis_digest.empty()
+            && !canonical_hash(candidate.music_analysis_digest))) {
         return fail(error, "Version metadata failed validation.");
     }
     candidate.info.layer_count = count;
@@ -1375,6 +1454,18 @@ bool project_content_digest(const ProjectConfig& project,
     return detail::sha256_hex(builder.bytes(), digest, error);
 }
 
+struct CachedGlobalConfig {
+    CanvasLoopConfig canvas;
+    ExportConfig output;
+    std::string canonical_output_digest;
+};
+
+struct BundleValidationCache {
+    std::map<std::string, std::string> asset_digests;
+    std::map<std::string, std::string> analysis_digests;
+    std::map<std::string, CachedGlobalConfig> global_configs;
+};
+
 bool load_snapshot(const detail::BundleFileSet& files,
                    const RootMetadata& root,
                    std::uint64_t version,
@@ -1383,7 +1474,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
                    std::string& semantic_digest,
                    bool& externally_modified,
                    std::string* error,
-                   std::vector<ProjectAttachment>* snapshot_attachments = nullptr) {
+                   std::vector<ProjectAttachment>* snapshot_attachments = nullptr,
+                   BundleValidationCache* validation_cache = nullptr) {
     const std::string* metadata_bytes = nullptr;
     if (!find_file(files, version_path(version, "metadata.txt"),
                    metadata_bytes, error)) return false;
@@ -1411,21 +1503,144 @@ bool load_snapshot(const detail::BundleFileSet& files,
     const std::string* output_bytes = nullptr;
     if (!find_file(files, version_path(version, "render_output.txt"),
                    output_bytes, error)) return false;
-    bool output_hash_matches = false;
-    if (!hash_matches(*output_bytes, manifest.render_output_digest,
-                      output_hash_matches, error)) return false;
-    external = external || !output_hash_matches;
+    std::string stored_output_digest;
+    if (!detail::sha256_hex(*output_bytes,
+                            stored_output_digest, error)) return false;
 
     ProjectConfig candidate;
     candidate.uuid = root.project_uuid;
     candidate.name = manifest.project_name;
-    if (!detail::deserialize_render_output_config(*output_bytes,
-                                                 candidate.canvas,
-                                                 candidate.output, error)) return false;
+    const std::string analysis_reference_path =
+        version_path(version, "music_analysis.txt");
+    const auto analysis_reference = files.files.find(analysis_reference_path);
+    const bool has_analysis_reference =
+        analysis_reference != files.files.end();
+    if (manifest.format_version >= 4U
+        && has_analysis_reference != !manifest.music_analysis_digest.empty()) {
+        return fail(error,
+                    "Version music-analysis reference does not match its metadata.");
+    }
+
+    const bool split_output =
+        output_bytes->rfind("PVT_RENDER_OUTPUT_SPLIT\t1\n", 0U) == 0U
+        || output_bytes->rfind("PVT_RENDER_OUTPUT_SPLIT\t1\r\n", 0U) == 0U;
+    const std::string* shared_analysis_bytes = nullptr;
+    std::string actual_analysis_digest;
+    if (has_analysis_reference) {
+        std::string referenced_digest;
+        if (!parse_music_analysis_reference(
+                analysis_reference->second, referenced_digest, error)) {
+            return false;
+        }
+        if (manifest.format_version >= 4U
+            && referenced_digest != manifest.music_analysis_digest) {
+            return fail(error,
+                        "Version music-analysis reference checksum disagrees with metadata.");
+        }
+        const std::string object_path =
+            music_analysis_asset_path(referenced_digest);
+        const auto object = files.files.find(object_path);
+        if (object == files.files.end()) {
+            return fail(error, "Version references missing shared music analysis '"
+                                   + object_path + "'.");
+        }
+        shared_analysis_bytes = &object->second;
+        bool found_cached_analysis = false;
+        if (validation_cache != nullptr) {
+            const auto cached_analysis =
+                validation_cache->analysis_digests.find(object_path);
+            if (cached_analysis != validation_cache->analysis_digests.end()) {
+                actual_analysis_digest = cached_analysis->second;
+                found_cached_analysis = true;
+            }
+        }
+        if (!found_cached_analysis) {
+            if (!detail::sha256_hex(object->second,
+                                    actual_analysis_digest, error)) return false;
+            if (validation_cache != nullptr) {
+                validation_cache->analysis_digests.emplace(
+                    object_path, actual_analysis_digest);
+            }
+        }
+        external = external || actual_analysis_digest != referenced_digest;
+    }
+
+    const std::string global_cache_key =
+        stored_output_digest + ":" + actual_analysis_digest;
+    std::string canonical_output_digest;
+    bool found_cached_global = false;
+    if (validation_cache != nullptr) {
+        const auto cached_global =
+            validation_cache->global_configs.find(global_cache_key);
+        if (cached_global != validation_cache->global_configs.end()) {
+            candidate.canvas = cached_global->second.canvas;
+            candidate.output = cached_global->second.output;
+            canonical_output_digest =
+                cached_global->second.canonical_output_digest;
+            found_cached_global = true;
+        }
+    }
+    if (!found_cached_global) {
+        if (split_output) {
+            if (shared_analysis_bytes == nullptr
+                || !detail::deserialize_split_render_output_config(
+                    *output_bytes, *shared_analysis_bytes,
+                    candidate.canvas, candidate.output, error)) return false;
+        } else {
+            if (!detail::deserialize_render_output_config(
+                    *output_bytes, candidate.canvas,
+                    candidate.output, error)) return false;
+            if (shared_analysis_bytes != nullptr) {
+                MusicAnalysis shared_analysis;
+                if (!detail::deserialize_music_analysis_config(
+                        *shared_analysis_bytes,
+                        shared_analysis, error)) return false;
+                std::string embedded_analysis;
+                if (!detail::serialize_music_analysis_config(
+                        candidate.canvas.clock.music,
+                        embedded_analysis, error)) return false;
+                if (embedded_analysis != *shared_analysis_bytes) {
+                    return fail(error,
+                                "Version embeds music analysis that disagrees with its shared reference.");
+                }
+                candidate.canvas.clock.music = std::move(shared_analysis);
+            }
+        }
+        std::string canonical_output;
+        if (!detail::serialize_render_output_config(
+                candidate.canvas, candidate.output,
+                canonical_output, error)
+            || !detail::sha256_hex(canonical_output,
+                                   canonical_output_digest, error)) return false;
+        if (validation_cache != nullptr) {
+            validation_cache->global_configs.emplace(
+                global_cache_key,
+                CachedGlobalConfig{candidate.canvas, candidate.output,
+                                   canonical_output_digest});
+        }
+    }
+    if (manifest.format_version >= 4U
+        && has_analysis_reference != split_output) {
+        return fail(error,
+                    "Version render/output storage does not match its declared format.");
+    }
+
+    bool output_hash_matches = false;
+    if (manifest.format_version >= 4U) {
+        output_hash_matches = stored_output_digest
+                              == manifest.render_output_digest;
+    } else {
+        output_hash_matches = canonical_output_digest
+                              == manifest.render_output_digest;
+    }
+    external = external || !output_hash_matches;
     candidate.layers = manifest.layers;
     std::set<std::string> expected_paths{
         version_path(version, "metadata.txt"),
         version_path(version, "render_output.txt")};
+    if (has_analysis_reference) {
+        expected_paths.insert(analysis_reference_path);
+    }
     for (std::size_t index = 0U; index < candidate.layers.size(); ++index) {
         LayerConfig& layer = candidate.layers[index];
         const std::string filename = std::to_string(layer.file_id) + ".pvt";
@@ -1480,7 +1695,10 @@ bool load_snapshot(const detail::BundleFileSet& files,
             attachment, manifest.format_version));
     }
     std::map<std::string, std::string> resolved_missing_asset_paths;
-    std::map<std::string, std::string> verified_assets;
+    std::map<std::string, std::string> local_verified_assets;
+    auto& verified_assets = validation_cache != nullptr
+                                ? validation_cache->asset_digests
+                                : local_verified_assets;
     for (ProjectAttachment& attachment : manifest.attachments) {
         const std::string expected_asset_path = attachment_asset_path(
             attachment, manifest.format_version);
@@ -1553,10 +1771,10 @@ bool load_snapshot(const detail::BundleFileSet& files,
         attachment.bundle_path = asset_path;
         attachment.externally_modified = changed;
         if (changed) {
-            // Version-3 asset paths deliberately keep their readable filename
-            // independent of integrity metadata. A user may therefore replace
-            // the file directly; load the new bytes dirty and let Save promote
-            // them exactly as an in-application replacement would.
+            // Version-3-or-newer asset paths deliberately keep their readable
+            // filename independent of integrity metadata. A user may therefore
+            // replace the file directly; load the new bytes dirty and let Save
+            // promote them exactly as an in-application replacement would.
             attachment.sha256 = std::move(actual);
             attachment.size_bytes = static_cast<std::uint64_t>(asset->second.size());
             external = true;
@@ -1803,7 +2021,11 @@ bool current_candidate(const detail::BundleFileSet& files,
 bool collect_version_infos(const detail::BundleFileSet& files,
                            const RootMetadata& root,
                            std::vector<BundleVersionInfo>& destination,
-                           std::string* error) {
+                           std::string* error,
+                           BundleValidationCache* shared_cache = nullptr) {
+    BundleValidationCache local_cache;
+    BundleValidationCache* validation_cache =
+        shared_cache != nullptr ? shared_cache : &local_cache;
     std::set<std::uint64_t> numbers = numeric_version_directories(files);
     for (const auto& indexed_version : root.version_digests) {
         numbers.insert(indexed_version.first);
@@ -1822,7 +2044,8 @@ bool collect_version_infos(const detail::BundleFileSet& files,
         const bool indexed = root.version_digests.find(number)
                              != root.version_digests.end();
         if (load_snapshot(files, root, number, project, info, semantic_digest,
-                          external, &integrity_error)) {
+                          external, &integrity_error, nullptr,
+                          validation_cache)) {
             info.indexed = indexed;
             info.valid = true;
             info.externally_modified = external;
@@ -1894,6 +2117,94 @@ bool collect_version_infos(const detail::BundleFileSet& files,
     return true;
 }
 
+bool validate_loaded_bundle_state(
+    const detail::BundleFileSet& files,
+    const RootMetadata& root,
+    bool root_external,
+    std::vector<BundleVersionInfo>& checked,
+    std::string* error) {
+    if (root_external) {
+        return fail(error, "Root metadata checksum does not match.");
+    }
+    if (!validate_history_accounting(files, root, error)) return false;
+    std::set<std::string> metadata_digests;
+    std::set<std::string> parent_digest_aliases;
+    std::set<std::string> version_uuids;
+    parent_digest_aliases.insert(root.lineage_aliases.begin(),
+                                 root.lineage_aliases.end());
+    for (const auto& preserved : root.preserved_versions) {
+        std::string observed_metadata_digest;
+        std::string observed_tree_digest;
+        if (!raw_version_digests(files, preserved.first,
+                                 observed_metadata_digest,
+                                 observed_tree_digest, error)) return false;
+        if (observed_metadata_digest
+                != preserved.second.observed_metadata_digest
+            || observed_tree_digest != preserved.second.tree_digest) {
+            return fail(error, "Preserved history version "
+                                   + std::to_string(preserved.first)
+                                   + " changed since its last observed save state.");
+        }
+        if (!observed_metadata_digest.empty()) {
+            parent_digest_aliases.insert(observed_metadata_digest);
+        }
+        parent_digest_aliases.insert(
+            preserved.second.lineage_aliases.begin(),
+            preserved.second.lineage_aliases.end());
+    }
+    for (const auto& indexed_version : root.version_digests) {
+        parent_digest_aliases.insert(indexed_version.second);
+    }
+    for (BundleVersionInfo& info : checked) {
+        if (info.indexed && !info.valid) {
+            return fail(error, "Indexed version " + std::to_string(info.number)
+                                   + " is malformed or incomplete: "
+                                   + info.integrity_message);
+        }
+        if (info.changed_since_recorded) {
+            return fail(error, "Version " + std::to_string(info.number)
+                                   + " changed since its last observed save state.");
+        }
+        if (info.valid && info.externally_modified) {
+            info.integrity_message =
+                "Recorded external-origin version is valid and its raw state is unchanged.";
+        }
+        if (info.valid) {
+            if (!metadata_digests.insert(info.metadata_digest).second
+                || !version_uuids.insert(info.uuid).second) {
+                return fail(error, "Bundle has duplicate version identity.");
+            }
+            parent_digest_aliases.insert(info.metadata_digest);
+        }
+    }
+    for (const BundleVersionInfo& info : checked) {
+        if (info.indexed && info.valid && !info.parent_digest.empty()
+            && parent_digest_aliases.find(info.parent_digest)
+                   == parent_digest_aliases.end()) {
+            return fail(error,
+                        "Version parent digest does not identify a bundle version.");
+        }
+    }
+    std::uint64_t current = 0U;
+    std::string current_digest;
+    if (!current_candidate(files, current, current_digest, error)) return false;
+    const auto root_current = root.version_digests.find(current);
+    if (root_current == root.version_digests.end()
+        || root_current->second != current_digest) {
+        return fail(error,
+                    "Current pointer does not match indexed version metadata.");
+    }
+    const auto current_info = std::find_if(
+        checked.begin(), checked.end(), [current](const BundleVersionInfo& info) {
+            return info.number == current;
+        });
+    if (current_info == checked.end() || current_info->externally_modified) {
+        return fail(error,
+                    "Current version is missing or has an integrity mismatch.");
+    }
+    return true;
+}
+
 bool preserve_raw_version(RootMetadata& root,
                           const detail::BundleFileSet& files,
                           std::uint64_t number,
@@ -1957,12 +2268,24 @@ bool build_version(ProjectConfig project,
     manifest.attachments = std::move(attachments);
 
     std::string output_bytes;
-    if (!detail::serialize_render_output_config(project.canvas, project.output,
-                                                output_bytes, error)
-        || !detail::sha256_hex(output_bytes, manifest.render_output_digest, error)) {
+    std::string analysis_bytes;
+    if (!split_render_output_and_music(
+            project.canvas, project.output, output_bytes, analysis_bytes,
+            manifest.music_analysis_digest, error)
+        || !detail::sha256_hex(output_bytes,
+                               manifest.render_output_digest, error)
+        || !stage_music_analysis(files, analysis_bytes,
+                                 manifest.music_analysis_digest, error)) {
         return false;
     }
     files.files[version_path(number, "render_output.txt")] = std::move(output_bytes);
+    if (!manifest.music_analysis_digest.empty()) {
+        std::string reference;
+        if (!serialize_music_analysis_reference(
+                manifest.music_analysis_digest, reference, error)) return false;
+        files.files[version_path(number, "music_analysis.txt")] =
+            std::move(reference);
+    }
     manifest.layer_digests.reserve(project.layers.size());
     for (const LayerConfig& layer : project.layers) {
         std::string layer_bytes;
@@ -1980,6 +2303,76 @@ bool build_version(ProjectConfig project,
                                    semantic_digest, error)) return false;
     files.files[version_path(number, "metadata.txt")] = std::move(metadata_bytes);
     version_info = std::move(manifest.info);
+    return true;
+}
+
+bool compact_embedded_music_analysis(
+    detail::BundleFileSet& files,
+    std::vector<BundleVersionInfo>& versions,
+    bool& compacted,
+    std::string* error) {
+    compacted = false;
+    for (BundleVersionInfo& version : versions) {
+        if (!version.valid || !version.indexed) continue;
+        const std::string metadata_path =
+            version_path(version.number, "metadata.txt");
+        const std::string output_path =
+            version_path(version.number, "render_output.txt");
+        const std::string reference_path =
+            version_path(version.number, "music_analysis.txt");
+        if (files.files.find(reference_path) != files.files.end()) continue;
+        const auto metadata = files.files.find(metadata_path);
+        const auto output = files.files.find(output_path);
+        if (metadata == files.files.end() || output == files.files.end()) continue;
+
+        VersionManifest manifest;
+        std::string ignored;
+        if (!parse_version_manifest(metadata->second, manifest, &ignored)
+            || manifest.format_version >= 4U) {
+            continue;
+        }
+        std::string actual_output_digest;
+        if (!detail::sha256_hex(output->second,
+                                actual_output_digest, error)) return false;
+        if (actual_output_digest != manifest.render_output_digest) {
+            continue; // Preserve direct edits for normal external promotion.
+        }
+
+        CanvasLoopConfig canvas;
+        ExportConfig export_config;
+        if (!detail::deserialize_render_output_config(
+                output->second, canvas, export_config, &ignored)) {
+            continue;
+        }
+        std::string compact_output;
+        std::string analysis_bytes;
+        std::string analysis_digest;
+        if (!split_render_output_and_music(
+                canvas, export_config, compact_output,
+                analysis_bytes, analysis_digest, error)) return false;
+        if (analysis_digest.empty()) continue;
+
+        std::string reconstructed;
+        std::string reconstructed_digest;
+        if (!detail::serialize_render_output_config(
+                canvas, export_config, reconstructed, error)
+            || !detail::sha256_hex(reconstructed,
+                                   reconstructed_digest, error)) return false;
+        if (reconstructed_digest != manifest.render_output_digest) {
+            continue;
+        }
+        if (!stage_music_analysis(
+                files, analysis_bytes, analysis_digest, error)) return false;
+        std::string reference;
+        if (!serialize_music_analysis_reference(
+                analysis_digest, reference, error)) return false;
+        files.files[output_path] = std::move(compact_output);
+        files.files[reference_path] = std::move(reference);
+        files.transactional_updates.insert(output_path);
+        files.transactional_updates.insert(reference_path);
+        version.changed_since_recorded = true;
+        compacted = true;
+    }
     return true;
 }
 
@@ -2436,6 +2829,7 @@ bool load_project_document(const std::string& path,
         }
 
         std::string last_failure = "Bundle has no versions.";
+        BundleValidationCache validation_cache;
         for (const std::uint64_t candidate_number : candidates) {
             ProjectConfig project;
             std::vector<ProjectAttachment> snapshot_attachments;
@@ -2445,7 +2839,7 @@ bool load_project_document(const std::string& path,
             std::string load_error;
             if (!load_snapshot(files, root, candidate_number, project, info,
                                semantic_digest, version_external, &load_error,
-                               &snapshot_attachments)) {
+                               &snapshot_attachments, &validation_cache)) {
                 last_failure = std::move(load_error);
                 continue;
             }
@@ -2498,7 +2892,8 @@ bool load_project_document(const std::string& path,
             document.newer_program_version =
                 program_version_is_newer(root.created_with_version)
                 || program_version_is_newer(root.last_changed_with_version);
-            if (!collect_version_infos(files, root, document.versions, error)) return false;
+            if (!collect_version_infos(files, root, document.versions, error,
+                                       &validation_cache)) return false;
             const bool unrecorded_history_change = std::any_of(
                 document.versions.begin(), document.versions.end(),
                 [](const BundleVersionInfo& value) {
@@ -3012,13 +3407,14 @@ bool save_with_reason(ProjectDocument& document,
         current_version = number;
         promoted_external = working.externally_modified || root_external;
     } else {
-        std::vector<BundleVersionInfo> validated;
-        const std::string& validation_path = destination_exists
-                                                 ? path : working.source_path;
-        if (validation_path.empty()
-            || !validate_project_bundle(validation_path,
-                                     &validated, error)) return false;
+        if (!have_root
+            || !validate_loaded_bundle_state(
+                files, root, root_external, versions, error)) return false;
     }
+
+    bool compacted_storage = false;
+    if (!compact_embedded_music_analysis(
+            files, versions, compacted_storage, error)) return false;
 
     if (!destination_exists) {
         files.root_name = portable_root_name(working.project.name);
@@ -3031,21 +3427,43 @@ bool save_with_reason(ProjectDocument& document,
                                : std::string{},
             error)) return false;
 
-    ProjectDocument reloaded;
-    if (!load_project_document(path, reloaded, error)) return false;
-    if (reloaded.current_version != current_version
-        || reloaded.project.uuid != working.project.uuid) {
-        return fail(error, "Saved bundle did not reopen at the committed version.");
+    std::string committed_state_digest;
+    if (!detail::bundle_file_set_digest(
+            files, committed_state_digest, error)) return false;
+    for (BundleVersionInfo& version : versions) {
+        version.changed_since_recorded = false;
+        if (version.valid && version.indexed
+            && version.number == current_version) {
+            version.externally_modified = false;
+            version.integrity_message.clear();
+        }
     }
-    reloaded.last_opened_utc = working.last_opened_utc;
+    for (ProjectAttachment& attachment : working.attachments) {
+        attachment.bundle_path = attachment_asset_path(
+            attachment.sha256, attachment.basename);
+        attachment.externally_modified = false;
+    }
+    working.source_path = path;
+    working.imported_from_path.clear();
+    working.bundle_root_name = files.root_name;
+    working.loaded_snapshot_digest = semantic_digest;
+    working.loaded_bundle_state_digest = std::move(committed_state_digest);
+    working.current_version = current_version;
+    working.versions = versions;
+    working.source_is_zip = detail::path_is_zip_bundle(path);
+    working.legacy_import = false;
+    working.dirty = false;
+    working.externally_modified = false;
+    working.newer_program_version = false;
     BundleSaveReport completed_report;
     completed_report.path = path;
     completed_report.version = current_version;
     completed_report.created_version = needs_version;
     completed_report.validated_only = !needs_version;
+    completed_report.compacted_storage = compacted_storage;
     completed_report.wrote_zip = detail::path_is_zip_bundle(path);
     completed_report.promoted_external_change = promoted_external;
-    document = std::move(reloaded);
+    document = std::move(working);
     if (report != nullptr) *report = std::move(completed_report);
     return true;
 }
@@ -3241,82 +3659,10 @@ bool validate_project_bundle(const std::string& path,
         RootMetadata root;
         bool root_external = false;
         if (!read_document_source(path, files, root, root_external, error)) return false;
-        if (root_external) return fail(error, "Root metadata checksum does not match.");
-        if (!validate_history_accounting(files, root, error)) return false;
         std::vector<BundleVersionInfo> checked;
-        if (!collect_version_infos(files, root, checked, error)) return false;
-        std::set<std::string> metadata_digests;
-        std::set<std::string> parent_digest_aliases;
-        std::set<std::string> version_uuids;
-        parent_digest_aliases.insert(root.lineage_aliases.begin(),
-                                     root.lineage_aliases.end());
-        for (const auto& preserved : root.preserved_versions) {
-            std::string observed_metadata_digest;
-            std::string observed_tree_digest;
-            if (!raw_version_digests(files, preserved.first,
-                                     observed_metadata_digest,
-                                     observed_tree_digest, error)) return false;
-            if (observed_metadata_digest
-                    != preserved.second.observed_metadata_digest
-                || observed_tree_digest != preserved.second.tree_digest) {
-                return fail(error, "Preserved history version "
-                                       + std::to_string(preserved.first)
-                                       + " changed since its last observed save state.");
-            }
-            if (!observed_metadata_digest.empty()) {
-                parent_digest_aliases.insert(observed_metadata_digest);
-            }
-            parent_digest_aliases.insert(
-                preserved.second.lineage_aliases.begin(),
-                preserved.second.lineage_aliases.end());
-        }
-        for (const auto& indexed_version : root.version_digests) {
-            parent_digest_aliases.insert(indexed_version.second);
-        }
-        for (BundleVersionInfo& info : checked) {
-            if (info.indexed && !info.valid) {
-                return fail(error, "Indexed version " + std::to_string(info.number)
-                                       + " is malformed or incomplete: "
-                                       + info.integrity_message);
-            }
-            if (info.changed_since_recorded) {
-                return fail(error, "Version " + std::to_string(info.number)
-                                       + " changed since its last observed save state.");
-            }
-            if (info.valid && info.externally_modified) {
-                info.integrity_message =
-                    "Recorded external-origin version is valid and its raw state is unchanged.";
-            }
-            if (info.valid) {
-                if (!metadata_digests.insert(info.metadata_digest).second
-                    || !version_uuids.insert(info.uuid).second) {
-                    return fail(error, "Bundle has duplicate version identity.");
-                }
-                parent_digest_aliases.insert(info.metadata_digest);
-            }
-        }
-        for (const BundleVersionInfo& info : checked) {
-            if (info.indexed && info.valid && !info.parent_digest.empty()
-                && parent_digest_aliases.find(info.parent_digest)
-                       == parent_digest_aliases.end()) {
-                return fail(error, "Version parent digest does not identify a bundle version.");
-            }
-        }
-        std::uint64_t current = 0U;
-        std::string current_digest;
-        if (!current_candidate(files, current, current_digest, error)) return false;
-        const auto root_current = root.version_digests.find(current);
-        if (root_current == root.version_digests.end()
-            || root_current->second != current_digest) {
-            return fail(error, "Current pointer does not match indexed version metadata.");
-        }
-        const auto current_info = std::find_if(
-            checked.begin(), checked.end(), [current](const BundleVersionInfo& info) {
-                return info.number == current;
-            });
-        if (current_info == checked.end() || current_info->externally_modified) {
-            return fail(error, "Current version is missing or has an integrity mismatch.");
-        }
+        if (!collect_version_infos(files, root, checked, error)
+            || !validate_loaded_bundle_state(
+                files, root, root_external, checked, error)) return false;
         if (versions != nullptr) *versions = std::move(checked);
         return true;
     } catch (const std::bad_alloc&) {

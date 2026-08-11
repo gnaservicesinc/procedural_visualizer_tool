@@ -2,6 +2,7 @@
 #define PVT_BUNDLE_ARCHIVE_H
 
 #include <map>
+#include <set>
 #include <string>
 
 namespace pvt::detail {
@@ -9,6 +10,10 @@ namespace pvt::detail {
 struct BundleFileSet {
     std::string root_name;
     std::map<std::string, std::string> files;
+    // In-memory commit metadata, never serialized or included in state
+    // digests. Project-format migrations may atomically add or replace only
+    // these explicitly verified files inside existing immutable versions.
+    std::set<std::string> transactional_updates;
     bool from_zip = false;
 };
 
@@ -27,7 +32,9 @@ bool write_bundle_file_set(const std::string& path,
 // state check while that lock is held. `destination_existed == false` is a
 // compare-and-create operation; otherwise `expected_state_digest` must match
 // the complete file-set digest currently on disk. This is the application save
-// path; the unchecked overload above remains useful for isolated archive tests.
+// path. Unchanged entries from an existing validated ZIP are copied in their
+// compressed form before the complete temporary archive is read back and
+// compared. The unchecked overload above remains useful for isolated tests.
 bool write_bundle_file_set_if_unchanged(
     const std::string& path,
     const BundleFileSet& files,

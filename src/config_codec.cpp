@@ -16,6 +16,7 @@ constexpr std::size_t kMaximumCodecLineBytes = 256U * 1024U;
 static_assert(std::is_nothrow_move_assignable_v<RenderData>);
 static_assert(std::is_nothrow_move_assignable_v<CanvasLoopConfig>);
 static_assert(std::is_nothrow_move_assignable_v<ExportConfig>);
+static_assert(std::is_nothrow_move_assignable_v<MusicAnalysis>);
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -405,6 +406,226 @@ bool deserialize_render_output_config(const std::string& serialized,
                     "Not enough memory to load render/output data; destination was not changed.");
     } catch (const std::exception& exception) {
         return fail(error, std::string("Unexpected render/output load error: ")
+                               + exception.what());
+    }
+}
+
+bool serialize_music_analysis_config(const MusicAnalysis& analysis,
+                                     std::string& serialized,
+                                     std::string* error) {
+    clear_error(error);
+    try {
+        ProjectConfig project = default_project();
+        if (project.layers.empty()) {
+            return fail(error, "The default project does not contain a layer.");
+        }
+        project.canvas.clock.music = analysis;
+        const RenderConfig config = apply_global_config(
+            project.canvas, project.output, project.layers.front().render);
+        std::string setup;
+        if (!serialize_setup_config(config, setup, error)) return false;
+
+        const std::string setup_header =
+            "PVT_SETUP\t" + std::to_string(kSetupFormatVersion);
+        std::vector<std::string_view> records;
+        if (!split_document(setup, setup_header, records, error)) return false;
+        serialized.clear();
+        serialized.reserve(setup.size());
+        serialized.append("PVT_MUSIC_ANALYSIS\t");
+        serialized.append(std::to_string(kMusicAnalysisConfigFormatVersion));
+        serialized.push_back('\n');
+        for (const std::string_view line : records) {
+            const std::string_view key = line.substr(0U, line.find('\t'));
+            if (!starts_with(key, "timing.music.")) continue;
+            if (serialized.size() > kMaximumSetupBytes - line.size() - 1U) {
+                return fail(error, "Music analysis exceeds the 8 MiB limit.");
+            }
+            serialized.append(line);
+            serialized.push_back('\n');
+        }
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to serialize music analysis.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected music-analysis serialization error: ")
+                               + exception.what());
+    }
+}
+
+bool deserialize_music_analysis_config(const std::string& serialized,
+                                       MusicAnalysis& analysis,
+                                       std::string* error) {
+    clear_error(error);
+    try {
+        const std::string analysis_header =
+            "PVT_MUSIC_ANALYSIS\t"
+            + std::to_string(kMusicAnalysisConfigFormatVersion);
+        std::vector<std::string_view> analysis_records;
+        if (!split_document(serialized, analysis_header,
+                            analysis_records, error)) return false;
+        for (const std::string_view line : analysis_records) {
+            const std::string_view key = line.substr(0U, line.find('\t'));
+            if (!starts_with(key, "timing.music.")) {
+                return fail(error,
+                            "Music-analysis data contains an unrelated field.");
+            }
+        }
+
+        ProjectConfig defaults = default_project();
+        if (defaults.layers.empty()) {
+            return fail(error, "The default project does not contain a layer.");
+        }
+        const RenderConfig default_config = apply_global_config(
+            defaults.canvas, defaults.output, defaults.layers.front().render);
+        std::string default_setup;
+        if (!serialize_setup_config(default_config, default_setup, error)) {
+            return false;
+        }
+        const std::string setup_header =
+            "PVT_SETUP\t" + std::to_string(kSetupFormatVersion);
+        std::vector<std::string_view> default_records;
+        if (!split_document(default_setup, setup_header,
+                            default_records, error)) return false;
+
+        std::string combined;
+        combined.reserve(default_setup.size() + serialized.size());
+        combined.append(setup_header);
+        combined.push_back('\n');
+        for (const std::string_view line : default_records) {
+            const std::string_view key = line.substr(0U, line.find('\t'));
+            if (starts_with(key, "timing.music.")) continue;
+            combined.append(line);
+            combined.push_back('\n');
+        }
+        for (const std::string_view line : analysis_records) {
+            if (combined.size() > kMaximumSetupBytes - line.size() - 1U) {
+                return fail(error, "Music analysis exceeds the 8 MiB limit.");
+            }
+            combined.append(line);
+            combined.push_back('\n');
+        }
+        RenderConfig loaded;
+        if (!deserialize_setup_config(combined, loaded, error)) return false;
+        MusicAnalysis candidate = std::move(loaded.clock.music);
+        analysis = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to load music analysis; destination was not changed.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected music-analysis load error: ")
+                               + exception.what());
+    }
+}
+
+bool serialize_split_render_output_config(const CanvasLoopConfig& canvas,
+                                          const ExportConfig& output,
+                                          std::string& serialized,
+                                          std::string* error) {
+    clear_error(error);
+    try {
+        const ProjectConfig defaults = default_project();
+        const RenderData render = defaults.layers.empty()
+                                      ? RenderData{} : defaults.layers.front().render;
+        const RenderConfig config = apply_global_config(canvas, output, render);
+        std::string setup;
+        if (!serialize_setup_config(config, setup, error)) return false;
+        const std::string setup_header =
+            "PVT_SETUP\t" + std::to_string(kSetupFormatVersion);
+        std::vector<std::string_view> records;
+        if (!split_document(setup, setup_header, records, error)) return false;
+        serialized.clear();
+        serialized.reserve(setup.size());
+        serialized.append("PVT_RENDER_OUTPUT_SPLIT\t");
+        serialized.append(std::to_string(kSplitRenderOutputConfigFormatVersion));
+        serialized.push_back('\n');
+        for (const std::string_view line : records) {
+            const std::string_view key = line.substr(0U, line.find('\t'));
+            if (!is_output_key(key) || starts_with(key, "timing.music.")) {
+                continue;
+            }
+            if (serialized.size() > kMaximumSetupBytes - line.size() - 1U) {
+                return fail(error, "Split render/output data exceeds the 8 MiB limit.");
+            }
+            serialized.append(line);
+            serialized.push_back('\n');
+        }
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to split render/output data.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected split render/output error: ")
+                               + exception.what());
+    }
+}
+
+bool deserialize_split_render_output_config(
+    const std::string& serialized,
+    const std::string& music_analysis,
+    CanvasLoopConfig& canvas,
+    ExportConfig& output,
+    std::string* error) {
+    clear_error(error);
+    try {
+        const std::string split_header =
+            "PVT_RENDER_OUTPUT_SPLIT\t"
+            + std::to_string(kSplitRenderOutputConfigFormatVersion);
+        std::vector<std::string_view> split_records;
+        if (!split_document(serialized, split_header,
+                            split_records, error)) return false;
+        for (const std::string_view line : split_records) {
+            const std::string_view key = line.substr(0U, line.find('\t'));
+            if (!is_output_key(key) || starts_with(key, "timing.music.")) {
+                return fail(error,
+                            "Split render/output data contains a field in the wrong block.");
+            }
+        }
+
+        const std::string analysis_header =
+            "PVT_MUSIC_ANALYSIS\t"
+            + std::to_string(kMusicAnalysisConfigFormatVersion);
+        std::vector<std::string_view> analysis_records;
+        if (!split_document(music_analysis, analysis_header,
+                            analysis_records, error)) return false;
+        for (const std::string_view line : analysis_records) {
+            const std::string_view key = line.substr(0U, line.find('\t'));
+            if (!starts_with(key, "timing.music.")) {
+                return fail(error,
+                            "Music-analysis data contains an unrelated field.");
+            }
+        }
+
+        std::string combined;
+        combined.reserve(serialized.size() + music_analysis.size());
+        combined.append("PVT_RENDER_OUTPUT\t");
+        combined.append(std::to_string(kRenderOutputConfigFormatVersion));
+        combined.push_back('\n');
+        for (const std::string_view line : split_records) {
+            combined.append(line);
+            combined.push_back('\n');
+        }
+        for (const std::string_view line : analysis_records) {
+            if (combined.size() > kMaximumSetupBytes - line.size() - 1U) {
+                return fail(error,
+                            "Combined render/output and analysis data exceeds the 8 MiB limit.");
+            }
+            combined.append(line);
+            combined.push_back('\n');
+        }
+        CanvasLoopConfig candidate_canvas;
+        ExportConfig candidate_output;
+        if (!deserialize_render_output_config(
+                combined, candidate_canvas, candidate_output, error)) {
+            return false;
+        }
+        canvas = std::move(candidate_canvas);
+        output = std::move(candidate_output);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to combine render/output and music analysis.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected split render/output load error: ")
                                + exception.what());
     }
 }

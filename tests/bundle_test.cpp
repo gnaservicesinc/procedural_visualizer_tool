@@ -143,6 +143,30 @@ bool replace_once(std::string& bytes, const std::string& before,
     return true;
 }
 
+bool replace_record_value(std::string& bytes, const std::string& key,
+                          const std::string& value) {
+    const std::string prefix = key + "\t";
+    std::size_t begin = bytes.find(prefix);
+    if (begin == std::string::npos
+        || (begin != 0U && bytes[begin - 1U] != '\n')) return false;
+    begin += prefix.size();
+    const std::size_t end = bytes.find('\n', begin);
+    if (end == std::string::npos) return false;
+    bytes.replace(begin, end - begin, value);
+    return true;
+}
+
+bool erase_record(std::string& bytes, const std::string& key) {
+    const std::string prefix = key + "\t";
+    std::size_t begin = bytes.find(prefix);
+    if (begin == std::string::npos
+        || (begin != 0U && bytes[begin - 1U] != '\n')) return false;
+    const std::size_t end = bytes.find('\n', begin);
+    if (end == std::string::npos) return false;
+    bytes.erase(begin, end + 1U - begin);
+    return true;
+}
+
 const pvt::BundleVersionInfo* version_info(const pvt::ProjectDocument& document,
                                            std::uint64_t number) {
     const auto found = std::find_if(
@@ -401,6 +425,36 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(round_trip.clock.music.beat_times_seconds.size() == 4U);
     CHECK(round_trip_output.filename_prefix == "music-sync_");
 
+    std::string analysis;
+    std::string split_output;
+    CHECK(pvt::detail::serialize_music_analysis_config(
+        canvas.clock.music, analysis, &error));
+    CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t1\n", 0U) == 0U);
+    CHECK(pvt::detail::serialize_split_render_output_config(
+        canvas, output, split_output, &error));
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t1\n", 0U) == 0U);
+    CHECK(split_output.find("timing.music.") == std::string::npos);
+    CHECK(split_output.size() < version_two.size());
+    pvt::CanvasLoopConfig combined_canvas;
+    pvt::ExportConfig combined_output;
+    CHECK(pvt::detail::deserialize_split_render_output_config(
+        split_output, analysis, combined_canvas, combined_output, &error));
+    std::string combined_canonical;
+    CHECK(pvt::detail::serialize_render_output_config(
+        combined_canvas, combined_output, combined_canonical, &error));
+    CHECK(combined_canonical == version_two);
+    pvt::MusicAnalysis analysis_round_trip;
+    CHECK(pvt::detail::deserialize_music_analysis_config(
+        analysis, analysis_round_trip, &error));
+    CHECK(analysis_round_trip.source_sha256 == std::string(64U, 'b'));
+    CHECK(analysis_round_trip.feature_samples.size() == 2U);
+    const std::string malformed_analysis =
+        analysis + "output.filename_prefix\twrong-block\n";
+    analysis_round_trip.source_basename = "unchanged.wav";
+    CHECK(!pvt::detail::deserialize_music_analysis_config(
+        malformed_analysis, analysis_round_trip, &error));
+    CHECK(analysis_round_trip.source_basename == "unchanged.wav");
+
     std::istringstream input(version_two);
     std::ostringstream legacy;
     std::string line;
@@ -483,6 +537,8 @@ void test_archive_compare_and_swap(const fs::path& directory) {
         state_a.files["metadata.txt"] = "state-a";
         state_a.files["metadata.sha256"] = "digest-a";
         state_a.files["current"] = "current-a";
+        state_a.files["assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stable.bin"] =
+            std::string(512U * 1024U, 's');
         std::string error;
         CHECK(pvt::detail::write_bundle_file_set(as_utf8(path), state_a, &error));
 
@@ -496,7 +552,8 @@ void test_archive_compare_and_swap(const fs::path& directory) {
         state_b.files["metadata.sha256"] = "digest-b";
         state_b.files["current"] = "current-b";
         const bool wrote_b =
-            pvt::detail::write_bundle_file_set(as_utf8(path), state_b, &error);
+            pvt::detail::write_bundle_file_set_if_unchanged(
+                as_utf8(path), state_b, true, digest_a, &error);
         if (!wrote_b) std::cerr << "CAS setup failed: " << error << '\n';
         CHECK(wrote_b);
 
@@ -508,6 +565,10 @@ void test_archive_compare_and_swap(const fs::path& directory) {
         pvt::detail::BundleFileSet final_state;
         CHECK(pvt::detail::read_bundle_file_set(as_utf8(path), final_state, &error));
         CHECK(final_state.files == state_b.files);
+        CHECK(final_state.files.at(
+                  "assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stable.bin")
+              == state_a.files.at(
+                  "assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/stable.bin"));
     }
 
 #if !defined(_WIN32)
@@ -529,6 +590,14 @@ void test_archive_compare_and_swap(const fs::path& directory) {
         CHECK(::close(lock_descriptor) == 0);
         CHECK(pvt::detail::write_bundle_file_set(
             as_utf8(locked_path), lock_state, &error));
+        CHECK(fs::exists(lock_path));
+        const int probe_descriptor = ::open(lock_path.c_str(), O_RDWR);
+        CHECK(probe_descriptor >= 0);
+        if (probe_descriptor >= 0) {
+            CHECK(::flock(probe_descriptor, LOCK_EX | LOCK_NB) == 0);
+            CHECK(::flock(probe_descriptor, LOCK_UN) == 0);
+            CHECK(::close(probe_descriptor) == 0);
+        }
     }
 
     const fs::path victim = directory / "lock-victim.txt";
@@ -1236,7 +1305,23 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
 std::size_t asset_entry_count(const pvt::detail::BundleFileSet& files) {
     return static_cast<std::size_t>(std::count_if(
         files.files.begin(), files.files.end(), [](const auto& entry) {
-            return entry.first.rfind("assets/", 0U) == 0U;
+            const std::string suffix = "/music_analysis.txt";
+            return entry.first.rfind("assets/", 0U) == 0U
+                   && (entry.first.size() < suffix.size()
+                       || entry.first.compare(entry.first.size() - suffix.size(),
+                                              suffix.size(), suffix) != 0);
+        }));
+}
+
+std::size_t music_analysis_entry_count(
+    const pvt::detail::BundleFileSet& files) {
+    const std::string suffix = "/music_analysis.txt";
+    return static_cast<std::size_t>(std::count_if(
+        files.files.begin(), files.files.end(), [&suffix](const auto& entry) {
+            return entry.first.rfind("assets/", 0U) == 0U
+                   && entry.first.size() >= suffix.size()
+                   && entry.first.compare(entry.first.size() - suffix.size(),
+                                          suffix.size(), suffix) == 0;
         }));
 }
 
@@ -1317,6 +1402,10 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     pvt::BundleSaveReport report;
     CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
     CHECK(report.created_version && report.version == 0U);
+    // Merely browsing an unpacked project in Finder must not break it. The
+    // out-of-band metadata remains on disk but is excluded from project state.
+    CHECK(write_bytes(bundle / ".DS_Store", "finder root metadata"));
+    CHECK(write_bytes(bundle / "0" / ".DS_Store", "finder folder metadata"));
     pvt::detail::BundleFileSet directory_files;
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
@@ -1325,7 +1414,90 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(directory_files.files.count(readable_asset_path(obj_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(image_attachment)) == 1U);
     CHECK(read_bytes(bundle / "0" / "metadata.txt").rfind(
-              "PVT_VERSION\t3\n", 0U) == 0U);
+              "PVT_VERSION\t4\n", 0U) == 0U);
+    CHECK(music_analysis_entry_count(directory_files) == 1U);
+    CHECK(directory_files.files["0/render_output.txt"].find(
+              "timing.music.feature_samples") == std::string::npos);
+    CHECK(directory_files.files.count("0/music_analysis.txt") == 1U);
+    CHECK(directory_files.files.count(".DS_Store") == 0U
+          && directory_files.files.count("0/.DS_Store") == 0U);
+
+    // The shared analysis object is also directly editable. A valid edit is
+    // loaded dirty and promoted to a new content identity on Save instead of
+    // corrupting or silently discarding the user's manual change.
+    const fs::path edited_analysis_bundle = directory / "direct-analysis-edit";
+    filesystem_error.clear();
+    fs::copy(bundle, edited_analysis_bundle, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    auto analysis_entry = std::find_if(
+        directory_files.files.begin(), directory_files.files.end(),
+        [](const auto& entry) {
+            return entry.first.rfind("assets/", 0U) == 0U
+                   && entry.first.size() >= 19U
+                   && entry.first.compare(entry.first.size() - 19U, 19U,
+                                          "/music_analysis.txt") == 0;
+        });
+    CHECK(analysis_entry != directory_files.files.end());
+    if (analysis_entry != directory_files.files.end()) {
+        // Missing references, missing objects, and malformed objects all fail
+        // transactionally instead of producing a partially loaded project.
+        for (const std::string& failure_case :
+             {"missing-analysis-reference", "missing-analysis-object",
+              "malformed-analysis-object"}) {
+            const fs::path rejected_bundle = directory / failure_case;
+            filesystem_error.clear();
+            fs::copy(bundle, rejected_bundle, fs::copy_options::recursive,
+                     filesystem_error);
+            CHECK(!filesystem_error);
+            if (failure_case == "missing-analysis-reference") {
+                filesystem_error.clear();
+                CHECK(fs::remove(rejected_bundle / "0" / "music_analysis.txt",
+                                 filesystem_error));
+                CHECK(!filesystem_error);
+            } else if (failure_case == "missing-analysis-object") {
+                filesystem_error.clear();
+                CHECK(fs::remove(
+                    rejected_bundle
+                        / pvt::detail::path_from_utf8(analysis_entry->first),
+                    filesystem_error));
+                CHECK(!filesystem_error);
+            } else {
+                CHECK(write_bytes(
+                    rejected_bundle
+                        / pvt::detail::path_from_utf8(analysis_entry->first),
+                    "not a music analysis\n"));
+            }
+            pvt::ProjectDocument rejected = pvt::default_project_document();
+            rejected.project.name = "transaction sentinel";
+            const std::string sentinel_uuid = rejected.project.uuid;
+            CHECK(!pvt::load_project_document(
+                as_utf8(rejected_bundle), rejected, &error));
+            CHECK(rejected.project.uuid == sentinel_uuid
+                  && rejected.project.name == "transaction sentinel");
+        }
+
+        std::string edited_analysis = analysis_entry->second;
+        CHECK(replace_record_value(
+            edited_analysis, "timing.music.detected_bpm", "121"));
+        CHECK(write_bytes(edited_analysis_bundle
+                              / pvt::detail::path_from_utf8(analysis_entry->first),
+                          edited_analysis));
+        pvt::ProjectDocument analysis_edited;
+        CHECK(pvt::load_project_document(
+            as_utf8(edited_analysis_bundle), analysis_edited, &error));
+        CHECK(analysis_edited.externally_modified && analysis_edited.dirty);
+        CHECK(analysis_edited.project.canvas.clock.music.detected_bpm == 121.0);
+        CHECK(pvt::save_project_document(
+            analysis_edited, as_utf8(edited_analysis_bundle), &report, &error));
+        CHECK(report.promoted_external_change && report.version == 1U);
+        pvt::detail::BundleFileSet promoted_analysis_files;
+        CHECK(pvt::detail::read_bundle_file_set(
+            as_utf8(edited_analysis_bundle), promoted_analysis_files, &error));
+        CHECK(music_analysis_entry_count(promoted_analysis_files) == 2U);
+        CHECK(pvt::validate_project_bundle(
+            as_utf8(edited_analysis_bundle), nullptr, &error));
+    }
 
     // Replacing readable music bytes directly performs the same bounded
     // analysis transaction as choosing a new source in the GUI.
@@ -1373,6 +1545,9 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
     CHECK(asset_entry_count(directory_files) == 3U);
+    CHECK(music_analysis_entry_count(directory_files) == 1U);
+    CHECK(fs::exists(bundle / ".DS_Store")
+          && fs::exists(bundle / "0" / ".DS_Store"));
 
     // Renaming/moving a source preserves its exact new filename and extension.
     // Deleting it after Attach but before Save remains safe.
@@ -1435,8 +1610,17 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
           == obj_bytes);
 
     // Version-2 bare-digest payloads remain loadable and the next changed Save
-    // writes a readable version-3 snapshot without rewriting legacy history.
+    // writes a readable current-format snapshot without rewriting legacy history.
     pvt::detail::BundleFileSet legacy_files = zip_files;
+    std::string legacy_output;
+    std::string legacy_output_digest;
+    CHECK(pvt::detail::serialize_render_output_config(
+        independent.project.canvas, independent.project.output,
+        legacy_output, &error));
+    CHECK(pvt::detail::sha256_hex(
+        legacy_output, legacy_output_digest, &error));
+    legacy_files.files["0/render_output.txt"] = legacy_output;
+    legacy_files.files.erase("0/music_analysis.txt");
     std::vector<std::pair<std::string, std::string>> legacy_assets;
     for (auto iterator = legacy_files.files.begin();
          iterator != legacy_files.files.end();) {
@@ -1446,6 +1630,10 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         }
         const std::size_t slash = iterator->first.find('/', 7U);
         CHECK(slash == 7U + 64U);
+        if (iterator->first.substr(slash + 1U) == "music_analysis.txt") {
+            iterator = legacy_files.files.erase(iterator);
+            continue;
+        }
         legacy_assets.emplace_back(iterator->first.substr(0U, slash),
                                    iterator->second);
         iterator = legacy_files.files.erase(iterator);
@@ -1454,8 +1642,11 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         CHECK(legacy_files.files.emplace(std::move(asset)).second);
     }
     std::string& legacy_manifest = legacy_files.files["0/metadata.txt"];
-    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t3\n",
+    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t4\n",
                        "PVT_VERSION\t2\n"));
+    CHECK(erase_record(legacy_manifest, "music_analysis.sha256"));
+    CHECK(replace_record_value(legacy_manifest, "render_output.sha256",
+                               legacy_output_digest));
     const fs::path legacy_zip = directory / "legacy-assets-v2.zip";
     CHECK(pvt::detail::write_bundle_file_set(as_utf8(legacy_zip), legacy_files,
                                              &error));
@@ -1465,12 +1656,98 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     legacy_loaded.project.layers.front().name = "Readable asset upgrade";
     CHECK(pvt::save_project_document(legacy_loaded, as_utf8(legacy_zip),
                                      &report, &error));
-    CHECK(report.version == 1U && report.created_version);
+    CHECK(report.version == 1U && report.created_version
+          && report.compacted_storage);
     pvt::detail::BundleFileSet upgraded_files;
     CHECK(pvt::detail::read_bundle_file_set(as_utf8(legacy_zip), upgraded_files,
                                             &error));
     CHECK(upgraded_files.files.count(readable_asset_path(changed_attachment)) == 1U);
+    CHECK(upgraded_files.files.count("0/music_analysis.txt") == 1U);
+    CHECK(upgraded_files.files["0/render_output.txt"].size()
+          < legacy_output.size());
+    pvt::ProjectConfig compacted_legacy_version;
+    CHECK(pvt::load_project_version(legacy_loaded, 0U,
+                                    compacted_legacy_version, &error));
+    CHECK(compacted_legacy_version.canvas.clock.music.feature_samples.size()
+          == independent.project.canvas.clock.music.feature_samples.size());
     CHECK(pvt::validate_project_bundle(as_utf8(legacy_zip), nullptr, &error));
+
+    // The same migration is an allowed atomic storage update for unpacked
+    // bundles; it does not require rewriting unrelated immutable files.
+    pvt::detail::BundleFileSet legacy_directory_files = zip_files;
+    legacy_directory_files.files["0/render_output.txt"] = legacy_output;
+    legacy_directory_files.files.erase("0/music_analysis.txt");
+    for (auto iterator = legacy_directory_files.files.begin();
+         iterator != legacy_directory_files.files.end();) {
+        if (iterator->first.rfind("assets/", 0U) == 0U
+            && iterator->first.size() >= 19U
+            && iterator->first.compare(iterator->first.size() - 19U, 19U,
+                                       "/music_analysis.txt") == 0) {
+            iterator = legacy_directory_files.files.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+    std::string& legacy_directory_manifest =
+        legacy_directory_files.files["0/metadata.txt"];
+    CHECK(replace_once(legacy_directory_manifest, "PVT_VERSION\t4\n",
+                       "PVT_VERSION\t3\n"));
+    CHECK(erase_record(legacy_directory_manifest, "music_analysis.sha256"));
+    CHECK(replace_record_value(legacy_directory_manifest,
+                               "render_output.sha256",
+                               legacy_output_digest));
+    std::string legacy_directory_metadata_digest;
+    CHECK(pvt::detail::sha256_hex(legacy_directory_manifest,
+                                  legacy_directory_metadata_digest, &error));
+    pvt::detail::BundleFileSet legacy_directory_tree;
+    legacy_directory_tree.root_name = "0";
+    for (const auto& entry : legacy_directory_files.files) {
+        if (entry.first.rfind("0/", 0U) == 0U) {
+            legacy_directory_tree.files.emplace(entry.first.substr(2U),
+                                                entry.second);
+        }
+    }
+    std::string legacy_directory_tree_digest;
+    CHECK(pvt::detail::bundle_file_set_digest(
+        legacy_directory_tree, legacy_directory_tree_digest, &error));
+    std::string& legacy_directory_root =
+        legacy_directory_files.files["metadata.txt"];
+    CHECK(replace_record_value(legacy_directory_root,
+                               "versions.0.metadata_sha256",
+                               legacy_directory_metadata_digest));
+    CHECK(replace_record_value(legacy_directory_root,
+                               "versions.0.tree_sha256",
+                               legacy_directory_tree_digest));
+    CHECK(replace_record_value(legacy_directory_files.files["current"],
+                               "metadata.sha256",
+                               legacy_directory_metadata_digest));
+    const fs::path legacy_parent = directory / "legacy-directory-parent";
+    filesystem_error.clear();
+    CHECK(fs::create_directory(legacy_parent, filesystem_error));
+    CHECK(!filesystem_error);
+    const fs::path legacy_directory = legacy_parent
+        / pvt::detail::path_from_utf8(legacy_directory_files.root_name);
+    CHECK(pvt::detail::write_bundle_file_set(
+        as_utf8(legacy_directory), legacy_directory_files, &error));
+    CHECK(rewrite_root_checksum(legacy_directory));
+    pvt::ProjectDocument legacy_directory_document;
+    CHECK(pvt::load_project_document(
+        as_utf8(legacy_directory), legacy_directory_document, &error));
+    CHECK(!legacy_directory_document.externally_modified
+          && !legacy_directory_document.dirty);
+    const bool saved_legacy_directory = pvt::save_project_document(
+        legacy_directory_document, as_utf8(legacy_directory), &report, &error);
+    if (!saved_legacy_directory) {
+        std::cerr << "legacy directory migration failed: " << error << '\n';
+    }
+    CHECK(saved_legacy_directory);
+    CHECK(report.validated_only && !report.created_version
+          && report.compacted_storage);
+    CHECK(fs::file_size(legacy_directory / "0" / "render_output.txt")
+          < legacy_output.size());
+    CHECK(fs::exists(legacy_directory / "0" / "music_analysis.txt"));
+    CHECK(pvt::validate_project_bundle(
+        as_utf8(legacy_directory), nullptr, &error));
 
     // A direct edit to a readable asset is a first-class project edit. The
     // loader derives fresh identity metadata, marks the project dirty, and Save

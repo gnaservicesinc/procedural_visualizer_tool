@@ -32,9 +32,9 @@ struct ProjectAttachment {
     std::uint64_t size_bytes = 0U;
     std::string local_path;
     std::string bundle_path;
-    // A valid direct edit to a readable version-3 asset is accepted just like
-    // replacing that source through the application. Saving promotes it to a
-    // new immutable version with fresh identity metadata.
+    // A valid direct edit to a readable version-3-or-newer asset is accepted
+    // just like replacing that source through the application. Saving promotes
+    // it to a new immutable version with fresh identity metadata.
     bool externally_modified = false;
 };
 
@@ -67,6 +67,7 @@ struct BundleSaveReport {
     std::uint64_t version = 0;
     bool created_version = false;
     bool validated_only = false;
+    bool compacted_storage = false;
     bool wrote_zip = false;
     bool promoted_external_change = false;
 };
