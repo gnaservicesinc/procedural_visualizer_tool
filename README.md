@@ -92,9 +92,17 @@ and therefore needs network access on its first distribution build.
   meter, and analyzed-music modes. Pulse interpolation can hold, move linearly,
   or ease with smoothstep; direction, phase, beat offset, and exact/fit-to-
   sequence behavior are explicit.
+- An optional active-layer clock with the same controls. A layer can follow its
+  own analyzed clip while the project timeline remains authoritative. Smart
+  loop fit, straight fit, play once, play once then fall back to the project
+  clock, and original-speed loop policies make short samples useful without
+  destructive source edits. Each Music clock has a **Data only** switch; it
+  keeps analysis-driven visuals while muting that source during preview and
+  movie export. This defaults on for layer clocks and off for the project clock.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
-  glow, and animated block scaling. Every effect can be enabled, synchronized,
-  duplicated, removed, and reordered. Each effect explicitly runs either in
+  glow, animated block scaling, and a deterministic spark/trail particle field.
+  Every effect can be enabled, synchronized, duplicated, removed, and reordered.
+  Each effect explicitly runs either in
   **Texture** space before surface wrapping or on the **Mapped object** after
   wrapping and the layer mirror/flip; the latter moves or deforms the rendered
   silhouette of a cylinder, sphere, cube, or OBJ in final canvas coordinates
@@ -102,6 +110,10 @@ and therefore needs network access on its first distribution build.
   include type-specific centers, edges, frequencies, harmonics/attenuation,
   glow bloom parameters, and block scale
   range/mix/quantization steps.
+- Per-layer closed motion presets: orbit, figure eight, bounce, and Lissajous,
+  with center, horizontal/vertical travel, integer loop cycles, phase, rotation,
+  and optional scale pulsing. They provide useful animated placement now while
+  the more elaborate reusable cubic-path editor remains future work.
 - Draggable numbered effect centers in the preview. A local area radius of zero
   preserves whole-layer behavior; a positive radius creates a smoothly
   feathered circle around the center for zoom, ripple, shake, flag wave, and
@@ -161,9 +173,9 @@ waves, swings, and centered effects with visible radius rings, ordered
 wave/swing/effect editors, palette and transform controls, type-aware effect
 controls, a live checkerboard alpha preview, a continuously updating timeline,
 and background composite export with cooperative cancellation. The
-**Synchronization** tab owns the global Clock block plus the selected layer's
-Swing and Audio Response blocks. The Output tab is global while the Layer Render
-tab always edits the selected layer. **Randomize
+**Synchronization** tab owns both the global Clock and the selected layer's
+optional active-layer Clock, Swing, and Audio Response blocks. The Output tab is
+global while the Layer Render tab always edits the selected layer. **Randomize
 values** keeps the current layer's stack structure and types while varying its
 settings; **Randomize mix** creates a new bounded mix. Both live in the Settings
 menu and require confirmation, keeping destructive experiments away from the
@@ -218,6 +230,16 @@ manual frame count is preserved in every mode; a render-ready Music clock uses
 `ceil(source sample frames / sample rate * FPS)` instead, and the GUI disables
 the ignored field until another clock is selected.
 
+An enabled active-layer clock locally replaces that clock evaluation without
+changing the project timeline or export length. Its duration policy maps the
+local source over the project duration: **Smart loop fit** repeats the greatest
+whole number of clips that fit and spreads the residual adjustment over that
+aggregate; **Straight fit** makes one traversal; **Play once** holds the final
+local visual state; **Play once then project** switches visual timing to the
+project clock; and **Original-speed loop** repeats unchanged. The one-shot
+policies are rejected when the local source is longer than the project because
+that configuration cannot reach its intended transition inside the loop.
+
 Wave propagation direction is continuous:
 
 - `0.0`: horizontal propagation
@@ -243,13 +265,14 @@ does not force it back on. Swings remain governed by their own active-layer
 checkbox and can be mixed with audio response. A relink must match the cached
 digest; reanalyze is the explicit way to accept changed audio.
 
-When Play is active, the project-wide Music clock's one managed track is decoded
-and played from the matching timeline position. Seeking, beat navigation,
-pause/resume, looping, and project replacement resynchronize or stop it. A
-persistent timeline volume control changes monitoring volume only. Layers do
-not own or mix independent audio tracks, so preview playback stays unambiguous.
-If an audio device cannot be opened, visual playback continues and reports the
-silent fallback instead of disabling the preview.
+When Play is active, every audible project and active-layer Music-clock source
+is decoded and mixed from the matching timeline position. The preview applies
+the same loop/fit/one-shot mapping used by the visual clocks. Seeking, beat
+navigation, pause/resume, looping, imports, clearing sources, and project
+replacement resynchronize or stop the mix. A persistent timeline volume control
+changes monitoring volume only. **Data only** sources still drive visuals but
+do not enter the mix. If an audio device cannot be opened, visual playback
+continues and reports the silent fallback instead of disabling the preview.
 
 On macOS, **Export Video** writes a QuickTime `.mov` directly through
 AVFoundation/VideoToolbox. The choices are lossless 8-bit RGBA PNG frames,
@@ -259,8 +282,11 @@ preferred, required, or disabled; requiring it fails before rendering when the
 requested VideoToolbox encoder is not advertised. PNG-in-MOV is codec-lossless
 and does not use VideoToolbox because there is nothing useful for its video
 hardware to accelerate. Transparency is retained only by codecs that support
-it. A ready Music-clock source is passed through into the movie without lossy
-audio re-encoding, and no layer-level audio is included.
+it. Audible project and layer-clock sources are rendered into one synchronized
+48 kHz float mix and supplied to the movie exporter; Data-only sources are
+omitted. Constant-rate fit policies intentionally resample both timing and pitch
+for faithful audition of their visual mapping. Source files and stored analysis
+remain untouched.
 
 Video duration uses the same effective project clock as preview and sequence
 export. Destinations are written through a sibling temporary file, checked,
@@ -508,11 +534,13 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-4 remain importable;
-current explicit legacy output is setup format 5. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-5 remain importable;
+current explicit legacy output is setup format 6. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
-identity data. Older files receive neutral compatibility defaults. Import creates a new unsaved
+identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
+motion, and particle settings. Older files receive neutral compatibility
+defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
 The CLI exposes
@@ -521,7 +549,8 @@ more than one layer exists.
 
 Version 4.0.1 corrected the 4.0.0 palette-stage bug without changing its schema:
 an enabled v4 palette selects starting colors instead of rewriting the final
-effected image. Version 5 adds the synchronization/music and asset data above.
+effected image. Versions 5 and 6 add the synchronization/music/asset and local
+clock/motion/particle data above.
 
 ## Scripted rendering
 
@@ -572,6 +601,9 @@ Clock overrides also include `--clock default|frame|time|meter|music`,
 `--clock-interpolation hold|linear|smoothstep`, `--clock-fit exact|sequence`,
 phase/direction/beat-offset controls, and a selected-layer `--swings` master
 toggle. Options are processed left-to-right, so put `--load` before overrides.
+The interactive CLI editor additionally exposes active-layer clocks, their
+duration and Data-only policies, layer motion presets, and particle controls;
+scripted workflows can configure those fields in the GUI or load a saved bundle.
 
 Run `./build/render9 --help` for all options. Existing matching output files are
 protected unless `--overwrite` is explicit. A full sequence collision preflight
@@ -702,7 +734,8 @@ The suite covers dynamic zero/one/ten-item configurations, deterministic frames,
 exact and near-seam continuity for every effect in both synchronization modes,
 texture/mapped-object stages, local effect and swing influence, starting
 palette ordering and toggle bypass, post-effects quantization,
-transforms, direction modes, alpha range and straight-alpha/glow composition,
+transforms, closed layer motion, particles, direction modes, alpha range and
+straight-alpha/glow composition,
 primitive mappings, rear-surface alpha/color compositing, bounded OBJ
 parsing/caching and
 two-sided perspective rendering, animated smooth/stepped block grouping and
@@ -713,8 +746,9 @@ append/no-change validation, semantic diffs, current/revert behavior, legacy
 promotion, checksum/fallback handling, readable attachment names and direct-edit
 promotion, deleted-original recovery, invalid replacement rejection, hostile archive/tree
 rejection, adaptive beat/tempo changes, dense transient and spectral/pitch
-features, music-clock interpolation and response routing,
-native PNG/ProRes/HEVC movies, audio pass-through, hardware-required encoder
+features, global/active-layer clock interpolation, duration mapping and response
+routing, native PNG/ProRes/HEVC movies, synchronized multi-source audio mixing,
+Data-only exclusion, hardware-required encoder
 selection, video cancellation/collision safety,
 8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
 deterministic dithering, byte-identical one/four-worker sequence output,
@@ -727,6 +761,31 @@ multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's
 offscreen platform, exercises project/layer/bundle/synchronization state, verifies
 that Play installs advancing completed preview frames, and checks adaptive UI
 layout behavior.
+
+## Live performance direction
+
+A laptop can already use pre-analyzed project and layer clips for synchronized
+visual/audio playback, including short experimental samples used only as clock
+data. The program does **not** yet capture a microphone, audio-interface input,
+pedalboard return, MIDI, or OSC stream, so it is not yet a low-latency live-input
+instrument.
+
+That instrument should stay in this repository. The preferred shape is a
+focused **Live mode** or sibling `pvt-live` front end that shares the renderer,
+effects, project schema, presets, and validation with the editor. A long-lived
+fork would duplicate fixes and make projects drift. Live analysis should be an
+ephemeral bounded stream feeding the existing clock/audio-response concepts;
+persist device-independent mappings and calibration, not a pretend music file
+or machine-specific device identity.
+
+A stage-ready pass should add selectable low-latency audio capture, an input
+ring buffer and incremental features, latency calibration, tap tempo plus
+MIDI/OSC/foot-controller scene control, full-screen output/display routing,
+freeze/blackout controls, dropout-safe last-good behavior, and a frame-time
+watchdog. An audio-interface aux or post-effects send would let a performer
+choose whether the visuals react to the acoustic instrument, the effected
+pedal/looper chain, or both. NDI/Syphon/Spout-style output can follow after the
+local performance path is dependable.
 
 ## Planned architecture (not implemented)
 
@@ -765,7 +824,9 @@ writing one atomic output file is allowed to finish, but its result is discarded
 before destination installation when cancellation is observed. Music, custom
 OBJ, and registered generic attachments are embedded under their content
 identity and exact original filename; starting-image rendering is not yet
-implemented. Reusable path animation remains planned work as described above. See
+implemented. Compact closed layer-motion presets are implemented; reusable
+editable cubic paths remain planned work as described above. Live audio/data
+capture remains future work. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 
 This project is licensed under GPLv3. Applications distributed with the library

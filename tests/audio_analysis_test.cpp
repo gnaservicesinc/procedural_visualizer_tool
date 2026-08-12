@@ -1,4 +1,5 @@
 #include "audio_analysis.h"
+#include "audio_playback.h"
 
 #include <algorithm>
 #include <array>
@@ -649,6 +650,36 @@ void test_long_track_density_and_transient(const fs::path& directory) {
               << " ms\n";
 }
 
+void test_synchronized_audio_mix(const fs::path& directory) {
+    const fs::path source = directory / "mix-source.wav";
+    std::vector<float> samples(4800U * 2U, 0.2F);
+    CHECK(write_float32_wave(source, 48000U, 2U, samples));
+    pvt::audio::PlaybackTrack straight;
+    straight.path = source.string();
+    straight.playback_rate = 0.5;
+    straight.stop_after_seconds = 0.2;
+    pvt::audio::PlaybackTrack looped;
+    looped.path = source.string();
+    looped.loop = true;
+    const fs::path mix = directory / "synchronized-mix.wav";
+    std::string error;
+    CHECK(pvt::audio::write_mix_wav(
+        {straight, looped}, 0.2, mix.string(), nullptr, &error));
+    CHECK(error.empty() && fs::exists(mix));
+    pvt::MusicAnalysis analysis;
+    CHECK(pvt::audio::analyze_music_file(mix.string(), analysis,
+                                         {}, nullptr, &error));
+    CHECK(analysis.source_channel_count == 2U);
+    CHECK(analysis.source_sample_rate == 48000U);
+    CHECK(std::abs(analysis.duration_seconds - 0.2) < 1.0e-6);
+
+    std::atomic_bool cancelled{true};
+    const fs::path cancelled_mix = directory / "cancelled-mix.wav";
+    CHECK(!pvt::audio::write_mix_wav(
+        {looped}, 0.2, cancelled_mix.string(), &cancelled, &error));
+    CHECK(!fs::exists(cancelled_mix));
+}
+
 } // namespace
 
 int main() {
@@ -666,6 +697,7 @@ int main() {
         test_cancellation(directory.path());
         test_known_sha256(directory.path());
         test_long_track_density_and_transient(directory.path());
+        test_synchronized_audio_mix(directory.path());
     } catch (const std::exception& exception) {
         std::cerr << "unexpected test exception: " << exception.what() << '\n';
         return 2;

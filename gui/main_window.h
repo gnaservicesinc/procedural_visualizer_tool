@@ -87,6 +87,8 @@ private:
         pvt::ProjectAttachment attached;
         std::shared_ptr<pvt::ProjectDocument> staged_document;
         MusicAnalysisAction action = MusicAnalysisAction::Choose;
+        bool layer_clock = false;
+        std::string layer_uuid;
         std::uint64_t generation = 0;
         std::uint64_t document_revision = 0;
     };
@@ -238,14 +240,19 @@ private:
     bool startExport();
     bool startVideoExport();
     bool startMusicAnalysis(const QString& sourcePath,
-                            MusicAnalysisAction action);
+                            MusicAnalysisAction action,
+                            bool layerClock = false);
     void finishMusicAnalysis(const MusicAnalysisResult& result);
     void cancelMusicAnalysis(const QString& message = {});
     void chooseMusicSource();
     void relinkMusicSource();
     void reanalyzeMusicSource();
     void clearMusicSource();
-    QString currentMusicSourcePath() const;
+    void chooseLayerMusicSource();
+    void relinkLayerMusicSource();
+    void reanalyzeLayerMusicSource();
+    void clearLayerMusicSource();
+    QString currentMusicSourcePath(bool layerClock = false) const;
     int effectiveFrameCount(QString* error = nullptr) const;
     bool musicRenderReady() const;
     void navigateToBeat(int direction);
@@ -301,6 +308,7 @@ private:
     std::atomic_bool cancel_export_{false};
     std::uint64_t music_analysis_generation_ = 0;
     bool music_analysis_active_ = false;
+    bool music_analysis_layer_clock_ = false;
     QString startup_working_directory_;
     QString last_dialog_directory_;
     QString current_project_path_;
@@ -388,6 +396,7 @@ private:
     QDoubleSpinBox* clock_phase_offset_ = nullptr;
     QComboBox* music_tempo_mode_ = nullptr;
     QDoubleSpinBox* music_beat_offset_ms_ = nullptr;
+    QCheckBox* music_data_only_ = nullptr;
     QLineEdit* music_source_ = nullptr;
     QLabel* music_summary_ = nullptr;
     QLabel* music_error_ = nullptr;
@@ -397,6 +406,33 @@ private:
     QPushButton* music_reanalyze_ = nullptr;
     QPushButton* music_clear_ = nullptr;
     QPushButton* music_cancel_ = nullptr;
+
+    QGroupBox* layer_clock_group_ = nullptr;
+    QFormLayout* layer_clock_form_ = nullptr;
+    QComboBox* layer_clock_scale_ = nullptr;
+    QComboBox* layer_clock_mode_ = nullptr;
+    QComboBox* layer_clock_interpolation_ = nullptr;
+    QComboBox* layer_clock_fit_ = nullptr;
+    QSpinBox* layer_clock_frame_interval_ = nullptr;
+    QDoubleSpinBox* layer_clock_time_interval_ms_ = nullptr;
+    QLineEdit* layer_meter_expression_ = nullptr;
+    QLabel* layer_meter_summary_ = nullptr;
+    QDoubleSpinBox* layer_meter_bpm_ = nullptr;
+    QSpinBox* layer_meter_tempo_note_ = nullptr;
+    QCheckBox* layer_clock_reverse_ = nullptr;
+    QDoubleSpinBox* layer_clock_phase_offset_ = nullptr;
+    QComboBox* layer_music_tempo_mode_ = nullptr;
+    QDoubleSpinBox* layer_music_beat_offset_ms_ = nullptr;
+    QCheckBox* layer_music_data_only_ = nullptr;
+    QLineEdit* layer_music_source_ = nullptr;
+    QLabel* layer_music_summary_ = nullptr;
+    QLabel* layer_music_error_ = nullptr;
+    QProgressBar* layer_music_progress_ = nullptr;
+    QPushButton* layer_music_choose_ = nullptr;
+    QPushButton* layer_music_relink_ = nullptr;
+    QPushButton* layer_music_reanalyze_ = nullptr;
+    QPushButton* layer_music_clear_ = nullptr;
+    QPushButton* layer_music_cancel_ = nullptr;
 
     QGroupBox* swings_group_ = nullptr;
     QListWidget* swing_list_ = nullptr;
@@ -478,6 +514,17 @@ private:
     QCheckBox* transform_flip_horizontal_ = nullptr;
     QCheckBox* transform_flip_vertical_ = nullptr;
     QComboBox* transform_mirror_ = nullptr;
+    QGroupBox* motion_group_ = nullptr;
+    QComboBox* motion_path_ = nullptr;
+    QDoubleSpinBox* motion_center_x_ = nullptr;
+    QDoubleSpinBox* motion_center_y_ = nullptr;
+    QDoubleSpinBox* motion_travel_x_ = nullptr;
+    QDoubleSpinBox* motion_travel_y_ = nullptr;
+    QSpinBox* motion_cycles_x_ = nullptr;
+    QSpinBox* motion_cycles_y_ = nullptr;
+    QDoubleSpinBox* motion_phase_ = nullptr;
+    QSpinBox* motion_rotations_ = nullptr;
+    QDoubleSpinBox* motion_scale_pulse_ = nullptr;
     QCheckBox* palette_enabled_ = nullptr;
     QLineEdit* palette_name_ = nullptr;
     QComboBox* palette_preset_ = nullptr;

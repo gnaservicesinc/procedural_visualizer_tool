@@ -15,7 +15,7 @@ if(PVT_ENABLE_DISTRIBUTION AND CMAKE_HOST_APPLE
         "Minimum macOS version for generated binaries" FORCE)
 endif()
 
-project(ProceduralVisualizerTool VERSION 5.0.0 LANGUAGES CXX)
+project(ProceduralVisualizerTool VERSION 6.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)

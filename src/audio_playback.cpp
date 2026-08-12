@@ -4,12 +4,16 @@
 #include "path_utf8.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <new>
+#include <vector>
 
 namespace pvt::audio {
 namespace {
@@ -31,12 +35,22 @@ std::string miniaudio_error(const char* action, ma_result result) {
 } // namespace
 
 struct AudioPlayback::Impl {
-    ma_decoder decoder{};
+    struct Voice {
+        ma_decoder decoder{};
+        bool initialized = false;
+        bool active = false;
+        bool loop = false;
+        ma_uint64 remaining_output_frames = (std::numeric_limits<ma_uint64>::max)();
+
+        ~Voice() {
+            if (initialized) (void)ma_decoder_uninit(&decoder);
+        }
+    };
+
+    std::vector<std::unique_ptr<Voice>> voices;
     ma_device device{};
-    bool decoder_initialized = false;
     bool device_initialized = false;
     std::atomic_bool started{false};
-    std::atomic_bool loop{false};
     std::atomic<ma_uint64> cursor_frames{0U};
     std::atomic<float> volume{1.0F};
 
@@ -50,48 +64,69 @@ struct AudioPlayback::Impl {
         auto* samples = static_cast<float*>(output);
         ma_silence_pcm_frames(samples, requested_frames, ma_format_f32,
                               kPlaybackChannels);
-        if (!self->decoder_initialized
-            || !self->started.load(std::memory_order_relaxed)) {
+        if (!self->started.load(std::memory_order_relaxed)) {
             return;
         }
-
-        ma_uint64 completed = 0U;
-        bool loop_attempted = false;
-        while (completed < requested_frames) {
-            ma_uint64 decoded = 0U;
-            const ma_result result = ma_decoder_read_pcm_frames(
-                &self->decoder,
-                ma_offset_pcm_frames_ptr_f32(samples, completed,
-                                              kPlaybackChannels),
-                static_cast<ma_uint64>(requested_frames) - completed,
-                &decoded);
-            if (decoded > 0U) {
-                completed += decoded;
-                self->cursor_frames.fetch_add(decoded,
-                                              std::memory_order_relaxed);
-                loop_attempted = false;
+        constexpr ma_uint64 kScratchFrames = 2048U;
+        std::array<float, kScratchFrames * kPlaybackChannels> scratch{};
+        const float voice_gain = self->voices.empty()
+            ? 1.0F
+            : static_cast<float>(1.0 / std::sqrt(
+                  static_cast<double>(self->voices.size())));
+        bool any_active = false;
+        for (const auto& voice_owner : self->voices) {
+            Voice& voice = *voice_owner;
+            if (!voice.active || !voice.initialized) continue;
+            ma_uint64 output_offset = 0U;
+            bool loop_attempted = false;
+            while (output_offset < requested_frames && voice.active) {
+                const ma_uint64 wanted = std::min<ma_uint64>(
+                    {kScratchFrames,
+                     static_cast<ma_uint64>(requested_frames) - output_offset,
+                     voice.remaining_output_frames});
+                if (wanted == 0U) {
+                    voice.active = false;
+                    break;
+                }
+                ma_uint64 decoded = 0U;
+                const ma_result result = ma_decoder_read_pcm_frames(
+                    &voice.decoder, scratch.data(), wanted, &decoded);
+                for (ma_uint64 frame = 0U; frame < decoded; ++frame) {
+                    const ma_uint64 target = (output_offset + frame)
+                                             * kPlaybackChannels;
+                    const ma_uint64 source = frame * kPlaybackChannels;
+                    samples[target] += scratch[source] * voice_gain;
+                    samples[target + 1U] += scratch[source + 1U] * voice_gain;
+                }
+                output_offset += decoded;
+                if (voice.remaining_output_frames
+                    != (std::numeric_limits<ma_uint64>::max)()) {
+                    voice.remaining_output_frames -= std::min(
+                        voice.remaining_output_frames, decoded);
+                }
+                if (decoded > 0U) loop_attempted = false;
+                if (decoded == wanted) continue;
+                if ((result != MA_SUCCESS && result != MA_AT_END)
+                    || !voice.loop || loop_attempted
+                    || ma_decoder_seek_to_pcm_frame(&voice.decoder, 0U)
+                           != MA_SUCCESS) {
+                    voice.active = false;
+                    break;
+                }
+                loop_attempted = true;
             }
-            if (completed >= requested_frames) break;
-            if ((result != MA_SUCCESS && result != MA_AT_END) || decoded > 0U) {
-                if (result != MA_SUCCESS && result != MA_AT_END) break;
-                continue;
-            }
-            if (!self->loop.load(std::memory_order_relaxed) || loop_attempted
-                || ma_decoder_seek_to_pcm_frame(&self->decoder, 0U)
-                       != MA_SUCCESS) {
-                self->started.store(false, std::memory_order_relaxed);
-                break;
-            }
-            self->cursor_frames.store(0U, std::memory_order_relaxed);
-            loop_attempted = true;
+            any_active = any_active || voice.active;
         }
-
+        self->cursor_frames.fetch_add(requested_frames,
+                                      std::memory_order_relaxed);
         const float gain = std::clamp(
             self->volume.load(std::memory_order_relaxed), 0.0F, 1.0F);
-        if (gain != 1.0F && completed > 0U) {
-            ma_apply_volume_factor_pcm_frames_f32(
-                samples, completed, kPlaybackChannels, gain);
+        const std::size_t sample_count = static_cast<std::size_t>(requested_frames)
+                                         * kPlaybackChannels;
+        for (std::size_t index = 0U; index < sample_count; ++index) {
+            samples[index] = std::clamp(samples[index] * gain, -1.0F, 1.0F);
         }
+        if (!any_active) self->started.store(false, std::memory_order_relaxed);
     }
 
     void uninitialize() noexcept {
@@ -101,10 +136,7 @@ struct AudioPlayback::Impl {
             ma_device_uninit(&device);
             device_initialized = false;
         }
-        if (decoder_initialized) {
-            (void)ma_decoder_uninit(&decoder);
-            decoder_initialized = false;
-        }
+        voices.clear();
         cursor_frames.store(0U, std::memory_order_relaxed);
     }
 
@@ -116,46 +148,103 @@ AudioPlayback::~AudioPlayback() = default;
 
 bool AudioPlayback::start(const std::string& path, double position_seconds,
                           bool should_loop, std::string* error) {
+    PlaybackTrack track;
+    track.path = path;
+    track.source_position_seconds = position_seconds;
+    track.loop = should_loop;
+    return start_mix({track}, position_seconds, error);
+}
+
+bool AudioPlayback::start_mix(const std::vector<PlaybackTrack>& tracks,
+                              double timeline_position_seconds,
+                              std::string* error) {
     if (error != nullptr) error->clear();
-    if (path.empty() || !std::isfinite(position_seconds)
-        || position_seconds < 0.0) {
-        return fail(error, "Audio playback requires a source and a finite, nonnegative position.");
-    }
     impl_->uninitialize();
-
-    ma_decoder_config decoder_config = ma_decoder_config_init(
-        ma_format_f32, kPlaybackChannels, kPlaybackSampleRate);
-#if defined(_WIN32)
-    const std::filesystem::path native = detail::path_from_utf8(path);
-    const ma_result decoder_result = ma_decoder_init_file_w(
-        native.c_str(), &decoder_config, &impl_->decoder);
-#else
-    const ma_result decoder_result = ma_decoder_init_file(
-        path.c_str(), &decoder_config, &impl_->decoder);
-#endif
-    if (decoder_result != MA_SUCCESS) {
-        return fail(error, miniaudio_error("Could not open the project music for playback",
-                                           decoder_result));
+    if (tracks.empty() || !std::isfinite(timeline_position_seconds)
+        || timeline_position_seconds < 0.0) {
+        return fail(error, "Audio playback requires tracks and a finite timeline position.");
     }
-    impl_->decoder_initialized = true;
-
-    const long double requested =
-        static_cast<long double>(position_seconds)
-        * static_cast<long double>(kPlaybackSampleRate);
-    const ma_uint64 frame = requested
+    try {
+        impl_->voices.reserve(tracks.size());
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to prepare the audio mix.");
+    }
+    for (const PlaybackTrack& track : tracks) {
+        if (track.path.empty() || !std::isfinite(track.source_position_seconds)
+            || track.source_position_seconds < 0.0
+            || !std::isfinite(track.playback_rate)
+            || track.playback_rate <= 0.0
+            || !std::isfinite(track.stop_after_seconds)
+            || track.stop_after_seconds < 0.0) {
+            impl_->uninitialize();
+            return fail(error, "Audio mix tracks require a source and finite, positive timing values.");
+        }
+        const double decoder_rate_exact =
+            static_cast<double>(kPlaybackSampleRate) / track.playback_rate;
+        if (decoder_rate_exact < 1000.0 || decoder_rate_exact > 384000.0) {
+            impl_->uninitialize();
+            return fail(error, "An audible layer is outside the supported playback/stretch range; use Smart loop fit for a short clip, choose a shorter source, or enable Data only.");
+        }
+        std::unique_ptr<Impl::Voice> voice;
+        try {
+            voice = std::make_unique<Impl::Voice>();
+        } catch (const std::bad_alloc&) {
+            impl_->uninitialize();
+            return fail(error, "Not enough memory to prepare the audio mix.");
+        }
+        const ma_uint32 decoder_rate = static_cast<ma_uint32>(
+            std::llround(decoder_rate_exact));
+        ma_decoder_config decoder_config = ma_decoder_config_init(
+            ma_format_f32, kPlaybackChannels, decoder_rate);
+#if defined(_WIN32)
+        const std::filesystem::path native = detail::path_from_utf8(track.path);
+        const ma_result decoder_result = ma_decoder_init_file_w(
+            native.c_str(), &decoder_config, &voice->decoder);
+#else
+        const ma_result decoder_result = ma_decoder_init_file(
+            track.path.c_str(), &decoder_config, &voice->decoder);
+#endif
+        if (decoder_result != MA_SUCCESS) {
+            impl_->uninitialize();
+            return fail(error, miniaudio_error(
+                "Could not open a project music source for playback",
+                decoder_result));
+        }
+        voice->initialized = true;
+        const long double requested =
+            static_cast<long double>(track.source_position_seconds)
+            * static_cast<long double>(decoder_rate);
+        const ma_uint64 frame = requested
                                     >= static_cast<long double>(
                                         std::numeric_limits<ma_uint64>::max())
                                 ? std::numeric_limits<ma_uint64>::max()
                                 : static_cast<ma_uint64>(requested);
-    const ma_result seek_result =
-        ma_decoder_seek_to_pcm_frame(&impl_->decoder, frame);
-    if (seek_result != MA_SUCCESS) {
-        impl_->uninitialize();
-        return fail(error, miniaudio_error("Could not seek the project music",
-                                           seek_result));
+        const ma_result seek_result =
+            ma_decoder_seek_to_pcm_frame(&voice->decoder, frame);
+        if (seek_result != MA_SUCCESS) {
+            impl_->uninitialize();
+            return fail(error, miniaudio_error(
+                "Could not seek a project music source", seek_result));
+        }
+        voice->loop = track.loop;
+        voice->active = true;
+        if (track.stop_after_seconds > 0.0) {
+            const long double remaining =
+                static_cast<long double>(track.stop_after_seconds)
+                * static_cast<long double>(kPlaybackSampleRate);
+            voice->remaining_output_frames = remaining
+                >= static_cast<long double>(
+                    std::numeric_limits<ma_uint64>::max())
+                    ? std::numeric_limits<ma_uint64>::max()
+                    : static_cast<ma_uint64>(std::ceil(remaining));
+        }
+        try {
+            impl_->voices.push_back(std::move(voice));
+        } catch (const std::bad_alloc&) {
+            impl_->uninitialize();
+            return fail(error, "Not enough memory to prepare the audio mix.");
+        }
     }
-    impl_->cursor_frames.store(frame, std::memory_order_relaxed);
-    impl_->loop.store(should_loop, std::memory_order_relaxed);
 
     ma_device_config device_config = ma_device_config_init(ma_device_type_playback);
     device_config.playback.format = ma_format_f32;
@@ -171,6 +260,15 @@ bool AudioPlayback::start(const std::string& path, double position_seconds,
                                            device_result));
     }
     impl_->device_initialized = true;
+    const long double timeline_frame =
+        static_cast<long double>(timeline_position_seconds)
+        * static_cast<long double>(kPlaybackSampleRate);
+    impl_->cursor_frames.store(
+        timeline_frame >= static_cast<long double>(
+                              (std::numeric_limits<ma_uint64>::max)())
+            ? (std::numeric_limits<ma_uint64>::max)()
+            : static_cast<ma_uint64>(timeline_frame),
+        std::memory_order_relaxed);
     impl_->started.store(true, std::memory_order_relaxed);
     const ma_result start_result = ma_device_start(&impl_->device);
     if (start_result != MA_SUCCESS) {
@@ -202,6 +300,234 @@ void AudioPlayback::set_volume(double requested) noexcept {
     impl_->volume.store(
         static_cast<float>(std::clamp(requested, 0.0, 1.0)),
         std::memory_order_relaxed);
+}
+
+bool write_mix_wav(const std::vector<PlaybackTrack>& tracks,
+                   double duration_seconds, const std::string& destination,
+                   const std::atomic_bool* cancel, std::string* error) {
+    if (error != nullptr) error->clear();
+    if (tracks.empty() || destination.empty()
+        || !std::isfinite(duration_seconds) || duration_seconds <= 0.0) {
+        return fail(error, "Audio export requires tracks, a temporary destination, and a positive duration.");
+    }
+    constexpr std::uint64_t kMaximumMixSeconds = 2U * 60U * 60U;
+    if (duration_seconds > static_cast<double>(kMaximumMixSeconds)) {
+        return fail(error, "Audio export exceeds the supported two-hour duration.");
+    }
+    const std::uint64_t total_frames = static_cast<std::uint64_t>(
+        std::ceil(duration_seconds * static_cast<double>(kPlaybackSampleRate)));
+    const std::uint64_t data_bytes = total_frames * kPlaybackChannels
+                                     * sizeof(float);
+    if (data_bytes > (std::numeric_limits<std::uint32_t>::max)() - 36U) {
+        return fail(error, "The mixed WAV would exceed its 4 GiB format limit.");
+    }
+
+    struct OfflineVoice {
+        ma_decoder decoder{};
+        bool initialized = false;
+        bool active = false;
+        bool loop = false;
+        ma_uint64 remaining = (std::numeric_limits<ma_uint64>::max)();
+        ~OfflineVoice() {
+            if (initialized) (void)ma_decoder_uninit(&decoder);
+        }
+    };
+    std::vector<std::unique_ptr<OfflineVoice>> voices;
+    try {
+        voices.reserve(tracks.size());
+        for (const PlaybackTrack& track : tracks) {
+            if (track.path.empty()
+                || !std::isfinite(track.source_position_seconds)
+                || track.source_position_seconds < 0.0
+                || !std::isfinite(track.playback_rate)
+                || track.playback_rate <= 0.0
+                || !std::isfinite(track.stop_after_seconds)
+                || track.stop_after_seconds < 0.0) {
+                return fail(error, "An audio-export track has invalid timing values.");
+            }
+            const double exact_rate = static_cast<double>(kPlaybackSampleRate)
+                                      / track.playback_rate;
+            if (exact_rate < 1000.0 || exact_rate > 384000.0) {
+                return fail(error, "An audible layer is outside the supported playback/stretch range; use Smart loop fit for a short clip, choose a shorter source, or enable Data only.");
+            }
+            auto voice = std::make_unique<OfflineVoice>();
+            const ma_uint32 decoder_rate = static_cast<ma_uint32>(
+                std::llround(exact_rate));
+            ma_decoder_config decoder_config = ma_decoder_config_init(
+                ma_format_f32, kPlaybackChannels, decoder_rate);
+#if defined(_WIN32)
+            const std::filesystem::path native =
+                detail::path_from_utf8(track.path);
+            const ma_result decoder_result = ma_decoder_init_file_w(
+                native.c_str(), &decoder_config, &voice->decoder);
+#else
+            const ma_result decoder_result = ma_decoder_init_file(
+                track.path.c_str(), &decoder_config, &voice->decoder);
+#endif
+            if (decoder_result != MA_SUCCESS) {
+                return fail(error, miniaudio_error(
+                    "Could not decode an audible project source",
+                    decoder_result));
+            }
+            voice->initialized = true;
+            const long double requested =
+                static_cast<long double>(track.source_position_seconds)
+                * static_cast<long double>(decoder_rate);
+            const ma_uint64 frame = requested
+                    >= static_cast<long double>(
+                        (std::numeric_limits<ma_uint64>::max)())
+                ? (std::numeric_limits<ma_uint64>::max)()
+                : static_cast<ma_uint64>(requested);
+            const ma_result seek = ma_decoder_seek_to_pcm_frame(
+                &voice->decoder, frame);
+            if (seek != MA_SUCCESS) {
+                return fail(error, miniaudio_error(
+                    "Could not seek an audible project source", seek));
+            }
+            voice->active = true;
+            voice->loop = track.loop;
+            if (track.stop_after_seconds > 0.0) {
+                voice->remaining = static_cast<ma_uint64>(std::ceil(
+                    track.stop_after_seconds * kPlaybackSampleRate));
+            }
+            voices.push_back(std::move(voice));
+        }
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to prepare the movie audio mix.");
+    }
+
+#if defined(_WIN32)
+    std::ofstream output(detail::path_from_utf8(destination),
+                         std::ios::binary | std::ios::trunc);
+#else
+    std::ofstream output(destination, std::ios::binary | std::ios::trunc);
+#endif
+    const auto remove_partial = [&destination] {
+        std::error_code ignored;
+        std::filesystem::remove(detail::path_from_utf8(destination), ignored);
+    };
+    if (!output) return fail(error, "Could not create the temporary movie audio mix.");
+    const auto write_u16 = [&output](std::uint16_t value) {
+        const std::array<char, 2> bytes{
+            static_cast<char>(value & 0xffU),
+            static_cast<char>((value >> 8U) & 0xffU)};
+        output.write(bytes.data(), bytes.size());
+    };
+    const auto write_u32 = [&output](std::uint32_t value) {
+        const std::array<char, 4> bytes{
+            static_cast<char>(value & 0xffU),
+            static_cast<char>((value >> 8U) & 0xffU),
+            static_cast<char>((value >> 16U) & 0xffU),
+            static_cast<char>((value >> 24U) & 0xffU)};
+        output.write(bytes.data(), bytes.size());
+    };
+    output.write("RIFF", 4);
+    write_u32(static_cast<std::uint32_t>(36U + data_bytes));
+    output.write("WAVEfmt ", 8);
+    write_u32(16U);
+    write_u16(3U); // IEEE float
+    write_u16(static_cast<std::uint16_t>(kPlaybackChannels));
+    write_u32(kPlaybackSampleRate);
+    write_u32(kPlaybackSampleRate * kPlaybackChannels * sizeof(float));
+    write_u16(static_cast<std::uint16_t>(kPlaybackChannels * sizeof(float)));
+    write_u16(32U);
+    output.write("data", 4);
+    write_u32(static_cast<std::uint32_t>(data_bytes));
+
+    constexpr ma_uint64 kChunkFrames = 2048U;
+    std::array<float, kChunkFrames * kPlaybackChannels> mixed{};
+    std::array<float, kChunkFrames * kPlaybackChannels> decoded{};
+    std::array<char, kChunkFrames * kPlaybackChannels * sizeof(float)>
+        little_endian_samples{};
+    const float voice_gain = static_cast<float>(
+        1.0 / std::sqrt(static_cast<double>(voices.size())));
+    for (ma_uint64 offset = 0U; offset < total_frames;) {
+        if (cancel != nullptr
+            && cancel->load(std::memory_order_relaxed)) {
+            output.close();
+            remove_partial();
+            return fail(error, "Movie audio mixing was cancelled.");
+        }
+        const ma_uint64 chunk = std::min<ma_uint64>(
+            kChunkFrames, total_frames - offset);
+        std::fill_n(mixed.data(), static_cast<std::size_t>(chunk)
+                                      * kPlaybackChannels, 0.0F);
+        for (const auto& voice_owner : voices) {
+            OfflineVoice& voice = *voice_owner;
+            ma_uint64 completed = 0U;
+            bool loop_attempted = false;
+            while (completed < chunk && voice.active) {
+                const ma_uint64 wanted = std::min(
+                    chunk - completed, voice.remaining);
+                if (wanted == 0U) {
+                    voice.active = false;
+                    break;
+                }
+                ma_uint64 got = 0U;
+                const ma_result result = ma_decoder_read_pcm_frames(
+                    &voice.decoder, decoded.data(), wanted, &got);
+                for (ma_uint64 frame = 0U; frame < got; ++frame) {
+                    const std::size_t target = static_cast<std::size_t>(
+                        (completed + frame) * kPlaybackChannels);
+                    const std::size_t source = static_cast<std::size_t>(
+                        frame * kPlaybackChannels);
+                    mixed[target] += decoded[source] * voice_gain;
+                    mixed[target + 1U] += decoded[source + 1U] * voice_gain;
+                }
+                completed += got;
+                if (voice.remaining
+                    != (std::numeric_limits<ma_uint64>::max)()) {
+                    voice.remaining -= std::min(voice.remaining, got);
+                }
+                if (got > 0U) loop_attempted = false;
+                if (got == wanted) continue;
+                if ((result != MA_SUCCESS && result != MA_AT_END)
+                    || !voice.loop || loop_attempted
+                    || ma_decoder_seek_to_pcm_frame(&voice.decoder, 0U)
+                           != MA_SUCCESS) {
+                    voice.active = false;
+                    break;
+                }
+                loop_attempted = true;
+            }
+        }
+        for (std::size_t index = 0U;
+             index < static_cast<std::size_t>(chunk) * kPlaybackChannels;
+             ++index) {
+            mixed[index] = std::clamp(mixed[index], -1.0F, 1.0F);
+        }
+        const std::size_t chunk_samples = static_cast<std::size_t>(chunk)
+                                          * kPlaybackChannels;
+        for (std::size_t index = 0U; index < chunk_samples; ++index) {
+            std::uint32_t bits = 0U;
+            static_assert(sizeof(bits) == sizeof(mixed[index]));
+            std::memcpy(&bits, &mixed[index], sizeof(bits));
+            const std::size_t byte = index * sizeof(float);
+            little_endian_samples[byte] = static_cast<char>(bits & 0xffU);
+            little_endian_samples[byte + 1U] =
+                static_cast<char>((bits >> 8U) & 0xffU);
+            little_endian_samples[byte + 2U] =
+                static_cast<char>((bits >> 16U) & 0xffU);
+            little_endian_samples[byte + 3U] =
+                static_cast<char>((bits >> 24U) & 0xffU);
+        }
+        output.write(little_endian_samples.data(),
+                     static_cast<std::streamsize>(chunk_samples
+                                                  * sizeof(float)));
+        if (!output) {
+            output.close();
+            remove_partial();
+            return fail(error, "Could not write the complete temporary movie audio mix.");
+        }
+        offset += chunk;
+    }
+    output.flush();
+    if (!output) {
+        output.close();
+        remove_partial();
+        return fail(error, "Could not flush the temporary movie audio mix.");
+    }
+    return true;
 }
 
 } // namespace pvt::audio

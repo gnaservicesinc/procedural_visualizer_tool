@@ -204,6 +204,14 @@ bool render_data_can_create_transparency(const RenderData& render) {
         && render.surface.curvature > 0.0) {
         return true;
     }
+    if (render.motion.enabled
+        && (render.motion.path != LayerMotionPath::None
+            || std::fabs(render.motion.center_x - 0.5) > 1.0e-12
+            || std::fabs(render.motion.center_y - 0.5) > 1.0e-12
+            || render.motion.rotations_per_loop != 0
+            || render.motion.scale_pulse > 1.0e-12)) {
+        return true;
+    }
     return std::any_of(render.effects.begin(), render.effects.end(),
                        effect_can_create_transparency);
 }
@@ -351,6 +359,101 @@ bool composite_pixels(const Image& source, Image& destination,
     return !cancelled(cancel);
 }
 
+struct LayerTimelineSelection {
+    int frame = 0;
+    bool use_project_clock = false;
+};
+
+double wrap_phase(double value) {
+    value -= std::floor(value);
+    return value < 0.0 ? value + 1.0 : value;
+}
+
+LayerTimelineSelection select_layer_timeline(
+    const ProjectConfig& project, const LayerConfig& layer,
+    double normalized_phase, const int* synchronized_frame) {
+    std::string ignored;
+    const int master_count = std::max(
+        1, effective_frame_count(project.canvas, &ignored));
+    int master_frame = synchronized_frame == nullptr
+        ? static_cast<int>(std::floor(
+              wrap_phase(normalized_phase) * static_cast<double>(master_count)))
+        : *synchronized_frame;
+    master_frame %= master_count;
+    if (master_frame < 0) master_frame += master_count;
+    LayerTimelineSelection selection{master_frame, false};
+    const LayerClockConfig& local = layer.render.layer_clock;
+    if (!local.enabled || local.clock.mode != ClockMode::Music) {
+        return selection;
+    }
+
+    const double local_duration = local.clock.music.duration_seconds;
+    if (!(local_duration > 0.0)) return selection;
+    const double master_duration =
+        project.canvas.clock.mode == ClockMode::Music
+                && project.canvas.clock.music.duration_seconds > 0.0
+            ? project.canvas.clock.music.duration_seconds
+            : static_cast<double>(master_count) / project.canvas.fps;
+    // Frame timestamps are always frame/fps. A Music-driven frame count is a
+    // ceil(), so normalizing by that count would subtly retime the local clock
+    // and disagree with preview/movie audio whenever a source is not an exact
+    // whole number of frames long.
+    const double master_time = static_cast<double>(master_frame)
+                               / project.canvas.fps;
+    const int local_count = std::max(
+        1, static_cast<int>(std::ceil(local_duration * project.canvas.fps)));
+    double local_time = 0.0;
+    switch (local.scale) {
+        case LayerClockScale::SmartLoopFit: {
+            const int loops = std::max(
+                1, static_cast<int>(std::floor(master_duration / local_duration)));
+            const double rate = static_cast<double>(loops) * local_duration
+                                / master_duration;
+            local_time = std::fmod(master_time * rate, local_duration);
+            break;
+        }
+        case LayerClockScale::StraightFit:
+            local_time = master_time * local_duration / master_duration;
+            break;
+        case LayerClockScale::PlayOnce:
+            local_time = std::min(master_time,
+                                  std::nextafter(local_duration, 0.0));
+            break;
+        case LayerClockScale::PlayOnceThenProject:
+            if (master_time >= local_duration) {
+                selection.use_project_clock = true;
+                return selection;
+            }
+            local_time = master_time;
+            break;
+        case LayerClockScale::OriginalSpeedLoop:
+            local_time = std::fmod(master_time, local_duration);
+            break;
+    }
+    selection.frame = std::min(
+        local_count - 1,
+        std::max(0, static_cast<int>(std::floor(
+                        local_time * project.canvas.fps))));
+    return selection;
+}
+
+RenderConfig materialize_project_layer(const ProjectConfig& project,
+                                       const ExportConfig& layer_output,
+                                       std::size_t index,
+                                       bool force_project_clock) {
+    if (!force_project_clock) {
+        RenderConfig config = apply_global_config(
+            project.canvas, layer_output, project.layers[index].render);
+        if (project.layers[index].render.layer_clock.enabled) {
+            config.clock = project.layers[index].render.layer_clock.clock;
+        }
+        return config;
+    }
+    RenderData render = project.layers[index].render;
+    render.layer_clock.enabled = false;
+    return apply_global_config(project.canvas, layer_output, render);
+}
+
 bool render_project_at_phase_validated(const ProjectConfig& project,
                                        double normalized_phase,
                                        const int* synchronized_frame,
@@ -386,15 +489,18 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
             return fail(error, "Project rendering was cancelled between layers.");
         }
 
-        const RenderConfig render =
-            apply_global_config(project.canvas, layer_output, layer.render);
+        const LayerTimelineSelection timeline = select_layer_timeline(
+            project, layer, normalized_phase, synchronized_frame);
+        const RenderConfig render = materialize_project_layer(
+            project, layer_output, index, timeline.use_project_clock);
         Image layer_image;
         std::string layer_error;
-        const bool rendered = synchronized_frame == nullptr
+        const bool layer_owns_clock = layer.render.layer_clock.enabled;
+        const bool rendered = synchronized_frame == nullptr && !layer_owns_clock
             ? render_frame_at_phase_cancellable(render, normalized_phase,
                                                 layer_image, cancel,
                                                 &layer_error)
-            : render_frame_cancellable(render, *synchronized_frame,
+            : render_frame_cancellable(render, timeline.frame,
                                        layer_image, cancel, &layer_error);
         if (!rendered) {
             if (cancelled(cancel)) {
@@ -460,19 +566,25 @@ bool render_project_with_backend_validated(
         }
     }
 
-    const auto materialize = [&](std::size_t index) {
-        return apply_global_config(project.canvas, layer_output,
-                                   project.layers[index].render);
+    const auto materialize = [&](std::size_t index, bool project_clock) {
+        return materialize_project_layer(project, layer_output, index,
+                                         project_clock);
     };
     const auto render_one = [&](std::size_t index,
                                 const FrameRenderOptions& selected,
                                 Image& image,
                                 std::string& layer_error) {
-        const RenderConfig render = materialize(index);
-        return synchronized_frame == nullptr
+        const LayerTimelineSelection timeline = select_layer_timeline(
+            project, project.layers[index], normalized_phase,
+            synchronized_frame);
+        const RenderConfig render = materialize(
+            index, timeline.use_project_clock);
+        const bool layer_owns_clock =
+            project.layers[index].render.layer_clock.enabled;
+        return synchronized_frame == nullptr && !layer_owns_clock
             ? render_frame_at_phase(render, normalized_phase, selected,
                                     image, cancel, &layer_error)
-            : render_frame(render, *synchronized_frame, selected,
+            : render_frame(render, timeline.frame, selected,
                            image, cancel, &layer_error);
     };
     const auto composite_one = [&](std::size_t index, const Image& image) {
@@ -543,8 +655,8 @@ bool render_project_with_backend_validated(
         }
 
         const std::size_t second_index = contributing[position + 1U];
-        const RenderConfig first_render = materialize(first_index);
-        const RenderConfig second_render = materialize(second_index);
+        const RenderConfig first_render = materialize(first_index, false);
+        const RenderConfig second_render = materialize(second_index, false);
         std::string ignored_reason;
         const bool first_gpu = metal_available
                                && detail::metal_backend_supports(
@@ -571,8 +683,8 @@ bool render_project_with_backend_validated(
         const bool gpu_is_second = second_gpu;
         const std::size_t cpu_index = gpu_is_second ? first_index : second_index;
         const std::size_t gpu_index = gpu_is_second ? second_index : first_index;
-        const ValidationResult cpu_validation = validate(materialize(cpu_index));
-        const ValidationResult gpu_validation = validate(materialize(gpu_index));
+        const ValidationResult cpu_validation = validate(materialize(cpu_index, false));
+        const ValidationResult gpu_validation = validate(materialize(gpu_index, false));
         std::size_t concurrent_peak = 0U;
         const bool bounded_pair = cpu_validation.ok && gpu_validation.ok
             && checked_add(cpu_validation.estimated_peak_bytes,
@@ -726,6 +838,19 @@ ValidationResult validate(const ProjectConfig& project) {
         std::size_t worst_layer_peak = 0U;
         bool has_contributing_layer = false;
         bool enabled_stack_is_guaranteed_opaque = false;
+        std::string master_count_error;
+        const int master_frame_count = effective_frame_count(
+            project.canvas, &master_count_error);
+        if (master_frame_count < 1) {
+            return invalid_result(master_count_error.empty()
+                                      ? "The project clock has no renderable duration."
+                                      : master_count_error);
+        }
+        const double master_duration =
+            project.canvas.clock.mode == ClockMode::Music
+                    && project.canvas.clock.music.duration_seconds > 0.0
+                ? project.canvas.clock.music.duration_seconds
+                : static_cast<double>(master_frame_count) / project.canvas.fps;
         for (std::size_t index = 0U; index < project.layers.size(); ++index) {
             const LayerConfig& layer = project.layers[index];
             if (!valid_uuid(layer.uuid)) {
@@ -761,6 +886,20 @@ ValidationResult validate(const ProjectConfig& project) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " is invalid: " + layer_validation.message,
                                       layer_validation.estimated_peak_bytes);
+            }
+            const LayerClockConfig& layer_clock = layer.render.layer_clock;
+            if (layer_clock.enabled
+                && layer_clock.clock.mode == ClockMode::Music
+                && (layer_clock.scale == LayerClockScale::PlayOnce
+                    || layer_clock.scale
+                           == LayerClockScale::PlayOnceThenProject)
+                && layer_clock.clock.music.duration_seconds
+                       > master_duration + 1.0e-9) {
+                return invalid_result(
+                    "Layer " + std::to_string(index + 1U)
+                    + " uses a play-once clock source longer than the project. "
+                      "Choose Smart loop fit, Straight fit, or Original-speed loop "
+                      "to keep the project seam smooth.");
             }
             if (layer.enabled && layer.opacity > 0.0) {
                 has_contributing_layer = true;

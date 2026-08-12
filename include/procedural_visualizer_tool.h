@@ -22,7 +22,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 5;
+constexpr std::uint32_t kSetupFormatVersion = 6;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
@@ -57,7 +57,8 @@ enum class EffectType : std::uint8_t {
     Shake,
     FlagWave,
     Glow,
-    BlockScale
+    BlockScale,
+    ParticleField
 };
 
 // Texture-space effects run before surface wrapping. Surface-space effects run
@@ -157,6 +158,28 @@ enum class MusicTempoMode : std::uint8_t {
     Double
 };
 
+// A layer clock remains locked to the project timeline; this policy controls
+// how a layer-local Music source is sampled when their durations differ.
+// Clock data is remapped, never destructively written back to the source or
+// cached analysis.
+enum class LayerClockScale : std::uint8_t {
+    SmartLoopFit = 0,
+    StraightFit,
+    PlayOnce,
+    PlayOnceThenProject,
+    OriginalSpeedLoop
+};
+
+// Compact, seamless alternatives to the deferred hand-authored Bezier path
+// editor. Integer cycle counts close exactly over the half-open project loop.
+enum class LayerMotionPath : std::uint8_t {
+    None = 0,
+    Orbit,
+    FigureEight,
+    Bounce,
+    Lissajous
+};
+
 enum class MusicFeature : std::uint8_t {
     Energy = 0,
     Bass,
@@ -245,7 +268,22 @@ struct ClockConfig {
     std::int64_t beat_offset_microseconds = 0;
     double phase_offset_degrees = 0.0;
     bool reverse = false;
+    // Analysis still drives visuals when true, but this source is excluded
+    // from preview playback and movie audio. Project clocks default audible.
+    bool data_only = false;
     MusicAnalysis music;
+};
+
+struct LayerClockConfig {
+    bool enabled = false;
+    LayerClockScale scale = LayerClockScale::SmartLoopFit;
+    // Layer music is normally a control signal. Audibility is an explicit
+    // choice so adding a modulation clip cannot unexpectedly alter a mix.
+    ClockConfig clock = [] {
+        ClockConfig value;
+        value.data_only = true;
+        return value;
+    }();
 };
 
 // Music response changes only evaluated values. Authored wave/effect settings
@@ -375,6 +413,24 @@ struct LayerTransformConfig {
     MirrorMode mirror = MirrorMode::None;
 };
 
+struct LayerMotionConfig {
+    bool enabled = false;
+    LayerMotionPath path = LayerMotionPath::None;
+    // Center and travel are fractions of canvas dimensions. Travel may extend
+    // beyond the canvas deliberately for projection/installation workflows.
+    double center_x = 0.5;
+    double center_y = 0.5;
+    double travel_x = 0.15;
+    double travel_y = 0.15;
+    int cycles_x = 1;
+    int cycles_y = 2;
+    double phase_degrees = 0.0;
+    // Whole rotations per loop and a symmetric scale pulse keep the seam
+    // closed. scale_pulse=0 is neutral; 0.5 spans 0.5x through 1.5x.
+    int rotations_per_loop = 0;
+    double scale_pulse = 0.0;
+};
+
 struct AlphaConfig {
     // Enables procedural alpha modulation for this render/layer. Legacy
     // RenderConfig exports also treat this flag as an RGBA request; projects
@@ -452,6 +508,7 @@ struct RenderData {
 
     bool swings_enabled = true;
     AudioReactiveConfig audio_reactive;
+    LayerClockConfig layer_clock;
 
     double phrase_warp = 0.05;
     double ghost_mix = 0.25;
@@ -475,6 +532,7 @@ struct RenderData {
     SurfaceConfig surface;
     PaletteConfig palette;
     LayerTransformConfig transform;
+    LayerMotionConfig motion;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -725,6 +783,8 @@ PVT_API const char* clock_mode_name(ClockMode value);
 PVT_API const char* clock_interpolation_name(ClockInterpolation value);
 PVT_API const char* clock_fit_name(ClockFit value);
 PVT_API const char* music_tempo_mode_name(MusicTempoMode value);
+PVT_API const char* layer_clock_scale_name(LayerClockScale value);
+PVT_API const char* layer_motion_path_name(LayerMotionPath value);
 PVT_API const char* music_feature_name(MusicFeature value);
 PVT_API const char* music_swing_policy_name(MusicSwingPolicy value);
 

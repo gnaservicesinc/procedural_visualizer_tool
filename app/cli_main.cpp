@@ -610,7 +610,8 @@ EffectType choose_effect_type() {
                  {EffectType::Shake, "Shake"},
                  {EffectType::FlagWave, "Flag wave"},
                  {EffectType::Glow, "Glow"},
-                 {EffectType::BlockScale, "Block scale"}});
+                 {EffectType::BlockScale, "Block scale"},
+                 {EffectType::ParticleField, "Particle field"}});
     return type;
 }
 
@@ -691,6 +692,24 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                 return false;
             }
             effect.secondary = static_cast<double>(steps);
+            return true;
+        }
+        case EffectType::ParticleField: {
+            int particles = static_cast<int>(std::llround(effect.frequency));
+            if (!prompt_real("Spark brightness", effect.intensity, 0.0, 100.0)
+                || !prompt_real("Travel per loop (fraction of short edge)",
+                                effect.magnitude, 0.0, 10.0)
+                || !prompt_int("Particle count", particles, 1, 1000)
+                || !prompt_real("Trail amount", effect.secondary, 0.0, 1.0)
+                || !prompt_real("Travel angle (degrees)", effect.angle_degrees,
+                                -36000.0, 36000.0)
+                || !prompt_real("Particle radius (pixels)", effect.radius_pixels,
+                                0.01, 16384.0)
+                || !prompt_real("White-hot core", effect.threshold, 0.0, 1.0)
+                || !prompt_real("Glow softness", effect.soft_knee, 0.0, 1.0)) {
+                return false;
+            }
+            effect.frequency = static_cast<double>(particles);
             return true;
         }
     }
@@ -808,7 +827,8 @@ bool prompt_meter_expression(std::string& expression) {
 
 bool analyze_music_interactive(pvt::ClockConfig& clock,
                                pvt::AudioReactiveConfig& response,
-                               ProjectDocument& document) {
+                               ProjectDocument& document,
+                               const std::string& attachment_reference) {
     std::cout << "Cached music: "
               << (clock.music.source_sha256.empty()
                       ? "none"
@@ -829,13 +849,16 @@ bool analyze_music_interactive(pvt::ClockConfig& clock,
             ProjectDocument candidate = document;
             std::string detach_error;
             if (!pvt::detach_project_file(
-                    candidate, pvt::kMusicSourceAttachmentId, &detach_error)) {
+                    candidate, attachment_reference, &detach_error)) {
                 std::cout << "Could not clear the embedded music source: "
                           << detach_error << '\n';
                 return true;
             }
             document = std::move(candidate);
             clock.music = {};
+            if (clock.mode == pvt::ClockMode::Music) {
+                clock.mode = pvt::ClockMode::Default;
+            }
             g_prompt_changed = true;
         }
         return true;
@@ -874,7 +897,7 @@ bool analyze_music_interactive(pvt::ClockConfig& clock,
     }
     ProjectDocument candidate = document;
     pvt::ProjectAttachment attached;
-    if (!pvt::attach_project_file(candidate, pvt::kMusicSourceAttachmentId,
+    if (!pvt::attach_project_file(candidate, attachment_reference,
                                   path, &attached, &error)) {
         std::cout << "\rMusic was analyzed, but its source could not be embedded; "
                      "the previous music remains unchanged: "
@@ -897,6 +920,82 @@ bool analyze_music_interactive(pvt::ClockConfig& clock,
     if (first_music_source) response.enabled = true;
     g_prompt_changed = true;
     return true;
+}
+
+void configure_active_layer_clock(RenderConfig& config,
+                                  ProjectDocument& document,
+                                  const std::string& layer_uuid) {
+    auto& local = config.layer_clock;
+    std::cout << "\n-- Clock — active layer --\n"
+              << "This optional clock stays on the project timeline while its pulses and "
+                 "music data drive only this layer.\n";
+    if (!prompt_bool("Override the project-wide clock", local.enabled)) return;
+    if (!local.enabled) return;
+    if (!prompt_enum("Duration mapping", local.scale,
+                     {{pvt::LayerClockScale::SmartLoopFit,
+                       "Smart loop fit (most loops, least stretch)"},
+                      {pvt::LayerClockScale::StraightFit,
+                       "Straight fit (one traversal)"},
+                      {pvt::LayerClockScale::PlayOnce,
+                       "Play once, then hold"},
+                      {pvt::LayerClockScale::PlayOnceThenProject,
+                       "Play once, then use project clock"},
+                      {pvt::LayerClockScale::OriginalSpeedLoop,
+                       "Original-speed loop (partial final loop allowed)"}})) return;
+    auto& clock = local.clock;
+    if (!prompt_enum("Layer clock source", clock.mode,
+                     {{pvt::ClockMode::Default, "Default seamless loop"},
+                      {pvt::ClockMode::Frame, "Pulse every N frames"},
+                      {pvt::ClockMode::Time, "Pulse every N milliseconds"},
+                      {pvt::ClockMode::Meter, "Tempo and meter"},
+                      {pvt::ClockMode::Music, "Detected music beats"}})
+        || !prompt_enum("Between calculated pulses", clock.interpolation,
+                        {{pvt::ClockInterpolation::Hold, "Hold"},
+                         {pvt::ClockInterpolation::Linear, "Linear"},
+                         {pvt::ClockInterpolation::Smoothstep, "Smooth eased"}})
+        || !prompt_bool("Reverse the layer clock", clock.reverse)
+        || !prompt_real("Layer clock phase offset (degrees)",
+                        clock.phase_offset_degrees, -36000.0, 36000.0)) return;
+    if (clock.mode == pvt::ClockMode::Frame) {
+        if (!prompt_int("Frames per pulse", clock.frame_interval, 1, 1000000)
+            || !prompt_enum("Interval fit", clock.fit,
+                            {{pvt::ClockFit::Exact, "Exact interval"},
+                             {pvt::ClockFit::FitSequence, "Fit whole sequence"}})) return;
+    } else if (clock.mode == pvt::ClockMode::Time) {
+        double milliseconds =
+            static_cast<double>(clock.time_interval_microseconds) / 1000.0;
+        if (!prompt_real("Milliseconds per pulse", milliseconds, 0.001,
+                         86400000.0)
+            || !prompt_enum("Interval fit", clock.fit,
+                            {{pvt::ClockFit::Exact, "Exact interval"},
+                             {pvt::ClockFit::FitSequence, "Fit whole sequence"}})) return;
+        clock.time_interval_microseconds =
+            static_cast<std::int64_t>(std::llround(milliseconds * 1000.0));
+    } else if (clock.mode == pvt::ClockMode::Meter) {
+        if (!prompt_meter_expression(clock.meter.expression)
+            || !prompt_real("Tempo (BPM)", clock.meter.bpm, 1.0, 1000.0)
+            || !prompt_int("BPM note denominator",
+                           clock.meter.tempo_note_denominator, 1, 1024)
+            || !prompt_enum("Interval fit", clock.fit,
+                            {{pvt::ClockFit::Exact, "Exact tempo"},
+                             {pvt::ClockFit::FitSequence, "Fit whole measures"}})) return;
+    } else if (clock.mode == pvt::ClockMode::Music) {
+        if (!analyze_music_interactive(
+                clock, config.audio_reactive, document,
+                pvt::layer_music_attachment_id(layer_uuid))
+            || !prompt_bool("Data only (mute this layer source in playback and movies)",
+                            clock.data_only)
+            || !prompt_enum("Beat interpretation", clock.music_tempo,
+                            {{pvt::MusicTempoMode::Half, "Half-time"},
+                             {pvt::MusicTempoMode::Detected, "Detected tempo"},
+                             {pvt::MusicTempoMode::Double, "Double-time"}})) return;
+        double offset_ms =
+            static_cast<double>(clock.beat_offset_microseconds) / 1000.0;
+        if (!prompt_real("Beat offset (milliseconds)", offset_ms,
+                         -86400000.0, 86400000.0)) return;
+        clock.beat_offset_microseconds =
+            static_cast<std::int64_t>(std::llround(offset_ms * 1000.0));
+    }
 }
 
 void configure_swings(RenderConfig& config) {
@@ -983,7 +1082,8 @@ void configure_color(RenderConfig& config) {
 }
 
 void configure_synchronization(RenderConfig& config,
-                               ProjectDocument& document) {
+                               ProjectDocument& document,
+                               const std::string& layer_uuid) {
     std::cout << "\n-- Synchronization --\n"
               << "The base clock is calculated first; authored swings are a reversible "
                  "layer on top.\n";
@@ -1046,11 +1146,15 @@ void configure_synchronization(RenderConfig& config,
         }
     } else if (config.clock.mode == pvt::ClockMode::Music) {
         if (!analyze_music_interactive(config.clock, config.audio_reactive,
-                                       document)
+                                       document, pvt::kMusicSourceAttachmentId)
             || !prompt_enum("Beat interpretation", config.clock.music_tempo,
                             {{pvt::MusicTempoMode::Half, "Half-time"},
                              {pvt::MusicTempoMode::Detected, "Detected tempo"},
                              {pvt::MusicTempoMode::Double, "Double-time"}})) {
+            return;
+        }
+        if (!prompt_bool("Data only (mute this source in playback and movies)",
+                         config.clock.data_only)) {
             return;
         }
         double offset_ms =
@@ -1101,6 +1205,8 @@ void configure_synchronization(RenderConfig& config,
     } else {
         std::cout << "Clock needs attention: " << count_error << '\n';
     }
+
+    configure_active_layer_clock(config, document, layer_uuid);
 
     std::cout << "\n-- Authored swings for the active layer --\n";
     configure_swings(config);
@@ -1181,6 +1287,30 @@ void configure_surface(RenderConfig& config,
         || !prompt_bool("Flip vertically", config.transform.flip_vertical)) {
         return;
     }
+    std::cout << "\n-- Seamless layer motion (compact path animation) --\n";
+    if (!prompt_bool("Enable layer motion", config.motion.enabled)) return;
+    if (config.motion.enabled
+        && (!prompt_enum("Closed motion path", config.motion.path,
+                         {{pvt::LayerMotionPath::None, "Static placement only"},
+                          {pvt::LayerMotionPath::Orbit, "Orbit"},
+                          {pvt::LayerMotionPath::FigureEight, "Figure eight"},
+                          {pvt::LayerMotionPath::Bounce, "Bounce"},
+                          {pvt::LayerMotionPath::Lissajous, "Lissajous"}})
+            || !prompt_real("Path center X", config.motion.center_x, -10.0, 10.0)
+            || !prompt_real("Path center Y", config.motion.center_y, -10.0, 10.0)
+            || !prompt_real("Horizontal travel", config.motion.travel_x, 0.0, 10.0)
+            || !prompt_real("Vertical travel", config.motion.travel_y, 0.0, 10.0)
+            || !prompt_int("Horizontal cycles", config.motion.cycles_x, -1000, 1000)
+            || !prompt_int("Vertical cycles", config.motion.cycles_y, -1000, 1000)
+            || !prompt_real("Path phase (degrees)", config.motion.phase_degrees,
+                            -36000.0, 36000.0)
+            || !prompt_int("Layer rotations per loop",
+                           config.motion.rotations_per_loop, -1000, 1000)
+            || !prompt_real("Scale pulse", config.motion.scale_pulse,
+                            0.0, 0.95))) {
+        return;
+    }
+    if (config.motion.enabled) config.output.write_alpha = true;
     if (config.surface.enabled
         && config.surface.mapping != pvt::SurfaceMapping::Plane
         && config.surface.curvature > 0.0) {
@@ -1302,7 +1432,7 @@ void warn_if_created_by_newer_version(const ProjectDocument& document) {
 #ifdef PVT_PROGRAM_VERSION
     const std::string current = PVT_PROGRAM_VERSION;
 #else
-    const std::string current = "5.0.0";
+    const std::string current = "6.0.0";
 #endif
     const bool newer_created = version_is_newer(document.created_with_version, current);
     const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
@@ -1445,6 +1575,56 @@ void configure_project_and_layers(CliState& state) {
             if (copy.name.size() <= kMaximumNameBytes - 5U) {
                 copy.name += " Copy";
             }
+            ProjectDocument staged_document = state.document;
+            const auto duplicate_attachment =
+                [&](const std::string& source_id,
+                    const std::string& destination_id,
+                    pvt::ProjectAttachment& attached) {
+                    const pvt::ProjectAttachment* source_attachment =
+                        pvt::find_project_attachment(staged_document, source_id);
+                    if (source_attachment == nullptr
+                        || source_attachment->local_path.empty()) {
+                        return false;
+                    }
+                    const std::string source_path = source_attachment->local_path;
+                    std::string attachment_error;
+                    if (!pvt::attach_project_file(
+                            staged_document, destination_id, source_path,
+                            &attached, &attachment_error)) {
+                        std::cout << "Could not duplicate the layer attachment: "
+                                  << attachment_error << '\n';
+                        return false;
+                    }
+                    return true;
+                };
+            if (!copy.render.surface.obj_sha256.empty()) {
+                pvt::ProjectAttachment attached;
+                if (!duplicate_attachment(
+                        pvt::surface_obj_attachment_id(
+                            project.layers[first_index].uuid),
+                        pvt::surface_obj_attachment_id(copy.uuid), attached)) {
+                    std::cout << "The embedded custom OBJ source is unavailable.\n";
+                    continue;
+                }
+                copy.render.surface.obj_path = attached.local_path;
+                copy.render.surface.obj_sha256 = attached.sha256;
+                copy.render.surface.obj_basename = attached.basename;
+            }
+            if (!copy.render.layer_clock.clock.music.source_sha256.empty()) {
+                pvt::ProjectAttachment attached;
+                if (!duplicate_attachment(
+                        pvt::layer_music_attachment_id(
+                            project.layers[first_index].uuid),
+                        pvt::layer_music_attachment_id(copy.uuid), attached)) {
+                    std::cout << "The embedded active-layer music source is unavailable.\n";
+                    continue;
+                }
+                copy.render.layer_clock.clock.music.source_sha256 = attached.sha256;
+                copy.render.layer_clock.clock.music.source_basename = attached.basename;
+            }
+            state.document.attachments = std::move(staged_document.attachments);
+            state.document.attachment_cache =
+                std::move(staged_document.attachment_cache);
             project.layers.insert(project.layers.begin()
                                       + static_cast<std::ptrdiff_t>(first_index + 1),
                                   std::move(copy));
@@ -1457,6 +1637,26 @@ void configure_project_and_layers(CliState& state) {
                                          : "Delete accepts one row number.\n");
                 continue;
             }
+            ProjectDocument staged_document = state.document;
+            bool detached = true;
+            for (const std::string& reference_id : {
+                     pvt::surface_obj_attachment_id(
+                         project.layers[first_index].uuid),
+                     pvt::layer_music_attachment_id(
+                         project.layers[first_index].uuid)}) {
+                std::string attachment_error;
+                if (!pvt::detach_project_file(
+                        staged_document, reference_id, &attachment_error)) {
+                    std::cout << "Could not remove the layer attachment: "
+                              << attachment_error << '\n';
+                    detached = false;
+                    break;
+                }
+            }
+            if (!detached) continue;
+            state.document.attachments = std::move(staged_document.attachments);
+            state.document.attachment_cache =
+                std::move(staged_document.attachment_cache);
             project.layers.erase(project.layers.begin()
                                  + static_cast<std::ptrdiff_t>(first_index));
             if (state.active_layer == first_index) {
@@ -1778,7 +1978,9 @@ bool interactive_menu(CliState& state) {
             switch (choice) {
                 case 2: configure_canvas(config); break;
                 case 3:
-                    configure_synchronization(config, state.document);
+                    configure_synchronization(
+                        config, state.document,
+                        state.document.project.layers[state.active_layer].uuid);
                     break;
                 case 4: configure_waves(config); break;
                 case 5: configure_effects(config); break;

@@ -157,6 +157,7 @@ bool valid_enum(EffectType value) {
         case EffectType::FlagWave:
         case EffectType::Glow:
         case EffectType::BlockScale:
+        case EffectType::ParticleField:
             return true;
     }
     return false;
@@ -166,6 +167,30 @@ bool valid_enum(EffectSpace value) {
     switch (value) {
         case EffectSpace::Texture:
         case EffectSpace::Surface:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(LayerClockScale value) {
+    switch (value) {
+        case LayerClockScale::SmartLoopFit:
+        case LayerClockScale::StraightFit:
+        case LayerClockScale::PlayOnce:
+        case LayerClockScale::PlayOnceThenProject:
+        case LayerClockScale::OriginalSpeedLoop:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(LayerMotionPath value) {
+    switch (value) {
+        case LayerMotionPath::None:
+        case LayerMotionPath::Orbit:
+        case LayerMotionPath::FigureEight:
+        case LayerMotionPath::Bounce:
+        case LayerMotionPath::Lissajous:
             return true;
     }
     return false;
@@ -785,6 +810,8 @@ bool effect_has_render_work(const EffectConfig& effect) {
             return effect.radius_pixels > 0.0;
         case EffectType::BlockScale:
             return effect.magnitude > 0.0 && effect.frequency > 0.0;
+        case EffectType::ParticleField:
+            return effect.frequency >= 1.0 && effect.radius_pixels > 0.0;
         case EffectType::EndlessZoom:
         case EffectType::Ripple:
         case EffectType::Shake:
@@ -795,7 +822,8 @@ bool effect_has_render_work(const EffectConfig& effect) {
 }
 
 bool effect_uses_edge_mode(EffectType type) {
-    return type != EffectType::Glow && type != EffectType::BlockScale;
+    return type != EffectType::Glow && type != EffectType::BlockScale
+           && type != EffectType::ParticleField;
 }
 
 bool surface_has_render_work(const SurfaceConfig& surface) {
@@ -808,6 +836,15 @@ bool surface_has_render_work(const SurfaceConfig& surface) {
     const bool identity_rotation = surface.rotations_per_loop == 0
                                    && std::fmod(surface.phase_degrees, 360.0) == 0.0;
     return !identity_rotation;
+}
+
+bool motion_has_render_work(const LayerMotionConfig& motion) {
+    if (!motion.enabled) return false;
+    return motion.path != LayerMotionPath::None
+           || std::fabs(motion.center_x - 0.5) > 1.0e-12
+           || std::fabs(motion.center_y - 0.5) > 1.0e-12
+           || motion.rotations_per_loop != 0
+           || motion.scale_pulse > 1.0e-12;
 }
 
 double srgb_to_linear(double value) {
@@ -1345,6 +1382,30 @@ const char* effect_type_name(EffectType value) {
         case EffectType::FlagWave: return "Flag wave";
         case EffectType::Glow: return "Glow";
         case EffectType::BlockScale: return "Block scale";
+        case EffectType::ParticleField: return "Particle field";
+    }
+    return "Unknown";
+}
+
+const char* layer_clock_scale_name(LayerClockScale value) {
+    switch (value) {
+        case LayerClockScale::SmartLoopFit: return "Smart loop fit";
+        case LayerClockScale::StraightFit: return "Straight fit";
+        case LayerClockScale::PlayOnce: return "Play once, then hold";
+        case LayerClockScale::PlayOnceThenProject:
+            return "Play once, then project clock";
+        case LayerClockScale::OriginalSpeedLoop: return "Original-speed loop";
+    }
+    return "Unknown";
+}
+
+const char* layer_motion_path_name(LayerMotionPath value) {
+    switch (value) {
+        case LayerMotionPath::None: return "None";
+        case LayerMotionPath::Orbit: return "Orbit";
+        case LayerMotionPath::FigureEight: return "Figure eight";
+        case LayerMotionPath::Bounce: return "Bounce";
+        case LayerMotionPath::Lissajous: return "Lissajous";
     }
     return "Unknown";
 }
@@ -1507,6 +1568,16 @@ EffectConfig default_effect(EffectType type) {
             effect.frequency = 3.0;
             effect.secondary = 0.0;
             break;
+        case EffectType::ParticleField:
+            effect.intensity = 1.4;
+            effect.magnitude = 0.22; // travel per loop, in canvas widths
+            effect.frequency = 96.0; // deterministic particle count
+            effect.secondary = 0.35; // trail amount
+            effect.angle_degrees = -75.0;
+            effect.radius_pixels = 3.5;
+            effect.threshold = 0.55; // core brightness
+            effect.soft_knee = 0.55; // glow softness
+            break;
     }
     return effect;
 }
@@ -1567,10 +1638,11 @@ RenderConfig default_config() {
     config.swings.push_back(default_swing(0));
     config.swings[0].id = 4;
 
-    config.effects.reserve(6);
-    const std::array<EffectType, 6> types = {
+    config.effects.reserve(7);
+    const std::array<EffectType, 7> types = {
         EffectType::EndlessZoom, EffectType::Ripple, EffectType::Shake,
-        EffectType::FlagWave, EffectType::Glow, EffectType::BlockScale};
+        EffectType::FlagWave, EffectType::Glow, EffectType::BlockScale,
+        EffectType::ParticleField};
     for (std::size_t index = 0; index < types.size(); ++index) {
         EffectConfig effect = default_effect(types[index]);
         effect.id = static_cast<std::uint64_t>(index) + 5U;
@@ -1671,7 +1743,8 @@ std::uint64_t allocate_layer_file_id(const ProjectConfig& project) {
     }
 }
 
-ValidationResult validate_impl(const RenderConfig& config, bool include_export) {
+ValidationResult validate_impl(const RenderConfig& config, bool include_export,
+                               bool validate_layer_clock = true) {
     if (config.width < 16 || config.width > kMaximumDimension
         || config.height < 16 || config.height > kMaximumDimension) {
         return invalid_result("Width and height must each be between 16 and 16384 pixels.");
@@ -1815,6 +1888,23 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
                                       : frame_error);
         }
     }
+    if (validate_layer_clock) {
+        if (!valid_enum(config.layer_clock.scale)) {
+            return invalid_result(
+                "The active-layer clock contains an unknown scaling policy.");
+        }
+        RenderConfig layer_clock_probe = config;
+        layer_clock_probe.clock = config.layer_clock.clock;
+        layer_clock_probe.layer_clock = {};
+        const ValidationResult layer_clock_validation =
+            validate_impl(layer_clock_probe, false, false);
+        if (!layer_clock_validation.ok) {
+            return invalid_result(
+                "The saved active-layer clock is invalid: "
+                + layer_clock_validation.message,
+                layer_clock_validation.estimated_peak_bytes);
+        }
+    }
     if (!valid_enum(config.audio_reactive.wave_source)
         || !valid_enum(config.audio_reactive.effect_source)
         || !valid_enum(config.audio_reactive.color_source)
@@ -1886,6 +1976,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
     // conservative upper bound for sequential additive glow amplification so
     // every accepted setup remains representable by 32-bit float channels.
     double logarithmic_color_bound = std::log(8.0);
+    long double particle_stamp_work = 0.0L;
     for (std::size_t index = 0; index < config.effects.size(); ++index) {
         const EffectConfig& effect = config.effects[index];
         if (!accept_id(effect.id)) {
@@ -1922,15 +2013,50 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
                 + " requires a mix from 0 to 1, positive ordered multipliers, "
                   "and whole quantization steps from 0 to 100.");
         }
+        if (effect.type == EffectType::ParticleField
+            && (effect.frequency < 1.0 || effect.frequency > 1000.0
+                || std::floor(effect.frequency) != effect.frequency
+                || effect.radius_pixels <= 0.0
+                || effect.secondary < 0.0 || effect.secondary > 1.0
+                || effect.threshold > 1.0)) {
+            return invalid_result(
+                "Particle field effect " + std::to_string(index + 1U)
+                + " requires 1 to 1000 whole particles, positive size, and "
+                  "trail/core controls from 0 to 1.");
+        }
         const bool active_effect = effect_has_render_work(effect);
         const bool active_glow = active_effect && effect.type == EffectType::Glow;
+        const bool active_particles = active_effect
+                                      && effect.type
+                                             == EffectType::ParticleField;
+        if (active_particles) {
+            const long double canvas_pixels =
+                static_cast<long double>(config.width)
+                * static_cast<long double>(config.height);
+            const long double stamp_side = std::ceil(
+                5.0L * static_cast<long double>(effect.radius_pixels)) + 2.0L;
+            const long double stamp_pixels = std::min(
+                canvas_pixels, stamp_side * stamp_side);
+            const long double trails = 1.0L + std::round(
+                static_cast<long double>(effect.secondary) * 12.0L);
+            particle_stamp_work += static_cast<long double>(effect.frequency)
+                                   * trails * stamp_pixels;
+            const long double maximum_particle_work = std::max(
+                20000000.0L, 8.0L * canvas_pixels);
+            if (particle_stamp_work > maximum_particle_work) {
+                return invalid_result(
+                    "The enabled particle fields exceed the bounded per-frame "
+                    "stamp budget; reduce particle count, trail amount, radius, "
+                    "or the number of particle effects.");
+            }
+        }
         has_enabled_effect = has_enabled_effect || active_effect;
         has_enabled_glow = has_enabled_glow || active_glow;
         has_transparent_edge_effect = has_transparent_edge_effect
                                       || (active_effect
                                           && effect_uses_edge_mode(effect.type)
                                           && effect.edge_mode == EdgeMode::Alpha);
-        if (active_glow) {
+        if (active_glow || active_particles) {
             double maximum_intensity = effect.intensity;
             if (config.audio_reactive.enabled
                 && config.audio_reactive.effects_enabled
@@ -1940,14 +2066,29 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
                     0.0, 1.0 + std::max(0.0,
                                        config.audio_reactive.effect_amount));
             }
-            logarithmic_color_bound += std::log1p(maximum_intensity);
+            if (active_glow) {
+                logarithmic_color_bound += std::log1p(maximum_intensity);
+            } else {
+                const double trails = 1.0 + std::round(
+                    clamp_value(effect.secondary, 0.0, 1.0) * 12.0);
+                const double maximum_addition = 2.0 * maximum_intensity
+                                                * effect.frequency * trails;
+                if (maximum_addition > 0.0) {
+                    const double addition_log = std::log(maximum_addition);
+                    const double high = std::max(logarithmic_color_bound,
+                                                 addition_log);
+                    logarithmic_color_bound = high + std::log(
+                        std::exp(logarithmic_color_bound - high)
+                        + std::exp(addition_log - high));
+                }
+            }
         }
     }
     if (logarithmic_color_bound
         >= std::log(static_cast<double>(std::numeric_limits<float>::max()))) {
         return invalid_result(
-            "The enabled glow stack can exceed the 32-bit float color range; "
-            "reduce glow intensity or the number of enabled glow effects.");
+            "The enabled glow/particle stack can exceed the 32-bit float color "
+            "range; reduce effect intensity or the number of enabled effects.");
     }
 
     if (!finite_in_range(config.phrase_warp, 0.0, 2.0)
@@ -1979,6 +2120,20 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
     }
     if (!valid_enum(config.transform.mirror)) {
         return invalid_result("The layer transform contains an unknown mirror mode.");
+    }
+    if (!valid_enum(config.motion.path)
+        || !finite_in_range(config.motion.center_x, -10.0, 10.0)
+        || !finite_in_range(config.motion.center_y, -10.0, 10.0)
+        || !finite_in_range(config.motion.travel_x, 0.0, 10.0)
+        || !finite_in_range(config.motion.travel_y, 0.0, 10.0)
+        || config.motion.cycles_x < -1000 || config.motion.cycles_x > 1000
+        || config.motion.cycles_y < -1000 || config.motion.cycles_y > 1000
+        || !finite_in_range(config.motion.phase_degrees, -36000.0, 36000.0)
+        || config.motion.rotations_per_loop < -1000
+        || config.motion.rotations_per_loop > 1000
+        || !finite_in_range(config.motion.scale_pulse, 0.0, 0.95)) {
+        return invalid_result(
+            "Layer motion path, placement, cycles, rotation, or scale is out of range.");
     }
 
     if (!finite_in_range(config.alpha.minimum, 0.0, 1.0)
@@ -2024,10 +2179,12 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export) 
             surface_has_render_work(config.surface)
             && config.surface.mapping != SurfaceMapping::Plane;
         if (!config.alpha.enabled && !config.output.write_alpha
-            && (has_transparent_edge_effect || has_transparent_surface)) {
+            && (has_transparent_edge_effect || has_transparent_surface
+                || motion_has_render_work(config.motion))) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
-                "edge handling or an active 3D surface has a transparent exterior.");
+                "edge handling, an active 3D surface has a transparent exterior, "
+                "or layer motion can expose the canvas exterior.");
         }
         if (config.output.bit_depth != 8 && config.output.bit_depth != 16
             && config.output.bit_depth != 32) {
@@ -2469,6 +2626,7 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                 }
                 case EffectType::Glow:
                 case EffectType::BlockScale:
+                case EffectType::ParticleField:
                     sampled = load_color(source, x, y);
                     break;
             }
@@ -2532,6 +2690,117 @@ void apply_block_scale(const Image& source, Image& destination,
                     store_color(destination, x, y,
                                 blend_straight_alpha(load_color(source, x, y),
                                                      average, amount));
+                }
+            }
+        }
+    }
+}
+
+std::uint64_t particle_hash(std::uint64_t value) {
+    value += UINT64_C(0x9e3779b97f4a7c15);
+    value = (value ^ (value >> 30U)) * UINT64_C(0xbf58476d1ce4e5b9);
+    value = (value ^ (value >> 27U)) * UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
+}
+
+double particle_unit(std::uint64_t value) {
+    return static_cast<double>(particle_hash(value) >> 11U)
+           * (1.0 / 9007199254740992.0);
+}
+
+void apply_particle_field(const Image& source, Image& destination,
+                          const EffectConfig& effect, double phase,
+                          const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
+    destination = source;
+    const int count = static_cast<int>(std::llround(effect.frequency));
+    const double radius = std::max(0.5, effect.radius_pixels);
+    const int trail_steps = 1 + static_cast<int>(std::llround(
+        clamp_value(effect.secondary, 0.0, 1.0) * 12.0));
+    const double progress = wrap_unit(phase / kTau);
+    const double angle = radians(effect.angle_degrees);
+    const double direction_x = std::cos(angle);
+    const double direction_y = std::sin(angle);
+    const double short_side = static_cast<double>(
+        std::min(source.width, source.height));
+    const double travel = effect.magnitude * short_side;
+    const double span_x = static_cast<double>(source.width) + 4.0 * radius;
+    const double span_y = static_cast<double>(source.height) + 4.0 * radius;
+    const double base_brightness = std::max(0.0, effect.intensity);
+    const double core = clamp_value(effect.threshold, 0.0, 1.0);
+    const double softness = std::max(0.05, effect.soft_knee);
+
+    for (int particle = 0; particle < count; ++particle) {
+        if ((particle & 15) == 0) throw_if_cancelled(cancel);
+        const std::uint64_t seed = particle_hash(
+            effect.id ^ (static_cast<std::uint64_t>(particle) + 1U)
+                            * UINT64_C(0xd1b54a32d192ed03));
+        const double start_x = particle_unit(seed) * span_x - 2.0 * radius;
+        const double start_y = particle_unit(seed ^ UINT64_C(0x94d049bb133111eb))
+                               * span_y - 2.0 * radius;
+        const int cycles = 1 + static_cast<int>(particle % 3);
+        const double orbit_offset = kTau * particle_unit(
+            seed ^ UINT64_C(0xbf58476d1ce4e5b9));
+        const double twinkle = 0.55 + 0.45 * std::sin(
+            kTau * (progress * (1.0 + static_cast<double>(particle % 5))
+                    + particle_unit(seed ^ UINT64_C(0x632be59bd9b4e019))));
+        const double orbit = kTau * progress * static_cast<double>(cycles)
+                             + orbit_offset;
+        const double along = travel * std::sin(orbit);
+        const double across = travel * 0.28 * std::cos(orbit);
+        double center_x = start_x + direction_x * along - direction_y * across;
+        double center_y = start_y + direction_y * along + direction_x * across;
+        center_x = std::fmod(center_x + 2.0 * radius, span_x);
+        center_y = std::fmod(center_y + 2.0 * radius, span_y);
+        if (center_x < 0.0) center_x += span_x;
+        if (center_y < 0.0) center_y += span_y;
+        center_x -= 2.0 * radius;
+        center_y -= 2.0 * radius;
+
+        for (int trail = trail_steps - 1; trail >= 0; --trail) {
+            const double trail_fraction = trail_steps <= 1
+                ? 0.0 : static_cast<double>(trail)
+                            / static_cast<double>(trail_steps - 1);
+            const double local_radius = radius * (1.0 - 0.58 * trail_fraction);
+            const double trail_distance = radius * 1.35
+                                          * static_cast<double>(trail);
+            const double px = center_x - direction_x * trail_distance;
+            const double py = center_y - direction_y * trail_distance;
+            const int minimum_x = std::max(
+                0, static_cast<int>(std::floor(px - 2.5 * local_radius)));
+            const int maximum_x = std::min(
+                source.width - 1,
+                static_cast<int>(std::ceil(px + 2.5 * local_radius)));
+            const int minimum_y = std::max(
+                0, static_cast<int>(std::floor(py - 2.5 * local_radius)));
+            const int maximum_y = std::min(
+                source.height - 1,
+                static_cast<int>(std::ceil(py + 2.5 * local_radius)));
+            const double trail_gain = (1.0 - 0.82 * trail_fraction) * twinkle;
+            for (int y = minimum_y; y <= maximum_y; ++y) {
+                for (int x = minimum_x; x <= maximum_x; ++x) {
+                    const double dx = (static_cast<double>(x) - px) / local_radius;
+                    const double dy = (static_cast<double>(y) - py) / local_radius;
+                    const double distance2 = dx * dx + dy * dy;
+                    if (distance2 > 6.25) continue;
+                    const double gaussian = std::exp(
+                        -distance2 / (0.22 + 1.55 * softness));
+                    const double area = circular_influence(
+                        effect.center_x, effect.center_y, effect.area_radius,
+                        static_cast<double>(x), static_cast<double>(y),
+                        source.width, source.height);
+                    const double amount = gaussian * trail_gain * area;
+                    if (amount <= 1.0e-8) continue;
+                    Color output = load_color(destination, x, y);
+                    const double white_core = std::pow(gaussian, 1.0 + 5.0 * core);
+                    // Warm HDR sparks remain lively over dark layers while a
+                    // white core lets the effect complement any palette.
+                    output.r += base_brightness * amount * (1.20 + 0.80 * white_core);
+                    output.g += base_brightness * amount * (0.28 + 0.72 * white_core);
+                    output.b += base_brightness * amount * (0.05 + 0.65 * white_core);
+                    output.a = std::max(output.a,
+                                        clamp_value(amount, 0.0, 1.0));
+                    store_color(destination, x, y, output);
                 }
             }
         }
@@ -3183,6 +3452,85 @@ void apply_layer_transform(Image& image,
     }
 }
 
+double triangle_motion(double phase) {
+    return (2.0 / 3.141592653589793238462643383279502884)
+           * std::asin(std::sin(phase));
+}
+
+void apply_layer_motion(const Image& source, Image& destination,
+                        const LayerMotionConfig& motion, double loop_phase,
+                        const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
+    ensure_image(destination, source.width, source.height);
+    const double path_time = loop_phase + radians(motion.phase_degrees);
+    double path_x = 0.0;
+    double path_y = 0.0;
+    switch (motion.path) {
+        case LayerMotionPath::None:
+            break;
+        case LayerMotionPath::Orbit: {
+            const double orbit = static_cast<double>(motion.cycles_x)
+                                 * path_time;
+            path_x = std::cos(orbit);
+            path_y = std::sin(orbit);
+            break;
+        }
+        case LayerMotionPath::FigureEight:
+            path_x = std::sin(static_cast<double>(motion.cycles_x)
+                              * path_time);
+            path_y = std::sin(static_cast<double>(motion.cycles_y)
+                              * path_time)
+                     * 0.5;
+            break;
+        case LayerMotionPath::Bounce:
+            path_x = triangle_motion(static_cast<double>(motion.cycles_x)
+                                     * path_time);
+            path_y = triangle_motion(static_cast<double>(motion.cycles_y)
+                                         * path_time
+                                         + 1.5707963267948966);
+            break;
+        case LayerMotionPath::Lissajous:
+            path_x = std::sin(static_cast<double>(motion.cycles_x)
+                                  * path_time
+                              + 1.5707963267948966);
+            path_y = std::sin(static_cast<double>(motion.cycles_y)
+                              * path_time);
+            break;
+    }
+    const double target_x = motion.center_x
+                                * static_cast<double>(source.width - 1)
+                            + path_x * motion.travel_x
+                                  * static_cast<double>(source.width);
+    const double target_y = motion.center_y
+                                * static_cast<double>(source.height - 1)
+                            + path_y * motion.travel_y
+                                  * static_cast<double>(source.height);
+    const double source_x = 0.5 * static_cast<double>(source.width - 1);
+    const double source_y = 0.5 * static_cast<double>(source.height - 1);
+    const double rotation = static_cast<double>(motion.rotations_per_loop)
+                            * loop_phase;
+    const double cosine = std::cos(-rotation);
+    const double sine = std::sin(-rotation);
+    const double scale = std::max(
+        0.05, 1.0 + motion.scale_pulse
+                        * std::sin(static_cast<double>(motion.cycles_y)
+                                   * path_time));
+    for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < source.width; ++x) {
+            const double relative_x = static_cast<double>(x) - target_x;
+            const double relative_y = static_cast<double>(y) - target_y;
+            const double rotated_x = cosine * relative_x - sine * relative_y;
+            const double rotated_y = sine * relative_x + cosine * relative_y;
+            store_color(destination, x, y,
+                        sample_bilinear(source,
+                                        source_x + rotated_x / scale,
+                                        source_y + rotated_y / scale,
+                                        EdgeMode::Alpha));
+        }
+    }
+}
+
 } // namespace
 
 namespace {
@@ -3241,6 +3589,9 @@ bool render_frame_at_timeline_sample_cancellable(
                     apply_block_scale(current, scratch, effect, phase,
                                       config.block_size, cancel);
                     current.pixels.swap(scratch.pixels);
+                } else if (effect.type == EffectType::ParticleField) {
+                    apply_particle_field(current, scratch, effect, phase, cancel);
+                    current.pixels.swap(scratch.pixels);
                 } else {
                     apply_coordinate_effect(current, scratch, effect, phase, cancel);
                     current.pixels.swap(scratch.pixels);
@@ -3276,6 +3627,11 @@ bool render_frame_at_timeline_sample_cancellable(
         // coordinates (including with mirrors/flips) and lets Shake move the
         // already transformed primitive as one object.
         apply_layer_transform(current, config.transform, cancel);
+        if (motion_has_render_work(config.motion)) {
+            apply_layer_motion(current, scratch, config.motion,
+                               loop_phase, cancel);
+            current.pixels.swap(scratch.pixels);
+        }
         apply_effect_stage(EffectSpace::Surface);
         apply_quantization(current, config.quantization, cancel);
         throw_if_cancelled(cancel);

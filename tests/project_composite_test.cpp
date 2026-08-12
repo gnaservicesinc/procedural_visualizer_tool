@@ -565,6 +565,89 @@ void test_project_sequence() {
     CHECK(!ignored);
 }
 
+void test_active_layer_clock_mappings() {
+    pvt::ProjectConfig project = pvt::default_project();
+    make_small(project);
+    project.canvas.fps = 10.0;
+    project.canvas.clock = ready_music_clock(10.0);
+    auto& local = project.layers.front().render.layer_clock;
+    CHECK(local.clock.data_only); // Layer sources begin silent by design.
+    local.enabled = true;
+    local.clock = ready_music_clock(3.0);
+    local.clock.data_only = true;
+    local.clock.music.source_sha256 = std::string(64U, 'c');
+    local.clock.music.source_basename = "layer-pulse.wav";
+    CHECK(pvt::validate(project).ok);
+
+    pvt::RenderConfig local_render = pvt::apply_global_config(
+        project.canvas, project.output, project.layers.front().render);
+    local_render.clock = local.clock;
+    pvt::RenderConfig project_render = pvt::apply_global_config(
+        project.canvas, project.output, project.layers.front().render);
+    project_render.layer_clock.enabled = false;
+
+    const auto expect_local_frame = [&](pvt::LayerClockScale scale,
+                                        int master_frame,
+                                        int expected_local_frame) {
+        project.layers.front().render.layer_clock.scale = scale;
+        pvt::Image actual;
+        pvt::Image expected;
+        std::string error;
+        CHECK(pvt::render_project_frame(project, master_frame, actual,
+                                        nullptr, &error));
+        CHECK(pvt::render_frame(local_render, expected_local_frame, expected,
+                                &error));
+        CHECK(actual.pixels == expected.pixels);
+    };
+    expect_local_frame(pvt::LayerClockScale::SmartLoopFit, 20, 18);
+    expect_local_frame(pvt::LayerClockScale::StraightFit, 20, 6);
+    expect_local_frame(pvt::LayerClockScale::PlayOnce, 50, 29);
+    expect_local_frame(pvt::LayerClockScale::OriginalSpeedLoop, 20, 20);
+
+    project.layers.front().render.layer_clock.scale =
+        pvt::LayerClockScale::PlayOnceThenProject;
+    pvt::Image fallback;
+    pvt::Image project_expected;
+    std::string error;
+    CHECK(pvt::render_project_frame(project, 50, fallback, nullptr, &error));
+    CHECK(pvt::render_frame(project_render, 50, project_expected, &error));
+    CHECK(fallback.pixels == project_expected.pixels);
+
+    project.layers.front().render.layer_clock.clock = ready_music_clock(11.0);
+    project.layers.front().render.layer_clock.scale =
+        pvt::LayerClockScale::PlayOnce;
+    CHECK(!pvt::validate(project).ok);
+    project.layers.front().render.layer_clock.scale =
+        pvt::LayerClockScale::StraightFit;
+    CHECK(pvt::validate(project).ok);
+
+    // A music duration need not contain a whole number of output frames.
+    // Mapping from frame/fps must agree with preview/movie audio; normalizing
+    // by the two independently ceiled frame counts would select local frame 10
+    // here instead of the correct frame 9.
+    project.canvas.clock = ready_music_clock(1.99);
+    project.layers.front().render.layer_clock.clock = ready_music_clock(1.01);
+    project.layers.front().render.layer_clock.clock.music.source_sha256 =
+        std::string(64U, 'c');
+    project.layers.front().render.layer_clock.clock.music.source_basename =
+        "fractional-layer.wav";
+    project.layers.front().render.layer_clock.scale =
+        pvt::LayerClockScale::StraightFit;
+    local_render = pvt::apply_global_config(
+        project.canvas, project.output, project.layers.front().render);
+    local_render.clock = project.layers.front().render.layer_clock.clock;
+    pvt::Image fractional_actual;
+    pvt::Image fractional_expected;
+    pvt::Image incorrectly_count_scaled;
+    CHECK(pvt::render_project_frame(project, 19, fractional_actual,
+                                    nullptr, &error));
+    CHECK(pvt::render_frame(local_render, 9, fractional_expected, &error));
+    CHECK(pvt::render_frame(local_render, 10, incorrectly_count_scaled, &error));
+    CHECK(fractional_actual.pixels == fractional_expected.pixels);
+    CHECK(maximum_difference(fractional_actual, incorrectly_count_scaled)
+          > 1.0e-5);
+}
+
 } // namespace
 
 int main() {
@@ -575,6 +658,7 @@ int main() {
     test_project_rendering_order_equivalence_and_seam();
     test_project_cancellation_during_layer_render();
     test_project_sequence();
+    test_active_layer_clock_mappings();
 
     if (failures != 0) {
         std::cerr << failures << " project/composite assertion(s) failed.\n";

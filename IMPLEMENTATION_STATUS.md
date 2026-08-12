@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -8,13 +8,20 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The macOS GUI now plays the single project-wide Music-clock track in sync with
-preview play, seeks, beat navigation, pause, looping, and project replacement.
-Its native movie exporter uses AVFoundation and VideoToolbox rather than FFmpeg:
-lossless PNG-in-MOV, ProRes 4444/4444 XQ, and unusually high-rate HEVC are
-available with explicit hardware prefer/require/software policies, optional
-alpha, and pass-through of the same project-wide audio. Movie installation is
-transactional, durable, collision-aware, cancellable, and tested.
+Version 6 adds optional per-layer clocks, Data-only Music sources, five bounded
+duration mappings, compact closed layer-motion presets, and a deterministic
+spark/trail particle effect. Preview playback now mixes every audible project
+and active-layer clock source at the same mapped timeline position used by the
+renderer. Native movie export renders that synchronized mix before passing it
+to AVFoundation/VideoToolbox; Data-only sources remain visual control data and
+are silent. Music import/clear, seeking, beat navigation, pause, looping, and
+project replacement all resynchronize safely. The new setup, layer, and
+render-output records retain compatibility defaults for older files.
+
+The live-performance architecture is also bounded: pre-analyzed clips work now,
+but low-latency device input does not. It should become a Live mode or sibling
+front end in this repository, sharing the renderer and project model rather
+than becoming a divergent fork.
 
 Application Settings can store the complete current project as the per-user
 template for future new documents or reactivate the built-in default; each new
@@ -119,21 +126,23 @@ The Qt GUI separates Synchronization, Layer Render, and global Output, adds a
 topmost-first Layers dock, project name/title, blend/opacity/enable/rename/
 duplicate/reorder controls, session Solo, version list/diff/current/revert tools,
 and application-wide undo/redo. Synchronization owns the global Clock plus the
-selected layer's master Swing and Audio Response blocks. Undo depth, window state,
+selected layer's optional local Clock, master Swing, and Audio Response blocks.
+Undo depth, window state,
 and dialog locations use per-user platform settings, while a hard 128 MiB history
 budget bounds full-state snapshots.
 Preview/export cancellation now reaches per-frame effects and OBJ rasterization;
 stale previews are cancelled and document replacement is blocked during export.
 The GUI now also exposes draggable numbered center handles and visible radius
 rings for effects and swings, Texture versus Mapped-object effect stages,
-custom/built-in per-layer palettes, and directional mirror plus
-horizontal/vertical layer transforms. Block Scale remains a whole-image effect
+custom/built-in per-layer palettes, directional mirror plus horizontal/vertical
+layer transforms, and closed motion presets. Block Scale remains a whole-image effect
 without a center/radius overlay. Version 5 adds a project-wide Default/Frame/
 Time/Meter/Music clock, parameter-state Hold/Linear/Smoothstep interpolation,
 time-varying music analysis, beat navigation, and layer audio-response routing.
-Formats 1-4 load with neutral compatibility defaults.
-The CLI exposes the same clock/music/swing/audio-response state plus immediate
-portable music and OBJ attachment import.
+Version 6 adds local clocks and mapping, Data-only sources, motion, and particles;
+formats 1-5 load with neutral compatibility defaults. The CLI exposes the same
+clock/music/swing/audio-response/motion/particle state plus immediate portable
+music and OBJ attachment import.
 
 Music analysis is deliberately not a fixed whole-song BPM estimate. A causal
 local beat/tempo observer is reconciled with offline multiband spectral-flux and
@@ -179,6 +188,7 @@ consumers do not inherit minizip requirements.
 | 3 | Toggle/add/remove/reorder any quantity | Complete | Bounded dynamic wave, swing, and effect collections support zero through their safety limits in the API, CLI, and GUI. |
 | 4 | Direction from horizontal through radial to vertical | Complete | Continuous `0.0` horizontal, `0.5` radial/default, `1.0` vertical control. |
 | 4a-f | Endless zoom, ripple, shake, flag wave, glow, block scale | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses visible straight-alpha-safe HDR bloom; Block Scale animates smooth or stepped pixel grouping at its stack position. |
+| 4g | Particle field | Complete | Deterministic loop-safe warm spark particles provide configurable count, spread, size, trails, direction, intensity, locality, and composable Texture/Mapped-object staging. |
 | 5 | 8/16-bit PNG and 32-bit float EXR | Complete | RGB/RGBA PNG at 8 or 16 bits per channel with compression levels 0-9 (default 5); RGB/RGBA uncompressed scanline EXR with FLOAT channels. |
 | 6 | Optional alpha throughout | Complete | Internal images are straight float RGBA, including meaningful RGB at zero alpha; RGB export drops only the fourth channel. |
 | 7 | Float processing and lower-depth dithering | Complete | Linear float image pipeline; sRGB conversion plus blue-noise-like, Bayer, or Floyd-Steinberg dithering for PNG; dither is off/ignored for EXR. |
@@ -187,16 +197,16 @@ consumers do not inherit minizip requirements.
 | 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave/swing/effect center handles and visible local-radius rings, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, and background export. |
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
 | 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
-| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v5, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
+| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v6, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
 | 14 | Randomize stack values or composition | Complete | Confirmed Settings-menu actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items; they are no longer exposed on the main toolbar. |
-| 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, Space owns preview play/pause outside text editors, and only the global Music-clock track is synchronized to preview audio. |
+| 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, Space owns preview play/pause outside text editors, and audible global/layer Music-clock tracks are synchronized and mixed. |
 | 16 | Named projects and default filenames | Complete | Semantic name appears in the title and a portable sanitizer supplies the initial `.zip`. Saved-project rename choices either preserve that path or create a current-state-only independent project with fresh identities, then open it or stay in the original. |
 | 17 | Full render-config layers | Complete | Global canvas/export data is split from per-layer render data; layer switches cannot overwrite global output state. Stable UUIDs/file IDs survive names and reorders. |
 | 18 | Layer compositing | Complete | Sequential bounded float-RGBA compositing implements all 11 requested modes plus opacity; only one layer frame and one accumulator are retained. |
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
 | 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
-| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v4 imports into a new unsaved one-layer project; setup v5 adds clock/music/audio-response and attachment identity data. Only explicit one-layer `--save-legacy` writes `.pvt`. |
+| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v5 imports into a new unsaved one-layer project; setup v6 adds local clock/motion/particle and Data-only data. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
 | 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
@@ -205,39 +215,42 @@ consumers do not inherit minizip requirements.
 | 28 | Draggable/localized effects | Complete | Numbered preview handles edit centers; zero area radius preserves whole-layer behavior and positive radii add feathered local influence. Glow blur and influence radii remain separate. |
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
 | 30 | Per-layer starting palettes | Complete | 1-256 embedded sRGB source colors, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
-| 31 | Transform layer | Complete (requested scope) | Directional horizontal/vertical/four-way mirrors plus horizontal and vertical flips run after surface mapping and before mapped-object effects and post-effects quantization. This is not a general move/scale/rotate affine transform. |
+| 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization. |
 | 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling intentionally remains CPU-only. |
 | 33 | Layer starting image | Partially complete - asset foundation | Generic image bytes can already be registered, bounded, checksummed, deduplicated, embedded, and recovered after original deletion. The layer source-mode schema/decoder/rendering/editor remain deferred. |
-| 34 | Closed reusable motion paths | Deferred - designed | Store named closed cubic paths separately from per-wave/effect/object bindings; use at least three nodes, handle modes, bounded arc-length LUT sampling, independent sync/phase/direction, and a dedicated editor. |
-| 35 | Synchronization tab and clock controls | Complete | Global Default/Frame/Time/Meter/Music clock, Hold/Linear/Smoothstep parameter interpolation, fit/exact spacing, direction/phase/beat offset, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. Music no longer adds a redundant swing-suppression control or popup. |
+| 34 | Closed reusable motion paths | Partially complete | Four validated built-in closed paths now animate a whole layer with cycles/phase/rotation/scale. Named user-edited cubic resources and bindings for waves/effect centers/objects remain deferred. |
+| 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and 8,192-sample multiband/onset/spectral/chroma analysis drive the base clock and independently routable wave/effect/color response. First import enables active-layer response, Energy supplies a visibly dynamic default hue route, and later user overrides remain intact. No fixed whole-song BPM clock is used. |
-| 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; hardware policy, alpha support, project-clock audio pass-through, progress, cancellation, and collision safety are explicit. No FFmpeg executable or library is used. |
+| 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; hardware policy, alpha support, synchronized global/layer float audio mixing, Data-only exclusion, progress, cancellation, and collision safety are explicit. No FFmpeg executable or library is used. |
 | 38 | Portable embedded attachments | Complete | Music, OBJ, image, and generic files retain exact filenames/extensions beneath collision-safe digest directories, accept valid direct replacements as first-class edits, keep managed copies, and retain hostile/oversize rejection plus v2 compatibility. |
 | 39 | User-defined new-project defaults | Complete in Qt GUI | Settings can transactionally capture the complete current project or reactivate the built-in template; every new document regenerates project/layer identities and starts unsaved. |
 | 40 | macOS icon and self-contained distribution | Complete | The supplied PNG generates a full ICNS resource; public and local `make distribution` targets stage Qt/plugins, statically build pinned libpng, embed license notices, enforce the macOS deployment baseline across every Mach-O, reject build-machine paths, sign, and verify the app. |
 | 41 | vImage/NEON assessment | Complete - no vImage integration | The workload is dominated by custom float procedural/effect/projection code; compiler NEON vectorization plus Metal is a better fit than extra vImage format passes without measured benefit. |
+| 42 | Active-layer clocks | Complete | Each layer may locally override the project clock while retaining the master duration; Smart loop fit, Straight fit, Play once, Play once then project, and Original-speed loop are validated, persisted, previewed, and exported. |
+| 43 | Live performance mode | Designed, not implemented | Keep one repository and shared core; add an ephemeral low-latency input/front-end path with device capture, MIDI/OSC, stage output, and fail-safe controls rather than forking the project. |
 
 ## Important implementation map
 
 - `include/procedural_visualizer_tool.h`: public C++ API and complete owned config model.
 - `src/core.cpp`: defaults, validated clock/meter/music-event evaluation,
   parameter interpolation, audio-response routing, periodic/spatial phases,
-  staged effects, palettes, transforms, float RGBA layer rendering,
+  staged effects including particles, palettes, transforms and closed layer
+  motion, float RGBA layer rendering,
   quantization, alpha, and analytic surface mappings.
 - `src/frame_renderer.cpp` / `src/metal_backend.cpp` / `src/metal_kernels.metal`:
   backend-neutral dispatch, CPU fallback, cached metal-cpp resources and compute
   pipelines, bounded admission, transactional cancellation, and GPU kernels for
   base generation, ordered effects, analytic surfaces, transforms, and
   quantization. Non-Apple/disabled builds use `src/metal_backend_stub.cpp`.
-- `src/composite.cpp`: project/layer validation, UUIDs, linear-light blend modes,
-  bounded ordered compositing, hybrid CPU/Metal layer pairing, and project frame
-  rendering.
+- `src/composite.cpp`: project/layer validation, UUIDs, active-layer clock
+  timeline mapping, linear-light blend modes, bounded ordered compositing,
+  hybrid CPU/Metal layer pairing, and project frame rendering.
 - `src/obj_mesh.cpp` / `src/obj_surface.cpp`: bounded Wavefront parsing/cache and
   perspective, two-sided, layered custom-mesh rasterization.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
   compression, dithering, collision preflight, ordered atomic installation,
   serialized progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v5 codec and split
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v6 codec and split
   per-layer/global bundle records with transactional legacy file I/O.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
   metadata, semantic history operations, readable/direct-editable attachment storage,
@@ -245,19 +258,24 @@ consumers do not inherit minizip requirements.
   save staging. This helper is intentionally not installed ABI.
 - `src/audio_analysis.cpp`: private full-source decoding, adaptive beat/local-
   tempo reconciliation, and dense multiband/onset/spectral/chroma extraction.
+- `src/audio_playback.cpp`: bounded real-time multi-source monitoring and
+  cancellable float WAV mixing using the same local duration mappings as visual
+  clock evaluation.
 - `third_party/miniaudio` / `third_party/btt`: pinned private decoder and causal
   beat/tempo observer; neither enters the installed core ABI.
 - `app/cli_main.cpp`: project/layer-aware interactive client plus scripted
   clock, music, attachment, audio-response, and worker controls.
-- `gui/main_window.cpp`: Qt 6 project/layer/version client, Synchronization UI,
-  asynchronous analysis, undo/redo, saved-rename workflow, spatial centers,
-  palettes/transforms, adaptive unclipped layouts, and cancellable sequence export.
+- `gui/main_window.cpp`: Qt 6 project/layer/version client, global/local
+  Synchronization UI, asynchronous analysis, undo/redo, saved-rename workflow,
+  spatial centers, palettes/transforms/motion, adaptive unclipped layouts, and
+  cancellable sequence/video export with synchronized audio mixing.
 - `tests/test_main.cpp`, `tests/project_composite_test.cpp`, and
   `tests/bundle_test.cpp`: core/seam/format/setup/I/O, layer/blend/project, and
-  persistence/archive-safety coverage, including worker determinism, setup-v5
+  persistence/archive-safety coverage, including worker determinism, setup-v6
   compatibility, clock/music response, staged/local effects, embedded assets,
   palettes/transforms, readable/direct-edited assets, and rename copies.
-  `tests/audio_analysis_test.cpp` covers analysis accuracy and density.
+  `tests/audio_analysis_test.cpp` covers analysis accuracy/density and offline
+  synchronized audio mixing.
 
 ## Guardrails retained
 
@@ -435,13 +453,13 @@ target.
 
 ## Remaining work for later passes
 
-1. **Metal backend:** no GPU renderer is implemented. Introduce a backend-neutral
-   frame-render interface first; retain the CPU implementation as the reference
-   and fallback, then add macOS Metal resource/pipeline caches and backend-aware
-   scheduling. Bound GPU allocations and in-flight frames, preserve cooperative
-   cancellation, and test CPU/Metal seam, alpha, surface, effect, palette, and
-   transform parity. Do not scatter one-off Metal paths through individual
-   effects or run CPU and GPU schedulers independently.
+1. **Live performance mode:** keep this repository and shared renderer/project
+   model; add a focused Live mode or sibling front end rather than a fork. Feed
+   ephemeral, bounded low-latency device input into incremental clock/feature
+   data without serializing it as a fake file analysis. Add input selection and
+   latency calibration, MIDI/OSC/tap-tempo scene control, full-screen display
+   routing, freeze/blackout, dropout-safe last-good behavior, and a frame-time
+   watchdog. Persist portable mappings, not machine-specific device identities.
 2. **Layer starting image:** reuse the implemented bounded readable attachment
    attachment store; do not add another asset container or naked local path.
    Add only the layer source-mode schema, transactional image decoder/cache,

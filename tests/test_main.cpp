@@ -240,7 +240,7 @@ void test_defaults_and_dynamic_collections() {
     make_small(config);
     CHECK(pvt::validate(config).ok);
     CHECK(config.waves.size() == 3);
-    CHECK(config.effects.size() >= 6);
+    CHECK(config.effects.size() >= 7);
     CHECK(config.output.png_compression_level == 5);
     CHECK(pvt::default_wave().id == 0U);
     CHECK(pvt::default_swing().id == 0U);
@@ -279,7 +279,7 @@ void test_defaults_and_dynamic_collections() {
     }
     config.effects.clear();
     for (std::size_t i = 0; i < 10; ++i) {
-        auto effect = pvt::default_effect(static_cast<pvt::EffectType>(i % 6U));
+        auto effect = pvt::default_effect(static_cast<pvt::EffectType>(i % 7U));
         effect.id = 2000 + i;
         effect.enabled = true;
         effect.synchronized = (i % 2U) != 0U;
@@ -550,7 +550,7 @@ void test_determinism_and_seam_continuity() {
 
     // Every effect type closes its loop with either synchronization mode.
     for (int raw_type = static_cast<int>(pvt::EffectType::EndlessZoom);
-         raw_type <= static_cast<int>(pvt::EffectType::BlockScale); ++raw_type) {
+         raw_type <= static_cast<int>(pvt::EffectType::ParticleField); ++raw_type) {
         for (const bool synchronized : {false, true}) {
             auto one_effect = pvt::default_config();
             make_small(one_effect);
@@ -1220,7 +1220,10 @@ void test_validation_limits() {
     CHECK(!pvt::validate(config).ok);
 
     config = pvt::default_config();
-    auto& block_scale = config.effects.back();
+    auto& block_scale = *std::find_if(
+        config.effects.begin(), config.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::BlockScale;
+        });
     CHECK(block_scale.type == pvt::EffectType::BlockScale);
     block_scale.enabled = true;
     block_scale.secondary = 3.0;
@@ -1238,6 +1241,20 @@ void test_validation_limits() {
     CHECK(!pvt::validate(config).ok);
     block_scale.secondary = -1.0;
     CHECK(!pvt::validate(config).ok);
+
+    config = pvt::default_config();
+    auto& particles = *std::find_if(
+        config.effects.begin(), config.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    particles.enabled = true;
+    CHECK(pvt::validate(config).ok);
+    particles.frequency = 1000.0;
+    particles.secondary = 1.0;
+    particles.radius_pixels = 16384.0;
+    CHECK(!pvt::validate(config).ok); // Bounded stamp-work guard.
+    particles.radius_pixels = 2.0;
+    CHECK(pvt::validate(config).ok);
 
     config = pvt::default_config();
     make_small(config);
@@ -1354,6 +1371,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.transform.flip_horizontal = true;
     original.transform.mirror = pvt::MirrorMode::BottomToTop;
     original.output.bit_depth = 16;
+    original.output.write_alpha = true;
     original.output.png_compression_level = 3;
     original.output.dither_method = pvt::DitherMethod::FloydSteinberg;
     original.output.output_directory = "output folder/%safe";
@@ -1367,6 +1385,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.clock.meter.tempo_note_denominator = 8;
     original.clock.music_tempo = pvt::MusicTempoMode::Double;
     original.clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+    original.clock.data_only = true;
     original.clock.beat_offset_microseconds = -25000;
     original.clock.phase_offset_degrees = 11.25;
     original.clock.reverse = true;
@@ -1398,6 +1417,23 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.audio_reactive.color_enabled = true;
     original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
     original.audio_reactive.color_amount_degrees = 42.0;
+    original.layer_clock.enabled = true;
+    original.layer_clock.scale = pvt::LayerClockScale::OriginalSpeedLoop;
+    original.layer_clock.clock.mode = pvt::ClockMode::Time;
+    original.layer_clock.clock.time_interval_microseconds = 187500;
+    original.layer_clock.clock.reverse = true;
+    CHECK(original.layer_clock.clock.data_only);
+    original.motion.enabled = true;
+    original.motion.path = pvt::LayerMotionPath::Lissajous;
+    original.motion.center_x = 0.41;
+    original.motion.center_y = 0.63;
+    original.motion.travel_x = 0.22;
+    original.motion.travel_y = 0.17;
+    original.motion.cycles_x = 3;
+    original.motion.cycles_y = 2;
+    original.motion.phase_degrees = 27.0;
+    original.motion.rotations_per_loop = -2;
+    original.motion.scale_pulse = 0.14;
 
     const fs::path first = directory / "first.pvt";
     const fs::path second = directory / "second.pvt";
@@ -1440,7 +1476,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     loaded.width = 777;
     CHECK(pvt::load_setup(first.string(), loaded, &error));
     CHECK(loaded.output.png_compression_level == 3);
-    CHECK(!loaded.output.write_alpha);
+    CHECK(loaded.output.write_alpha);
     CHECK(loaded.surface.obj_path == original.surface.obj_path);
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
@@ -1466,6 +1502,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.clock.meter.expression == "3+2+3/8 | 5/4");
     CHECK(loaded.clock.music_tempo == pvt::MusicTempoMode::Double);
     CHECK(loaded.clock.music_swing_policy == pvt::MusicSwingPolicy::KeepAll);
+    CHECK(loaded.clock.data_only);
     CHECK(loaded.clock.music.source_sha256 == std::string(64U, 'a'));
     CHECK(loaded.clock.music.source_basename == "track % alpha.wav");
     CHECK(loaded.clock.music.beat_times_seconds
@@ -1476,17 +1513,21 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.audio_reactive.enabled);
     CHECK(loaded.audio_reactive.wave_source == pvt::MusicFeature::Bass);
     CHECK(loaded.audio_reactive.color_amount_degrees == 42.0);
+    CHECK(loaded.layer_clock.enabled);
+    CHECK(loaded.layer_clock.scale == pvt::LayerClockScale::OriginalSpeedLoop);
+    CHECK(loaded.layer_clock.clock.mode == pvt::ClockMode::Time);
+    CHECK(loaded.layer_clock.clock.time_interval_microseconds == 187500);
+    CHECK(loaded.layer_clock.clock.data_only);
+    CHECK(loaded.motion.enabled);
+    CHECK(loaded.motion.path == pvt::LayerMotionPath::Lissajous);
+    CHECK(loaded.motion.cycles_x == 3 && loaded.motion.cycles_y == 2);
+    CHECK(loaded.motion.rotations_per_loop == -2);
+    CHECK(loaded.motion.scale_pulse == 0.14);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
 
-    // Version 4 predates synchronization and audio response. Remove every v5
-    // record to emulate a real older file; all new fields receive neutral
-    // defaults rather than leaking the destination's previous state.
-    const auto version_five_bytes = read_bytes(first);
-    std::string version_four(version_five_bytes.begin(), version_five_bytes.end());
-    CHECK(version_four.rfind("PVT_SETUP\t5\n", 0U) == 0U);
-    version_four.replace(0U, std::string("PVT_SETUP\t5").size(),
-                         "PVT_SETUP\t4");
+    // Each compatibility fixture removes the records introduced by the newer
+    // version; merely changing a header would create an impossible old file.
     const auto erase_record = [](std::string& setup, const std::string& key) {
         const std::string prefix = key + "\t";
         const std::size_t position = setup.find(prefix);
@@ -1512,6 +1553,35 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
             setup.erase(position, newline + 1U - position);
         }
     };
+
+    const auto version_six_bytes = read_bytes(first);
+    std::string version_five(version_six_bytes.begin(), version_six_bytes.end());
+    CHECK(version_five.rfind("PVT_SETUP\t6\n", 0U) == 0U);
+    version_five.replace(0U, std::string("PVT_SETUP\t6").size(),
+                         "PVT_SETUP\t5");
+    erase_record(version_five, "timing.clock.data_only");
+    erase_records_with_prefix(version_five, "layer_clock.");
+    erase_records_with_prefix(version_five, "motion.");
+
+    const fs::path version_five_setup = directory / "version-five.pvt";
+    {
+        std::ofstream output(version_five_setup, std::ios::binary);
+        output.write(version_five.data(),
+                     static_cast<std::streamsize>(version_five.size()));
+    }
+    auto loaded_version_five = original;
+    CHECK(pvt::load_setup(version_five_setup.string(), loaded_version_five,
+                          &error));
+    CHECK(!loaded_version_five.clock.data_only);
+    CHECK(!loaded_version_five.layer_clock.enabled);
+    CHECK(!loaded_version_five.motion.enabled);
+
+    // Version 4 predates synchronization and audio response. Remove every v5
+    // record so new fields receive neutral defaults rather than leaking the
+    // destination's previous state.
+    std::string version_four = version_five;
+    version_four.replace(0U, std::string("PVT_SETUP\t5").size(),
+                         "PVT_SETUP\t4");
     erase_records_with_prefix(version_four, "timing.clock.");
     erase_records_with_prefix(version_four, "timing.music.");
     erase_record(version_four, "rhythm.swings_enabled");
@@ -1565,7 +1635,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     std::string version_two = version_three;
     CHECK(version_two.rfind("PVT_SETUP\t3\n", 0U) == 0U);
     version_two.replace(0U, std::string("PVT_SETUP\t3").size(), "PVT_SETUP\t2");
-    const std::string write_alpha_record = "output.write_alpha\t0\n";
+    const std::string write_alpha_record = "output.write_alpha\t1\n";
     const std::size_t write_alpha_position = version_two.find(write_alpha_record);
     CHECK(write_alpha_position != std::string::npos);
     if (write_alpha_position != std::string::npos) {
@@ -1642,8 +1712,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(pvt::save_setup(loaded, float_round_trip.string(), &error));
     CHECK(read_bytes(float_setup) == read_bytes(float_round_trip));
 
-    std::string oversized_analysis(version_five_bytes.begin(),
-                                   version_five_bytes.end());
+    std::string oversized_analysis(version_six_bytes.begin(),
+                                   version_six_bytes.end());
     const std::string feature_count = "timing.music.feature_samples.count\t2\n";
     const std::size_t feature_count_at = oversized_analysis.find(feature_count);
     CHECK(feature_count_at != std::string::npos);

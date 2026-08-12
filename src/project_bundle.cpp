@@ -35,7 +35,7 @@
 #endif
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "5.0.0"
+#  define PVT_PROGRAM_VERSION "6.0.0"
 #endif
 
 namespace pvt {
@@ -1677,6 +1677,20 @@ bool load_snapshot(const detail::BundleFileSet& files,
                         "Music analysis and its embedded source attachment disagree.");
         }
         for (const LayerConfig& layer : candidate.layers) {
+            const MusicAnalysis& layer_music =
+                layer.render.layer_clock.clock.music;
+            const ProjectAttachment* layer_music_source =
+                attachment_for(layer_music_attachment_id(layer.uuid));
+            if (layer_music.source_sha256.empty()
+                    != (layer_music_source == nullptr)
+                || (layer_music_source != nullptr
+                    && (layer_music_source->sha256
+                            != layer_music.source_sha256
+                        || layer_music_source->basename
+                            != layer_music.source_basename))) {
+                return fail(error,
+                            "Active-layer music analysis and its embedded source attachment disagree.");
+            }
             const SurfaceConfig& surface = layer.render.surface;
             const ProjectAttachment* obj =
                 attachment_for(surface_obj_attachment_id(layer.uuid));
@@ -1796,6 +1810,13 @@ bool load_snapshot(const detail::BundleFileSet& files,
             candidate.canvas.clock.music.source_basename = music_source->basename;
         }
         for (LayerConfig& layer : candidate.layers) {
+            MusicAnalysis& layer_music =
+                layer.render.layer_clock.clock.music;
+            if (const ProjectAttachment* music = attachment_for(
+                    layer_music_attachment_id(layer.uuid))) {
+                layer_music.source_sha256 = music->sha256;
+                layer_music.source_basename = music->basename;
+            }
             SurfaceConfig& surface = layer.render.surface;
             if (const ProjectAttachment* obj = attachment_for(
                     surface_obj_attachment_id(layer.uuid))) {
@@ -1878,6 +1899,37 @@ bool materialize_snapshot_attachments(
         project.canvas.clock.music = std::move(replacement);
     }
     for (LayerConfig& layer : project.layers) {
+        MusicAnalysis& local_music = layer.render.layer_clock.clock.music;
+        if (!local_music.source_sha256.empty()) {
+            const std::string music_reference =
+                layer_music_attachment_id(layer.uuid);
+            const auto local_source = std::find_if(
+                attachments.begin(), attachments.end(),
+                [&music_reference](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == music_reference;
+                });
+            if (local_source == attachments.end()) {
+                return fail(error,
+                            "Active-layer music attachment disappeared during materialization.");
+            }
+            if (local_source->externally_modified) {
+                MusicAnalysis replacement;
+                std::string analysis_error;
+                if (!audio::analyze_music_file(local_source->local_path,
+                                               replacement, {}, nullptr,
+                                               &analysis_error)) {
+                    return fail(error,
+                                "A directly edited active-layer music asset could not be reanalyzed: "
+                                    + analysis_error);
+                }
+                if (replacement.source_sha256 != local_source->sha256) {
+                    return fail(error,
+                                "An active-layer music asset changed during reanalysis.");
+                }
+                replacement.source_basename = local_source->basename;
+                local_music = std::move(replacement);
+            }
+        }
         if (layer.render.surface.obj_sha256.empty()) continue;
         const std::string reference_id =
             surface_obj_attachment_id(layer.uuid);
@@ -2516,6 +2568,10 @@ std::string surface_obj_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".surface.obj";
 }
 
+std::string layer_music_attachment_id(const std::string& layer_uuid) {
+    return "layer." + layer_uuid + ".clock.music";
+}
+
 const ProjectAttachment* find_project_attachment(
     const ProjectDocument& document,
     const std::string& reference_id) {
@@ -2631,7 +2687,9 @@ bool make_independent_project_copy(const ProjectConfig& project,
             !project.canvas.clock.music.source_sha256.empty()
             || std::any_of(project.layers.begin(), project.layers.end(),
                            [](const LayerConfig& layer) {
-                               return !layer.render.surface.obj_sha256.empty();
+                               return !layer.render.surface.obj_sha256.empty()
+                                      || !layer.render.layer_clock.clock.music
+                                              .source_sha256.empty();
                            });
         if (has_embedded_identity) {
             return fail(error,
@@ -2691,9 +2749,17 @@ bool make_independent_project_copy(const ProjectDocument& source,
         ProjectConfig attachment_free = source.project;
         attachment_free.canvas.clock.music.source_sha256.clear();
         attachment_free.canvas.clock.music.source_basename.clear();
+        if (attachment_free.canvas.clock.mode == ClockMode::Music) {
+            attachment_free.canvas.clock.mode = ClockMode::Default;
+        }
         for (LayerConfig& layer : attachment_free.layers) {
             layer.render.surface.obj_sha256.clear();
             layer.render.surface.obj_basename.clear();
+            layer.render.layer_clock.clock.music.source_sha256.clear();
+            layer.render.layer_clock.clock.music.source_basename.clear();
+            if (layer.render.layer_clock.clock.mode == ClockMode::Music) {
+                layer.render.layer_clock.clock.mode = ClockMode::Default;
+            }
         }
         ProjectDocument candidate;
         if (!make_independent_project_copy(attachment_free, candidate, error)) {
@@ -2713,9 +2779,15 @@ bool make_independent_project_copy(const ProjectDocument& source,
                 surface_obj_attachment_id(source.project.layers[index].uuid);
             const std::string new_id =
                 surface_obj_attachment_id(candidate.project.layers[index].uuid);
+            const std::string old_music_id =
+                layer_music_attachment_id(source.project.layers[index].uuid);
+            const std::string new_music_id =
+                layer_music_attachment_id(candidate.project.layers[index].uuid);
             for (ProjectAttachment& attachment : candidate.attachments) {
                 if (attachment.reference_id == old_id) {
                     attachment.reference_id = new_id;
+                } else if (attachment.reference_id == old_music_id) {
+                    attachment.reference_id = new_music_id;
                 }
             }
         }
@@ -3149,6 +3221,59 @@ bool sync_project_attachment_references(ProjectDocument& document,
                               ".surface.obj") == 0
                        && expected_obj_references.find(attachment.reference_id)
                               == expected_obj_references.end();
+            }),
+        document.attachments.end());
+
+    std::set<std::string> expected_layer_music_references;
+    for (LayerConfig& layer : document.project.layers) {
+        const std::string reference_id = layer_music_attachment_id(layer.uuid);
+        expected_layer_music_references.insert(reference_id);
+        const MusicAnalysis& analysis = layer.render.layer_clock.clock.music;
+        auto existing = std::find_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&reference_id](const ProjectAttachment& attachment) {
+                return attachment.reference_id == reference_id;
+            });
+        if (analysis.source_sha256.empty()) {
+            if (!detach_project_file(document, reference_id, error)) return false;
+            continue;
+        }
+        if (existing == document.attachments.end()) {
+            const auto same_bytes = std::find_if(
+                document.attachments.begin(), document.attachments.end(),
+                [&analysis](const ProjectAttachment& attachment) {
+                    return attachment.sha256 == analysis.source_sha256
+                           && attachment.basename == analysis.source_basename;
+                });
+            if (same_bytes == document.attachments.end()) {
+                return fail(error,
+                            "Active-layer music analysis source has not been attached to the project.");
+            }
+            ProjectAttachment alias = *same_bytes;
+            alias.reference_id = reference_id;
+            document.attachments.push_back(std::move(alias));
+            existing = std::prev(document.attachments.end());
+        }
+        if (existing->sha256 != analysis.source_sha256
+            || existing->basename != analysis.source_basename) {
+            return fail(error,
+                        "Active-layer music analysis does not match its attached source file.");
+        }
+    }
+    document.attachments.erase(
+        std::remove_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&expected_layer_music_references](
+                const ProjectAttachment& attachment) {
+                constexpr std::string_view suffix = ".clock.music";
+                return attachment.reference_id.rfind("layer.", 0U) == 0U
+                       && attachment.reference_id.size() > suffix.size()
+                       && attachment.reference_id.compare(
+                              attachment.reference_id.size() - suffix.size(),
+                              suffix.size(), suffix) == 0
+                       && expected_layer_music_references.find(
+                              attachment.reference_id)
+                              == expected_layer_music_references.end();
             }),
         document.attachments.end());
 

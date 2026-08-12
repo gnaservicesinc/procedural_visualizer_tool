@@ -528,6 +528,29 @@ bool metal_backend_supports(const RenderConfig& config,
         }
         return false;
     }
+    if (config.motion.enabled
+        && (config.motion.path != LayerMotionPath::None
+            || config.motion.rotations_per_loop != 0
+            || config.motion.scale_pulse > 0.0
+            || std::fabs(config.motion.center_x - 0.5) > 1.0e-12
+            || std::fabs(config.motion.center_y - 0.5) > 1.0e-12)) {
+        if (reason != nullptr) {
+            *reason = "Animated layer motion currently uses the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
+        }
+        return false;
+    }
+    const auto particle = std::find_if(
+        config.effects.begin(), config.effects.end(),
+        [](const EffectConfig& effect) {
+            return effect.enabled && effect.type == EffectType::ParticleField
+                   && effect.intensity > 0.0;
+        });
+    if (particle != config.effects.end()) {
+        if (reason != nullptr) {
+            *reason = "Particle fields currently use the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
+        }
+        return false;
+    }
     if (reason != nullptr) reason->clear();
     return true;
 }

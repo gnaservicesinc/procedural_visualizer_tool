@@ -97,12 +97,12 @@ VideoExportDialog::VideoExportDialog(
     form->addRow(preserve_alpha_);
 
     include_music_ = new QCheckBox(
-        tr("Include original project-clock audio (no recompression)"), this);
+        tr("Include audible project and layer-clock music"), this);
     include_music_->setObjectName(QStringLiteral("videoIncludeMusic"));
     include_music_->setChecked(projectHasMusic);
     include_music_->setEnabled(projectHasMusic);
     include_music_->setToolTip(
-        tr("Only the project-wide Music clock is muxed. Layers never contribute audio."));
+        tr("Data-only sources remain silent. Audible layer clips use the same fit, loop, and one-shot mapping as their visual clocks."));
     form->addRow(include_music_);
     root->addLayout(form);
 

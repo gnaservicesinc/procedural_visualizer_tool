@@ -246,7 +246,7 @@ void test_layer_codec_backward_compatibility() {
     std::string version_three;
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(original, version_three, &error));
-    CHECK(version_three.rfind("PVT_LAYER\t3\n", 0U) == 0U);
+    CHECK(version_three.rfind("PVT_LAYER\t4\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         version_three, current_round_trip, &error));
@@ -281,19 +281,21 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.audio_reactive.color_source
           == pvt::MusicFeature::Midrange);
 
-    // PVT_LAYER v2 carried the PVT_SETUP v4 render subset. Strip every v3-only
-    // synchronization record while preserving all v2 spatial/palette data.
+    // PVT_LAYER v2 carried the PVT_SETUP v4 render subset. Strip every v3/v4
+    // synchronization and animation record while preserving v2 spatial data.
     std::istringstream current_input(version_three);
     std::ostringstream version_two_output;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_input, line)));
-    CHECK(line == "PVT_LAYER\t3");
+    CHECK(line == "PVT_LAYER\t4");
     version_two_output << "PVT_LAYER\t2\n";
     while (std::getline(current_input, line)) {
         const std::size_t tab = line.find('\t');
         const std::string key = line.substr(0U, tab);
         const bool v3_only = key == "rhythm.swings_enabled"
                              || key.rfind("audio_reactive.", 0U) == 0U
+                             || key.rfind("layer_clock.", 0U) == 0U
+                             || key.rfind("motion.", 0U) == 0U
                              || key == "surface.obj_sha256"
                              || key == "surface.obj_basename";
         if (!v3_only) version_two_output << line << '\n';
@@ -410,7 +412,7 @@ void test_render_output_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t2\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t3\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -459,7 +461,7 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t2");
+    CHECK(line == "PVT_RENDER_OUTPUT\t3");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');
@@ -1268,7 +1270,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(pvt::validate_project_bundle(as_utf8(checksum_bundle), nullptr, &error));
 
     std::string root = read_bytes(checksum_bundle / "metadata.txt");
-    CHECK(replace_once(root, "project.last_changed_with_version\t5.0.0\n",
+    CHECK(replace_once(root, "project.last_changed_with_version\t6.0.0\n",
                        "project.last_changed_with_version\t99.0.0\n"));
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
@@ -1349,11 +1351,17 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     document.project.name = "Embedded Assets";
     std::string error;
     pvt::ProjectAttachment music_attachment;
+    pvt::ProjectAttachment layer_music_attachment;
     pvt::ProjectAttachment obj_attachment;
     pvt::ProjectAttachment image_attachment;
     CHECK(pvt::attach_project_file(
         document, pvt::kMusicSourceAttachmentId, as_utf8(audio_source),
         &music_attachment, &error));
+    CHECK(pvt::attach_project_file(
+        document,
+        pvt::layer_music_attachment_id(
+            document.project.layers.front().uuid),
+        as_utf8(audio_source), &layer_music_attachment, &error));
     CHECK(pvt::attach_project_file(
         document,
         pvt::surface_obj_attachment_id(document.project.layers.front().uuid),
@@ -1382,6 +1390,14 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     music.feature_samples = {
         {0.5F, 0.4F, 0.3F, 0.2F, 0.8F, 1.0F},
     };
+    auto& layer_clock =
+        document.project.layers.front().render.layer_clock;
+    layer_clock.enabled = true;
+    layer_clock.scale = pvt::LayerClockScale::StraightFit;
+    layer_clock.clock = document.project.canvas.clock;
+    layer_clock.clock.data_only = true;
+    layer_clock.clock.music.source_sha256 = layer_music_attachment.sha256;
+    layer_clock.clock.music.source_basename = layer_music_attachment.basename;
     pvt::SurfaceConfig& surface =
         document.project.layers.front().render.surface;
     surface.mapping = pvt::SurfaceMapping::CustomObj;
@@ -1527,11 +1543,18 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
 
     pvt::ProjectDocument loaded;
     CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
-    CHECK(loaded.attachments.size() == 4U);
+    CHECK(loaded.attachments.size() == 5U);
     CHECK(read_bytes(pvt::detail::path_from_utf8(
               pvt::project_attachment_path(loaded,
                                            pvt::kMusicSourceAttachmentId)))
           == audio_bytes);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              pvt::project_attachment_path(
+                  loaded, pvt::layer_music_attachment_id(
+                              loaded.project.layers.front().uuid))))
+          == audio_bytes);
+    CHECK(loaded.project.layers.front().render.layer_clock.enabled);
+    CHECK(loaded.project.layers.front().render.layer_clock.clock.data_only);
     CHECK(read_bytes(pvt::detail::path_from_utf8(
               loaded.project.layers.front().render.surface.obj_path))
           == obj_bytes);
@@ -1598,7 +1621,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::save_project_document(independent, as_utf8(zip), &report, &error));
     pvt::detail::BundleFileSet zip_files;
     CHECK(pvt::detail::read_bundle_file_set(as_utf8(zip), zip_files, &error));
-    CHECK(zip_files.from_zip && asset_entry_count(zip_files) == 3U);
+    CHECK(zip_files.from_zip && asset_entry_count(zip_files) == 4U);
     pvt::ProjectDocument zip_loaded;
     CHECK(pvt::load_project_document(as_utf8(zip), zip_loaded, &error));
     CHECK(read_bytes(pvt::detail::path_from_utf8(

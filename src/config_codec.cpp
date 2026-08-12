@@ -37,10 +37,10 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 11U> prefixes{{
+    constexpr std::array<std::string_view, 13U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
-        "palette.", "transform.",
+        "palette.", "transform.", "layer_clock.", "motion.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -64,6 +64,12 @@ bool is_setup_v5_key(std::string_view key) {
            || key == "surface.obj_basename";
 }
 
+bool is_setup_v6_key(std::string_view key) {
+    return key == "timing.clock.data_only"
+           || starts_with(key, "layer_clock.")
+           || starts_with(key, "motion.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -73,7 +79,9 @@ bool supported_layer_version(const std::string& serialized,
         if (starts_with(serialized, header + "\n")
             || starts_with(serialized, header + "\r\n")) {
             layer_version = version;
-            setup_version = version == 1U ? 3U : version == 2U ? 4U : 5U;
+            setup_version = version == 1U ? 3U
+                            : version == 2U ? 4U
+                            : version == 3U ? 5U : 6U;
             return true;
         }
     }
@@ -90,7 +98,8 @@ bool supported_render_output_version(const std::string& serialized,
         if (starts_with(serialized, header + "\n")
             || starts_with(serialized, header + "\r\n")) {
             output_version = version;
-            setup_version = version == 1U ? 4U : 5U;
+            setup_version = version == 1U ? 4U
+                            : version == 2U ? 5U : 6U;
             return true;
         }
     }
@@ -247,6 +256,9 @@ bool synthesize_setup(const std::string& partial,
     for (const std::string_view line : default_records) {
         const std::string_view key = line.substr(0U, line.find('\t'));
         if (setup_version < 5U && is_setup_v5_key(key)) {
+            continue;
+        }
+        if (setup_version < 6U && is_setup_v6_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
