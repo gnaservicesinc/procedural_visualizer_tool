@@ -448,6 +448,7 @@ if(PVT_BUILD_QT_GUI)
             "-framework AudioToolbox"
             "-framework CoreMedia"
             "-framework CoreVideo"
+            "-framework Foundation"
             "-framework VideoToolbox")
     endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
@@ -537,6 +538,7 @@ if(BUILD_TESTING)
             "-framework AudioToolbox"
             "-framework CoreMedia"
             "-framework CoreVideo"
+            "-framework Foundation"
             "-framework VideoToolbox")
         pvt_enable_warnings(pvt_video_export_tests)
         add_test(NAME pvt_video_export COMMAND pvt_video_export_tests)

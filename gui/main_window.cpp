@@ -7114,7 +7114,7 @@ bool MainWindow::startVideoExport() {
                                     this, [this, completed, total] {
                                         if (!export_active_) return;
                                         status_->setText(
-                                            tr("Rendering video frame %1/%2…")
+                                            tr("Exporting video frame %1/%2…")
                                                 .arg(completed).arg(total));
                                         export_progress_->setValue(
                                             total > 0 ? completed * 1000 / total : 0);
@@ -7133,6 +7133,8 @@ bool MainWindow::startVideoExport() {
                 result.error = QString::fromStdString(export_error);
                 if (result.ok) {
                     QString details = QString::fromStdString(report.format_name);
+                    details.append(tr(", %1 parallel render worker(s)")
+                                       .arg(report.render_workers));
                     if (report.included_audio) {
                         details.append(tr(", synchronized audio mix included"));
                     }

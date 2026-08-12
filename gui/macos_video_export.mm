@@ -10,12 +10,16 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <utility>
@@ -112,6 +116,24 @@ bool encode_png_sample(const pvt::Image& image, bool preserve_alpha,
                       * static_cast<std::size_t>(image.height) * 4U) {
         return fail(error, "Rendered frame metadata is inconsistent.");
     }
+    const std::size_t components = preserve_alpha ? 4U : 3U;
+    const std::size_t raw_bytes =
+        static_cast<std::size_t>(image.width)
+        * static_cast<std::size_t>(image.height) * components;
+    const std::size_t reserve_overhead = raw_bytes / 32U + 65536U;
+    if (reserve_overhead
+        > std::numeric_limits<std::size_t>::max() - raw_bytes) {
+        return fail(error, "Lossless movie frame memory estimate overflowed.");
+    }
+    try {
+        bytes.clear();
+        // Deflate's worst-case expansion and PNG chunk overhead are far below
+        // this allowance. Reserving it prevents vector growth from briefly
+        // doubling every worker's encoded-frame allocation.
+        bytes.reserve(raw_bytes + reserve_overhead);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to encode a lossless movie frame.");
+    }
     png_structp png = png_create_write_struct(
         PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
     if (png == nullptr) return fail(error, "Could not create the PNG movie encoder.");
@@ -121,7 +143,6 @@ bool encode_png_sample(const pvt::Image& image, bool preserve_alpha,
         return fail(error, "Could not create PNG movie metadata.");
     }
     PngWriteState state{&bytes, false};
-    bytes.clear();
     if (setjmp(png_jmpbuf(png)) != 0) {
         png_destroy_write_struct(&png, &info);
         bytes.clear();
@@ -139,7 +160,6 @@ bool encode_png_sample(const pvt::Image& image, bool preserve_alpha,
     // Lossless video favors reasonable encode time; this changes size only.
     png_set_compression_level(png, 3);
     png_write_info(png, info);
-    const std::size_t components = preserve_alpha ? 4U : 3U;
     std::vector<unsigned char> row(
         static_cast<std::size_t>(image.width) * components);
     for (int y = 0; y < image.height; ++y) {
@@ -161,6 +181,42 @@ bool encode_png_sample(const pvt::Image& image, bool preserve_alpha,
     png_write_end(png, info);
     png_destroy_write_struct(&png, &info);
     return !state.failed;
+}
+
+bool encode_bgra_sample(const pvt::Image& image, bool preserve_alpha,
+                        std::vector<unsigned char>& bytes,
+                        std::string* error) {
+    if (image.width <= 0 || image.height <= 0
+        || image.pixels.size()
+               != static_cast<std::size_t>(image.width)
+                      * static_cast<std::size_t>(image.height) * 4U) {
+        return fail(error, "Rendered frame metadata is inconsistent.");
+    }
+    const std::size_t width = static_cast<std::size_t>(image.width);
+    const std::size_t height = static_cast<std::size_t>(image.height);
+    if (width > std::numeric_limits<std::size_t>::max() / height
+        || width * height > std::numeric_limits<std::size_t>::max() / 4U) {
+        return fail(error, "Rendered video frame is too large to convert.");
+    }
+    bytes.resize(width * height * 4U);
+    for (int y = 0; y < image.height; ++y) {
+        for (int x = 0; x < image.width; ++x) {
+            unsigned char red = 0U;
+            unsigned char green = 0U;
+            unsigned char blue = 0U;
+            unsigned char alpha = 255U;
+            convert_pixel(image.pixel(x, y), preserve_alpha, true,
+                          red, green, blue, alpha);
+            const std::size_t offset =
+                (static_cast<std::size_t>(y) * width
+                 + static_cast<std::size_t>(x)) * 4U;
+            bytes[offset] = blue;
+            bytes[offset + 1U] = green;
+            bytes[offset + 2U] = red;
+            bytes[offset + 3U] = alpha;
+        }
+    }
+    return true;
 }
 
 struct TemporaryMovie {
@@ -332,13 +388,11 @@ bool wait_until_ready(AVAssetWriterInput* input, AVAssetWriter* writer,
 
 bool append_png_frame(AVAssetWriterInput* input, AVAssetWriter* writer,
                       CMVideoFormatDescriptionRef format,
-                      const pvt::Image& image, bool preserve_alpha,
+                      const std::vector<unsigned char>& png,
                       CMTime presentation, CMTime duration,
                       const std::atomic_bool* cancel,
                       std::string* error) {
     if (!wait_until_ready(input, writer, cancel, error)) return false;
-    std::vector<unsigned char> png;
-    if (!encode_png_sample(image, preserve_alpha, png, error)) return false;
     CMBlockBufferRef block = nullptr;
     OSStatus status = CMBlockBufferCreateWithMemoryBlock(
         kCFAllocatorDefault, nullptr, png.size(), kCFAllocatorDefault,
@@ -370,10 +424,19 @@ bool append_png_frame(AVAssetWriterInput* input, AVAssetWriter* writer,
                                            "Could not append a lossless video frame."));
 }
 
-bool fill_pixel_buffer(CVPixelBufferRef buffer, const pvt::Image& image,
-                       bool preserve_alpha, std::string* error) {
-    if (buffer == nullptr || image.width <= 0 || image.height <= 0) {
+bool fill_pixel_buffer(CVPixelBufferRef buffer,
+                       const std::vector<unsigned char>& bgra,
+                       int width, int height, bool preserve_alpha,
+                       std::string* error) {
+    if (buffer == nullptr || width <= 0 || height <= 0) {
         return fail(error, "Video pixel buffer is missing.");
+    }
+    const std::size_t packed_stride = static_cast<std::size_t>(width) * 4U;
+    if (static_cast<std::size_t>(height)
+            > std::numeric_limits<std::size_t>::max() / packed_stride
+        || bgra.size()
+               != packed_stride * static_cast<std::size_t>(height)) {
+        return fail(error, "Converted video frame metadata is inconsistent.");
     }
     const CVReturn locked = CVPixelBufferLockBaseAddress(buffer, 0U);
     if (locked != kCVReturnSuccess) {
@@ -381,28 +444,17 @@ bool fill_pixel_buffer(CVPixelBufferRef buffer, const pvt::Image& image,
     }
     auto* base = static_cast<unsigned char*>(CVPixelBufferGetBaseAddress(buffer));
     const std::size_t stride = CVPixelBufferGetBytesPerRow(buffer);
-    const std::size_t required_stride = static_cast<std::size_t>(image.width) * 4U;
-    if (base == nullptr || stride < required_stride
+    if (base == nullptr || stride < packed_stride
         || CVPixelBufferGetHeight(buffer)
-               < static_cast<std::size_t>(image.height)) {
+               < static_cast<std::size_t>(height)) {
         CVPixelBufferUnlockBaseAddress(buffer, 0U);
         return fail(error, "VideoToolbox supplied an undersized pixel buffer.");
     }
-    for (int y = 0; y < image.height; ++y) {
+    for (int y = 0; y < height; ++y) {
         unsigned char* row = base + static_cast<std::size_t>(y) * stride;
-        for (int x = 0; x < image.width; ++x) {
-            unsigned char red = 0U;
-            unsigned char green = 0U;
-            unsigned char blue = 0U;
-            unsigned char alpha = 255U;
-            convert_pixel(image.pixel(x, y), preserve_alpha, true,
-                          red, green, blue, alpha);
-            const std::size_t offset = static_cast<std::size_t>(x) * 4U;
-            row[offset] = blue;
-            row[offset + 1U] = green;
-            row[offset + 2U] = red;
-            row[offset + 3U] = alpha;
-        }
+        const unsigned char* source =
+            bgra.data() + static_cast<std::size_t>(y) * packed_stride;
+        std::memcpy(row, source, packed_stride);
     }
     CVPixelBufferUnlockBaseAddress(buffer, 0U);
     CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey,
@@ -418,6 +470,128 @@ bool fill_pixel_buffer(CVPixelBufferRef buffer, const pvt::Image& image,
     }
     return true;
 }
+
+bool checked_multiply(std::size_t left, std::size_t right,
+                      std::size_t* result) {
+    if (left != 0U
+        && right > std::numeric_limits<std::size_t>::max() / left) {
+        return false;
+    }
+    *result = left * right;
+    return true;
+}
+
+bool checked_add(std::size_t left, std::size_t right,
+                 std::size_t* result) {
+    if (right > std::numeric_limits<std::size_t>::max() - left) {
+        return false;
+    }
+    *result = left + right;
+    return true;
+}
+
+bool select_video_worker_count(const pvt::ProjectConfig& project,
+                               const pvt::ValidationResult& validation,
+                               const Options& options, int total_frames,
+                               std::size_t* worker_count,
+                               std::string* error) {
+    if (options.worker_count > pvt::kMaximumSequenceWorkers) {
+        return fail(error, "Video render worker count cannot exceed "
+                           + std::to_string(pvt::kMaximumSequenceWorkers)
+                           + ".");
+    }
+    std::size_t pixel_count = 0U;
+    std::size_t converted_frame_bytes = 0U;
+    if (!checked_multiply(static_cast<std::size_t>(project.canvas.width),
+                          static_cast<std::size_t>(project.canvas.height),
+                          &pixel_count)
+        || !checked_multiply(pixel_count, 4U, &converted_frame_bytes)) {
+        return fail(error, "Video frame memory estimate overflowed.");
+    }
+
+    std::size_t render_peak = validation.estimated_peak_bytes;
+    if (options.frame.backend == pvt::RenderBackend::CpuAndGpu
+        && !checked_multiply(render_peak, 2U, &render_peak)) {
+        render_peak = std::numeric_limits<std::size_t>::max();
+    }
+    std::size_t queued_frame_bytes = 0U;
+    const std::size_t queue_overhead =
+        converted_frame_bytes / 32U + 65536U;
+    if (!checked_add(converted_frame_bytes, queue_overhead,
+                     &queued_frame_bytes)) {
+        queued_frame_bytes = std::numeric_limits<std::size_t>::max();
+    }
+    std::size_t worker_peak = 0U;
+    if (!checked_add(render_peak, queued_frame_bytes, &worker_peak)) {
+        worker_peak = std::numeric_limits<std::size_t>::max();
+    }
+
+    const std::size_t hardware =
+        std::max<std::size_t>(1U, std::thread::hardware_concurrency());
+    const std::size_t requested = options.worker_count == 0U
+                                      ? hardware : options.worker_count;
+    const std::size_t budget = options.memory_budget_bytes == 0U
+                                   ? pvt::kDefaultSequenceMemoryBudgetBytes
+                                   : options.memory_budget_bytes;
+    const std::size_t memory_limited = worker_peak == 0U
+        ? requested
+        : std::max<std::size_t>(1U, budget / worker_peak);
+    *worker_count = std::max<std::size_t>(
+        1U, std::min({requested, memory_limited,
+                      static_cast<std::size_t>(total_frames),
+                      pvt::kMaximumSequenceWorkers}));
+    return true;
+}
+
+struct VideoFrameResult {
+    bool ok = false;
+    int frame_index = -1;
+    std::vector<unsigned char> bytes;
+    std::string error;
+    std::exception_ptr exception;
+};
+
+struct VideoWorkerSlot {
+    bool ready = false;
+    VideoFrameResult result;
+};
+
+std::string worker_exception_message(const std::exception_ptr& exception) {
+    try {
+        if (exception != nullptr) std::rethrow_exception(exception);
+    } catch (const std::bad_alloc&) {
+        return "worker ran out of memory";
+    } catch (const std::exception& value) {
+        return value.what();
+    } catch (...) {
+        return "worker failed with an unknown exception";
+    }
+    return "worker failed without an error";
+}
+
+class VideoWorkerJoiner {
+public:
+    VideoWorkerJoiner(std::vector<std::thread>& threads,
+                      std::atomic_bool& stop,
+                      std::condition_variable& wake)
+        : threads_(threads), stop_(stop), wake_(wake) {}
+
+    VideoWorkerJoiner(const VideoWorkerJoiner&) = delete;
+    VideoWorkerJoiner& operator=(const VideoWorkerJoiner&) = delete;
+
+    ~VideoWorkerJoiner() {
+        stop_.store(true, std::memory_order_relaxed);
+        wake_.notify_all();
+        for (std::thread& thread : threads_) {
+            if (thread.joinable()) thread.join();
+        }
+    }
+
+private:
+    std::vector<std::thread>& threads_;
+    std::atomic_bool& stop_;
+    std::condition_variable& wake_;
+};
 
 NSDictionary* video_settings(const pvt::ProjectConfig& project,
                              const Options& options) {
@@ -594,6 +768,12 @@ bool export_project(const pvt::ProjectConfig& project,
         const int total_frames = pvt::effective_frame_count(
             project.canvas, &frame_count_error);
         if (total_frames < 1) return fail(error, frame_count_error);
+        std::size_t render_worker_count = 0U;
+        if (!select_video_worker_count(project, validation, options,
+                                       total_frames, &render_worker_count,
+                                       error)) {
+            return false;
+        }
         if (options.codec != Codec::PngLossless
             && ((project.canvas.width & 1) != 0
                 || (project.canvas.height & 1) != 0)) {
@@ -776,60 +956,245 @@ bool export_project(const pvt::ProjectConfig& project,
 
         bool ok = true;
         std::string work_error;
-        if (progress && !progress(0, total_frames)) {
+        try {
+            if (progress && !progress(0, total_frames)) {
+                ok = false;
+                work_error =
+                    "Video export was cancelled by the progress callback.";
+            }
+        } catch (const std::exception& exception) {
             ok = false;
-            work_error = "Video export was cancelled by the progress callback.";
+            work_error = "Video progress callback failed: "
+                         + std::string(exception.what());
+        } catch (...) {
+            ok = false;
+            work_error =
+                "Video progress callback failed with an unknown exception.";
         }
-        for (int frame = 0; ok && frame < total_frames; ++frame) {
-            if (cancelled(cancel)) {
-                ok = false;
-                work_error = "Video export was cancelled.";
-                break;
-            }
-            pvt::Image image;
-            if (!pvt::render_project_frame(project, frame, options.frame,
-                                           image, cancel, &work_error)) {
-                ok = false;
-                break;
-            }
-            const CMTime presentation = CMTimeMultiply(
-                frame_duration, static_cast<std::int32_t>(frame));
-            if (options.codec == Codec::PngLossless) {
-                ok = append_png_frame(video_input, writer, png_format,
-                                      image, options.preserve_alpha,
-                                      presentation, frame_duration,
-                                      cancel, &work_error);
-            } else if (wait_until_ready(video_input, writer, cancel,
-                                        &work_error)) {
-                CVPixelBufferRef pixel = nullptr;
-                const CVReturn pixel_status = CVPixelBufferPoolCreatePixelBuffer(
-                    kCFAllocatorDefault, adaptor.pixelBufferPool, &pixel);
-                if (pixel_status != kCVReturnSuccess || pixel == nullptr) {
-                    ok = false;
-                    work_error = "Could not allocate a VideoToolbox pixel buffer.";
-                } else {
-                    ok = fill_pixel_buffer(pixel, image,
-                                           options.preserve_alpha, &work_error)
-                         && [adaptor appendPixelBuffer:pixel
-                                 withPresentationTime:presentation];
-                    if (!ok && work_error.empty()) {
-                        work_error = writer_error(
-                            writer, "Could not append a VideoToolbox video frame.");
+
+        {
+            // Rendering and pixel conversion are independent across frames.
+            // Each worker owns one ordered slot, bounding queued memory while
+            // the calling thread remains the sole AVFoundation appender.
+            std::atomic_bool stop{!ok};
+            std::atomic<int> next_frame{0};
+            std::mutex frame_mutex;
+            std::condition_variable frame_wake;
+            std::vector<VideoWorkerSlot> slots(render_worker_count);
+            std::vector<std::thread> frame_threads;
+            frame_threads.reserve(render_worker_count);
+            std::exception_ptr scheduler_exception;
+            VideoWorkerJoiner joiner(frame_threads, stop, frame_wake);
+
+            if (ok) {
+                try {
+                    for (std::size_t worker = 0U;
+                         worker < render_worker_count; ++worker) {
+                        frame_threads.emplace_back([&, worker] {
+                            @autoreleasepool {
+                                try {
+                                    pvt::Image image;
+                                    for (;;) {
+                                        {
+                                            std::unique_lock<std::mutex> lock(
+                                                frame_mutex);
+                                            frame_wake.wait(lock, [&] {
+                                                return stop.load(
+                                                           std::memory_order_relaxed)
+                                                       || !slots[worker].ready;
+                                            });
+                                        }
+                                        if (stop.load(std::memory_order_relaxed)) {
+                                            return;
+                                        }
+                                        const int frame = next_frame.fetch_add(
+                                            1, std::memory_order_relaxed);
+                                        if (frame >= total_frames) return;
+
+                                        VideoFrameResult result;
+                                        result.frame_index = frame;
+                                        try {
+                                            if (pvt::render_project_frame(
+                                                    project, frame, options.frame,
+                                                    image, &stop, &result.error)) {
+                                                result.ok = options.codec
+                                                        == Codec::PngLossless
+                                                    ? encode_png_sample(
+                                                          image,
+                                                          options.preserve_alpha,
+                                                          result.bytes,
+                                                          &result.error)
+                                                    : encode_bgra_sample(
+                                                          image,
+                                                          options.preserve_alpha,
+                                                          result.bytes,
+                                                          &result.error);
+                                            }
+                                        } catch (...) {
+                                            result.exception =
+                                                std::current_exception();
+                                        }
+                                        {
+                                            std::lock_guard<std::mutex> lock(
+                                                frame_mutex);
+                                            slots[worker].result =
+                                                std::move(result);
+                                            slots[worker].ready = true;
+                                        }
+                                        frame_wake.notify_all();
+                                    }
+                                } catch (...) {
+                                    {
+                                        std::lock_guard<std::mutex> lock(
+                                            frame_mutex);
+                                        if (scheduler_exception == nullptr) {
+                                            scheduler_exception =
+                                                std::current_exception();
+                                        }
+                                    }
+                                    stop.store(true,
+                                               std::memory_order_relaxed);
+                                    frame_wake.notify_all();
+                                }
+                            }
+                        });
                     }
-                    CVPixelBufferRelease(pixel);
+                } catch (const std::exception& exception) {
+                    ok = false;
+                    work_error = "Could not start parallel video rendering: "
+                                 + std::string(exception.what());
+                    stop.store(true, std::memory_order_relaxed);
+                    frame_wake.notify_all();
+                } catch (...) {
+                    ok = false;
+                    work_error =
+                        "Could not start parallel video rendering.";
+                    stop.store(true, std::memory_order_relaxed);
+                    frame_wake.notify_all();
                 }
-            } else {
-                ok = false;
             }
-            if (ok && progress && !progress(frame + 1, total_frames)) {
-                ok = false;
-                work_error = "Video export was cancelled by the progress callback.";
+
+            for (int expected = 0; ok && expected < total_frames;
+                 ++expected) {
+                VideoFrameResult result;
+                {
+                    std::unique_lock<std::mutex> lock(frame_mutex);
+                    for (;;) {
+                        if (scheduler_exception != nullptr) {
+                            ok = false;
+                            work_error = "Video render worker failed: "
+                                + worker_exception_message(
+                                      scheduler_exception) + ".";
+                            break;
+                        }
+                        if (cancelled(cancel)) {
+                            ok = false;
+                            work_error = "Video export was cancelled.";
+                            break;
+                        }
+                        if (audio_failed.load(std::memory_order_relaxed)) {
+                            ok = false;
+                            std::lock_guard<std::mutex> audio_lock(
+                                audio_error_mutex);
+                            work_error = audio_error;
+                            break;
+                        }
+                        auto ready = std::find_if(
+                            slots.begin(), slots.end(),
+                            [expected](const VideoWorkerSlot& slot) {
+                                return slot.ready
+                                       && slot.result.frame_index == expected;
+                            });
+                        if (ready != slots.end()) {
+                            result = std::move(ready->result);
+                            ready->ready = false;
+                            break;
+                        }
+                        frame_wake.wait_for(
+                            lock, std::chrono::milliseconds(10));
+                    }
+                }
+                frame_wake.notify_all();
+                if (!ok) break;
+                if (result.exception != nullptr) {
+                    ok = false;
+                    work_error = "Could not process video frame "
+                        + std::to_string(expected) + ": "
+                        + worker_exception_message(result.exception) + ".";
+                    break;
+                }
+                if (!result.ok) {
+                    ok = false;
+                    work_error = "Could not render or convert video frame "
+                        + std::to_string(expected) + ": " + result.error;
+                    break;
+                }
+
+                const CMTime presentation = CMTimeMultiply(
+                    frame_duration, static_cast<std::int32_t>(expected));
+                if (options.codec == Codec::PngLossless) {
+                    ok = append_png_frame(
+                        video_input, writer, png_format, result.bytes,
+                        presentation, frame_duration, cancel, &work_error);
+                } else if (wait_until_ready(video_input, writer, cancel,
+                                            &work_error)) {
+                    CVPixelBufferRef pixel = nullptr;
+                    const CVReturn pixel_status =
+                        CVPixelBufferPoolCreatePixelBuffer(
+                            kCFAllocatorDefault, adaptor.pixelBufferPool,
+                            &pixel);
+                    if (pixel_status != kCVReturnSuccess || pixel == nullptr) {
+                        ok = false;
+                        work_error =
+                            "Could not allocate a VideoToolbox pixel buffer.";
+                    } else {
+                        ok = fill_pixel_buffer(
+                                 pixel, result.bytes,
+                                 project.canvas.width,
+                                 project.canvas.height,
+                                 options.preserve_alpha, &work_error)
+                             && [adaptor appendPixelBuffer:pixel
+                                     withPresentationTime:presentation];
+                        if (!ok && work_error.empty()) {
+                            work_error = writer_error(
+                                writer,
+                                "Could not append a VideoToolbox video frame.");
+                        }
+                        CVPixelBufferRelease(pixel);
+                    }
+                } else {
+                    ok = false;
+                }
+
+                if (ok && progress) {
+                    try {
+                        if (!progress(expected + 1, total_frames)) {
+                            ok = false;
+                            work_error =
+                                "Video export was cancelled by the progress callback.";
+                        }
+                    } catch (const std::exception& exception) {
+                        ok = false;
+                        work_error = "Video progress callback failed: "
+                                     + std::string(exception.what());
+                    } catch (...) {
+                        ok = false;
+                        work_error =
+                            "Video progress callback failed with an unknown exception.";
+                    }
+                }
+                if (audio_failed.load(std::memory_order_relaxed)) {
+                    ok = false;
+                    std::lock_guard<std::mutex> lock(audio_error_mutex);
+                    work_error = audio_error;
+                }
+                if (!ok) {
+                    stop.store(true, std::memory_order_relaxed);
+                    frame_wake.notify_all();
+                }
             }
-            if (audio_failed.load(std::memory_order_relaxed)) {
-                ok = false;
-                std::lock_guard<std::mutex> lock(audio_error_mutex);
-                work_error = audio_error;
-            }
+            stop.store(true, std::memory_order_relaxed);
+            frame_wake.notify_all();
         }
         [video_input markAsFinished];
         if (!ok || cancelled(cancel)) {
@@ -858,6 +1223,7 @@ bool export_project(const pvt::ProjectConfig& project,
                 options.hardware == HardwarePolicy::Require;
             report->hardware_available = hardware_available;
             report->included_audio = include_audio;
+            report->render_workers = render_worker_count;
             report->format_name = codec_name(options.codec);
         }
         return true;

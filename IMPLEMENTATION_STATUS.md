@@ -168,6 +168,17 @@ workers reduced wall time from 44.95 seconds to 5.44 seconds (8.3x), with all 24
 PNGs byte-identical. This is evidence for that workload, not a general speedup
 guarantee.
 
+Native video export uses the same bounded frame-level scheduling principle.
+Independent workers render and convert lossless-PNG or BGRA payloads ahead of
+the movie writer; AVFoundation append, presentation timestamps, progress, and
+audio synchronization remain serialized in frame order. Automatic selection is
+bounded by hardware concurrency, frame count, 256 workers, and the conservative
+2 GiB aggregate peak estimate, so video no longer reduces procedural rendering
+to a one-core render/encode loop. On a CPU-only 24-frame 960x540, block-size-1,
+64-wave lossless-PNG movie workload, automatic 12-worker export reduced wall
+time from 50.96 seconds to 5.72 seconds (8.9x) on the same M2 Max host. This is
+one representative measurement rather than a universal scaling guarantee.
+
 The CLI opens ZIPs, directories, and legacy setups; renders composite projects;
 edits the selected layer; manages bounded layers; separates final alpha from
 modulation; performs normal bundle saves; and reserves `--save-legacy` for an
@@ -210,7 +221,7 @@ consumers do not inherit minizip requirements.
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
 | 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
-| 26 | Better CPU utilization | Complete | Bounded frame-level render/encode workers, ordered atomic install, serialized progress, `--workers 0..256`, and auto selection in GUI/library. Representative M2 Max measurement: 44.95 s to 5.44 s (8.3x). |
+| 26 | Better CPU utilization | Complete | Image sequences and native movies use bounded frame-level render/convert workers with ordered output and serialized progress; `--workers 0..256` configures portable sequences and native video auto-selects within the same hardware/memory limits. Representative M2 Max image-sequence measurement: 44.95 s to 5.44 s (8.3x). |
 | 27 | Texture versus mapped-surface effects | Complete | Each effect runs before surface mapping or after it; mapped-object coordinate effects move/deform the primitive silhouette. Relative order is retained within each stage. |
 | 28 | Draggable/localized effects | Complete | Numbered preview handles edit centers; zero area radius preserves whole-layer behavior and positive radii add feathered local influence. Glow blur and influence radii remain separate. |
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
@@ -221,7 +232,7 @@ consumers do not inherit minizip requirements.
 | 34 | Closed reusable motion paths | Partially complete | Four validated built-in closed paths now animate a whole layer with cycles/phase/rotation/scale. Named user-edited cubic resources and bindings for waves/effect centers/objects remain deferred. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and 8,192-sample multiband/onset/spectral/chroma analysis drive the base clock and independently routable wave/effect/color response. First import enables active-layer response, Energy supplies a visibly dynamic default hue route, and later user overrides remain intact. No fixed whole-song BPM clock is used. |
-| 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; hardware policy, alpha support, synchronized global/layer float audio mixing, Data-only exclusion, progress, cancellation, and collision safety are explicit. No FFmpeg executable or library is used. |
+| 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; bounded parallel frame render/conversion feeds one ordered writer while hardware policy, alpha, synchronized audio, Data-only exclusion, progress, cancellation, and collision safety remain explicit. No FFmpeg executable or library is used. |
 | 38 | Portable embedded attachments | Complete | Music, OBJ, image, and generic files retain exact filenames/extensions beneath collision-safe digest directories, accept valid direct replacements as first-class edits, keep managed copies, and retain hostile/oversize rejection plus v2 compatibility. |
 | 39 | User-defined new-project defaults | Complete in Qt GUI | Settings can transactionally capture the complete current project or reactivate the built-in template; every new document regenerates project/layer identities and starts unsaved. |
 | 40 | macOS icon and self-contained distribution | Complete | The supplied PNG generates a full ICNS resource; public and local `make distribution` targets stage Qt/plugins, statically build pinned libpng, embed license notices, enforce the macOS deployment baseline across every Mach-O, reject build-machine paths, sign, and verify the app. |
@@ -288,10 +299,11 @@ consumers do not inherit minizip requirements.
 - The active-layer Swing checkbox is authoritative under every clock. Legacy
   music-swing policy values remain readable for setup compatibility but do not
   silently suppress the authored block.
-- Sequence workers operate on independent frames, not layers. The requested
-  count is capped by frames, hardware/explicit request, 256, and a default 2 GiB
-  aggregate estimate. Encoding may overlap, but installation and progress remain
-  ordered and the complete collision preflight still happens before frame zero.
+- Sequence and native-video workers operate on independent frames, not layers.
+  The count is capped by frames, hardware/explicit request, 256, and a default
+  2 GiB aggregate estimate. Image encoding and video conversion may overlap,
+  but file installation or AVFoundation append, timestamps, and progress remain
+  ordered; sequence collision preflight still happens before frame zero.
 - Effects are grouped into two explicit stages: every Texture effect runs before
   surface wrapping and every Mapped-object effect afterward. List order remains
   stable within a stage; the mapping boundary cannot be interleaved ambiguously.
@@ -356,6 +368,16 @@ consumers do not inherit minizip requirements.
   do not create commands.
 
 ## Validation record
+
+The 2026-08-12 native-video scheduling correction passed the Qt-enabled Release
+suite 19/19, focused native-video AddressSanitizer plus UndefinedBehaviorSanitizer
+coverage, native and offscreen GUI smoke tests, and the self-contained macOS
+distribution verifier over 26 Mach-O files. Lossless movies produced by the
+automatic two-worker path and a forced one-worker path were byte-identical;
+tests also retain audio, ProRes/HEVC where available, progress/cancellation,
+no-clobber, atomic replacement, permission preservation, and worker-bound
+coverage. `git diff --check` passed. The representative 8.9x video timing is
+recorded above.
 
 The 2026-08-10 release-blocker correction passed the clean Qt-enabled Release
 suite 15/15 with standard IEEE-safe optimization flags and the workspace's

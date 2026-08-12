@@ -154,6 +154,7 @@ int main() {
                     return true;
                 }, &cancel, &report, &error)
             || last_progress != 2 || !report.included_audio
+            || report.render_workers != 2U
             || !inspect_movie(lossless, true, error)) {
             std::cerr << "Lossless native video export failed: " << error << '\n';
             return 1;
@@ -174,9 +175,15 @@ int main() {
             return 1;
         }
         options.overwrite_existing = true;
+        options.memory_budget_bytes = 1U;
         if (!pvt::video::export_project(project, lossless.string(), options, {},
-                                        &cancel, nullptr, &error)) {
+                                        &cancel, &report, &error)
+            || report.render_workers != 1U) {
             std::cerr << "Atomic video replacement failed: " << error << '\n';
+            return 1;
+        }
+        if (read_file(lossless) != original) {
+            std::cerr << "Parallel video output differs from single-worker output.\n";
             return 1;
         }
         struct stat replaced{};
@@ -187,8 +194,19 @@ int main() {
         }
 
         options.overwrite_existing = false;
+        options.memory_budget_bytes = 0U;
         options.include_project_music = false;
         options.music_source_path.clear();
+        options.worker_count = pvt::kMaximumSequenceWorkers + 1U;
+        const fs::path invalid_workers = directory / "invalid-workers.mov";
+        if (pvt::video::export_project(
+                project, invalid_workers.string(), options, {}, &cancel,
+                nullptr, &error)
+            || fs::exists(invalid_workers)) {
+            std::cerr << "Invalid video worker count was accepted.\n";
+            return 1;
+        }
+        options.worker_count = 0U;
         const fs::path cancelled_movie = directory / "cancelled.mov";
         if (pvt::video::export_project(
                 project, cancelled_movie.string(), options,
