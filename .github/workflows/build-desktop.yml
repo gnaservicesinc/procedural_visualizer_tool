@@ -199,8 +199,23 @@ jobs:
             "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/share/zlib/copyright" `
             "$docDir/ZLIB-LICENSE"
           $env:QT_QPA_PLATFORM = "offscreen"
-          & "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" --smoke-test
-          & "$env:GITHUB_WORKSPACE/package/bin/render9.exe" --self-test
+          function Invoke-PackageCheck($filePath, $argument) {
+            $process = Start-Process `
+              -FilePath $filePath -ArgumentList $argument -PassThru
+            if (-not $process.WaitForExit(30000)) {
+              $process.Kill($true)
+              throw "Package check timed out: $filePath $argument"
+            }
+            $process.WaitForExit()
+            if ($process.ExitCode -ne 0) {
+              throw "Package check failed with exit code $($process.ExitCode): $filePath $argument"
+            }
+          }
+          Invoke-PackageCheck `
+            "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" `
+            "--smoke-test"
+          Invoke-PackageCheck `
+            "$env:GITHUB_WORKSPACE/package/bin/render9.exe" "--self-test"
 
       - name: Verify and stage macOS package
         if: runner.os == 'macOS'

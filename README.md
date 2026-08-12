@@ -65,9 +65,11 @@ make distribution QT_PREFIX=/path/to/Qt/6.x/macos
 The unbundled linker output is kept under `build/distribution-intermediate/`;
 the top-level app is always the staged, dependency-complete, verified result.
 
-The default signature is ad-hoc. Pass
-`-DPVT_DISTRIBUTION_CODE_SIGN_IDENTITY="Developer ID Application: ..."` through
-`CMAKE_CONFIGURE_ARGS` when preparing a signed/notarized release.
+The default signature is ad-hoc. This project does not publish Developer
+ID-signed or notarized packages. Local builders who want to use their own
+identity can pass `-DPVT_DISTRIBUTION_CODE_SIGN_IDENTITY="Developer ID
+Application: ..."` through `CMAKE_CONFIGURE_ARGS` and complete Apple's
+notarization process themselves.
 Unless the caller explicitly supplies `CMAKE_OSX_DEPLOYMENT_TARGET`, this path
 targets macOS 13. It builds the existing libpng dependency statically from a
 SHA-256-pinned upstream archive instead of inheriting a local/Homebrew dylib,
@@ -88,10 +90,12 @@ platform:
   directory built and tested on Ubuntu 24.04.
 
 Each package contains the Qt GUI, the `render9` command-line renderer, licenses,
-and documentation. Workflow artifacts are retained for 30 days. The macOS app
-uses an ad-hoc signature and is not notarized, and the Windows executable is not
-Authenticode-signed; production releases need the corresponding signing
-credentials and GitHub Actions secrets.
+and documentation. Workflow artifacts are retained for 30 days. As an
+intentional project policy, the macOS app uses an ad-hoc signature and is not
+notarized, and the Windows executable is not Authenticode-signed. Users can
+approve the downloaded application through their platform's security controls,
+or build from source and sign the result locally. The workflow does not require
+or expect commercial signing credentials.
 
 ## What is configurable
 
