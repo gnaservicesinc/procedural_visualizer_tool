@@ -495,7 +495,7 @@ bool read_regular_file(const fs::path& path,
 
 #if defined(_WIN32)
 bool flush_path(const fs::path& path) {
-    HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ,
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                 nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
