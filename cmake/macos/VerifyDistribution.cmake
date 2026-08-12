@@ -56,7 +56,10 @@ foreach(_pvt_file IN LISTS _pvt_bundle_files)
         message(FATAL_ERROR
             "Could not inspect distribution dependencies for ${_pvt_file}: ${_pvt_otool_error}")
     endif()
-    if(_pvt_dependencies MATCHES "[\n\r\t ](/opt/|/usr/local/|/Users/)")
+    # Universal Mach-O output repeats the inspected file's absolute path as an
+    # unindented architecture header. Actual dependency entries are indented,
+    # so only those entries should participate in the machine-path check.
+    if(_pvt_dependencies MATCHES "[\t ](/opt/|/usr/local/|/Users/)")
         message(FATAL_ERROR
             "Distribution binary still references a build-machine library:\n"
             "${_pvt_file}\n${_pvt_dependencies}")

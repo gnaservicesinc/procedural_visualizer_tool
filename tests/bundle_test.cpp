@@ -203,7 +203,11 @@ bool write_test_zip(const fs::path& path,
         mz_zip_writer_set_compress_method(writer, MZ_COMPRESS_METHOD_STORE);
         for (const std::string& name : names) {
             mz_zip_file info{};
-            info.version_madeby = MZ_VERSION_MADEBY;
+            info.version_madeby = symlink_entry
+                ? static_cast<std::uint16_t>(
+                      (MZ_HOST_SYSTEM_UNIX << 8U)
+                      | (MZ_VERSION_MADEBY & 0xffU))
+                : MZ_VERSION_MADEBY;
             info.compression_method = MZ_COMPRESS_METHOD_STORE;
             info.external_fa = (symlink_entry ? 0120777U : 0100644U) << 16U;
             info.filename = name.c_str();
@@ -218,6 +222,28 @@ bool write_test_zip(const fs::path& path,
     if (ok) ok = mz_zip_writer_close(writer) == MZ_OK;
     else (void)mz_zip_writer_close(writer);
     mz_zip_writer_delete(&writer);
+#if defined(_WIN32)
+    // minizip normalizes backslashes supplied to its Windows writer. Restore
+    // them in both equal-length filename records so this remains a genuine
+    // hostile-archive fixture for the reader's platform-neutral path guard.
+    if (ok) {
+        std::string archive = read_bytes(path);
+        bool changed = false;
+        for (const std::string& name : names) {
+            if (name.find('\\') == std::string::npos) continue;
+            std::string normalized = name;
+            std::replace(normalized.begin(), normalized.end(), '\\', '/');
+            std::size_t position = 0U;
+            while ((position = archive.find(normalized, position))
+                   != std::string::npos) {
+                archive.replace(position, normalized.size(), name);
+                position += name.size();
+                changed = true;
+            }
+        }
+        ok = changed && write_bytes(path, archive);
+    }
+#endif
     return ok;
 }
 

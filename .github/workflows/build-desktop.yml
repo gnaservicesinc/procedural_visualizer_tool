@@ -1,0 +1,254 @@
+name: Build desktop packages
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: 6.8.3
+  AQTINSTALL_VERSION: 3.3.0
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-24.04
+            qt-host: linux
+            qt-arch: linux_gcc_64
+            qt-dir: gcc_64
+            archive: procedural-visualizer-tool-linux-x86_64.tar.gz
+          - name: Windows x64
+            os: windows-2022
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+            qt-dir: msvc2022_64
+            archive: procedural-visualizer-tool-windows-x86_64.zip
+          - name: macOS arm64
+            os: macos-15
+            qt-host: mac
+            qt-arch: clang_64
+            qt-dir: macos
+            archive: procedural-visualizer-tool-macos-arm64.zip
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgl1-mesa-dev \
+            libpng-dev \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxkbcommon-x11-0 \
+            xvfb
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install libpng:x64-windows-static
+
+      - name: Install Qt
+        shell: bash
+        run: |
+          python3 -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_exe="$GITHUB_WORKSPACE/.venv/Scripts/python.exe"
+          else
+            python_exe="$GITHUB_WORKSPACE/.venv/bin/python3"
+          fi
+          "$python_exe" -m pip install "aqtinstall==$AQTINSTALL_VERSION"
+          "$python_exe" -m aqt install-qt \
+            "${{ matrix.qt-host }}" desktop "$QT_VERSION" \
+            "${{ matrix.qt-arch }}" --outputdir .qt
+          qt_root="$GITHUB_WORKSPACE/.qt/$QT_VERSION/${{ matrix.qt-dir }}"
+          echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
+          echo "$qt_root/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch pinned Apple metal-cpp headers
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          metal_cpp="$RUNNER_TEMP/metal-cpp"
+          git init "$metal_cpp"
+          git -C "$metal_cpp" remote add origin https://github.com/apple/metal-cpp.git
+          git -C "$metal_cpp" fetch --depth=1 origin 9b4029d993648571595451f3b965c7c438fb7dc4
+          git -C "$metal_cpp" checkout --detach FETCH_HEAD
+          echo "METAL_CPP_DIR=$metal_cpp" >> "$GITHUB_ENV"
+
+      - name: Configure Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
+            -DPVT_BUILD_CLI=ON \
+            -DPVT_BUILD_QT_GUI=ON \
+            -DPVT_DEPLOY_QT_RUNTIME=ON \
+            -DPVT_ENABLE_METAL=OFF \
+            -DBUILD_TESTING=ON
+
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DCMAKE_INSTALL_BINDIR=. `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DPVT_BUILD_CLI=ON `
+            -DPVT_BUILD_QT_GUI=ON `
+            -DPVT_DEPLOY_QT_RUNTIME=ON `
+            -DPVT_ENABLE_METAL=OFF `
+            -DBUILD_TESTING=ON
+
+      - name: Configure macOS arm64 build
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DPVT_BUILD_CLI=ON \
+            -DPVT_BUILD_QT_GUI=ON \
+            -DPVT_ENABLE_DISTRIBUTION=ON \
+            -DPVT_ENABLE_METAL=ON \
+            -DPVT_METAL_CPP_DIR="$METAL_CPP_DIR" \
+            -DBUILD_TESTING=ON
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel
+
+      - name: Build verified macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: cmake --build build --config Release --parallel --target distribution
+
+      - name: Run Windows tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 300
+
+      - name: Run Linux tests
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure --timeout 300
+
+      - name: Run macOS tests
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ctest --test-dir build --output-on-failure --timeout 300 -E '^pvt_gui_smoke$'
+
+      - name: Install Linux package
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake --install build --prefix "$GITHUB_WORKSPACE/package"
+          if ldd ./package/bin/procedural-visualizer-tool \
+              ./package/plugins/platforms/libqxcb.so | grep 'not found'; then
+            exit 1
+          fi
+          xvfb-run --auto-servernum \
+            ./package/bin/procedural-visualizer-tool --smoke-test
+          ./package/bin/render9 --self-test
+
+      - name: Install Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --install build --config Release --prefix "$env:GITHUB_WORKSPACE/package"
+          $docDir = "$env:GITHUB_WORKSPACE/package/share/doc/ProceduralVisualizerTool"
+          New-Item -ItemType Directory -Force -Path $docDir | Out-Null
+          Copy-Item `
+            "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/share/libpng/copyright" `
+            "$docDir/LIBPNG-LICENSE"
+          Copy-Item `
+            "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/share/zlib/copyright" `
+            "$docDir/ZLIB-LICENSE"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          & "$env:GITHUB_WORKSPACE/package/procedural-visualizer-tool.exe" --smoke-test
+          & "$env:GITHUB_WORKSPACE/package/render9.exe" --self-test
+
+      - name: Verify and stage macOS package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="build/Procedural Visualizer Tool.app"
+          "$app/Contents/MacOS/Procedural Visualizer Tool" --smoke-test
+          lipo "$app/Contents/MacOS/Procedural Visualizer Tool" \
+            -verify_arch arm64
+          lipo build/render9 -verify_arch arm64
+          codesign --force --sign - build/render9
+          package="$GITHUB_WORKSPACE/procedural-visualizer-tool-macos-arm64"
+          mkdir -p "$package"
+          ditto "$app" "$package/Procedural Visualizer Tool.app"
+          cp build/render9 README.md LICENSE "$package/"
+
+      - name: Package Linux artifact
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package_name=procedural-visualizer-tool-linux-x86_64
+          mv package "$package_name"
+          mkdir -p dist
+          tar -czf "dist/${{ matrix.archive }}" "$package_name"
+
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packageName = "procedural-visualizer-tool-windows-x86_64"
+          Move-Item package $packageName
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path $packageName -DestinationPath "dist/${{ matrix.archive }}"
+
+      - name: Package macOS artifact
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            procedural-visualizer-tool-macos-arm64 \
+            "dist/${{ matrix.archive }}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: dist/${{ matrix.archive }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30

@@ -6273,7 +6273,8 @@ void MainWindow::randomizeStackComposition() {
         pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
         pvt::EffectType::Shake, pvt::EffectType::FlagWave, pvt::EffectType::Glow,
         pvt::EffectType::BlockScale, pvt::EffectType::ParticleField};
-    const int effect_count = random_integer(random, 1, static_cast<int>(effect_types.size()));
+    constexpr int kMaximumRandomEffects = 6;
+    const int effect_count = random_integer(random, 1, kMaximumRandomEffects);
     bool has_enabled_effect = false;
     for (int index = 0; index < effect_count; ++index) {
         const int selected = random_integer(

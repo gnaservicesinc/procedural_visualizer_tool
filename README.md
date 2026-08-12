@@ -73,6 +73,26 @@ targets macOS 13. It builds the existing libpng dependency statically from a
 SHA-256-pinned upstream archive instead of inheriting a local/Homebrew dylib,
 and therefore needs network access on its first distribution build.
 
+### Automated desktop packages
+
+GitHub Actions builds tested desktop packages after every push to `main`, for
+every pull-request update, and on manual request. Open the **Build desktop
+packages** workflow run on GitHub and download the artifact for the required
+platform:
+
+- `procedural-visualizer-tool-macos-arm64.zip` supports Apple Silicon Macs on
+  macOS 13 or newer.
+- `procedural-visualizer-tool-windows-x86_64.zip` is a portable 64-bit Windows
+  directory.
+- `procedural-visualizer-tool-linux-x86_64.tar.gz` is a portable 64-bit Linux
+  directory built and tested on Ubuntu 24.04.
+
+Each package contains the Qt GUI, the `render9` command-line renderer, licenses,
+and documentation. Workflow artifacts are retained for 30 days. The macOS app
+uses an ad-hoc signature and is not notarized, and the Windows executable is not
+Authenticode-signed; production releases need the corresponding signing
+credentials and GitHub Actions secrets.
+
 ## What is configurable
 
 - A semantic UTF-8 project name used in the window title. Display-safe characters

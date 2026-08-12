@@ -5,6 +5,8 @@ endif()
 
 option(PVT_ENABLE_DISTRIBUTION
     "Add a target that stages a self-contained macOS application" OFF)
+option(PVT_DEPLOY_QT_RUNTIME
+    "Deploy the Qt runtime and plugins when installing the GUI" OFF)
 # Set this before project() initializes compiler flags. Qt 6.5 supports this
 # baseline, and every native API used by the application is availability-
 # guarded where necessary. A caller's explicit deployment target still wins.
@@ -30,6 +32,10 @@ set(PVT_DISTRIBUTION_CODE_SIGN_IDENTITY "-" CACHE STRING
 if(PVT_ENABLE_DISTRIBUTION AND NOT PVT_BUILD_QT_GUI)
     message(FATAL_ERROR
         "PVT_ENABLE_DISTRIBUTION requires PVT_BUILD_QT_GUI=ON.")
+endif()
+if(PVT_DEPLOY_QT_RUNTIME AND NOT PVT_BUILD_QT_GUI)
+    message(FATAL_ERROR
+        "PVT_DEPLOY_QT_RUNTIME requires PVT_BUILD_QT_GUI=ON.")
 endif()
 set(PVT_METAL_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../3rd_party/metal-cpp"
     CACHE PATH "Directory containing Apple's metal-cpp headers")
@@ -434,6 +440,12 @@ if(PVT_BUILD_QT_GUI)
     else()
         set_target_properties(ProceduralVisualizerToolGui PROPERTIES
             OUTPUT_NAME "procedural-visualizer-tool")
+        if(UNIX)
+            file(RELATIVE_PATH pvt_gui_install_library_path
+                "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
+            set_target_properties(ProceduralVisualizerToolGui PROPERTIES
+                INSTALL_RPATH "\$ORIGIN/${pvt_gui_install_library_path}")
+        endif()
     endif()
     target_link_libraries(ProceduralVisualizerToolGui PRIVATE
         ProceduralVisualizerTool::Bundle
@@ -668,6 +680,12 @@ if(PVT_BUILD_QT_GUI)
     install(TARGETS ProceduralVisualizerToolGui
         BUNDLE DESTINATION .
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(PVT_DEPLOY_QT_RUNTIME)
+        qt_generate_deploy_app_script(
+            TARGET ProceduralVisualizerToolGui
+            OUTPUT_SCRIPT pvt_qt_deploy_script)
+        install(SCRIPT "${pvt_qt_deploy_script}")
+    endif()
 endif()
 install(FILES include/procedural_visualizer_tool.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
