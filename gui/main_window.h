@@ -39,6 +39,10 @@ class QUndoStack;
 class QWidget;
 class PreviewWidget;
 
+namespace pvt::audio {
+class AudioPlayback;
+}
+
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
@@ -64,6 +68,7 @@ private:
         bool ok = false;
         bool cancelled = false;
         QString error;
+        QString success_message;
     };
 
     enum class MusicAnalysisAction {
@@ -115,6 +120,8 @@ private:
     void updateExportAvailability();
     void updateTimelineReadout();
     void togglePlayback();
+    void stopPlayback();
+    void startProjectAudioPlayback();
     void loadSelectedWave();
     void loadSelectedSwing();
     void loadSelectedEffect();
@@ -161,6 +168,12 @@ private:
     void restoreUserSettings();
     void saveUserSettings();
     void showApplicationSettings();
+    bool hasCustomNewProjectDefaults() const;
+    std::unique_ptr<pvt::ProjectDocument> makeNewProjectDocument(
+        QString* warning = nullptr) const;
+    bool saveCurrentProjectAsDefaults(QString* error = nullptr);
+    bool restoreBuiltInProjectDefaults(QString* error = nullptr);
+    void replaceWithNewProject();
     bool documentReplacementAllowed(QString* error = nullptr);
     void refreshVersionsPage();
     void refreshVersionDiff();
@@ -223,6 +236,7 @@ private:
     QString usableDialogDirectory(const QString& preferred = {}) const;
     void rememberDialogLocation(const QString& selectedPath);
     bool startExport();
+    bool startVideoExport();
     bool startMusicAnalysis(const QString& sourcePath,
                             MusicAnalysisAction action);
     void finishMusicAnalysis(const MusicAnalysisResult& result);
@@ -292,6 +306,9 @@ private:
     QString current_project_path_;
     QString imported_legacy_path_;
     QString compatibility_warning_;
+    QString custom_defaults_load_warning_;
+
+    std::unique_ptr<pvt::audio::AudioPlayback> audio_playback_;
 
     PreviewWidget* preview_ = nullptr;
     QTabWidget* tabs_ = nullptr;
@@ -302,6 +319,7 @@ private:
     QProgressBar* export_progress_ = nullptr;
     QLabel* frame_label_ = nullptr;
     QSlider* timeline_ = nullptr;
+    QSlider* audio_volume_ = nullptr;
     QPushButton* play_button_ = nullptr;
     QPushButton* previous_beat_ = nullptr;
     QPushButton* next_beat_ = nullptr;
@@ -312,6 +330,7 @@ private:
     QFutureWatcher<MusicAnalysisResult>* music_analysis_watcher_ = nullptr;
     QUndoStack* undo_stack_ = nullptr;
     QAction* export_action_ = nullptr;
+    QAction* video_export_action_ = nullptr;
     QAction* cancel_export_action_ = nullptr;
     QAction* new_action_ = nullptr;
     QAction* open_action_ = nullptr;

@@ -1,4 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
+option(PVT_ENABLE_DISTRIBUTION
+    "Add a target that stages a self-contained macOS application" OFF)
+# Set this before project() initializes compiler flags. Qt 6.5 supports this
+# baseline, and every native API used by the application is availability-
+# guarded where necessary. A caller's explicit deployment target still wins.
+if(PVT_ENABLE_DISTRIBUTION AND CMAKE_HOST_APPLE
+   AND (NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET
+        OR CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL ""))
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
+        "Minimum macOS version for generated binaries" FORCE)
+endif()
 
 project(ProceduralVisualizerTool VERSION 5.0.0 LANGUAGES CXX)
 
@@ -10,6 +25,12 @@ option(PVT_BUILD_CLI "Build the command-line renderer" ON)
 option(PVT_BUILD_QT_GUI "Build the Qt 6 interactive GUI" OFF)
 option(PVT_BUILD_EXAMPLES "Build the C++ library API example" OFF)
 option(PVT_ENABLE_METAL "Build the optional Apple Metal rendering backend" ON)
+set(PVT_DISTRIBUTION_CODE_SIGN_IDENTITY "-" CACHE STRING
+    "macOS signing identity for distribution; '-' performs ad-hoc signing")
+if(PVT_ENABLE_DISTRIBUTION AND NOT PVT_BUILD_QT_GUI)
+    message(FATAL_ERROR
+        "PVT_ENABLE_DISTRIBUTION requires PVT_BUILD_QT_GUI=ON.")
+endif()
 set(PVT_METAL_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../3rd_party/metal-cpp"
     CACHE PATH "Directory containing Apple's metal-cpp headers")
 
@@ -22,7 +43,57 @@ function(pvt_enable_warnings target)
     endif()
 endfunction()
 
-find_package(PNG REQUIRED)
+set(PVT_DISTRIBUTION_LIBPNG OFF)
+if(APPLE AND PVT_ENABLE_DISTRIBUTION)
+    # A distribution must not inherit an arbitrary Homebrew/local libpng and
+    # its deployment target. Build the already-required dependency from a
+    # content-pinned upstream archive into a private static prefix instead.
+    include(ExternalProject)
+    find_package(ZLIB REQUIRED)
+    set(PVT_DISTRIBUTION_LIBPNG_PREFIX
+        "${CMAKE_CURRENT_BINARY_DIR}/_deps/pvt-libpng")
+    set(PVT_DISTRIBUTION_LIBPNG_INSTALL
+        "${PVT_DISTRIBUTION_LIBPNG_PREFIX}/install")
+    file(MAKE_DIRECTORY "${PVT_DISTRIBUTION_LIBPNG_INSTALL}/include")
+    ExternalProject_Add(pvt_distribution_libpng
+        PREFIX "${PVT_DISTRIBUTION_LIBPNG_PREFIX}"
+        URL
+            "https://github.com/pnggroup/libpng/archive/4e3f57d50f552841550a36eabbb3fbcecacb7750.tar.gz"
+        URL_HASH
+            "SHA256=0327d94ddd66859be9eb904c71baa207e32869397d3d9936b7c1ba8191d6c6f3"
+        CMAKE_CACHE_ARGS
+            "-DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>"
+            "-DCMAKE_INSTALL_LIBDIR:STRING=lib"
+            "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}"
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+            "-DCMAKE_OSX_ARCHITECTURES:STRING=${CMAKE_OSX_ARCHITECTURES}"
+            "-DCMAKE_OSX_SYSROOT:PATH=${CMAKE_OSX_SYSROOT}"
+            "-DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON"
+            "-DPNG_LIBCONF_HEADER:FILEPATH=<SOURCE_DIR>/scripts/pnglibconf.h.prebuilt"
+            "-DPNG_SHARED:BOOL=OFF"
+            "-DPNG_STATIC:BOOL=ON"
+            "-DPNG_FRAMEWORK:BOOL=OFF"
+            "-DPNG_TESTS:BOOL=OFF"
+            "-DPNG_TOOLS:BOOL=OFF"
+            "-DPNG_HARDWARE_OPTIMIZATIONS:BOOL=OFF"
+        BUILD_BYPRODUCTS
+            "${PVT_DISTRIBUTION_LIBPNG_INSTALL}/lib/libpng16.a"
+        INSTALL_DIR "${PVT_DISTRIBUTION_LIBPNG_INSTALL}"
+        UPDATE_DISCONNECTED TRUE)
+    ExternalProject_Get_Property(pvt_distribution_libpng SOURCE_DIR)
+    set(PVT_DISTRIBUTION_LIBPNG_LICENSE "${SOURCE_DIR}/LICENSE")
+    add_library(PNG::PNG STATIC IMPORTED GLOBAL)
+    set_target_properties(PNG::PNG PROPERTIES
+        IMPORTED_LOCATION
+            "${PVT_DISTRIBUTION_LIBPNG_INSTALL}/lib/libpng16.a"
+        INTERFACE_INCLUDE_DIRECTORIES
+            "${PVT_DISTRIBUTION_LIBPNG_INSTALL}/include"
+        INTERFACE_LINK_LIBRARIES ZLIB::ZLIB)
+    add_dependencies(PNG::PNG pvt_distribution_libpng)
+    set(PVT_DISTRIBUTION_LIBPNG ON)
+else()
+    find_package(PNG REQUIRED)
+endif()
 find_package(Threads REQUIRED)
 
 add_library(ProceduralVisualizerTool
@@ -73,6 +144,11 @@ if(NOT PVT_METAL_BACKEND_ENABLED)
 endif()
 add_library(ProceduralVisualizerTool::ProceduralVisualizerTool
     ALIAS ProceduralVisualizerTool)
+if(PVT_DISTRIBUTION_LIBPNG)
+    # The imported target dependency supplies generated png headers as well as
+    # the archive, so it must finish before compilation begins.
+    add_dependencies(ProceduralVisualizerTool pvt_distribution_libpng)
+endif()
 
 target_compile_features(ProceduralVisualizerTool PUBLIC cxx_std_17)
 target_compile_definitions(ProceduralVisualizerTool PRIVATE PVT_BUILDING_LIBRARY)
@@ -113,7 +189,6 @@ if(PVT_NEEDS_AUDIO_SUPPORT)
         third_party/miniaudio/miniaudio.h)
     target_compile_features(pvt_miniaudio PRIVATE c_std_11)
     target_compile_definitions(pvt_miniaudio PRIVATE
-        MA_NO_DEVICE_IO
         MA_NO_ENCODING
         MA_NO_ENGINE
         MA_NO_GENERATION
@@ -121,6 +196,11 @@ if(PVT_NEEDS_AUDIO_SUPPORT)
         MA_NO_RESOURCE_MANAGER)
     target_include_directories(pvt_miniaudio SYSTEM PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio>)
+    # Device I/O dynamically discovers native backends on Unix. Explicitly
+    # carry its portable loader/thread requirements through this static target
+    # instead of relying on whichever executable happens to consume it.
+    target_link_libraries(pvt_miniaudio PRIVATE
+        Threads::Threads ${CMAKE_DL_LIBS})
     set_target_properties(pvt_miniaudio PROPERTIES
         C_EXTENSIONS NO
         POSITION_INDEPENDENT_CODE ON)
@@ -155,7 +235,9 @@ if(PVT_NEEDS_AUDIO_SUPPORT)
 
     add_library(ProceduralVisualizerAudio STATIC
         src/audio_analysis.cpp
-        src/audio_analysis.h)
+        src/audio_analysis.h
+        src/audio_playback.cpp
+        src/audio_playback.h)
     add_library(ProceduralVisualizerTool::Audio ALIAS ProceduralVisualizerAudio)
     target_compile_features(ProceduralVisualizerAudio PUBLIC cxx_std_17)
     target_include_directories(ProceduralVisualizerAudio PUBLIC
@@ -286,6 +368,38 @@ if(PVT_BUILD_QT_GUI)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent)
     qt_standard_project_setup()
 
+    set(PVT_GUI_VIDEO_SOURCES gui/video_export_stub.cpp)
+    if(APPLE)
+        enable_language(OBJCXX)
+        set(PVT_GUI_VIDEO_SOURCES gui/macos_video_export.mm)
+        set_source_files_properties(gui/macos_video_export.mm PROPERTIES
+            COMPILE_OPTIONS "-fobjc-arc")
+    endif()
+
+    set(PVT_GUI_ICON_SOURCE)
+    if(APPLE)
+        find_program(PVT_SIPS_EXECUTABLE NAMES sips REQUIRED)
+        find_program(PVT_ICONUTIL_EXECUTABLE NAMES iconutil REQUIRED)
+        set(PVT_GUI_ICON_SOURCE
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/ProceduralVisualizerTool.icns")
+        add_custom_command(
+            OUTPUT "${PVT_GUI_ICON_SOURCE}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPVT_ICON_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png"
+                "-DPVT_ICON_OUTPUT=${PVT_GUI_ICON_SOURCE}"
+                "-DPVT_SIPS=${PVT_SIPS_EXECUTABLE}"
+                "-DPVT_ICONUTIL=${PVT_ICONUTIL_EXECUTABLE}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/GenerateIcns.cmake"
+            DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png"
+                "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/GenerateIcns.cmake"
+            COMMENT "Generating the macOS application icon"
+            VERBATIM)
+        set_source_files_properties("${PVT_GUI_ICON_SOURCE}" PROPERTIES
+            GENERATED TRUE
+            MACOSX_PACKAGE_LOCATION Resources)
+    endif()
+
     qt_add_executable(ProceduralVisualizerToolGui MACOSX_BUNDLE
         gui/application_settings_dialog.cpp
         gui/application_settings_dialog.h
@@ -294,6 +408,11 @@ if(PVT_BUILD_QT_GUI)
         gui/main_window.h
         gui/preview_widget.cpp
         gui/preview_widget.h
+        gui/video_export.h
+        gui/video_export_dialog.cpp
+        gui/video_export_dialog.h
+        ${PVT_GUI_VIDEO_SOURCES}
+        ${PVT_GUI_ICON_SOURCE}
     )
     set_target_properties(ProceduralVisualizerToolGui PROPERTIES CXX_EXTENSIONS NO)
     if(APPLE)
@@ -302,7 +421,8 @@ if(PVT_BUILD_QT_GUI)
             MACOSX_BUNDLE_BUNDLE_NAME "Procedural Visualizer Tool"
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.gnaservices.proceduralvisualizertool"
             MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-            MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+            MACOSX_BUNDLE_ICON_FILE "ProceduralVisualizerTool.icns")
     else()
         set_target_properties(ProceduralVisualizerToolGui PROPERTIES
             OUTPUT_NAME "procedural-visualizer-tool")
@@ -310,12 +430,73 @@ if(PVT_BUILD_QT_GUI)
     target_link_libraries(ProceduralVisualizerToolGui PRIVATE
         ProceduralVisualizerTool::Bundle
         ProceduralVisualizerTool::Audio
+        PNG::PNG
         Qt6::Concurrent
         Qt6::Widgets
     )
+    if(APPLE)
+        target_link_libraries(ProceduralVisualizerToolGui PRIVATE
+            "-framework AVFoundation"
+            "-framework AudioToolbox"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
+            "-framework VideoToolbox")
+    endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
         PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
     pvt_enable_warnings(ProceduralVisualizerToolGui)
+
+    if(PVT_ENABLE_DISTRIBUTION)
+        if(NOT APPLE)
+            message(FATAL_ERROR
+                "PVT_ENABLE_DISTRIBUTION currently creates a macOS app bundle and requires APPLE.")
+        endif()
+        if(TARGET Qt6::macdeployqt)
+            set(PVT_MACDEPLOYQT "$<TARGET_FILE:Qt6::macdeployqt>")
+        else()
+            find_program(PVT_MACDEPLOYQT NAMES macdeployqt
+                HINTS "${Qt6_DIR}/../../../bin" REQUIRED)
+        endif()
+        find_program(PVT_VTOOL NAMES vtool REQUIRED)
+        set(PVT_DISTRIBUTION_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/dist")
+        set(PVT_DISTRIBUTION_APP
+            "${PVT_DISTRIBUTION_DIRECTORY}/Procedural Visualizer Tool.app")
+        add_custom_target(distribution
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory
+                    "${PVT_DISTRIBUTION_APP}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "${PVT_DISTRIBUTION_DIRECTORY}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                    "$<TARGET_BUNDLE_DIR:ProceduralVisualizerToolGui>"
+                    "${PVT_DISTRIBUTION_APP}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+                    "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses/ProceduralVisualizerTool-GPL-3.0.txt"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio/LICENSE"
+                    "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses/miniaudio-LICENSE.txt"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/btt/LICENSE"
+                    "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses/Beat-and-Tempo-Tracking-LICENSE.txt"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${PVT_DISTRIBUTION_LIBPNG_LICENSE}"
+                    "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses/libpng-LICENSE.txt"
+            COMMAND "${PVT_MACDEPLOYQT}"
+                    "${PVT_DISTRIBUTION_APP}"
+                    -always-overwrite
+                    "-codesign=${PVT_DISTRIBUTION_CODE_SIGN_IDENTITY}"
+                    "$<$<CONFIG:Debug>:-use-debug-libs>"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DPVT_APP_BUNDLE=${PVT_DISTRIBUTION_APP}"
+                    "-DPVT_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                    "-DPVT_VTOOL=${PVT_VTOOL}"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/VerifyDistribution.cmake"
+            DEPENDS ProceduralVisualizerToolGui
+            COMMENT "Staging and verifying a self-contained macOS application"
+            VERBATIM)
+    endif()
 endif()
 
 if(BUILD_TESTING)
@@ -326,6 +507,30 @@ if(BUILD_TESTING)
         ProceduralVisualizerTool::Audio)
     pvt_enable_warnings(pvt_audio_analysis_tests)
     add_test(NAME pvt_audio_analysis COMMAND pvt_audio_analysis_tests)
+
+    if(APPLE)
+        add_executable(pvt_video_export_tests
+            tests/video_export_test.mm
+            gui/macos_video_export.mm
+            gui/video_export.h)
+        target_compile_features(pvt_video_export_tests PRIVATE cxx_std_17)
+        set_target_properties(pvt_video_export_tests PROPERTIES
+            CXX_EXTENSIONS NO)
+        set_source_files_properties(
+            tests/video_export_test.mm gui/macos_video_export.mm PROPERTIES
+            COMPILE_OPTIONS "-fobjc-arc")
+        target_include_directories(pvt_video_export_tests PRIVATE gui)
+        target_link_libraries(pvt_video_export_tests PRIVATE
+            ProceduralVisualizerTool::ProceduralVisualizerTool
+            PNG::PNG
+            "-framework AVFoundation"
+            "-framework AudioToolbox"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
+            "-framework VideoToolbox")
+        pvt_enable_warnings(pvt_video_export_tests)
+        add_test(NAME pvt_video_export COMMAND pvt_video_export_tests)
+    endif()
 
     add_executable(pvt_tests tests/test_main.cpp)
     target_compile_features(pvt_tests PRIVATE cxx_std_17)
@@ -445,6 +650,11 @@ install(TARGETS ProceduralVisualizerTool
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(PVT_BUILD_CLI)
     install(TARGETS render9
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+if(PVT_BUILD_QT_GUI)
+    install(TARGETS ProceduralVisualizerToolGui
+        BUNDLE DESTINATION .
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(FILES include/procedural_visualizer_tool.h

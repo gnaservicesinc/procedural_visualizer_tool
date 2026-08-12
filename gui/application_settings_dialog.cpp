@@ -4,7 +4,9 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -26,7 +28,8 @@ QLabel* explanatory_label(const QString& text, QWidget* parent) {
 } // namespace
 
 ApplicationSettingsDialog::ApplicationSettingsDialog(
-    int undoLimit, pvt::RenderBackend renderBackend, QWidget* parent)
+    int undoLimit, pvt::RenderBackend renderBackend,
+    bool hasCustomNewProjectDefaults, QWidget* parent)
     : QDialog(parent) {
     setObjectName(QStringLiteral("applicationSettingsDialog"));
     setWindowTitle(tr("Application Settings"));
@@ -62,6 +65,44 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
                "history. A separate 128 MiB safety limit always remains active."),
             history_group));
     general_layout->addWidget(history_group);
+
+    auto* defaults_group = new QGroupBox(tr("New Projects"), general_page);
+    auto* defaults_layout = new QVBoxLayout(defaults_group);
+    defaults_layout->addWidget(explanatory_label(
+        tr("Save the complete project currently open behind this dialog as a "
+           "new-project template. New projects receive fresh project and layer "
+           "identities; the template may include layers and embedded assets."),
+        defaults_group));
+    auto* defaults_buttons = new QHBoxLayout;
+    auto* save_defaults = new QPushButton(
+        tr("Use Current Project as Default"), defaults_group);
+    save_defaults->setObjectName(QStringLiteral("saveCurrentProjectDefaults"));
+    auto* restore_defaults = new QPushButton(
+        tr("Restore Built-in Default"), defaults_group);
+    restore_defaults->setObjectName(QStringLiteral("restoreBuiltInDefaults"));
+    restore_defaults->setEnabled(hasCustomNewProjectDefaults);
+    defaults_buttons->addWidget(save_defaults);
+    defaults_buttons->addWidget(restore_defaults);
+    defaults_buttons->addStretch(1);
+    defaults_layout->addLayout(defaults_buttons);
+    defaults_status_ = explanatory_label(
+        hasCustomNewProjectDefaults
+            ? tr("A custom new-project template is active.")
+            : tr("The built-in new-project template is active."),
+        defaults_group);
+    defaults_status_->setObjectName(QStringLiteral("newProjectDefaultsStatus"));
+    defaults_layout->addWidget(defaults_status_);
+    connect(save_defaults, &QPushButton::clicked, this, [this] {
+        defaults_action_ = NewProjectDefaultsAction::SaveCurrentProject;
+        defaults_status_->setText(
+            tr("Pending: save the current project as the default when OK is clicked."));
+    });
+    connect(restore_defaults, &QPushButton::clicked, this, [this] {
+        defaults_action_ = NewProjectDefaultsAction::RestoreBuiltIn;
+        defaults_status_->setText(
+            tr("Pending: restore the built-in default when OK is clicked."));
+    });
+    general_layout->addWidget(defaults_group);
     general_layout->addStretch(1);
     tabs->addTab(general_page, tr("General"));
 
@@ -114,4 +155,9 @@ pvt::RenderBackend ApplicationSettingsDialog::renderBackend() const {
         return pvt::RenderBackend::CpuAndGpu;
     }
     return static_cast<pvt::RenderBackend>(value);
+}
+
+ApplicationSettingsDialog::NewProjectDefaultsAction
+ApplicationSettingsDialog::newProjectDefaultsAction() const {
+    return defaults_action_;
 }

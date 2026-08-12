@@ -2,7 +2,10 @@
 
 #include "application_settings_dialog.h"
 #include "preview_widget.h"
+#include "video_export.h"
+#include "video_export_dialog.h"
 #include "../src/audio_analysis.h"
+#include "../src/audio_playback.h"
 #include "../src/config_codec.h"
 #include "../src/project_bundle.h"
 
@@ -42,6 +45,7 @@
 #include <QProgressBar>
 #include <QRandomGenerator>
 #include <QScrollArea>
+#include <QSaveFile>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -49,6 +53,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStandardPaths>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -81,6 +86,14 @@ constexpr int kDefaultUndoLimit = 500;
 constexpr int kMinimumUndoLimit = 10;
 constexpr int kMaximumUndoLimit = 5000;
 constexpr std::size_t kMaximumUndoHistoryBytes = 128U * 1024U * 1024U;
+
+QString custom_new_project_defaults_path() {
+    const QString root = QStandardPaths::writableLocation(
+        QStandardPaths::AppConfigLocation);
+    return root.isEmpty()
+               ? QString{}
+               : QDir(root).filePath(QStringLiteral("new-project-default.zip"));
+}
 
 #ifndef PVT_PROGRAM_VERSION
 #  define PVT_PROGRAM_VERSION "5.0.0"
@@ -352,21 +365,27 @@ std::vector<double> music_beats_for_ui(const pvt::ClockConfig& clock) {
     if (clock.music_tempo == pvt::MusicTempoMode::Half) {
         beats.reserve((source.size() + 1U) / 2U);
         for (std::size_t index = 0U; index < source.size(); index += 2U) {
-            beats.push_back(source[index] + offset);
+            beats.push_back(source[index] - offset);
         }
     } else if (clock.music_tempo == pvt::MusicTempoMode::Double) {
         beats.reserve(source.empty() ? 0U : source.size() * 2U - 1U);
         for (std::size_t index = 0U; index < source.size(); ++index) {
-            beats.push_back(source[index] + offset);
+            beats.push_back(source[index] - offset);
             if (index + 1U < source.size()) {
                 beats.push_back((source[index] + source[index + 1U]) * 0.5
-                                + offset);
+                                - offset);
             }
         }
     } else {
         beats.reserve(source.size());
-        for (const double beat : source) beats.push_back(beat + offset);
+        for (const double beat : source) beats.push_back(beat - offset);
     }
+    beats.erase(std::remove_if(
+                    beats.begin(), beats.end(), [&clock](double beat) {
+                        return !std::isfinite(beat) || beat < 0.0
+                               || beat > clock.music.duration_seconds;
+                    }),
+                beats.end());
     return beats;
 }
 
@@ -830,11 +849,12 @@ MainWindow::MainWindow(QWidget* parent)
     // meshes) anchored to the launch location even when a desktop launcher
     // originally assigned the process an unusable root working directory.
     (void)QDir::setCurrent(startup_working_directory_);
-    if (project_.layers.empty()) {
-        project_ = pvt::default_project();
+    document_ = makeNewProjectDocument(&custom_defaults_load_warning_);
+    if (document_ == nullptr || document_->project.layers.empty()) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
     }
-    document_ = std::make_unique<pvt::ProjectDocument>(pvt::default_project_document());
-    document_->project = project_;
+    project_ = document_->project;
     document_->dirty = false;
     active_layer_uuid_ = project_.layers.front().uuid;
     loadActiveConfiguration();
@@ -852,6 +872,7 @@ MainWindow::MainWindow(QWidget* parent)
     preview_timer_->setInterval(70);
     playback_timer_ = new QTimer(this);
     playback_timer_->setTimerType(Qt::PreciseTimer);
+    audio_playback_ = std::make_unique<pvt::audio::AudioPlayback>();
     preview_watcher_ = new QFutureWatcher<PreviewResult>(this);
     export_watcher_ = new QFutureWatcher<ExportResult>(this);
     music_analysis_watcher_ = new QFutureWatcher<MusicAnalysisResult>(this);
@@ -897,10 +918,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(preview_timer_, &QTimer::timeout, this, &MainWindow::startPreview);
     connect(playback_timer_, &QTimer::timeout, this, [this] {
-        int next = timeline_->value() + 1;
-        if (next > timeline_->maximum()) {
-            next = 0;
+        if (audio_playback_ != nullptr && audio_playback_->is_playing()) {
+            const double position = audio_playback_->position_seconds();
+            const int synchronized_frame = std::clamp(
+                static_cast<int>(std::floor(position * config_.fps)),
+                timeline_->minimum(), timeline_->maximum());
+            timeline_->setValue(synchronized_frame);
+            return;
         }
+        int next = timeline_->value() + 1;
+        if (next > timeline_->maximum()) next = 0;
         timeline_->setValue(next);
     });
     connect(preview_watcher_, &QFutureWatcher<PreviewResult>::finished, this, [this] {
@@ -943,7 +970,9 @@ MainWindow::MainWindow(QWidget* parent)
         if (result.ok) {
             status_->setText(tr("Export complete"));
             QMessageBox::information(this, tr("Export complete"),
-                                     tr("The image sequence was exported successfully."));
+                                     result.success_message.isEmpty()
+                                         ? tr("The export completed successfully.")
+                                         : result.success_message);
         } else if (result.cancelled) {
             status_->setText(tr("Export cancelled"));
         } else {
@@ -958,6 +987,14 @@ MainWindow::MainWindow(QWidget* parent)
                 updateMusicTransactionGuards();
                 updateSynchronizationState();
                 updateExportAvailability();
+                if (playback_timer_ != nullptr
+                    && playback_timer_->isActive()) {
+                    // Analysis temporarily stops the device. Resume the
+                    // retained or newly committed global source from the
+                    // current visual timeline, including after a failed or
+                    // cancelled transaction.
+                    startProjectAudioPlayback();
+                }
             });
 
     connectEditors();
@@ -969,6 +1006,9 @@ MainWindow::MainWindow(QWidget* parent)
     updateWindowTitle();
     updateCompatibilityWarning();
     restoreUserSettings();
+    if (!custom_defaults_load_warning_.isEmpty()) {
+        status_->setText(custom_defaults_load_warning_);
+    }
     configure_readable_layouts(this);
     qApp->installEventFilter(this);
     QTimer::singleShot(0, this, [this] { configure_readable_layouts(this); });
@@ -977,6 +1017,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
+    if (audio_playback_ != nullptr) audio_playback_->stop();
     if (preview_cancel_ != nullptr) {
         preview_cancel_->store(true, std::memory_order_relaxed);
     }
@@ -1002,6 +1043,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         return;
     }
     cancelMusicAnalysis();
+    stopPlayback();
     saveUserSettings();
     QMainWindow::closeEvent(event);
 }
@@ -2345,6 +2387,15 @@ QWidget* MainWindow::createTimeline() {
     previous_beat_ = new QPushButton(tr("Previous beat"));
     next_beat_ = new QPushButton(tr("Next beat"));
     timeline_ = new QSlider(Qt::Horizontal);
+    audio_volume_ = new QSlider(Qt::Horizontal);
+    audio_volume_->setObjectName(QStringLiteral("previewAudioVolume"));
+    audio_volume_->setRange(0, 100);
+    audio_volume_->setValue(std::clamp(
+        QSettings().value(QStringLiteral("preferences/previewAudioVolume"), 80)
+            .toInt(), 0, 100));
+    audio_volume_->setMaximumWidth(110);
+    audio_volume_->setToolTip(
+        tr("Preview volume for the project-wide Music clock. Layer settings never add audio."));
     timeline_->setRange(0, std::max(1, effectiveFrameCount()) - 1);
     frame_label_ = new QLabel;
     frame_label_->setMinimumWidth(230);
@@ -2354,6 +2405,8 @@ QWidget* MainWindow::createTimeline() {
     layout->addWidget(new QLabel(tr("Frame")));
     layout->addWidget(timeline_, 1);
     layout->addWidget(frame_label_);
+    layout->addWidget(new QLabel(tr("Audio")));
+    layout->addWidget(audio_volume_);
 
     connect(play_button_, &QPushButton::clicked,
             this, &MainWindow::togglePlayback);
@@ -2362,10 +2415,24 @@ QWidget* MainWindow::createTimeline() {
         updateTimelineReadout();
         schedulePreview();
     });
+    connect(timeline_, &QSlider::sliderReleased, this, [this] {
+        if (playback_timer_ != nullptr && playback_timer_->isActive()) {
+            startProjectAudioPlayback();
+        }
+    });
     connect(previous_beat_, &QPushButton::clicked, this,
             [this] { navigateToBeat(-1); });
     connect(next_beat_, &QPushButton::clicked, this,
             [this] { navigateToBeat(1); });
+    connect(audio_volume_, &QSlider::valueChanged, this, [this](int value) {
+        if (audio_playback_ != nullptr) {
+            audio_playback_->set_volume(static_cast<double>(value) / 100.0);
+        }
+    });
+    if (audio_playback_ != nullptr) {
+        audio_playback_->set_volume(
+            static_cast<double>(audio_volume_->value()) / 100.0);
+    }
     updateTimelineReadout();
     return widget;
 }
@@ -2373,15 +2440,52 @@ QWidget* MainWindow::createTimeline() {
 void MainWindow::togglePlayback() {
     if (playback_timer_ == nullptr || play_button_ == nullptr) return;
     if (playback_timer_->isActive()) {
-        playback_timer_->stop();
-        play_button_->setText(tr("Play"));
+        stopPlayback();
     } else {
         playback_preview_advanced_ = false;
+        startProjectAudioPlayback();
         playback_timer_->start(std::max(
             1, static_cast<int>(std::lround(1000.0 / config_.fps))));
         play_button_->setText(tr("Pause"));
     }
     schedulePreview();
+}
+
+void MainWindow::stopPlayback() {
+    if (playback_timer_ != nullptr) playback_timer_->stop();
+    if (audio_playback_ != nullptr) audio_playback_->stop();
+    if (play_button_ != nullptr) play_button_->setText(tr("Play"));
+}
+
+void MainWindow::startProjectAudioPlayback() {
+    if (audio_playback_ == nullptr) return;
+    // This function is also the authoritative resynchronization point. Stop a
+    // formerly valid Music source before checking the current clock so a mode
+    // switch or undo cannot leave stale audio playing.
+    audio_playback_->stop();
+    if (timeline_ == nullptr
+        || config_.clock.mode != pvt::ClockMode::Music
+        || !musicRenderReady()) {
+        return;
+    }
+    const QString source = currentMusicSourcePath();
+    if (source.isEmpty()) {
+        status_->setText(
+            tr("Preview is playing silently because the embedded project music is unavailable."));
+        return;
+    }
+    std::string playback_error;
+    const double position = static_cast<double>(timeline_->value()) / config_.fps;
+    if (!audio_playback_->start(source.toStdString(), position, true,
+                                &playback_error)) {
+        status_->setText(
+            tr("Preview is playing silently: %1")
+                .arg(QString::fromStdString(playback_error)));
+        return;
+    }
+    audio_playback_->set_volume(
+        audio_volume_ != nullptr
+            ? static_cast<double>(audio_volume_->value()) / 100.0 : 0.8);
 }
 
 void MainWindow::createToolbar() {
@@ -2410,20 +2514,24 @@ void MainWindow::createToolbar() {
     toolbar->addAction(open_action_);
     toolbar->addAction(save_action_);
     toolbar->addSeparator();
-    randomize_values_action_ = toolbar->addAction(tr("Randomize values"));
+    randomize_values_action_ = new QAction(tr("Randomize Values…"), this);
     randomize_values_action_->setToolTip(
         tr("Randomize bounded, loop-safe parameters while preserving each item's "
            "name, type, enabled state, and position in its stack."));
-    randomize_mix_action_ = toolbar->addAction(tr("Randomize mix"));
+    randomize_mix_action_ = new QAction(tr("Random Mix…"), this);
     randomize_mix_action_->setToolTip(
         tr("Create a new bounded mix of waves, swing waveforms, effect types, and "
            "enabled items."));
-    toolbar->addSeparator();
-    export_action_ = toolbar->addAction(tr("Export"));
+    settings_menu->addSeparator();
+    settings_menu->addAction(randomize_values_action_);
+    settings_menu->addAction(randomize_mix_action_);
+    export_action_ = toolbar->addAction(tr("Export Frames"));
+    video_export_action_ = toolbar->addAction(tr("Export Video…"));
     cancel_export_action_ = toolbar->addAction(tr("Cancel export"));
     cancel_export_action_->setEnabled(false);
     file_menu->addSeparator();
     file_menu->addAction(export_action_);
+    file_menu->addAction(video_export_action_);
 
     undo_action_ = undo_stack_->createUndoAction(this, tr("Undo"));
     redo_action_ = undo_stack_->createRedoAction(this, tr("Redo"));
@@ -2446,25 +2554,7 @@ void MainWindow::createToolbar() {
     connect(new_action_, &QAction::triggered, this, [this] {
         if (!documentReplacementAllowed()) return;
         if (!confirmDiscardChanges()) return;
-        cancelMusicAnalysis();
-        project_ = pvt::default_project();
-        active_layer_uuid_ = project_.layers.front().uuid;
-        solo_layer_uuid_.reset();
-        current_project_path_.clear();
-        imported_legacy_path_.clear();
-        document_ = std::make_unique<pvt::ProjectDocument>(pvt::default_project_document());
-        document_->project = project_;
-        document_->dirty = false;
-        baseline_dirty_ = false;
-        updateCompatibilityWarning();
-        loadActiveConfiguration();
-        clearUndoHistory(false);
-        undo_stack_->setClean();
-        refreshLayerList();
-        refreshAll();
-        ++document_revision_;
-        updateWindowTitle();
-        schedulePreview();
+        replaceWithNewProject();
     });
     connect(open_action_, &QAction::triggered, this, &MainWindow::loadSetup);
     connect(open_folder_action_, &QAction::triggered, this, [this] {
@@ -2486,10 +2576,22 @@ void MainWindow::createToolbar() {
     });
     connect(save_action_, &QAction::triggered, this, &MainWindow::saveSetup);
     connect(save_as_action_, &QAction::triggered, this, &MainWindow::saveSetupAs);
-    connect(randomize_values_action_, &QAction::triggered, this,
-            &MainWindow::randomizeExistingStackSettings);
-    connect(randomize_mix_action_, &QAction::triggered, this,
-            &MainWindow::randomizeStackComposition);
+    connect(randomize_values_action_, &QAction::triggered, this, [this] {
+        const auto choice = QMessageBox::question(
+            this, tr("Randomize layer values?"),
+            tr("This changes the values of every wave, swing, and effect in the "
+               "active layer. The action can be undone. Continue?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (choice == QMessageBox::Yes) randomizeExistingStackSettings();
+    });
+    connect(randomize_mix_action_, &QAction::triggered, this, [this] {
+        const auto choice = QMessageBox::question(
+            this, tr("Create a random mix?"),
+            tr("This replaces the active layer's wave, swing, and effect stacks "
+               "with a new random mix. The action can be undone. Continue?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (choice == QMessageBox::Yes) randomizeStackComposition();
+    });
     connect(export_action_, &QAction::triggered, this, [this] {
         if (export_watcher_->isRunning()) {
             return;
@@ -2517,6 +2619,8 @@ void MainWindow::createToolbar() {
         cancel_export_action_->setEnabled(false);
         status_->setText(tr("Cancelling export…"));
     });
+    connect(video_export_action_, &QAction::triggered,
+            this, &MainWindow::startVideoExport);
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this,
             [this] {
                 updateExportAvailability();
@@ -3268,6 +3372,9 @@ void MainWindow::restoreActiveState(const std::string& layer_uuid,
     loadActiveConfiguration();
     refreshLayerList();
     refreshAll();
+    if (playback_timer_ != nullptr && playback_timer_->isActive()) {
+        startProjectAudioPlayback();
+    }
     restoring_undo_ = false;
     noteDocumentChange();
     schedulePreview();
@@ -3334,6 +3441,9 @@ void MainWindow::restoreProjectState(const ProjectDocumentState& state,
     loadActiveConfiguration();
     refreshLayerList();
     refreshAll();
+    if (playback_timer_ != nullptr && playback_timer_->isActive()) {
+        startProjectAudioPlayback();
+    }
     restoring_undo_ = false;
     noteDocumentChange();
     schedulePreview();
@@ -3544,21 +3654,31 @@ void MainWindow::saveUserSettings() {
     }
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(render_backend_));
+    if (audio_volume_ != nullptr) {
+        settings.setValue(QStringLiteral("preferences/previewAudioVolume"),
+                          audio_volume_->value());
+    }
 }
 
 void MainWindow::showApplicationSettings() {
     if (undo_stack_ == nullptr) return;
     const int current_undo_limit = undo_stack_->undoLimit();
     const pvt::RenderBackend current_backend = render_backend_;
-    ApplicationSettingsDialog dialog(current_undo_limit, current_backend, this);
+    ApplicationSettingsDialog dialog(current_undo_limit, current_backend,
+                                     hasCustomNewProjectDefaults(), this);
     configure_readable_layouts(&dialog);
     if (dialog.exec() != QDialog::Accepted) return;
 
     const int requested_undo_limit = dialog.undoLimit();
     const pvt::RenderBackend requested_backend = dialog.renderBackend();
+    const auto defaults_action = dialog.newProjectDefaultsAction();
     const bool undo_limit_changed = requested_undo_limit != current_undo_limit;
     const bool backend_changed = requested_backend != current_backend;
-    if (!undo_limit_changed && !backend_changed) return;
+    if (!undo_limit_changed && !backend_changed
+        && defaults_action
+               == ApplicationSettingsDialog::NewProjectDefaultsAction::Keep) {
+        return;
+    }
 
     if (undo_limit_changed && undo_stack_->count() > 0) {
         const auto choice = QMessageBox::question(
@@ -3589,11 +3709,217 @@ void MainWindow::showApplicationSettings() {
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(requested_backend));
     settings.sync();
+
+    QString defaults_message;
+    QString defaults_error;
+    if (defaults_action
+        == ApplicationSettingsDialog::NewProjectDefaultsAction::SaveCurrentProject) {
+        const auto choice = QMessageBox::question(
+            this, tr("Replace new-project default?"),
+            tr("Save the current project — including all layers and embedded assets — "
+               "as the template used by every future New Project command?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (choice == QMessageBox::Yes) {
+            if (saveCurrentProjectAsDefaults(&defaults_error)) {
+                defaults_message = tr(" Current project saved as the new-project default.");
+            }
+        }
+    } else if (defaults_action
+               == ApplicationSettingsDialog::NewProjectDefaultsAction::RestoreBuiltIn) {
+        const auto choice = QMessageBox::question(
+            this, tr("Restore built-in default?"),
+            tr("Future new projects will use the program's built-in starting settings. Continue?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (choice == QMessageBox::Yes) {
+            if (restoreBuiltInProjectDefaults(&defaults_error)) {
+                defaults_message = tr(" Built-in new-project default restored.");
+            }
+        }
+    }
+    if (!defaults_error.isEmpty()) {
+        QMessageBox::critical(this, tr("Could not update new-project defaults"),
+                              defaults_error);
+    }
     status_->setText(
-        tr("Application settings saved — %1 undo steps, %2 rendering")
+        tr("Application settings saved — %1 undo steps, %2 rendering.%3")
             .arg(requested_undo_limit)
             .arg(QString::fromUtf8(
-                pvt::render_backend_name(requested_backend))));
+                pvt::render_backend_name(requested_backend)))
+            .arg(defaults_message));
+}
+
+bool MainWindow::hasCustomNewProjectDefaults() const {
+    const QString path = custom_new_project_defaults_path();
+    const QFileInfo information(path);
+    return QSettings().value(
+               QStringLiteral("preferences/customNewProjectDefaults"), false)
+               .toBool()
+           && !path.isEmpty() && information.exists() && information.isFile()
+           && !information.isSymLink();
+}
+
+std::unique_ptr<pvt::ProjectDocument> MainWindow::makeNewProjectDocument(
+    QString* warning) const {
+    if (warning != nullptr) warning->clear();
+    if (!hasCustomNewProjectDefaults()) {
+        return std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+    }
+    pvt::ProjectDocument saved_template;
+    std::string load_error;
+    const QString path = custom_new_project_defaults_path();
+    if (!pvt::load_project_document(path.toStdString(), saved_template,
+                                    &load_error)) {
+        if (warning != nullptr) {
+            *warning = tr("Custom new-project defaults could not be loaded; using the built-in template. %1")
+                           .arg(QString::fromStdString(load_error));
+        }
+        return std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+    }
+    auto fresh = std::make_unique<pvt::ProjectDocument>();
+    std::string copy_error;
+    if (!pvt::make_independent_project_copy(saved_template, *fresh,
+                                            &copy_error)) {
+        if (warning != nullptr) {
+            *warning = tr("Custom new-project defaults were valid but could not be detached; using the built-in template. %1")
+                           .arg(QString::fromStdString(copy_error));
+        }
+        return std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+    }
+    fresh->dirty = false;
+    return fresh;
+}
+
+bool MainWindow::saveCurrentProjectAsDefaults(QString* error) {
+    if (error != nullptr) error->clear();
+    syncActiveRender();
+    syncProjectGlobals();
+    pvt::ProjectDocument source = document_ != nullptr
+                                      ? *document_
+                                      : pvt::default_project_document();
+    source.project = project_;
+    pvt::ProjectDocument detached;
+    std::string operation_error;
+    if (!pvt::make_independent_project_copy(source, detached,
+                                            &operation_error)) {
+        if (error != nullptr) *error = QString::fromStdString(operation_error);
+        return false;
+    }
+
+    const QString destination = custom_new_project_defaults_path();
+    if (destination.isEmpty()) {
+        if (error != nullptr) {
+            *error = tr("The operating system did not provide an application-settings directory.");
+        }
+        return false;
+    }
+    const QString directory = QFileInfo(destination).absolutePath();
+    if (!QDir().mkpath(directory)) {
+        if (error != nullptr) *error = tr("Could not create the defaults directory.");
+        return false;
+    }
+    QTemporaryDir staging(
+        QDir(directory).filePath(QStringLiteral(".pvt-defaults-XXXXXX")));
+    if (!staging.isValid()) {
+        if (error != nullptr) *error = tr("Could not create a defaults staging directory.");
+        return false;
+    }
+    const QString staged_path = staging.filePath(QStringLiteral("template.zip"));
+    if (!pvt::save_project_document(detached, staged_path.toStdString(),
+                                    nullptr, &operation_error)) {
+        if (error != nullptr) *error = QString::fromStdString(operation_error);
+        return false;
+    }
+    QFile input(staged_path);
+    QSaveFile output(destination);
+    if (!input.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly)) {
+        if (error != nullptr) *error = tr("Could not open the defaults bundle for atomic installation.");
+        return false;
+    }
+    while (!input.atEnd()) {
+        const QByteArray chunk = input.read(1024 * 1024);
+        if (chunk.isEmpty() && input.error() != QFileDevice::NoError) {
+            output.cancelWriting();
+            if (error != nullptr) *error = tr("Could not read the staged defaults bundle.");
+            return false;
+        }
+        if (output.write(chunk) != chunk.size()) {
+            output.cancelWriting();
+            if (error != nullptr) *error = tr("Could not write the new defaults bundle.");
+            return false;
+        }
+    }
+    if (!output.commit()) {
+        if (error != nullptr) *error = tr("Could not atomically install the new defaults bundle.");
+        return false;
+    }
+    pvt::ProjectDocument verified;
+    if (!pvt::load_project_document(destination.toStdString(), verified,
+                                    &operation_error)) {
+        if (error != nullptr) {
+            *error = tr("The installed defaults bundle failed validation: %1")
+                         .arg(QString::fromStdString(operation_error));
+        }
+        return false;
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("preferences/customNewProjectDefaults"), true);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        if (error != nullptr) {
+            *error = tr("The template was saved, but its activation preference could not be persisted.");
+        }
+        return false;
+    }
+    return true;
+}
+
+bool MainWindow::restoreBuiltInProjectDefaults(QString* error) {
+    if (error != nullptr) error->clear();
+    QSettings settings;
+    settings.setValue(QStringLiteral("preferences/customNewProjectDefaults"), false);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        if (error != nullptr) {
+            *error = tr("Could not persist the built-in-default selection.");
+        }
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::replaceWithNewProject() {
+    cancelMusicAnalysis();
+    stopPlayback();
+    QString warning;
+    document_ = makeNewProjectDocument(&warning);
+    if (document_ == nullptr || document_->project.layers.empty()) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+    }
+    project_ = document_->project;
+    document_->dirty = false;
+    active_layer_uuid_ = project_.layers.front().uuid;
+    solo_layer_uuid_.reset();
+    current_project_path_.clear();
+    imported_legacy_path_.clear();
+    baseline_dirty_ = false;
+    updateCompatibilityWarning();
+    loadActiveConfiguration();
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    refreshLayerList();
+    refreshAll();
+    ++document_revision_;
+    updateWindowTitle();
+    schedulePreview();
+    status_->setText(warning.isEmpty()
+                         ? (hasCustomNewProjectDefaults()
+                                ? tr("Started a new project from your custom defaults.")
+                                : tr("Started a new project from the built-in defaults."))
+                         : warning);
 }
 
 void MainWindow::refreshAll() {
@@ -3621,6 +3947,11 @@ void MainWindow::updateTimelineState() {
     timeline_->setMaximum(count - 1);
     timeline_->setValue(std::min(timeline_->value(), timeline_->maximum()));
     updateTimelineReadout();
+    if (audio_volume_ != nullptr) {
+        audio_volume_->setEnabled(config_.clock.mode == pvt::ClockMode::Music
+                                  && musicRenderReady()
+                                  && !currentMusicSourcePath().isEmpty());
+    }
     if (playback_timer_->isActive()) {
         playback_timer_->setInterval(
             std::max(1, static_cast<int>(std::lround(1000.0 / config_.fps))));
@@ -3686,6 +4017,9 @@ void MainWindow::navigateToBeat(int direction) {
     timeline_->setValue(std::clamp(
         static_cast<int>(std::llround(destination * config_.fps)),
         timeline_->minimum(), timeline_->maximum()));
+    if (playback_timer_ != nullptr && playback_timer_->isActive()) {
+        startProjectAudioPlayback();
+    }
 }
 
 void MainWindow::updateSynchronizationState() {
@@ -3880,6 +4214,15 @@ void MainWindow::updateExportAvailability() {
     if (export_action_ != nullptr && !export_active_) {
         export_action_->setEnabled(!music_analysis_active_);
         export_action_->setToolTip(QString{});
+    }
+    if (video_export_action_ != nullptr && !export_active_) {
+        static const pvt::video::Capabilities video =
+            pvt::video::capabilities();
+        video_export_action_->setEnabled(!music_analysis_active_
+                                         && video.available);
+        video_export_action_->setToolTip(
+            video.available ? tr("Export a native macOS QuickTime movie without FFmpeg.")
+                            : QString::fromStdString(video.status));
     }
 }
 
@@ -4607,6 +4950,10 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
     syncProjectGlobals();
     updateSynchronizationState();
     updateTimelineState();
+    if (changed_editor == clock_mode_ && playback_timer_ != nullptr
+        && playback_timer_->isActive()) {
+        startProjectAudioPlayback();
+    }
     preview_->setConfiguration(config_);
     schedulePreview();
     const QString key = editor_change_is_continuous(changed_editor)
@@ -5263,6 +5610,7 @@ bool MainWindow::startMusicAnalysis(const QString& source_path,
         || music_analysis_watcher_->isRunning()) {
         return false;
     }
+    if (audio_playback_ != nullptr) audio_playback_->stop();
     music_analysis_active_ = true;
     const std::uint64_t generation = ++music_analysis_generation_;
     const std::uint64_t revision = document_revision_;
@@ -5494,6 +5842,7 @@ void MainWindow::clearMusicSource() {
         || document_ == nullptr) {
         return;
     }
+    if (audio_playback_ != nullptr) audio_playback_->stop();
     auto before = captureActiveState();
     std::string error;
     if (!pvt::detach_project_file(
@@ -5707,6 +6056,7 @@ bool MainWindow::startExport() {
             resolvedOutputDirectory(QString::fromStdString(project.output.output_directory))
                 .toStdString();
         export_active_ = true;
+        if (video_export_action_ != nullptr) video_export_action_->setEnabled(false);
         export_watcher_->setFuture(QtConcurrent::run(
             [this, project = std::move(project), render_options]() mutable {
                 ExportResult result;
@@ -5744,6 +6094,10 @@ bool MainWindow::startExport() {
                 }
                 result.cancelled = !result.ok && cancel_export_.load();
                 result.error = QString::fromStdString(error);
+                if (result.ok) {
+                    result.success_message =
+                        tr("The image sequence was exported successfully.");
+                }
                 return result;
             }));
     } catch (const std::exception& exception) {
@@ -5764,12 +6118,162 @@ bool MainWindow::startExport() {
     return true;
 }
 
+bool MainWindow::startVideoExport() {
+    if (export_watcher_ == nullptr || export_watcher_->isRunning()) return false;
+    const pvt::video::Capabilities available = pvt::video::capabilities();
+    if (!available.available) {
+        QMessageBox::information(this, tr("Video export unavailable"),
+                                 QString::fromStdString(available.status));
+        return false;
+    }
+    const auto validation = pvt::validate(project_);
+    if (!validation.ok) {
+        QMessageBox::warning(this, tr("Invalid setup"),
+                             QString::fromStdString(validation.message));
+        return false;
+    }
+    const QString music_path = currentMusicSourcePath();
+    const bool has_music = config_.clock.mode == pvt::ClockMode::Music
+                           && musicRenderReady() && !music_path.isEmpty();
+    pvt::video::Capabilities dialog_capabilities = available;
+    if ((project_.canvas.width & 1) != 0
+        || (project_.canvas.height & 1) != 0) {
+        dialog_capabilities.prores_4444 = false;
+        dialog_capabilities.prores_4444_xq = false;
+        dialog_capabilities.hevc = false;
+        dialog_capabilities.hevc_alpha = false;
+        dialog_capabilities.status =
+            "This canvas has an odd width or height, so lossless PNG is the "
+            "only compatible native movie format. ProRes and HEVC require even dimensions.";
+    }
+    VideoExportDialog dialog(dialog_capabilities, project_.output.write_alpha,
+                             has_music, this);
+    configure_readable_layouts(&dialog);
+    if (dialog.exec() != QDialog::Accepted) return false;
+    pvt::video::Options options = dialog.options();
+
+    QString base_name = QString::fromStdString(
+        pvt::portable_project_filename(project_.name));
+    if (base_name.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive)) {
+        base_name.chop(4);
+    }
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Export native video"),
+        QDir(usableDialogDirectory()).filePath(base_name + QStringLiteral(".mov")),
+        tr("QuickTime movie (*.mov)"));
+    if (path.isEmpty()) return false;
+    if (QFileInfo(path).suffix().isEmpty()) path.append(QStringLiteral(".mov"));
+    rememberDialogLocation(path);
+    const QFileInfo destination(path);
+    if (destination.exists() || destination.isSymLink()) {
+        if (destination.isDir()) {
+            QMessageBox::critical(this, tr("Invalid video destination"),
+                                  tr("The selected video destination is a directory."));
+            return false;
+        }
+        const auto replace = QMessageBox::warning(
+            this, tr("Replace existing video?"),
+            tr("A file already exists at %1. It will remain untouched unless the "
+               "complete new movie is ready. Replace it then?").arg(path),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (replace != QMessageBox::Yes) return false;
+        options.overwrite_existing = true;
+    }
+    options.music_source_path = has_music ? music_path.toStdString() : std::string{};
+    options.include_project_music = options.include_project_music && has_music;
+    options.frame = frameRenderOptions();
+
+    cancel_export_.store(false);
+    export_active_ = true;
+    export_action_->setEnabled(false);
+    video_export_action_->setEnabled(false);
+    cancel_export_action_->setEnabled(true);
+    export_progress_->setRange(0, 1000);
+    export_progress_->setValue(0);
+    export_progress_->show();
+    status_->setText(tr("Exporting native video…"));
+    try {
+        auto project = project_;
+        export_watcher_->setFuture(QtConcurrent::run(
+            [this, project = std::move(project), path,
+             options = std::move(options)]() mutable {
+                ExportResult result;
+                pvt::video::Report report;
+                std::string export_error;
+                try {
+                    result.ok = pvt::video::export_project(
+                        project, path.toStdString(), options,
+                        [this](int completed, int total) {
+                            const int stride = std::max(1, total / 200);
+                            if (completed == 0 || completed == total
+                                || completed % stride == 0) {
+                                QMetaObject::invokeMethod(
+                                    this, [this, completed, total] {
+                                        if (!export_active_) return;
+                                        status_->setText(
+                                            tr("Rendering video frame %1/%2…")
+                                                .arg(completed).arg(total));
+                                        export_progress_->setValue(
+                                            total > 0 ? completed * 1000 / total : 0);
+                                    }, Qt::QueuedConnection);
+                            }
+                            return !cancel_export_.load();
+                        },
+                        &cancel_export_, &report, &export_error);
+                } catch (const std::exception& exception) {
+                    export_error = std::string("Video export failed: ")
+                                   + exception.what();
+                } catch (...) {
+                    export_error = "Video export failed because of an unexpected error.";
+                }
+                result.cancelled = !result.ok && cancel_export_.load();
+                result.error = QString::fromStdString(export_error);
+                if (result.ok) {
+                    QString details = QString::fromStdString(report.format_name);
+                    if (report.included_audio) {
+                        details.append(tr(", original project-clock audio included"));
+                    }
+                    if (options.codec != pvt::video::Codec::PngLossless) {
+                        details.append(report.hardware_required
+                                           ? tr(", hardware encoding required")
+                                           : (report.hardware_available
+                                                  ? tr(", hardware encoder available/preferred")
+                                                  : tr(", software fallback allowed")));
+                    }
+                    result.success_message =
+                        tr("The native QuickTime movie was exported to %1.\n\n%2")
+                            .arg(path, details);
+                }
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        export_active_ = false;
+        export_progress_->hide();
+        updateExportAvailability();
+        cancel_export_action_->setEnabled(false);
+        QMessageBox::critical(this, tr("Video export could not start"),
+                              QString::fromUtf8(exception.what()));
+        return false;
+    } catch (...) {
+        export_active_ = false;
+        export_progress_->hide();
+        updateExportAvailability();
+        cancel_export_action_->setEnabled(false);
+        QMessageBox::critical(
+            this, tr("Video export could not start"),
+            tr("The background video-export task could not be created."));
+        return false;
+    }
+    return true;
+}
+
 bool MainWindow::loadSetupFile(const QString& path, QString* error) {
     return loadProjectPath(path, error);
 }
 
 bool MainWindow::loadProjectPath(const QString& path, QString* error) {
     cancelMusicAnalysis();
+    stopPlayback();
     pvt::ProjectDocument loaded;
     std::string load_error;
     const QFileInfo source_info(path);
@@ -5818,9 +6322,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (settings_action_ == nullptr || settings_menu == nullptr
         || edit_menu == nullptr || project_toolbar == nullptr
         || !settings_menu->actions().contains(settings_action_)
-        || !project_toolbar->actions().contains(settings_action_)) {
+        || !project_toolbar->actions().contains(settings_action_)
+        || randomize_values_action_ == nullptr || randomize_mix_action_ == nullptr
+        || !settings_menu->actions().contains(randomize_values_action_)
+        || !settings_menu->actions().contains(randomize_mix_action_)
+        || project_toolbar->actions().contains(randomize_values_action_)
+        || project_toolbar->actions().contains(randomize_mix_action_)) {
         if (error != nullptr) {
-            *error = tr("Application Settings is not reachable from both the menu bar and toolbar.");
+            *error = tr("Application Settings or guarded randomization actions are exposed in the wrong place.");
         }
         return false;
     }
@@ -5859,7 +6368,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     {
         ApplicationSettingsDialog settings_dialog(
-            expected_undo_limit, expected_backend, this);
+            expected_undo_limit, expected_backend,
+            hasCustomNewProjectDefaults(), this);
         configure_readable_layouts(&settings_dialog);
         const auto* tabs = settings_dialog.findChild<QTabWidget*>(
             QStringLiteral("applicationSettingsTabs"));
@@ -5867,8 +6377,13 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("undoLimitPreference"));
         const auto* backend = settings_dialog.findChild<QComboBox*>(
             QStringLiteral("renderBackendPreference"));
+        const auto* save_defaults = settings_dialog.findChild<QPushButton*>(
+            QStringLiteral("saveCurrentProjectDefaults"));
+        const auto* restore_defaults = settings_dialog.findChild<QPushButton*>(
+            QStringLiteral("restoreBuiltInDefaults"));
         if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
             || backend == nullptr || backend->count() != 3
+            || save_defaults == nullptr || restore_defaults == nullptr
             || settings_dialog.undoLimit() != expected_undo_limit
             || settings_dialog.renderBackend() != expected_backend) {
             if (error != nullptr) {

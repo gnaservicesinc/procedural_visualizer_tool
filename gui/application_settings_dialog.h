@@ -6,19 +6,31 @@
 #include <QDialog>
 
 class QComboBox;
+class QLabel;
 class QSpinBox;
 
 class ApplicationSettingsDialog final : public QDialog {
 public:
+    enum class NewProjectDefaultsAction {
+        Keep,
+        SaveCurrentProject,
+        RestoreBuiltIn
+    };
+
     ApplicationSettingsDialog(int undoLimit, pvt::RenderBackend renderBackend,
+                              bool hasCustomNewProjectDefaults,
                               QWidget* parent = nullptr);
 
     int undoLimit() const;
     pvt::RenderBackend renderBackend() const;
+    NewProjectDefaultsAction newProjectDefaultsAction() const;
 
 private:
     QSpinBox* undo_limit_ = nullptr;
     QComboBox* render_backend_ = nullptr;
+    QLabel* defaults_status_ = nullptr;
+    NewProjectDefaultsAction defaults_action_ =
+        NewProjectDefaultsAction::Keep;
 };
 
 #endif

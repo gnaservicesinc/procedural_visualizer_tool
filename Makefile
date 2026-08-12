@@ -3,6 +3,7 @@ BUILD_DIR ?= build
 BUILD_TYPE ?= Release
 QT_PREFIX ?=
 PVT_BUILD_QT_GUI ?= OFF
+PVT_ENABLE_DISTRIBUTION ?= OFF
 PVT_LAUNCH_DIR ?= $(CURDIR)
 INSTALL_PREFIX ?=
 CMAKE_CONFIGURE_ARGS ?=
@@ -10,7 +11,7 @@ CMAKE_CONFIGURE_ARGS ?=
 QT_PREFIX_ARG = $(if $(strip $(QT_PREFIX)),-DCMAKE_PREFIX_PATH="$(QT_PREFIX)",)
 INSTALL_PREFIX_ARG = $(if $(strip $(INSTALL_PREFIX)),--prefix "$(INSTALL_PREFIX)",)
 
-.PHONY: all configure run render gui check test debug install clean
+.PHONY: all configure run render gui distribution check test debug install clean
 
 all: configure
 	$(CMAKE) --build "$(BUILD_DIR)" --config "$(BUILD_TYPE)" --parallel
@@ -20,6 +21,7 @@ configure:
 		-DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" \
 		-DPVT_BUILD_CLI=ON \
 		-DPVT_BUILD_QT_GUI=$(PVT_BUILD_QT_GUI) \
+		-DPVT_ENABLE_DISTRIBUTION=$(PVT_ENABLE_DISTRIBUTION) \
 		$(QT_PREFIX_ARG) $(CMAKE_CONFIGURE_ARGS)
 
 run: all
@@ -67,6 +69,11 @@ gui:
 	else \
 		echo "Could not locate the built GUI executable in $(BUILD_DIR)." >&2; exit 1; \
 	fi
+
+distribution:
+	$(MAKE) PVT_BUILD_QT_GUI=ON PVT_ENABLE_DISTRIBUTION=ON configure
+	$(CMAKE) --build "$(BUILD_DIR)" --config "$(BUILD_TYPE)" \
+		--parallel --target distribution
 
 check test: all
 	ctest --test-dir "$(BUILD_DIR)" -C "$(BUILD_TYPE)" --output-on-failure

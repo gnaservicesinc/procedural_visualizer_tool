@@ -8,6 +8,33 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
+The macOS GUI now plays the single project-wide Music-clock track in sync with
+preview play, seeks, beat navigation, pause, looping, and project replacement.
+Its native movie exporter uses AVFoundation and VideoToolbox rather than FFmpeg:
+lossless PNG-in-MOV, ProRes 4444/4444 XQ, and unusually high-rate HEVC are
+available with explicit hardware prefer/require/software policies, optional
+alpha, and pass-through of the same project-wide audio. Movie installation is
+transactional, durable, collision-aware, cancellable, and tested.
+
+Application Settings can store the complete current project as the per-user
+template for future new documents or reactivate the built-in default; each new
+document still receives independent project/layer identities. Randomize Values
+and Randomize Mix moved from the toolbar into Settings and now require
+confirmation. The supplied PNG is generated into a complete macOS icon family.
+The public and local wrapper Makefiles expose `make distribution`, whose CMake
+target uses `macdeployqt`, signing, required-content checks, and recursive Mach-O
+dependency/deployment-target verification to produce a self-contained app
+bundle. Distribution defaults to macOS 13 and statically builds a SHA-256-pinned
+libpng, avoiding this workstation's macOS-26 local dylib; program and
+third-party license notices are embedded before signing.
+
+vImage was evaluated and deliberately not inserted into the CPU renderer. Its
+standard conversions/filters do not match the dominant custom procedural,
+projection, effect, and float-compositing work; extra frame-format passes would
+cost memory bandwidth and complicate precision/alpha semantics. AppleClang
+retains normal NEON auto-vectorization opportunities and Metal remains the
+purpose-built parallel backend.
+
 The application is now project-oriented. A named `ProjectConfig` owns global
 canvas/loop and export data plus up to 64 independently configurable render
 layers. Each layer has a stable UUID and bundle file ID, name, enabled state,
@@ -115,8 +142,9 @@ always evaluates procedural parameters; rendered RGBA frames are never
 crossfaded.
 
 Music-mode frame count is derived from decoded sample frames/sample rate and
-FPS while preserving the stored manual count for later modes. Export remains
-the supported PNG/EXR image-sequence workflow.
+FPS while preserving the stored manual count for later modes. PNG/EXR image
+sequences remain the portable cross-platform workflow, while the macOS GUI also
+offers native QuickTime movie export.
 
 Sequence export now uses independent-frame CPU workers for rendering and
 encoding. Automatic selection is bounded by hardware concurrency, frame count,
@@ -157,8 +185,8 @@ consumers do not inherit minizip requirements.
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
 | 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
 | 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v5, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
-| 14 | Randomize stack values or composition | Complete | Separate GUI actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items. |
-| 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, and Space owns preview play/pause outside text editors instead of toggling focused boxes. |
+| 14 | Randomize stack values or composition | Complete | Confirmed Settings-menu actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items; they are no longer exposed on the main toolbar. |
+| 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, Space owns preview play/pause outside text editors, and only the global Music-clock track is synchronized to preview audio. |
 | 16 | Named projects and default filenames | Complete | Semantic name appears in the title and a portable sanitizer supplies the initial `.zip`. Saved-project rename choices either preserve that path or create a current-state-only independent project with fresh identities, then open it or stay in the original. |
 | 17 | Full render-config layers | Complete | Global canvas/export data is split from per-layer render data; layer switches cannot overwrite global output state. Stable UUIDs/file IDs survive names and reorders. |
 | 18 | Layer compositing | Complete | Sequential bounded float-RGBA compositing implements all 11 requested modes plus opacity; only one layer frame and one accumulator are retained. |
@@ -166,7 +194,7 @@ consumers do not inherit minizip requirements.
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
 | 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
 | 22 | Legacy compatibility without overwrite | Complete | Setup v1-v4 imports into a new unsaved one-layer project; setup v5 adds clock/music/audio-response and attachment identity data. Only explicit one-layer `--save-legacy` writes `.pvt`. |
-| 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; an extensible Application Settings dialog exposes the step limit and rendering backend from a top-level menu and toolbar, while the hard 128 MiB history budget and all UI preferences live in per-user `QSettings`, outside bundles. |
+| 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
 | 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
 | 26 | Better CPU utilization | Complete | Bounded frame-level render/encode workers, ordered atomic install, serialized progress, `--workers 0..256`, and auto selection in GUI/library. Representative M2 Max measurement: 44.95 s to 5.44 s (8.3x). |
@@ -180,8 +208,11 @@ consumers do not inherit minizip requirements.
 | 34 | Closed reusable motion paths | Deferred - designed | Store named closed cubic paths separately from per-wave/effect/object bindings; use at least three nodes, handle modes, bounded arc-length LUT sampling, independent sync/phase/direction, and a dedicated editor. |
 | 35 | Synchronization tab and clock controls | Complete | Global Default/Frame/Time/Meter/Music clock, Hold/Linear/Smoothstep parameter interpolation, fit/exact spacing, direction/phase/beat offset, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. Music no longer adds a redundant swing-suppression control or popup. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and 8,192-sample multiband/onset/spectral/chroma analysis drive the base clock and independently routable wave/effect/color response. First import enables active-layer response, Energy supplies a visibly dynamic default hue route, and later user overrides remain intact. No fixed whole-song BPM clock is used. |
-| 37 | Music-video export | Removed | The broken MP4-with-embedded-music option, FFmpeg helper, and its test target were removed; image-sequence export remains supported. |
+| 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; hardware policy, alpha support, project-clock audio pass-through, progress, cancellation, and collision safety are explicit. No FFmpeg executable or library is used. |
 | 38 | Portable embedded attachments | Complete | Music, OBJ, image, and generic files retain exact filenames/extensions beneath collision-safe digest directories, accept valid direct replacements as first-class edits, keep managed copies, and retain hostile/oversize rejection plus v2 compatibility. |
+| 39 | User-defined new-project defaults | Complete in Qt GUI | Settings can transactionally capture the complete current project or reactivate the built-in template; every new document regenerates project/layer identities and starts unsaved. |
+| 40 | macOS icon and self-contained distribution | Complete | The supplied PNG generates a full ICNS resource; public and local `make distribution` targets stage Qt/plugins, statically build pinned libpng, embed license notices, enforce the macOS deployment baseline across every Mach-O, reject build-machine paths, sign, and verify the app. |
+| 41 | vImage/NEON assessment | Complete - no vImage integration | The workload is dominated by custom float procedural/effect/projection code; compiler NEON vectorization plus Metal is a better fit than extra vImage format passes without measured benefit. |
 
 ## Important implementation map
 

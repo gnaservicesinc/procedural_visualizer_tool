@@ -14,8 +14,10 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
   compatible installed minizip-ng when available and otherwise fetches its
   pinned, minimal zlib-only configuration.
 - CLI/GUI music import uses pinned, in-tree miniaudio decoding and an adaptive
-  beat/spectral analyzer. WAV (including IEEE 32-bit float), FLAC, and MP3 are
-  accepted. These private targets are omitted from a core-library-only build.
+  beat/spectral analyzer. The same private component provides synchronized GUI
+  playback without a Qt Multimedia or system-installed audio dependency. WAV
+  (including IEEE 32-bit float), FLAC, and MP3 are accepted. These private
+  targets are omitted from a core-library-only build.
 - Qt 6.5 or newer with Widgets and Concurrent components for the optional GUI.
 - On Apple platforms, the optional Metal backend uses Apple's header-only
   [metal-cpp](https://developer.apple.com/metal/cpp/) from
@@ -23,6 +25,9 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
   `PVT_ENABLE_METAL=OFF` for an explicitly CPU-only build, or
   point `PVT_METAL_CPP_DIR` at another metal-cpp checkout. Other platforms build
   the same public backend API with the CPU fallback.
+- On macOS, GUI video export uses the system AVFoundation, VideoToolbox,
+  CoreMedia, and CoreVideo frameworks directly. FFmpeg is neither launched nor
+  bundled.
 
 ## Quick start
 
@@ -48,6 +53,22 @@ make gui
 For a Qt installation outside those paths, pass
 `QT_PREFIX=/path/to/Qt/6.x/<kit>`. The launch target handles both the macOS app
 bundle and native non-macOS executable names.
+
+Create a redistributable macOS app containing Qt, its required plugins, and
+non-system dynamic libraries:
+
+```sh
+make distribution QT_PREFIX=/path/to/Qt/6.x/macos
+# Result: build/dist/Procedural Visualizer Tool.app
+```
+
+The default signature is ad-hoc. Pass
+`-DPVT_DISTRIBUTION_CODE_SIGN_IDENTITY="Developer ID Application: ..."` through
+`CMAKE_CONFIGURE_ARGS` when preparing a signed/notarized release.
+Unless the caller explicitly supplies `CMAKE_OSX_DEPLOYMENT_TARGET`, this path
+targets macOS 13. It builds the existing libpng dependency statically from a
+SHA-256-pinned upstream archive instead of inheriting a local/Homebrew dylib,
+and therefore needs network access on its first distribution build.
 
 ## What is configurable
 
@@ -141,8 +162,10 @@ and background composite export with cooperative cancellation. The
 Swing and Audio Response blocks. The Output tab is global while the Layer Render
 tab always edits the selected layer. **Randomize
 values** keeps the current layer's stack structure and types while varying its
-settings; **Randomize mix** creates a new bounded mix. File dialogs remember
-their last usable folder and otherwise begin in the home folder.
+settings; **Randomize mix** creates a new bounded mix. Both live in the Settings
+menu and require confirmation, keeping destructive experiments away from the
+main toolbar. File dialogs remember their last usable folder and otherwise
+begin in the home folder.
 
 Every GUI field edit and structural move participates in session undo/redo.
 **Settings > Application Settings…** (also available from the main toolbar)
@@ -150,7 +173,11 @@ provides extensible General and Rendering pages for program-wide preferences.
 The undo step limit, rendering backend, window layout, and dialog locations are
 stored with the platform's normal per-user settings service (`QSettings`), so
 they persist across projects and relaunches and are never placed inside a
-portable project. A separate hard 128 MiB snapshot budget prevents a
+portable project. The General page can also capture the complete current
+project as the template for future **New Project** commands or restore the
+built-in template. New documents receive fresh project/layer identities, so
+using a saved template never aliases histories or assets. A separate hard 128
+MiB snapshot budget prevents a
 large, high-layer document from turning a generous step limit into unbounded
 memory growth; if history must be trimmed, the document remains correctly dirty.
 Saved-version history is separate from session undo.
@@ -196,7 +223,7 @@ Wave propagation direction is continuous:
 
 Intermediate values blend between radial and the selected axis.
 
-## Music analysis and exact-duration video
+## Music analysis, synchronized playback, and native video
 
 Import is asynchronous, cancellable, and transactional. The analyzer decodes
 the full source, derives sample-accurate duration, tracks time-varying beat and
@@ -212,6 +239,30 @@ the user turns Audio Response off, switching clock modes or replacing the source
 does not force it back on. Swings remain governed by their own active-layer
 checkbox and can be mixed with audio response. A relink must match the cached
 digest; reanalyze is the explicit way to accept changed audio.
+
+When Play is active, the project-wide Music clock's one managed track is decoded
+and played from the matching timeline position. Seeking, beat navigation,
+pause/resume, looping, and project replacement resynchronize or stop it. A
+persistent timeline volume control changes monitoring volume only. Layers do
+not own or mix independent audio tracks, so preview playback stays unambiguous.
+If an audio device cannot be opened, visual playback continues and reports the
+silent fallback instead of disabling the preview.
+
+On macOS, **Export Video** writes a QuickTime `.mov` directly through
+AVFoundation/VideoToolbox. The choices are lossless 8-bit RGBA PNG frames,
+ProRes 4444 or 4444 XQ for perceptually lossless editing, and deliberately
+high-data-rate HEVC for smaller delivery files. Hardware encoding can be
+preferred, required, or disabled; requiring it fails before rendering when the
+requested VideoToolbox encoder is not advertised. PNG-in-MOV is codec-lossless
+and does not use VideoToolbox because there is nothing useful for its video
+hardware to accelerate. Transparency is retained only by codecs that support
+it. A ready Music-clock source is passed through into the movie without lossy
+audio re-encoding, and no layer-level audio is included.
+
+Video duration uses the same effective project clock as preview and sequence
+export. Destinations are written through a sibling temporary file, checked,
+synced, and installed atomically; existing files are replaced only after the
+GUI's explicit confirmation.
 
 ## Parallel sequence export and Metal
 
@@ -240,6 +291,16 @@ memory budget provide additional bounds. Cancellation prevents queued work from
 being submitted and keeps the destination transactional. A command buffer that
 has already reached the GPU is allowed to finish; its result is discarded when
 cancellation is observed.
+
+The CPU renderer intentionally does not add a vImage pass. Its expensive work
+is custom procedural sampling, effect evaluation, surface projection, and
+linear-light compositing rather than the image-format conversions and standard
+filters that vImage accelerates. AppleClang can still auto-vectorize suitable
+loops to ARM NEON, while the existing Metal backend handles the much larger
+parallel opportunity. Converting every float-RGBA frame into vImage buffers for
+a few isolated operations would add bandwidth and precision/alpha transitions
+without a demonstrated end-to-end win. Native video conversion likewise keeps
+the renderer's explicit linear-to-sRGB/Rec.709 and straight-alpha semantics.
 
 The GUI and the default library overload select workers automatically. The CLI
 can choose the upper bound explicitly:
@@ -605,9 +666,14 @@ make install INSTALL_PREFIX=/desired/prefix
 The installed CMake package target is
 `ProceduralVisualizerTool::ProceduralVisualizerTool`. Installed shared-library
 CLI builds use a relative runtime search path to find the sibling library
-directory. The Qt GUI remains a build-tree application: a redistributable GUI
-bundle also needs the matching Qt runtime and a libpng built for the intended
-deployment target.
+directory. On macOS, configure with `PVT_ENABLE_DISTRIBUTION=ON` and build the
+`distribution` target (or use `make distribution`) to stage the matching Qt
+runtime, plugins, and other non-system dependencies inside the app. A private,
+pinned static libpng avoids carrying the build machine's dylib into the bundle.
+The packaging check recursively rejects Mach-O dependencies that still point
+into `/opt`, `/usr/local`, or a user's home directory; rejects any binary whose
+minimum macOS version exceeds the chosen deployment target; requires the app
+and third-party license notices; and verifies the completed code signature.
 
 ## Direct CMake Qt build
 
@@ -645,6 +711,8 @@ promotion, checksum/fallback handling, readable attachment names and direct-edit
 promotion, deleted-original recovery, invalid replacement rejection, hostile archive/tree
 rejection, adaptive beat/tempo changes, dense transient and spectral/pitch
 features, music-clock interpolation and response routing,
+native PNG/ProRes/HEVC movies, audio pass-through, hardware-required encoder
+selection, video cancellation/collision safety,
 8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
 deterministic dithering, byte-identical one/four-worker sequence output,
 callback/cancel behavior, sequence collision preflight, Unicode paths,
