@@ -57,6 +57,11 @@ jobs:
             libgl1-mesa-dev \
             libpng-dev \
             libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
             libxkbcommon-x11-0 \
             xvfb
 
@@ -111,7 +116,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DCMAKE_INSTALL_BINDIR=. `
@@ -170,12 +175,13 @@ jobs:
         shell: bash
         run: |
           cmake --install build --prefix "$GITHUB_WORKSPACE/package"
+          if ldd ./package/bin/procedural-visualizer-tool \
+              ./package/plugins/platforms/libqxcb.so | grep 'not found'; then
+            exit 1
+          fi
           xvfb-run --auto-servernum \
             ./package/bin/procedural-visualizer-tool --smoke-test
           ./package/bin/render9 --self-test
-          if ldd ./package/bin/procedural-visualizer-tool | grep 'not found'; then
-            exit 1
-          fi
 
       - name: Install Windows package
         if: runner.os == 'Windows'
