@@ -120,6 +120,7 @@ private:
     void updateSynchronizationState();
     void updateMusicSummary();
     void updateExportAvailability();
+    void finishExportUiState();
     void updateTimelineReadout();
     void togglePlayback();
     void stopPlayback();

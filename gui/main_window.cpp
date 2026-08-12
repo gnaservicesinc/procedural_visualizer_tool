@@ -1119,8 +1119,10 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this, [this] {
         const ExportResult result = export_watcher_->result();
-        export_active_ = false;
-        export_progress_->hide();
+        // Clear the active guard before recomputing action availability. An
+        // earlier split completion handler refreshed the actions first, saw an
+        // active export, and left both export commands permanently disabled.
+        finishExportUiState();
         if (close_after_export_) {
             close_after_export_ = false;
             QTimer::singleShot(0, this, &QWidget::close);
@@ -2973,11 +2975,6 @@ void MainWindow::createToolbar() {
     });
     connect(video_export_action_, &QAction::triggered,
             this, &MainWindow::startVideoExport);
-    connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this,
-            [this] {
-                updateExportAvailability();
-                cancel_export_action_->setEnabled(false);
-            });
 }
 
 void MainWindow::connectEditors() {
@@ -4794,6 +4791,15 @@ void MainWindow::updateExportAvailability() {
         video_export_action_->setToolTip(
             video.available ? tr("Export a native macOS QuickTime movie without FFmpeg.")
                             : QString::fromStdString(video.status));
+    }
+}
+
+void MainWindow::finishExportUiState() {
+    export_active_ = false;
+    if (export_progress_ != nullptr) export_progress_->hide();
+    updateExportAvailability();
+    if (cancel_export_action_ != nullptr) {
+        cancel_export_action_->setEnabled(false);
     }
 }
 
@@ -6967,15 +6973,13 @@ bool MainWindow::startExport() {
                 return result;
             }));
     } catch (const std::exception& exception) {
-        export_active_ = false;
-        export_progress_->hide();
+        finishExportUiState();
         status_->setText(tr("Export could not start"));
         QMessageBox::critical(this, tr("Export could not start"),
                               QString::fromUtf8(exception.what()));
         return false;
     } catch (...) {
-        export_active_ = false;
-        export_progress_->hide();
+        finishExportUiState();
         status_->setText(tr("Export could not start"));
         QMessageBox::critical(this, tr("Export could not start"),
                               tr("The background export task could not be created."));
@@ -7146,18 +7150,12 @@ bool MainWindow::startVideoExport() {
                 return result;
             }));
     } catch (const std::exception& exception) {
-        export_active_ = false;
-        export_progress_->hide();
-        updateExportAvailability();
-        cancel_export_action_->setEnabled(false);
+        finishExportUiState();
         QMessageBox::critical(this, tr("Video export could not start"),
                               QString::fromUtf8(exception.what()));
         return false;
     } catch (...) {
-        export_active_ = false;
-        export_progress_->hide();
-        updateExportAvailability();
-        cancel_export_action_->setEnabled(false);
+        finishExportUiState();
         QMessageBox::critical(
             this, tr("Video export could not start"),
             tr("The background video-export task could not be created."));
@@ -7223,12 +7221,34 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !settings_menu->actions().contains(settings_action_)
         || !project_toolbar->actions().contains(settings_action_)
         || randomize_values_action_ == nullptr || randomize_mix_action_ == nullptr
+        || export_action_ == nullptr || video_export_action_ == nullptr
+        || cancel_export_action_ == nullptr || export_progress_ == nullptr
         || !settings_menu->actions().contains(randomize_values_action_)
         || !settings_menu->actions().contains(randomize_mix_action_)
         || project_toolbar->actions().contains(randomize_values_action_)
         || project_toolbar->actions().contains(randomize_mix_action_)) {
         if (error != nullptr) {
             *error = tr("Application Settings or guarded randomization actions are exposed in the wrong place.");
+        }
+        return false;
+    }
+
+    // Completion must clear the guard before action availability is refreshed.
+    // This directly covers the signal-ordering regression that left both export
+    // commands disabled after the success dialog was dismissed.
+    export_active_ = true;
+    export_action_->setEnabled(false);
+    video_export_action_->setEnabled(false);
+    cancel_export_action_->setEnabled(true);
+    export_progress_->show();
+    finishExportUiState();
+    const bool expected_video_enabled =
+        !music_analysis_active_ && pvt::video::capabilities().available;
+    if (export_active_ || !export_action_->isEnabled()
+        || video_export_action_->isEnabled() != expected_video_enabled
+        || cancel_export_action_->isEnabled() || !export_progress_->isHidden()) {
+        if (error != nullptr) {
+            *error = tr("Export completion did not restore the export actions and clear the cancel state.");
         }
         return false;
     }
