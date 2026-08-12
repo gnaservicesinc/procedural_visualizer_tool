@@ -122,7 +122,6 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DCMAKE_INSTALL_BINDIR=. `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DPVT_BUILD_CLI=ON `
             -DPVT_BUILD_QT_GUI=ON `
@@ -200,8 +199,8 @@ jobs:
             "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/share/zlib/copyright" `
             "$docDir/ZLIB-LICENSE"
           $env:QT_QPA_PLATFORM = "offscreen"
-          & "$env:GITHUB_WORKSPACE/package/procedural-visualizer-tool.exe" --smoke-test
-          & "$env:GITHUB_WORKSPACE/package/render9.exe" --self-test
+          & "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" --smoke-test
+          & "$env:GITHUB_WORKSPACE/package/bin/render9.exe" --self-test
 
       - name: Verify and stage macOS package
         if: runner.os == 'macOS'
