@@ -146,6 +146,14 @@ jobs:
           qt_root="$GITHUB_WORKSPACE/.qt/$QT_VERSION/${{ matrix.qt-dir }}"
           echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
           echo "$qt_root/bin" >> "$GITHUB_PATH"
+          if [[ "${{ matrix.qt-arch }}" == *arm64_cross_compiled ]]; then
+            "$python_exe" -m aqt install-qt \
+              windows desktop "$QT_VERSION" win64_msvc2022_64 \
+              --outputdir .qt-host
+            qt_host_root="$GITHUB_WORKSPACE/.qt-host/$QT_VERSION/msvc2022_64"
+            echo "QT_HOST_ROOT=$qt_host_root" >> "$GITHUB_ENV"
+            echo "$qt_host_root/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Restore source-built Qt for Linux arm64
         if: matrix.qt-source == 'source'
@@ -219,6 +227,7 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" `
             -A "${{ matrix.cmake-arch }}" -T ClangCL `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
+            -DQT_HOST_PATH="$env:QT_HOST_ROOT" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg-triplet }}" `
             -DPVT_BUILD_CLI=ON `
