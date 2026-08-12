@@ -26,7 +26,10 @@ target uses `macdeployqt`, signing, required-content checks, and recursive Mach-
 dependency/deployment-target verification to produce a self-contained app
 bundle. Distribution defaults to macOS 13 and statically builds a SHA-256-pinned
 libpng, avoiding this workstation's macOS-26 local dylib; program and
-third-party license notices are embedded before signing.
+third-party license notices are embedded before signing. The bare linker bundle
+lives under `distribution-intermediate/`; the obvious top-level app is the
+verified distributable, preventing it from being confused with an incomplete
+build-tree bundle.
 
 vImage was evaluated and deliberately not inserted into the CPU renderer. Its
 standard conversions/filters do not match the dominant custom procedural,

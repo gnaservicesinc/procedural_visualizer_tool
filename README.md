@@ -59,8 +59,11 @@ non-system dynamic libraries:
 
 ```sh
 make distribution QT_PREFIX=/path/to/Qt/6.x/macos
-# Result: build/dist/Procedural Visualizer Tool.app
+# Result: build/Procedural Visualizer Tool.app
 ```
+
+The unbundled linker output is kept under `build/distribution-intermediate/`;
+the top-level app is always the staged, dependency-complete, verified result.
 
 The default signature is ad-hoc. Pass
 `-DPVT_DISTRIBUTION_CODE_SIGN_IDENTITY="Developer ID Application: ..."` through

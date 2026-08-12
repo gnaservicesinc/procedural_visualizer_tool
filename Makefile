@@ -54,6 +54,10 @@ gui:
 	$(MAKE) PVT_BUILD_QT_GUI=ON all
 	@if [ -x "$(BUILD_DIR)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" ]; then \
 		"$(BUILD_DIR)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
+	elif [ -x "$(BUILD_DIR)/distribution-intermediate/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" ]; then \
+		"$(BUILD_DIR)/distribution-intermediate/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
+	elif [ -x "$(BUILD_DIR)/distribution-intermediate/$(BUILD_TYPE)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" ]; then \
+		"$(BUILD_DIR)/distribution-intermediate/$(BUILD_TYPE)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" ]; then \
 		"$(BUILD_DIR)/$(BUILD_TYPE)/Procedural Visualizer Tool.app/Contents/MacOS/Procedural Visualizer Tool" --working-directory "$(PVT_LAUNCH_DIR)"; \
 	elif [ -x "$(BUILD_DIR)/procedural-visualizer-tool" ]; then \

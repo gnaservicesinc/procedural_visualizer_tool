@@ -423,6 +423,14 @@ if(PVT_BUILD_QT_GUI)
             MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
             MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
             MACOSX_BUNDLE_ICON_FILE "ProceduralVisualizerTool.icns")
+        if(PVT_ENABLE_DISTRIBUTION)
+            # Keep the linker's bare build-tree bundle visibly separate from
+            # the verified distributable. The final app occupies the obvious
+            # top-level build path, matching normal macOS packaging practice.
+            set_target_properties(ProceduralVisualizerToolGui PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY
+                    "${CMAKE_CURRENT_BINARY_DIR}/distribution-intermediate")
+        endif()
     else()
         set_target_properties(ProceduralVisualizerToolGui PROPERTIES
             OUTPUT_NAME "procedural-visualizer-tool")
@@ -458,14 +466,16 @@ if(PVT_BUILD_QT_GUI)
                 HINTS "${Qt6_DIR}/../../../bin" REQUIRED)
         endif()
         find_program(PVT_VTOOL NAMES vtool REQUIRED)
-        set(PVT_DISTRIBUTION_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/dist")
         set(PVT_DISTRIBUTION_APP
-            "${PVT_DISTRIBUTION_DIRECTORY}/Procedural Visualizer Tool.app")
+            "${CMAKE_CURRENT_BINARY_DIR}/Procedural Visualizer Tool.app")
         add_custom_target(distribution
             COMMAND "${CMAKE_COMMAND}" -E remove_directory
                     "${PVT_DISTRIBUTION_APP}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                    "${PVT_DISTRIBUTION_DIRECTORY}"
+            # Remove only the obsolete output directory used by the previous
+            # distribution layout, so an old package cannot be mistaken for
+            # the current top-level result.
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory
+                    "${CMAKE_CURRENT_BINARY_DIR}/dist"
             COMMAND "${CMAKE_COMMAND}" -E copy_directory
                     "$<TARGET_BUNDLE_DIR:ProceduralVisualizerToolGui>"
                     "${PVT_DISTRIBUTION_APP}"
