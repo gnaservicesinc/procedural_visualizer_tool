@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  group: desktop-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -68,8 +68,14 @@ jobs:
       - name: Install Qt
         shell: bash
         run: |
-          python3 -m pip install "aqtinstall==$AQTINSTALL_VERSION"
-          python3 -m aqt install-qt \
+          python3 -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_exe="$GITHUB_WORKSPACE/.venv/Scripts/python.exe"
+          else
+            python_exe="$GITHUB_WORKSPACE/.venv/bin/python3"
+          fi
+          "$python_exe" -m pip install "aqtinstall==$AQTINSTALL_VERSION"
+          "$python_exe" -m aqt install-qt \
             "${{ matrix.qt-host }}" desktop "$QT_VERSION" \
             "${{ matrix.qt-arch }}" --outputdir .qt
           qt_root="$GITHUB_WORKSPACE/.qt/$QT_VERSION/${{ matrix.qt-dir }}"
