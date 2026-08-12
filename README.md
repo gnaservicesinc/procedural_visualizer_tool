@@ -75,9 +75,10 @@ and therefore needs network access on its first distribution build.
 
 ### Automated desktop packages
 
-GitHub Actions builds tested desktop packages after every push and for every
-pull request. Open the **Build desktop packages** workflow run on GitHub and
-download the artifact for the required platform:
+GitHub Actions builds tested desktop packages after every push to `main`, for
+every pull-request update, and on manual request. Open the **Build desktop
+packages** workflow run on GitHub and download the artifact for the required
+platform:
 
 - `procedural-visualizer-tool-macos-arm64.zip` supports Apple Silicon Macs on
   macOS 13 or newer.
