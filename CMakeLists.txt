@@ -685,6 +685,14 @@ if(PVT_BUILD_QT_GUI)
             TARGET ProceduralVisualizerToolGui
             OUTPUT_SCRIPT pvt_qt_deploy_script)
         install(SCRIPT "${pvt_qt_deploy_script}")
+        if(WIN32)
+            if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
+                message(FATAL_ERROR
+                    "The Qt offscreen platform plugin is required for installed-package validation.")
+            endif()
+            install(FILES "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+                DESTINATION plugins/platforms)
+        endif()
     endif()
 endif()
 install(FILES include/procedural_visualizer_tool.h

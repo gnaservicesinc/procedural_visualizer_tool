@@ -29,18 +29,40 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-24.04
+            qt-source: archive
             qt-host: linux
             qt-arch: linux_gcc_64
             qt-dir: gcc_64
+            package-dir: procedural-visualizer-tool-linux-x86_64
             archive: procedural-visualizer-tool-linux-x86_64.tar.gz
+          - name: Linux arm64
+            os: ubuntu-24.04-arm
+            qt-source: source
+            package-dir: procedural-visualizer-tool-linux-arm64
+            archive: procedural-visualizer-tool-linux-arm64.tar.gz
           - name: Windows x64
             os: windows-2022
+            qt-source: archive
             qt-host: windows
             qt-arch: win64_msvc2022_64
             qt-dir: msvc2022_64
+            cmake-arch: x64
+            vcpkg-triplet: x64-windows-static
+            package-dir: procedural-visualizer-tool-windows-x86_64
             archive: procedural-visualizer-tool-windows-x86_64.zip
+          - name: Windows arm64
+            os: windows-11-arm
+            qt-source: archive
+            qt-host: windows
+            qt-arch: win64_msvc2022_arm64_cross_compiled
+            qt-dir: msvc2022_arm64
+            cmake-arch: ARM64
+            vcpkg-triplet: arm64-windows-static
+            package-dir: procedural-visualizer-tool-windows-arm64
+            archive: procedural-visualizer-tool-windows-arm64.zip
           - name: macOS arm64
             os: macos-15
+            qt-source: archive
             qt-host: mac
             qt-arch: clang_64
             qt-dir: macos
@@ -54,27 +76,61 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            libgl1-mesa-dev \
-            libpng-dev \
-            libxcb-cursor0 \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-render-util0 \
-            libxcb-shape0 \
-            libxcb-xinerama0 \
-            libxkbcommon-x11-0 \
+          packages=(
+            libgl1-mesa-dev
+            libpng-dev
+            libxcb-cursor0
+            libxcb-icccm4
+            libxcb-image0
+            libxcb-keysyms1
+            libxcb-render-util0
+            libxcb-shape0
+            libxcb-xinerama0
+            libxkbcommon-x11-0
             xvfb
+          )
+          if [[ "${{ matrix.qt-source }}" == "source" ]]; then
+            packages+=(
+              libegl1-mesa-dev
+              libfontconfig1-dev
+              libfreetype-dev
+              libx11-dev
+              libx11-xcb-dev
+              libxext-dev
+              libxfixes-dev
+              libxi-dev
+              libxcb1-dev
+              libxcb-cursor-dev
+              libxcb-glx0-dev
+              libxcb-icccm4-dev
+              libxcb-image0-dev
+              libxcb-keysyms1-dev
+              libxcb-randr0-dev
+              libxcb-render0-dev
+              libxcb-render-util0-dev
+              libxcb-shape0-dev
+              libxcb-shm0-dev
+              libxcb-sync-dev
+              libxcb-util-dev
+              libxcb-xfixes0-dev
+              libxcb-xinerama0-dev
+              libxcb-xkb-dev
+              libxkbcommon-dev
+              libxkbcommon-x11-dev
+            )
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends "${packages[@]}"
 
       - name: Install Windows build dependencies
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install libpng:x64-windows-static
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" `
+            install "libpng:${{ matrix.vcpkg-triplet }}"
 
       - name: Install Qt
+        if: matrix.qt-source == 'archive'
         shell: bash
         run: |
           python3 -m venv .venv
@@ -88,6 +144,47 @@ jobs:
             "${{ matrix.qt-host }}" desktop "$QT_VERSION" \
             "${{ matrix.qt-arch }}" --outputdir .qt
           qt_root="$GITHUB_WORKSPACE/.qt/$QT_VERSION/${{ matrix.qt-dir }}"
+          echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
+          echo "$qt_root/bin" >> "$GITHUB_PATH"
+
+      - name: Restore source-built Qt for Linux arm64
+        if: matrix.qt-source == 'source'
+        id: qt-source-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .qt-source/${{ env.QT_VERSION }}
+          key: qtbase-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Build Qt for Linux arm64
+        if: matrix.qt-source == 'source' && steps.qt-source-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          source_archive="$RUNNER_TEMP/qtbase-$QT_VERSION.tar.xz"
+          source_directory="$RUNNER_TEMP/qtbase-$QT_VERSION"
+          install_directory="$GITHUB_WORKSPACE/.qt-source/$QT_VERSION"
+          curl --fail --location --retry 3 \
+            --output "$source_archive" \
+            "https://download.qt.io/archive/qt/6.8/$QT_VERSION/submodules/qtbase-everywhere-src-$QT_VERSION.tar.xz"
+          echo "56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80  $source_archive" \
+            | sha256sum --check --strict
+          mkdir -p "$source_directory"
+          tar -xJf "$source_archive" --strip-components=1 \
+            -C "$source_directory"
+          cmake -S "$source_directory" -B "$RUNNER_TEMP/qtbase-build" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$install_directory" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DQT_BUILD_EXAMPLES=OFF \
+            -DQT_BUILD_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/qtbase-build" --parallel
+          cmake --install "$RUNNER_TEMP/qtbase-build"
+
+      - name: Use source-built Qt for Linux arm64
+        if: matrix.qt-source == 'source'
+        shell: bash
+        run: |
+          qt_root="$GITHUB_WORKSPACE/.qt-source/$QT_VERSION"
           echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
           echo "$qt_root/bin" >> "$GITHUB_PATH"
 
@@ -119,10 +216,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL `
+          cmake -S . -B build -G "Visual Studio 17 2022" `
+            -A "${{ matrix.cmake-arch }}" -T ClangCL `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg-triplet }}" `
             -DPVT_BUILD_CLI=ON `
             -DPVT_BUILD_QT_GUI=ON `
             -DPVT_DEPLOY_QT_RUNTIME=ON `
@@ -193,10 +291,10 @@ jobs:
           $docDir = "$env:GITHUB_WORKSPACE/package/share/doc/ProceduralVisualizerTool"
           New-Item -ItemType Directory -Force -Path $docDir | Out-Null
           Copy-Item `
-            "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/share/libpng/copyright" `
+            "$env:VCPKG_INSTALLATION_ROOT/installed/${{ matrix.vcpkg-triplet }}/share/libpng/copyright" `
             "$docDir/LIBPNG-LICENSE"
           Copy-Item `
-            "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static/share/zlib/copyright" `
+            "$env:VCPKG_INSTALLATION_ROOT/installed/${{ matrix.vcpkg-triplet }}/share/zlib/copyright" `
             "$docDir/ZLIB-LICENSE"
           $env:QT_QPA_PLATFORM = "offscreen"
           function Invoke-PackageCheck($filePath, $argument) {
@@ -236,7 +334,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          package_name=procedural-visualizer-tool-linux-x86_64
+          package_name=${{ matrix.package-dir }}
           mv package "$package_name"
           mkdir -p dist
           tar -czf "dist/${{ matrix.archive }}" "$package_name"
@@ -245,7 +343,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $packageName = "procedural-visualizer-tool-windows-x86_64"
+          $packageName = "${{ matrix.package-dir }}"
           Move-Item package $packageName
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path $packageName -DestinationPath "dist/${{ matrix.archive }}"

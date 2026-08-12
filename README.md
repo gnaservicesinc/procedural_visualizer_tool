@@ -86,8 +86,11 @@ platform:
   macOS 13 or newer.
 - `procedural-visualizer-tool-windows-x86_64.zip` is a portable 64-bit Windows
   directory.
-- `procedural-visualizer-tool-linux-x86_64.tar.gz` is a portable 64-bit Linux
-  directory built and tested on Ubuntu 24.04.
+- `procedural-visualizer-tool-windows-arm64.zip` is a native Windows on ARM
+  directory.
+- `procedural-visualizer-tool-linux-x86_64.tar.gz` and
+  `procedural-visualizer-tool-linux-arm64.tar.gz` are native Linux directories
+  built and tested on Ubuntu 24.04.
 
 Each package contains the Qt GUI, the `render9` command-line renderer, licenses,
 and documentation. Workflow artifacts are retained for 30 days. As an
