@@ -495,6 +495,18 @@ bool read_regular_file(const fs::path& path,
 
 #if defined(_WIN32)
 bool flush_path(const fs::path& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES
+        || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
+        return false;
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+        // Windows does not expose a directory fsync equivalent through
+        // FlushFileBuffers. The files in the staged tree have already been
+        // flushed individually, so validate the directory here and let the
+        // following rename provide the atomic installation boundary.
+        return true;
+    }
     HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                 nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);

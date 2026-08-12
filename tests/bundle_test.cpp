@@ -228,9 +228,11 @@ bool write_test_zip(const fs::path& path,
     // hostile-archive fixture for the reader's platform-neutral path guard.
     if (ok) {
         std::string archive = read_bytes(path);
+        bool needs_patch = false;
         bool changed = false;
         for (const std::string& name : names) {
             if (name.find('\\') == std::string::npos) continue;
+            needs_patch = true;
             std::string normalized = name;
             std::replace(normalized.begin(), normalized.end(), '\\', '/');
             std::size_t position = 0U;
@@ -241,7 +243,9 @@ bool write_test_zip(const fs::path& path,
                 changed = true;
             }
         }
-        ok = changed && write_bytes(path, archive);
+        if (needs_patch) {
+            ok = changed && write_bytes(path, archive);
+        }
     }
 #endif
     return ok;
