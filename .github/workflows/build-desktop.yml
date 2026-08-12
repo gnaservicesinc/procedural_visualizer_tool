@@ -32,7 +32,7 @@ jobs:
             qt-dir: gcc_64
             archive: procedural-visualizer-tool-linux-x86_64.tar.gz
           - name: Windows x64
-            os: windows-2025
+            os: windows-2022
             qt-host: windows
             qt-arch: win64_msvc2022_64
             qt-dir: msvc2022_64
@@ -57,7 +57,8 @@ jobs:
             libgl1-mesa-dev \
             libpng-dev \
             libxcb-cursor0 \
-            libxkbcommon-x11-0
+            libxkbcommon-x11-0 \
+            xvfb
 
       - name: Install Windows build dependencies
         if: runner.os == 'Windows'
@@ -169,7 +170,7 @@ jobs:
         shell: bash
         run: |
           cmake --install build --prefix "$GITHUB_WORKSPACE/package"
-          QT_QPA_PLATFORM=offscreen \
+          xvfb-run --auto-servernum \
             ./package/bin/procedural-visualizer-tool --smoke-test
           ./package/bin/render9 --self-test
           if ldd ./package/bin/procedural-visualizer-tool | grep 'not found'; then
