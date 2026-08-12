@@ -32,6 +32,101 @@ std::string miniaudio_error(const char* action, ma_result result) {
            + (description != nullptr ? description : "");
 }
 
+ma_result init_file_decoder(const std::string& path, ma_uint32 output_rate,
+                            ma_decoder* decoder) {
+    ma_decoder_config config = ma_decoder_config_init(
+        ma_format_f32, kPlaybackChannels, output_rate);
+#if defined(_WIN32)
+    const std::filesystem::path native = detail::path_from_utf8(path);
+    return ma_decoder_init_file_w(native.c_str(), &config, decoder);
+#else
+    return ma_decoder_init_file(path.c_str(), &config, decoder);
+#endif
+}
+
+bool prepare_rate_adjusted_decoder(const PlaybackTrack& track,
+                                   ma_decoder& decoder, bool& initialized,
+                                   const char* open_action,
+                                   const char* seek_action,
+                                   std::string* error) {
+    ma_uint32 nominal_output_rate = kPlaybackSampleRate;
+    ma_result result = init_file_decoder(
+        track.path, nominal_output_rate, &decoder);
+    if (result != MA_SUCCESS) {
+        return fail(error, miniaudio_error(open_action, result));
+    }
+    initialized = true;
+
+    ma_uint32 source_rate = decoder.converter.sampleRateIn;
+    if (decoder.converter.hasResampler == MA_FALSE) {
+        // A decoder whose source already matches the device rate would normally
+        // bypass resampling. Reopen it at an adjacent nominal rate so that the
+        // converter can carry the exact project/source timing ratio below.
+        (void)ma_decoder_uninit(&decoder);
+        initialized = false;
+        nominal_output_rate = source_rate == kPlaybackSampleRate
+                                  ? kPlaybackSampleRate + 1U
+                                  : kPlaybackSampleRate;
+        result = init_file_decoder(track.path, nominal_output_rate, &decoder);
+        if (result != MA_SUCCESS) {
+            return fail(error, miniaudio_error(open_action, result));
+        }
+        initialized = true;
+        source_rate = decoder.converter.sampleRateIn;
+    }
+    if (source_rate == 0U || decoder.converter.hasResampler == MA_FALSE) {
+        return fail(error,
+                    "Could not prepare an exact-rate project music resampler.");
+    }
+
+    // Seek while the decoder still has its nominal source/output ratio. This
+    // maps source seconds to the correct backend frame before the converter is
+    // retimed for device-rate playback.
+    const long double requested =
+        static_cast<long double>(track.source_position_seconds)
+        * static_cast<long double>(nominal_output_rate);
+    const ma_uint64 frame = requested
+                                >= static_cast<long double>(
+                                    (std::numeric_limits<ma_uint64>::max)())
+                            ? (std::numeric_limits<ma_uint64>::max)()
+                            : static_cast<ma_uint64>(requested);
+    result = ma_decoder_seek_to_pcm_frame(&decoder, frame);
+    if (result != MA_SUCCESS) {
+        return fail(error, miniaudio_error(seek_action, result));
+    }
+
+    const long double exact_ratio =
+        static_cast<long double>(source_rate)
+        * static_cast<long double>(track.playback_rate)
+        / static_cast<long double>(kPlaybackSampleRate);
+    constexpr std::uint64_t kPreferredRateDenominator = UINT64_C(10000000);
+    const long double maximum_rate = static_cast<long double>(
+        (std::numeric_limits<ma_uint32>::max)());
+    const std::uint64_t denominator = static_cast<std::uint64_t>(
+        std::min<long double>(
+            static_cast<long double>(kPreferredRateDenominator),
+            std::floor(maximum_rate / std::max(1.0L, exact_ratio))));
+    const long double scaled_numerator = exact_ratio
+                                         * static_cast<long double>(denominator);
+    const std::uint64_t numerator = scaled_numerator > maximum_rate
+                                        ? 0U
+                                        : static_cast<std::uint64_t>(
+                                              std::llround(scaled_numerator));
+    if (denominator == 0U || numerator == 0U
+        || numerator > (std::numeric_limits<ma_uint32>::max)()) {
+        return fail(error,
+                    "The exact project music playback ratio is unsupported.");
+    }
+    result = ma_data_converter_set_rate(
+        &decoder.converter, static_cast<ma_uint32>(numerator),
+        static_cast<ma_uint32>(denominator));
+    if (result != MA_SUCCESS) {
+        return fail(error, miniaudio_error(
+            "Could not configure exact project music playback timing", result));
+    }
+    return true;
+}
+
 } // namespace
 
 struct AudioPlayback::Impl {
@@ -192,39 +287,12 @@ bool AudioPlayback::start_mix(const std::vector<PlaybackTrack>& tracks,
             impl_->uninitialize();
             return fail(error, "Not enough memory to prepare the audio mix.");
         }
-        const ma_uint32 decoder_rate = static_cast<ma_uint32>(
-            std::llround(decoder_rate_exact));
-        ma_decoder_config decoder_config = ma_decoder_config_init(
-            ma_format_f32, kPlaybackChannels, decoder_rate);
-#if defined(_WIN32)
-        const std::filesystem::path native = detail::path_from_utf8(track.path);
-        const ma_result decoder_result = ma_decoder_init_file_w(
-            native.c_str(), &decoder_config, &voice->decoder);
-#else
-        const ma_result decoder_result = ma_decoder_init_file(
-            track.path.c_str(), &decoder_config, &voice->decoder);
-#endif
-        if (decoder_result != MA_SUCCESS) {
-            impl_->uninitialize();
-            return fail(error, miniaudio_error(
+        if (!prepare_rate_adjusted_decoder(
+                track, voice->decoder, voice->initialized,
                 "Could not open a project music source for playback",
-                decoder_result));
-        }
-        voice->initialized = true;
-        const long double requested =
-            static_cast<long double>(track.source_position_seconds)
-            * static_cast<long double>(decoder_rate);
-        const ma_uint64 frame = requested
-                                    >= static_cast<long double>(
-                                        std::numeric_limits<ma_uint64>::max())
-                                ? std::numeric_limits<ma_uint64>::max()
-                                : static_cast<ma_uint64>(requested);
-        const ma_result seek_result =
-            ma_decoder_seek_to_pcm_frame(&voice->decoder, frame);
-        if (seek_result != MA_SUCCESS) {
+                "Could not seek a project music source", error)) {
             impl_->uninitialize();
-            return fail(error, miniaudio_error(
-                "Could not seek a project music source", seek_result));
+            return false;
         }
         voice->loop = track.loop;
         voice->active = true;
@@ -351,38 +419,11 @@ bool write_mix_wav(const std::vector<PlaybackTrack>& tracks,
                 return fail(error, "An audible layer is outside the supported playback/stretch range; use Smart loop fit for a short clip, choose a shorter source, or enable Data only.");
             }
             auto voice = std::make_unique<OfflineVoice>();
-            const ma_uint32 decoder_rate = static_cast<ma_uint32>(
-                std::llround(exact_rate));
-            ma_decoder_config decoder_config = ma_decoder_config_init(
-                ma_format_f32, kPlaybackChannels, decoder_rate);
-#if defined(_WIN32)
-            const std::filesystem::path native =
-                detail::path_from_utf8(track.path);
-            const ma_result decoder_result = ma_decoder_init_file_w(
-                native.c_str(), &decoder_config, &voice->decoder);
-#else
-            const ma_result decoder_result = ma_decoder_init_file(
-                track.path.c_str(), &decoder_config, &voice->decoder);
-#endif
-            if (decoder_result != MA_SUCCESS) {
-                return fail(error, miniaudio_error(
+            if (!prepare_rate_adjusted_decoder(
+                    track, voice->decoder, voice->initialized,
                     "Could not decode an audible project source",
-                    decoder_result));
-            }
-            voice->initialized = true;
-            const long double requested =
-                static_cast<long double>(track.source_position_seconds)
-                * static_cast<long double>(decoder_rate);
-            const ma_uint64 frame = requested
-                    >= static_cast<long double>(
-                        (std::numeric_limits<ma_uint64>::max)())
-                ? (std::numeric_limits<ma_uint64>::max)()
-                : static_cast<ma_uint64>(requested);
-            const ma_result seek = ma_decoder_seek_to_pcm_frame(
-                &voice->decoder, frame);
-            if (seek != MA_SUCCESS) {
-                return fail(error, miniaudio_error(
-                    "Could not seek an audible project source", seek));
+                    "Could not seek an audible project source", error)) {
+                return false;
             }
             voice->active = true;
             voice->loop = track.loop;

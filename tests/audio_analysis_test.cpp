@@ -680,6 +680,53 @@ void test_synchronized_audio_mix(const fs::path& directory) {
     CHECK(!fs::exists(cancelled_mix));
 }
 
+void test_fractional_playback_rate_does_not_drift(const fs::path& directory) {
+    constexpr std::uint32_t source_rate = 1000U;
+    constexpr std::size_t source_frames = 480000U;
+    constexpr std::size_t step_frame = 479850U;
+    std::vector<float> samples(source_frames, 0.0F);
+    std::fill(samples.begin() + static_cast<std::ptrdiff_t>(step_frame),
+              samples.end(), 1.0F);
+    const fs::path source = directory / "fractional-rate-source.wav";
+    CHECK(write_float32_wave(source, source_rate, 1U, samples));
+
+    pvt::audio::PlaybackTrack track;
+    track.path = source.string();
+    track.playback_rate = 47.99;
+    const fs::path mix = directory / "fractional-rate-mix.wav";
+    std::string error;
+    CHECK(pvt::audio::write_mix_wav(
+        {track}, 10.0, mix.string(), nullptr, &error));
+    CHECK(error.empty());
+
+    std::ifstream input(mix, std::ios::binary);
+    CHECK(static_cast<bool>(input));
+    input.seekg(44, std::ios::beg);
+    std::size_t first_loud_frame = (std::numeric_limits<std::size_t>::max)();
+    for (std::size_t frame = 0U; frame < 480000U && input; ++frame) {
+        std::array<std::uint32_t, 2U> bits{};
+        for (std::uint32_t& value : bits) {
+            std::array<unsigned char, 4U> bytes{};
+            input.read(reinterpret_cast<char*>(bytes.data()),
+                       static_cast<std::streamsize>(bytes.size()));
+            value = static_cast<std::uint32_t>(bytes[0U])
+                    | (static_cast<std::uint32_t>(bytes[1U]) << 8U)
+                    | (static_cast<std::uint32_t>(bytes[2U]) << 16U)
+                    | (static_cast<std::uint32_t>(bytes[3U]) << 24U);
+        }
+        float left = 0.0F;
+        std::memcpy(&left, &bits[0U], sizeof(left));
+        if (left > 0.5F) {
+            first_loud_frame = frame;
+            break;
+        }
+    }
+    CHECK(first_loud_frame != (std::numeric_limits<std::size_t>::max)());
+    // Exact 47.99x timing places the step near frame 479950. Rounding the
+    // decoder rate to 1000 Hz plays at 48x and moves it near frame 479850.
+    CHECK(first_loud_frame > 479900U);
+}
+
 } // namespace
 
 int main() {
@@ -698,6 +745,7 @@ int main() {
         test_known_sha256(directory.path());
         test_long_track_density_and_transient(directory.path());
         test_synchronized_audio_mix(directory.path());
+        test_fractional_playback_rate_does_not_drift(directory.path());
     } catch (const std::exception& exception) {
         std::cerr << "unexpected test exception: " << exception.what() << '\n';
         return 2;

@@ -189,6 +189,7 @@ bool effect_can_create_transparency(const EffectConfig& effect) {
     if (!effect.enabled || effect.intensity <= 0.0
         || effect.type == EffectType::Glow
         || effect.type == EffectType::BlockScale
+        || effect.type == EffectType::ParticleField
         || effect.edge_mode != EdgeMode::Alpha) {
         return false;
     }

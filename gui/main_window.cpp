@@ -605,6 +605,37 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
     });
 }
 
+void scale_project_for_preview(pvt::ProjectConfig& project) {
+    const int source_short_edge =
+        std::max(1, std::min(project.canvas.width, project.canvas.height));
+    const double scale = std::min(
+        {1.0, 720.0 / static_cast<double>(project.canvas.width),
+         480.0 / static_cast<double>(project.canvas.height)});
+    const int preview_width =
+        std::max(16, static_cast<int>(std::lround(project.canvas.width * scale)));
+    const int preview_height =
+        std::max(16, static_cast<int>(std::lround(project.canvas.height * scale)));
+    const double pixel_scale =
+        static_cast<double>(std::min(preview_width, preview_height))
+        / static_cast<double>(source_short_edge);
+
+    // These controls are defined in output pixels. Scale them with the preview
+    // so the low-resolution image preserves their full-resolution proportions.
+    for (auto& layer : project.layers) {
+        layer.render.displacement *= pixel_scale;
+        for (auto& effect : layer.render.effects) {
+            if (effect.type == pvt::EffectType::Glow
+                || effect.type == pvt::EffectType::ParticleField) {
+                effect.radius_pixels *= pixel_scale;
+            }
+        }
+    }
+    project.canvas.width = preview_width;
+    project.canvas.height = preview_height;
+    project.canvas.block_size = std::max(
+        1, static_cast<int>(std::lround(project.canvas.block_size * scale)));
+}
+
 void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
     if (auto* label = qobject_cast<QLabel*>(form->labelForField(field))) {
         label->setText(text);
@@ -4990,6 +5021,9 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_knee_, is_glow || is_particles);
     effect_form_->setRowVisible(effect_area_radius_, !is_block_scale);
 
+    effect_radius_->setRange(is_particles ? 0.01 : 0.0, 16384.0);
+    effect_threshold_->setRange(0.0, is_particles ? 1.0 : 64.0);
+
     effect_edge_->setToolTip(
         tr("Controls samples that move beyond the source image boundary."));
     effect_center_x_->setToolTip(tr("Normalized horizontal center; 0 is left and 1 is right."));
@@ -5103,6 +5137,12 @@ void MainWindow::updateEffectEditorVisibility() {
             tr("A deterministic whole particle count from 1 to 1000."));
         effect_secondary_->setToolTip(
             tr("Extends a fading trail behind each moving spark."));
+        effect_radius_->setToolTip(
+            tr("Spark radius in full-resolution output pixels."));
+        effect_threshold_->setToolTip(
+            tr("Moves the particle color from warm ember toward a white-hot core."));
+        effect_knee_->setToolTip(
+            tr("Controls the softness of each particle's glow falloff."));
     }
 }
 
@@ -6821,33 +6861,7 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
             result.error = tr("Preview cancelled.");
             return result;
         }
-        const int source_short_edge =
-            std::max(1, std::min(project.canvas.width, project.canvas.height));
-        const double scale = std::min(
-            {1.0, 720.0 / static_cast<double>(project.canvas.width),
-             480.0 / static_cast<double>(project.canvas.height)});
-        const int preview_width =
-            std::max(16, static_cast<int>(std::lround(project.canvas.width * scale)));
-        const int preview_height =
-            std::max(16, static_cast<int>(std::lround(project.canvas.height * scale)));
-        const double pixel_scale =
-            static_cast<double>(std::min(preview_width, preview_height)) /
-            static_cast<double>(source_short_edge);
-
-        // These controls are defined in output pixels. Scale them with the preview so
-        // the low-resolution preview preserves their full-resolution proportions.
-        for (auto& layer : project.layers) {
-            layer.render.displacement *= pixel_scale;
-            for (auto& effect : layer.render.effects) {
-                if (effect.type == pvt::EffectType::Glow) {
-                    effect.radius_pixels *= pixel_scale;
-                }
-            }
-        }
-        project.canvas.width = preview_width;
-        project.canvas.height = preview_height;
-        project.canvas.block_size = std::max(
-            1, static_cast<int>(std::lround(project.canvas.block_size * scale)));
+        scale_project_for_preview(project);
         pvt::Image image;
         std::string error;
         if (!pvt::render_project_frame(project, frame, render_options, image,
@@ -7431,6 +7445,68 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || audio_wave_source_->count() != audio_color_source_->count()) {
         if (error != nullptr) {
             *error = tr("The Synchronization tab or its active-layer routing blocks were not constructed correctly.");
+        }
+        return false;
+    }
+
+    pvt::ProjectConfig preview_scale_probe = pvt::default_project();
+    preview_scale_probe.canvas.width = 3840;
+    preview_scale_probe.canvas.height = 2160;
+    preview_scale_probe.canvas.block_size = 16;
+    preview_scale_probe.layers.front().render.displacement = 40.0;
+    preview_scale_probe.layers.front().render.effects.clear();
+    auto preview_particle = pvt::default_effect(pvt::EffectType::ParticleField);
+    preview_particle.radius_pixels = 40.0;
+    auto preview_glow = pvt::default_effect(pvt::EffectType::Glow);
+    preview_glow.radius_pixels = 20.0;
+    preview_scale_probe.layers.front().render.effects = {
+        preview_particle, preview_glow};
+    scale_project_for_preview(preview_scale_probe);
+    if (preview_scale_probe.canvas.width != 720
+        || preview_scale_probe.canvas.height != 405
+        || preview_scale_probe.canvas.block_size != 3
+        || std::abs(preview_scale_probe.layers.front().render.displacement
+                    - 7.5) > 1.0e-12
+        || std::abs(preview_scale_probe.layers.front().render.effects[0U]
+                        .radius_pixels - 7.5) > 1.0e-12
+        || std::abs(preview_scale_probe.layers.front().render.effects[1U]
+                        .radius_pixels - 3.75) > 1.0e-12) {
+        if (error != nullptr) {
+            *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
+        }
+        return false;
+    }
+
+    const int particle_type = effect_type_->findData(
+        static_cast<int>(pvt::EffectType::ParticleField));
+    const int glow_type = effect_type_->findData(
+        static_cast<int>(pvt::EffectType::Glow));
+    bool effect_ranges_valid = particle_type >= 0 && glow_type >= 0;
+    if (effect_ranges_valid) {
+        const QSignalBlocker type_blocker(effect_type_);
+        const QSignalBlocker intensity_blocker(effect_intensity_);
+        const QSignalBlocker magnitude_blocker(effect_magnitude_);
+        const QSignalBlocker frequency_blocker(effect_frequency_);
+        const QSignalBlocker secondary_blocker(effect_secondary_);
+        const QSignalBlocker radius_blocker(effect_radius_);
+        const QSignalBlocker threshold_blocker(effect_threshold_);
+        const int previous_type = effect_type_->currentIndex();
+        effect_type_->setCurrentIndex(particle_type);
+        updateEffectEditorVisibility();
+        effect_ranges_valid = effect_radius_->minimum() > 0.0
+                              && effect_threshold_->minimum() == 0.0
+                              && effect_threshold_->maximum() == 1.0;
+        effect_type_->setCurrentIndex(glow_type);
+        updateEffectEditorVisibility();
+        effect_ranges_valid = effect_ranges_valid
+                              && effect_radius_->minimum() == 0.0
+                              && effect_threshold_->maximum() == 64.0;
+        effect_type_->setCurrentIndex(previous_type);
+        updateEffectEditorVisibility();
+    }
+    if (!effect_ranges_valid) {
+        if (error != nullptr) {
+            *error = tr("Effect editor ranges do not match Particle Field and Glow validation.");
         }
         return false;
     }

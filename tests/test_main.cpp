@@ -812,6 +812,57 @@ void test_partial_alpha_glow_composition() {
     }
 }
 
+void test_particle_straight_alpha_emission() {
+    auto config = pvt::default_config();
+    make_small(config);
+    config.width = 32;
+    config.height = 32;
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.hue_cycles = 0;
+    config.palette.enabled = true;
+    config.palette.colors = {{0.0, 0.0, 0.0}};
+    config.alpha.enabled = true;
+    config.alpha.minimum = 0.0;
+    config.alpha.maximum = 0.0;
+    config.output.write_alpha = true;
+
+    auto particles = pvt::default_effect(pvt::EffectType::ParticleField);
+    particles.id = pvt::allocate_id(config);
+    particles.enabled = true;
+    particles.intensity = 1.0;
+    particles.magnitude = 0.0;
+    particles.frequency = 1.0;
+    particles.secondary = 0.0;
+    particles.radius_pixels = 4.0;
+    particles.threshold = 0.5;
+    config.effects.push_back(particles);
+
+    pvt::Image image;
+    std::string error;
+    CHECK(pvt::render_frame_at_phase(config, 0.25, image, &error));
+    bool found_soft_particle_edge = false;
+    for (std::size_t offset = 0U; offset < image.pixels.size(); offset += 4U) {
+        const float alpha = image.pixels[offset + 3U];
+        if (alpha > 0.02F && alpha < 0.20F) {
+            found_soft_particle_edge = true;
+            // Straight RGB keeps the full spark color. Multiplying RGB by the
+            // same coverage here would make later compositing apply alpha twice.
+            CHECK(image.pixels[offset] >= 1.19F);
+            CHECK(std::isfinite(image.pixels[offset]));
+            CHECK(std::isfinite(image.pixels[offset + 1U]));
+            CHECK(std::isfinite(image.pixels[offset + 2U]));
+        }
+    }
+    CHECK(found_soft_particle_edge);
+}
+
 void test_block_scale_and_default_glow_visibility() {
     auto glow_config = pvt::default_config();
     make_small(glow_config);
@@ -1273,6 +1324,7 @@ void test_validation_limits() {
     config.width = 5000;
     config.height = 5000;
     config.block_size = 16;
+    config.output.write_alpha = true;
     const auto two_buffer_result = pvt::validate(config);
     CHECK(two_buffer_result.ok);
     config.surface.enabled = true;
@@ -1295,6 +1347,10 @@ void test_validation_limits() {
           == two_buffer_result.estimated_peak_bytes);
     config.effects[1].intensity = 1.0;
     CHECK(!pvt::validate(config).ok); // An active effect requires a third buffer.
+    config.effects[1].intensity = 0.0;
+    config.motion.enabled = true;
+    config.motion.path = pvt::LayerMotionPath::Orbit;
+    CHECK(!pvt::validate(config).ok); // Active motion uses the same third scratch buffer.
 
     config = pvt::default_config();
     make_small(config);
@@ -2267,6 +2323,7 @@ int main(int argc, char** argv) {
     test_determinism_and_seam_continuity();
     test_direction_alpha_and_surfaces(source_root);
     test_partial_alpha_glow_composition();
+    test_particle_straight_alpha_emission();
     test_block_scale_and_default_glow_visibility();
     test_palettes_transforms_and_spatial_stages();
     test_validation_limits();

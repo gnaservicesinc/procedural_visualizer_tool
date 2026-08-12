@@ -294,6 +294,18 @@ void test_project_validation() {
                                     &render_error));
     project.layers[1U].render.effects.front().enabled = false;
 
+    // Particle Field ignores its serialized edge mode and only adds coverage;
+    // a hidden/randomized Alpha value must not make an opaque RGB layer fail.
+    pvt::ProjectConfig particle_project = pvt::default_project();
+    make_small(particle_project);
+    auto particle = pvt::default_effect(pvt::EffectType::ParticleField);
+    particle.id = pvt::allocate_id(particle_project.layers.front().render);
+    particle.enabled = true;
+    particle.edge_mode = pvt::EdgeMode::Alpha;
+    particle_project.layers.front().render.effects.push_back(particle);
+    particle_project.output.write_alpha = false;
+    CHECK(pvt::validate(particle_project).ok);
+
     invalid = project;
     invalid.layers[1U].uuid = invalid.layers[0U].uuid;
     CHECK(!pvt::validate(invalid).ok);

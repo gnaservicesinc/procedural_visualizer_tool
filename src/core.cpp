@@ -2217,7 +2217,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     // Rendering is transactional: a previously rendered destination remains
     // alive until the new frame succeeds and is swapped into it.
     std::size_t buffer_count = 2U;
-    if (has_enabled_effect || surface_has_render_work(config.surface)) {
+    if (has_enabled_effect || surface_has_render_work(config.surface)
+        || motion_has_render_work(config.motion)) {
         ++buffer_count;
     }
     if (has_enabled_glow) {
@@ -2795,11 +2796,34 @@ void apply_particle_field(const Image& source, Image& destination,
                     const double white_core = std::pow(gaussian, 1.0 + 5.0 * core);
                     // Warm HDR sparks remain lively over dark layers while a
                     // white core lets the effect complement any palette.
-                    output.r += base_brightness * amount * (1.20 + 0.80 * white_core);
-                    output.g += base_brightness * amount * (0.28 + 0.72 * white_core);
-                    output.b += base_brightness * amount * (0.05 + 0.65 * white_core);
-                    output.a = std::max(output.a,
-                                        clamp_value(amount, 0.0, 1.0));
+                    const double particle_alpha = clamp_value(amount, 0.0, 1.0);
+                    const double previous_alpha = clamp_value(output.a, 0.0, 1.0);
+                    const double combined_alpha = particle_alpha
+                                                  + previous_alpha
+                                                        * (1.0 - particle_alpha);
+                    const double red_emission =
+                        base_brightness * (1.20 + 0.80 * white_core);
+                    const double green_emission =
+                        base_brightness * (0.28 + 0.72 * white_core);
+                    const double blue_emission =
+                        base_brightness * (0.05 + 0.65 * white_core);
+                    if (combined_alpha > 1.0e-12) {
+                        // Images use straight alpha. Accumulate the additive
+                        // particle light in premultiplied form, then convert it
+                        // back so later layer compositing applies coverage only
+                        // once. Opaque inputs retain the original additive-HDR
+                        // behavior while transparent sparks keep full chroma.
+                        output.r = (output.r * previous_alpha
+                                    + red_emission * particle_alpha)
+                                   / combined_alpha;
+                        output.g = (output.g * previous_alpha
+                                    + green_emission * particle_alpha)
+                                   / combined_alpha;
+                        output.b = (output.b * previous_alpha
+                                    + blue_emission * particle_alpha)
+                                   / combined_alpha;
+                    }
+                    output.a = combined_alpha;
                     store_color(destination, x, y, output);
                 }
             }
