@@ -61,6 +61,7 @@ jobs:
             libxcb-image0 \
             libxcb-keysyms1 \
             libxcb-render-util0 \
+            libxcb-shape0 \
             libxcb-xinerama0 \
             libxkbcommon-x11-0 \
             xvfb
@@ -206,9 +207,9 @@ jobs:
         run: |
           app="build/Procedural Visualizer Tool.app"
           "$app/Contents/MacOS/Procedural Visualizer Tool" --smoke-test
-          lipo -verify_arch arm64 \
-            "$app/Contents/MacOS/Procedural Visualizer Tool"
-          lipo -verify_arch arm64 build/render9
+          lipo "$app/Contents/MacOS/Procedural Visualizer Tool" \
+            -verify_arch arm64
+          lipo build/render9 -verify_arch arm64
           codesign --force --sign - build/render9
           package="$GITHUB_WORKSPACE/procedural-visualizer-tool-macos-arm64"
           mkdir -p "$package"
