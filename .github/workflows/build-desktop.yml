@@ -37,12 +37,12 @@ jobs:
             qt-arch: win64_msvc2022_64
             qt-dir: msvc2022_64
             archive: procedural-visualizer-tool-windows-x86_64.zip
-          - name: macOS universal
+          - name: macOS arm64
             os: macos-15
             qt-host: mac
             qt-arch: clang_64
             qt-dir: macos
-            archive: procedural-visualizer-tool-macos-universal.zip
+            archive: procedural-visualizer-tool-macos-arm64.zip
 
     steps:
       - name: Check out source
@@ -122,14 +122,14 @@ jobs:
             -DPVT_ENABLE_METAL=OFF `
             -DBUILD_TESTING=ON
 
-      - name: Configure macOS universal build
+      - name: Configure macOS arm64 build
         if: runner.os == 'macOS'
         shell: bash
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$QT_ROOT" \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DPVT_BUILD_CLI=ON \
             -DPVT_BUILD_QT_GUI=ON \
             -DPVT_ENABLE_DISTRIBUTION=ON \
@@ -200,11 +200,11 @@ jobs:
         run: |
           app="build/Procedural Visualizer Tool.app"
           "$app/Contents/MacOS/Procedural Visualizer Tool" --smoke-test
-          lipo -verify_arch arm64 x86_64 \
+          lipo -verify_arch arm64 \
             "$app/Contents/MacOS/Procedural Visualizer Tool"
-          lipo -verify_arch arm64 x86_64 build/render9
+          lipo -verify_arch arm64 build/render9
           codesign --force --sign - build/render9
-          package="$GITHUB_WORKSPACE/procedural-visualizer-tool-macos-universal"
+          package="$GITHUB_WORKSPACE/procedural-visualizer-tool-macos-arm64"
           mkdir -p "$package"
           ditto "$app" "$package/Procedural Visualizer Tool.app"
           cp build/render9 README.md LICENSE "$package/"
@@ -233,7 +233,7 @@ jobs:
         run: |
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
-            procedural-visualizer-tool-macos-universal \
+            procedural-visualizer-tool-macos-arm64 \
             "dist/${{ matrix.archive }}"
 
       - name: Upload package

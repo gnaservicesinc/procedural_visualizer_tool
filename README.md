@@ -79,8 +79,8 @@ GitHub Actions builds tested desktop packages after every push and for every
 pull request. Open the **Build desktop packages** workflow run on GitHub and
 download the artifact for the required platform:
 
-- `procedural-visualizer-tool-macos-universal.zip` supports both Apple Silicon
-  and Intel Macs on macOS 13 or newer.
+- `procedural-visualizer-tool-macos-arm64.zip` supports Apple Silicon Macs on
+  macOS 13 or newer.
 - `procedural-visualizer-tool-windows-x86_64.zip` is a portable 64-bit Windows
   directory.
 - `procedural-visualizer-tool-linux-x86_64.tar.gz` is a portable 64-bit Linux
