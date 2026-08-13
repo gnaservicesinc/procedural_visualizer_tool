@@ -57,6 +57,10 @@ bool fail(std::string* error, std::string message) {
     return false;
 }
 
+bool cancelled(const std::atomic_bool* cancel) {
+    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
+}
+
 void clear_error(std::string* error) {
     if (error != nullptr) {
         error->clear();
@@ -259,6 +263,7 @@ bool write_png_stream(std::FILE* file,
                       const Image& image,
                       const RenderConfig& config,
                       std::uint32_t seed,
+                      const std::atomic_bool* cancel,
                       std::string* error) {
     const int channels = writes_alpha_channel(config) ? 4 : 3;
     const int bit_depth = config.output.bit_depth;
@@ -348,6 +353,14 @@ bool write_png_stream(std::FILE* file,
 
     const std::uint32_t maximum = bit_depth == 16 ? 65535U : 255U;
     for (int y = 0; y < image.height; ++y) {
+        if (cancelled(cancel)) {
+            png_destroy_write_struct(&png, &info);
+            std::free(context);
+            std::free(row);
+            std::free(diffusion_a);
+            std::free(diffusion_b);
+            return fail(error, "PNG encoding was cancelled.");
+        }
         double* current_error = nullptr;
         double* next_error = nullptr;
         if (use_floyd) {
@@ -409,6 +422,14 @@ bool write_png_stream(std::FILE* file,
         png_write_row(png, row);
     }
 
+    if (cancelled(cancel)) {
+        png_destroy_write_struct(&png, &info);
+        std::free(context);
+        std::free(row);
+        std::free(diffusion_a);
+        std::free(diffusion_b);
+        return fail(error, "PNG encoding was cancelled.");
+    }
     png_write_end(png, info);
     png_destroy_write_struct(&png, &info);
     std::free(context);
@@ -479,6 +500,7 @@ struct ExrChannel {
 bool write_exr_stream(std::FILE* file,
                       const Image& image,
                       const RenderConfig& config,
+                      const std::atomic_bool* cancel,
                       std::string* error) {
     // OpenEXR scanline files store channels alphabetically. Each scanline chunk
     // contains one planar run per channel in the same order as the chlist.
@@ -588,6 +610,9 @@ bool write_exr_stream(std::FILE* file,
     std::vector<unsigned char> little_endian;
     little_endian.reserve(8U);
     for (int y = 0; y < image.height; ++y) {
+        if (cancelled(cancel)) {
+            return fail(error, "OpenEXR encoding was cancelled.");
+        }
         little_endian.clear();
         append_u64(little_endian,
                    first_chunk + static_cast<std::uint64_t>(y) * chunk_bytes);
@@ -598,6 +623,9 @@ bool write_exr_stream(std::FILE* file,
 
     std::vector<unsigned char> scanline(scanline_bytes);
     for (int y = 0; y < image.height; ++y) {
+        if (cancelled(cancel)) {
+            return fail(error, "OpenEXR encoding was cancelled.");
+        }
         std::size_t output = 0;
         for (std::size_t channel = 0; channel < channel_count; ++channel) {
             for (int x = 0; x < image.width; ++x) {
@@ -871,6 +899,7 @@ bool prepare_image_output(const std::string& path,
                           const Image& image,
                           const RenderConfig& config,
                           std::uint32_t deterministic_seed,
+                          const std::atomic_bool* cancel,
                           PreparedOutput* prepared,
                           std::string* error) {
     if (prepared == nullptr) {
@@ -949,9 +978,9 @@ bool prepare_image_output(const std::string& path,
 
     const bool encoded = config.output.bit_depth == 32
                              ? write_exr_stream(prepared->temporary.file(), image,
-                                                config, error)
+                                                config, cancel, error)
                              : write_png_stream(prepared->temporary.file(), image, config,
-                                                deterministic_seed, error);
+                                                deterministic_seed, cancel, error);
     if (!encoded) {
         return false;
     }
@@ -990,7 +1019,7 @@ bool write_image_impl(const std::string& path,
                       std::string* error) {
     PreparedOutput prepared;
     return prepare_image_output(path, image, config, deterministic_seed,
-                                &prepared, error)
+                                nullptr, &prepared, error)
            && install_prepared_output(prepared, error);
 }
 
@@ -1037,10 +1066,6 @@ bool build_frame_path(const RenderConfig& config,
     *result = detail::path_from_utf8(config.output.output_directory)
               / detail::path_from_utf8(filename);
     return true;
-}
-
-bool cancelled(const std::atomic_bool* cancel) {
-    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
 
 bool report_progress(const ProgressCallback& progress,
@@ -1228,7 +1253,7 @@ bool render_prepared_sequence(int total_frames,
                                 && prepare_image_output(
                                     detail::path_to_utf8(frame_path), image,
                                     output_config, kSequenceDitherSeed,
-                                    result.prepared.get(), &result.error)) {
+                                    &stop, result.prepared.get(), &result.error)) {
                                 result.ok = true;
                                 result.failure_stage = FrameFailureStage::None;
                             }

@@ -49,6 +49,9 @@ protected:
 
 private:
     QRectF imageRectangle() const;
+    bool sourceOverlayActive() const;
+    QRectF sourceOverlayRectangle() const;
+    QRectF handleRectangle(std::size_t index) const;
     QPointF handlePosition(std::size_t index) const;
     std::optional<std::size_t> hitHandle(const QPointF& position) const;
     std::size_t handleCount() const;

@@ -176,6 +176,9 @@ bool valid_blend_mode(BlendMode mode) {
         case BlendMode::Subtract:
         case BlendMode::Multiply:
         case BlendMode::Add:
+        case BlendMode::Erase:
+        case BlendMode::ColorEraseTones:
+        case BlendMode::ColorEraseBrightness:
             return true;
     }
     return false;
@@ -197,6 +200,9 @@ bool effect_can_create_transparency(const EffectConfig& effect) {
 }
 
 bool render_data_can_create_transparency(const RenderData& render) {
+    if (render.starting_image.enabled) {
+        return true;
+    }
     if (render.alpha.enabled && render.alpha.minimum < 1.0) {
         return true;
     }
@@ -299,6 +305,10 @@ double blend_channel(double backdrop, double source, BlendMode mode) {
             return b * s;
         case BlendMode::Add:
             return std::min(1.0, b + s);
+        case BlendMode::Erase:
+        case BlendMode::ColorEraseTones:
+        case BlendMode::ColorEraseBrightness:
+            return backdrop;
     }
     return source;
 }
@@ -329,6 +339,41 @@ bool composite_pixels(const Image& source, Image& destination,
         }
         const double backdrop_alpha =
             static_cast<double>(destination.pixels[offset + 3U]);
+        if (mode == BlendMode::Erase
+            || mode == BlendMode::ColorEraseTones
+            || mode == BlendMode::ColorEraseBrightness) {
+            if (backdrop_alpha <= 0.0) {
+                continue;
+            }
+            double match = 1.0;
+            if (mode == BlendMode::ColorEraseTones) {
+                const double red = static_cast<double>(source.pixels[offset])
+                                   - destination.pixels[offset];
+                const double green = static_cast<double>(source.pixels[offset + 1U])
+                                     - destination.pixels[offset + 1U];
+                const double blue = static_cast<double>(source.pixels[offset + 2U])
+                                    - destination.pixels[offset + 2U];
+                const double distance = std::sqrt(
+                    red * red + green * green + blue * blue);
+                match = clamp_unit((0.30 - distance) / 0.22);
+                match = match * match * (3.0 - 2.0 * match);
+            } else if (mode == BlendMode::ColorEraseBrightness) {
+                const double source_luma =
+                    0.2126 * source.pixels[offset]
+                    + 0.7152 * source.pixels[offset + 1U]
+                    + 0.0722 * source.pixels[offset + 2U];
+                const double backdrop_luma =
+                    0.2126 * destination.pixels[offset]
+                    + 0.7152 * destination.pixels[offset + 1U]
+                    + 0.0722 * destination.pixels[offset + 2U];
+                match = clamp_unit((source_luma - backdrop_luma) / 0.10);
+                match = match * match * (3.0 - 2.0 * match);
+            }
+            const double erase = clamp_unit(source_alpha * match);
+            destination.pixels[offset + 3U] = static_cast<float>(
+                clamp_unit(backdrop_alpha * (1.0 - erase)));
+            continue;
+        }
         if (backdrop_alpha <= 0.0) {
             destination.pixels[offset] = source.pixels[offset];
             destination.pixels[offset + 1U] = source.pixels[offset + 1U];
@@ -903,17 +948,30 @@ ValidationResult validate(const ProjectConfig& project) {
                       "to keep the project seam smooth.");
             }
             if (layer.enabled && layer.opacity > 0.0) {
-                has_contributing_layer = true;
+                const bool erases_lower_layers =
+                    layer.blend_mode == BlendMode::Erase
+                    || layer.blend_mode == BlendMode::ColorEraseTones
+                    || layer.blend_mode == BlendMode::ColorEraseBrightness;
+                if (erases_lower_layers) {
+                    // A destination-out layer can punch coverage back out of
+                    // an opaque lower stack. A later ordinary opaque layer may
+                    // establish full coverage again.
+                    enabled_stack_is_guaranteed_opaque = false;
+                } else {
+                    has_contributing_layer = true;
+                }
                 // Once an enabled layer is guaranteed to cover every pixel at
                 // alpha 1, ordinary source-over alpha remains 1 for every
                 // layer above it, even when those upper layers are partially
                 // transparent. This permits a safely opaque composite to be
                 // exported as RGB without merely guessing from the presence
                 // of alpha-capable render data elsewhere in the stack.
-                enabled_stack_is_guaranteed_opaque =
-                    enabled_stack_is_guaranteed_opaque
-                    || (layer.opacity == 1.0
-                        && !render_data_can_create_transparency(layer.render));
+                if (!erases_lower_layers) {
+                    enabled_stack_is_guaranteed_opaque =
+                        enabled_stack_is_guaranteed_opaque
+                        || (layer.opacity == 1.0
+                            && !render_data_can_create_transparency(layer.render));
+                }
                 worst_layer_peak =
                     std::max(worst_layer_peak, layer_validation.estimated_peak_bytes);
             }
@@ -1147,6 +1205,9 @@ const char* blend_mode_name(BlendMode value) {
         case BlendMode::Subtract: return "Subtract";
         case BlendMode::Multiply: return "Multiply";
         case BlendMode::Add: return "Add";
+        case BlendMode::Erase: return "Erase";
+        case BlendMode::ColorEraseTones: return "Color eraser (tones)";
+        case BlendMode::ColorEraseBrightness: return "Color eraser (brightness)";
     }
     return "Unknown blend mode";
 }

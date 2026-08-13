@@ -8,6 +8,47 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
+The public product version is now 0.9.0 and has one source of truth in
+`VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
+installed package metadata, and saved-project provenance;
+`scripts/bump-version.sh` performs a validated SemVer bump without silently
+tagging, building, or publishing a release.
+
+This pass also closes former remaining-work items 2 through 6. Layers can use a
+bounded embedded PNG source with Stretch, Contain, Cover, or Tile fitting and a
+shared bounded decoded-image cache. Reusable project-level closed cubic paths
+have stable path/node IDs, explicit handles and handle policies, a four-node
+ellipse tool, bounded arc-length sampling, and independently clocked bindings
+for the active layer, wave sources, and effect centers. Texture/local-Swing
+editing on non-plane surfaces uses a labelled unwrapped source/UV inset instead
+of pretending a screen-space circle is a projection. PNG and EXR encoders check
+cancellation between scanlines while preserving atomic-output cleanup. The Qt
+application is installed by `cmake --install`; system-Qt installs and opt-in Qt
+runtime deployment are documented for Linux/Windows, while the verified macOS
+distribution path remains the release-grade bundle route.
+
+The layer blend list adds three destination-out operations. Erase uses source
+alpha; Color Eraser (tones) uses a soft linear-light color-distance match; Color
+Eraser (brightness) removes backdrop pixels darker than the mask layer. All
+three affect only already-composited lower layers, never later layers above.
+About PVT includes GPLv3-or-later/no-warranty information plus project, bug, and
+private vulnerability-report links.
+
+Cross-platform GPU and native-video parity are not falsely declared complete.
+Metal and AVFoundation/VideoToolbox remain the tested native implementations;
+PNG/EXR sequences remain portable. Optional Linux GStreamer export and a
+user-selected, never-downloaded-or-redistributed Windows FFmpeg executable are
+post-1.0 candidates that require native platform validation.
+
+`PORTABILITY_ROADMAP.md` now makes the next implementation sequence concrete.
+The Qt editor should use Qt's public OpenGL context/offscreen APIs for a first
+Linux/Windows GPU backend rather than adding a second GLFW event/window layer.
+GLFW remains a possible thin PVT-Live presentation front end. Windows native
+movie work should prefer Media Foundation before an explicitly selected FFmpeg
+fallback; Linux should use an optional GStreamer API backend.
+
+### Earlier version-6 foundation
+
 Version 6 adds optional per-layer clocks, Data-only Music sources, five bounded
 duration mappings, compact closed layer-motion presets, and a deterministic
 spark/trail particle effect. Preview playback now mixes every audible project
@@ -139,8 +180,9 @@ layer transforms, and closed motion presets. Block Scale remains a whole-image e
 without a center/radius overlay. Version 5 adds a project-wide Default/Frame/
 Time/Meter/Music clock, parameter-state Hold/Linear/Smoothstep interpolation,
 time-varying music analysis, beat navigation, and layer audio-response routing.
-Version 6 adds local clocks and mapping, Data-only sources, motion, and particles;
-formats 1-5 load with neutral compatibility defaults. The CLI exposes the same
+Version 6 added local clocks and mapping, Data-only sources, motion, and particles;
+setup formats 1-6 load with neutral compatibility defaults under current setup
+format 7. The CLI exposes the same
 clock/music/swing/audio-response/motion/particle state plus immediate portable
 music and OBJ attachment import.
 
@@ -208,7 +250,7 @@ consumers do not inherit minizip requirements.
 | 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave/swing/effect center handles and visible local-radius rings, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, and background export. |
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
 | 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
-| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v6, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
+| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v7, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
 | 14 | Randomize stack values or composition | Complete | Confirmed Settings-menu actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items; they are no longer exposed on the main toolbar. |
 | 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, Space owns preview play/pause outside text editors, and audible global/layer Music-clock tracks are synchronized and mixed. |
 | 16 | Named projects and default filenames | Complete | Semantic name appears in the title and a portable sanitizer supplies the initial `.zip`. Saved-project rename choices either preserve that path or create a current-state-only independent project with fresh identities, then open it or stay in the original. |
@@ -217,7 +259,7 @@ consumers do not inherit minizip requirements.
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
 | 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
-| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v5 imports into a new unsaved one-layer project; setup v6 adds local clock/motion/particle and Data-only data. Only explicit one-layer `--save-legacy` writes `.pvt`. |
+| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v6 imports remain supported with neutral defaults; setup v7 adds starting images and reusable-path bindings/geometry. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
 | 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
@@ -228,8 +270,8 @@ consumers do not inherit minizip requirements.
 | 30 | Per-layer starting palettes | Complete | 1-256 embedded sRGB source colors, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
 | 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization. |
 | 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling intentionally remains CPU-only. |
-| 33 | Layer starting image | Partially complete - asset foundation | Generic image bytes can already be registered, bounded, checksummed, deduplicated, embedded, and recovered after original deletion. The layer source-mode schema/decoder/rendering/editor remain deferred. |
-| 34 | Closed reusable motion paths | Partially complete | Four validated built-in closed paths now animate a whole layer with cycles/phase/rotation/scale. Named user-edited cubic resources and bindings for waves/effect centers/objects remain deferred. |
+| 33 | Layer starting image | Complete | Embedded PNG layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, CPU rendering, hybrid fallback, cancellation, and seam/render regression coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
+| 34 | Closed reusable motion paths | Complete | Up to 32 named project-level paths contain 3-128 stable-ID cubic nodes with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, hybrid fallback, bounded arc-length sampling, and seam/round-trip tests cover the feature. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, and an authoritative per-layer Swing block live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and 8,192-sample multiband/onset/spectral/chroma analysis drive the base clock and independently routable wave/effect/color response. First import enables active-layer response, Energy supplies a visibly dynamic default hue route, and later user overrides remain intact. No fixed whole-song BPM clock is used. |
 | 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; bounded parallel frame render/conversion feeds one ordered writer while hardware policy, alpha, synchronized audio, Data-only exclusion, progress, cancellation, and collision safety remain explicit. No FFmpeg executable or library is used. |
@@ -239,6 +281,9 @@ consumers do not inherit minizip requirements.
 | 41 | vImage/NEON assessment | Complete - no vImage integration | The workload is dominated by custom float procedural/effect/projection code; compiler NEON vectorization plus Metal is a better fit than extra vImage format passes without measured benefit. |
 | 42 | Active-layer clocks | Complete | Each layer may locally override the project clock while retaining the master duration; Smart loop fit, Straight fit, Play once, Play once then project, and Original-speed loop are validated, persisted, previewed, and exported. |
 | 43 | Live performance mode | Designed, not implemented | Keep one repository and shared core; add an ephemeral low-latency input/front-end path with device capture, MIDI/OSC, stage output, and fail-safe controls rather than forking the project. |
+| 44 | Destination-out eraser blends | Complete | Alpha erase, soft linear-light tone erase, and brightness-threshold erase affect only the accumulated lower stack; serialization, CLI, GUI descriptions, alpha validation, and composite tests cover them. |
+| 45 | Projected source/UV editing | Complete | Texture-effect and localized-Swing handles move and render inside an explicit labelled unwrapped source/UV inset for non-plane surfaces; mapped-object controls remain in final screen space. |
+| 46 | Encoder cancellation and GUI install | Complete | PNG/EXR writers abort between scanlines and discard their temporary file. `cmake --install` installs the Qt application when enabled; `PVT_DEPLOY_QT_RUNTIME` optionally stages Qt dependencies, while system-Qt installs remain the Linux default. |
 
 ## Important implementation map
 
@@ -261,7 +306,7 @@ consumers do not inherit minizip requirements.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
   compression, dithering, collision preflight, ordered atomic installation,
   serialized progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v6 codec and split
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v7 codec and split
   per-layer/global bundle records with transactional legacy file I/O.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
   metadata, semantic history operations, readable/direct-editable attachment storage,
@@ -282,7 +327,7 @@ consumers do not inherit minizip requirements.
   cancellable sequence/video export with synchronized audio mixing.
 - `tests/test_main.cpp`, `tests/project_composite_test.cpp`, and
   `tests/bundle_test.cpp`: core/seam/format/setup/I/O, layer/blend/project, and
-  persistence/archive-safety coverage, including worker determinism, setup-v6
+  persistence/archive-safety coverage, including worker determinism, setup-v7
   compatibility, clock/music response, staged/local effects, embedded assets,
   palettes/transforms, readable/direct-edited assets, and rename copies.
   `tests/audio_analysis_test.cpp` covers analysis accuracy/density and offline
@@ -368,6 +413,16 @@ consumers do not inherit minizip requirements.
   do not create commands.
 
 ## Validation record
+
+The 2026-08-12 0.9.0 feature pass passed the complete Qt-enabled Release suite
+21/21. New regression coverage renders and round-trips PNG source layers,
+checks tile/stretch edge sampling, verifies reusable-path validation,
+serialization, tangent following, and exact loop closure, exercises all three
+eraser modes, checks the CLI version, and opens/inspects both About PVT and the
+motion-path editor in GUI smoke. A fresh core-only configure kept Qt deployment
+off; a fresh macOS GUI configure selected it on. `cmake --install` deployed Qt,
+the installed GUI passed its Cocoa smoke test, and the installed CLI passed
+self-test. `git diff --check` is part of final validation below.
 
 The 2026-08-12 native-video scheduling correction passed the Qt-enabled Release
 suite 19/19, focused native-video AddressSanitizer plus UndefinedBehaviorSanitizer
@@ -473,7 +528,7 @@ GUI builds print a deployment-target linker warning there. A redistributable
 macOS package should bundle or link a libpng built for its intended deployment
 target.
 
-## Remaining work for later passes
+## Post-1.0 / 1.1.x roadmap
 
 1. **Live performance mode:** keep this repository and shared renderer/project
    model; add a focused Live mode or sibling front end rather than a fork. Feed
@@ -482,39 +537,28 @@ target.
    latency calibration, MIDI/OSC/tap-tempo scene control, full-screen display
    routing, freeze/blackout, dropout-safe last-good behavior, and a frame-time
    watchdog. Persist portable mappings, not machine-specific device identities.
-2. **Layer starting image:** reuse the implemented bounded readable attachment
-   attachment store; do not add another asset container or naked local path.
-   Add only the layer source-mode schema, transactional image decoder/cache,
-   renderer integration, and GUI. Reference a stable attachment ID/digest and
-   share immutable decoded storage across preview, frames, layers, and compact
-   undo snapshots. Treat it as an alternative to procedural generation and its
-   starting palette, then apply existing periodic effects/surfaces/transforms.
-3. **Reusable closed cubic paths:** define named project-level path geometry
-   separately from per-consumer bindings. Require at least three nodes, close
-   the final cubic segment to the first, give nodes stable IDs, and store Corner,
-   Auto Smooth, Smooth, or Symmetric handle modes with explicit in/out handles.
-   Because three arbitrary smooth nodes are not an exact ellipse, provide an
-   ellipse tool that creates a four-node cubic approximation instead of silently
-   promising circle behavior the geometry cannot guarantee.
-   Bindings for waves, effect centers, and mapped objects should independently
-   own enable, synchronized/free clock, integer cycles, phase, direction, and
-   offset, plus optional follow-tangent orientation. Build a bounded arc-length
-   lookup table after edits for visually uniform sampling. Add a dedicated GUI
-   node/handle editor, strict setup/bundle validation, undo, and semantic diffs.
-4. **Projected source-overlay editing:** add an explicit unwrapped source/UV
-   preview or inset for Texture effects and localized Swings when a non-plane
-   surface is active. Their current dotted overlays are deliberately labelled
-   as unprojected; arbitrary OBJ UVs can be discontinuous or one-to-many, so a
-   screen-space circle must not pretend to be the projected footprint.
-5. If encoder-level cancellation becomes important, add format-specific abort
-   plumbing around libpng/zlib and EXR output. Rendering itself is cancellable
-   within expensive frame/effect/OBJ passes; an encoder currently finishes the
-   one atomic output file it has already started.
-6. For distributable GUI bundles, deploy the matching Qt runtime. On macOS also
-   resolve the deployment-target mismatch by packaging an appropriately built
-   libpng and exercise the oldest supported macOS version. Until that deployment
-   workflow exists, the GUI intentionally remains a build-tree application and is
-   not installed by `cmake --install`.
-7. Expand GUI automation beyond the bounded smoke paths to exhaustively drive
+2. **Snapcraft distribution:** create, test, publish, and debug the Snap in an
+   Ubuntu VM. Snap confinement, plugs, desktop integration, and store behavior
+   require a real target environment; do not infer success from macOS.
+3. **Debian/PPA distribution:** build and test Debian packages and a Launchpad
+   PPA from Debian/Ubuntu systems, including clean-install, upgrade, dependency,
+   and desktop-entry behavior.
+4. **Cross-platform acceleration:** retain explicit CPU, CPU+GPU, and strict-GPU
+   policy plus dependable CPU fallback. Metal is the only implemented/tested GPU
+   backend today. Implement the staged Qt-hosted OpenGL design in
+   `PORTABILITY_ROADMAP.md`, exercise it first with Mesa CI parity, and call it
+   production-ready only after real Linux/Windows GPU stacks pass; a
+   software-rendered VM does not prove parity. GLFW may host a future standalone
+   Live output window but does not replace the renderer or Qt editor.
+5. **Cross-platform native video:** investigate optional GStreamer export on
+   Linux. Prefer native Media Foundation on Windows; a later integration may
+   prompt for an already-installed FFmpeg executable and link to external
+   instructions, but must neither download nor redistribute FFmpeg. Treat codec
+   availability, licensing, patents, cancellation, audio sync, alpha, and atomic
+   output as explicit policies.
+6. **Deeper creative controls:** add more effect types and greater parameter
+   control, plus bounded embedded depth-map and normal-map sources that can be
+   targeted to all or part of a layer.
+7. **Exhaustive GUI automation:** expand beyond the bounded smoke paths to drive
    every layer editor, undo merge boundary, long semantic diff, bit-depth
    transition, progress path, and cancellation race.

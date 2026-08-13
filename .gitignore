@@ -53,3 +53,14 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Local builds and generated frames
+.DS_Store
+/build*/
+/render9
+frame_*.png
+frame_*.exr
+/library_example.png
+
+# Wavefront fixtures used by the custom-surface parser and renderer tests.
+!tests/assets/obj/*.obj

@@ -272,14 +272,22 @@ void test_layer_codec_backward_compatibility() {
     original.audio_reactive.color_enabled = true;
     original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
     original.audio_reactive.color_amount_degrees = 38.0;
+    original.waves.front().path.enabled = true;
+    original.waves.front().path.path_id = 91U;
+    original.waves.front().path.cycles_per_loop = 2;
+    original.effects.front().path.path_id = 91U;
+    original.motion.custom_path.path_id = 91U;
+    const std::vector<pvt::CubicMotionPath> motion_paths{
+        pvt::default_ellipse_path(91U, 100U, "Layer ellipse")};
 
     std::string version_three;
     std::string error;
-    CHECK(pvt::detail::serialize_layer_config(original, version_three, &error));
-    CHECK(version_three.rfind("PVT_LAYER\t4\n", 0U) == 0U);
+    CHECK(pvt::detail::serialize_layer_config(
+        original, version_three, &error, &motion_paths));
+    CHECK(version_three.rfind("PVT_LAYER\t5\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
-        version_three, current_round_trip, &error));
+        version_three, current_round_trip, &error, &motion_paths));
     CHECK(current_round_trip.swings.front().radius == 0.27);
     CHECK(current_round_trip.effects.front().space
           == pvt::EffectSpace::Surface);
@@ -310,6 +318,8 @@ void test_layer_codec_backward_compatibility() {
           == pvt::MusicFeature::Onset);
     CHECK(current_round_trip.audio_reactive.color_source
           == pvt::MusicFeature::Midrange);
+    CHECK(current_round_trip.waves.front().path.enabled);
+    CHECK(current_round_trip.waves.front().path.path_id == 91U);
 
     // PVT_LAYER v2 carried the PVT_SETUP v4 render subset. Strip every v3/v4
     // synchronization and animation record while preserving v2 spatial data.
@@ -317,7 +327,7 @@ void test_layer_codec_backward_compatibility() {
     std::ostringstream version_two_output;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_input, line)));
-    CHECK(line == "PVT_LAYER\t4");
+    CHECK(line == "PVT_LAYER\t5");
     version_two_output << "PVT_LAYER\t2\n";
     while (std::getline(current_input, line)) {
         const std::size_t tab = line.find('\t');
@@ -326,6 +336,8 @@ void test_layer_codec_backward_compatibility() {
                              || key.rfind("audio_reactive.", 0U) == 0U
                              || key.rfind("layer_clock.", 0U) == 0U
                              || key.rfind("motion.", 0U) == 0U
+                             || key.rfind("source_image.", 0U) == 0U
+                             || key.find(".path.") != std::string::npos
                              || key == "surface.obj_sha256"
                              || key == "surface.obj_basename";
         if (!v3_only) version_two_output << line << '\n';
@@ -436,13 +448,15 @@ void test_render_output_codec_backward_compatibility() {
         {0.2F, 0.3F, 0.4F, 0.5F, 0.6F, 0.7F},
         {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
     };
+    canvas.motion_paths.push_back(
+        pvt::default_ellipse_path(91U, 100U, "Codec ellipse"));
     output.filename_prefix = "music-sync_";
 
     std::string version_two;
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t3\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t4\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -455,6 +469,8 @@ void test_render_output_codec_backward_compatibility() {
           == pvt::MusicSwingPolicy::SuppressGlobal);
     CHECK(round_trip.clock.music.source_sha256 == std::string(64U, 'b'));
     CHECK(round_trip.clock.music.beat_times_seconds.size() == 4U);
+    CHECK(round_trip.motion_paths.size() == 1U);
+    CHECK(round_trip.motion_paths.front().nodes.size() == 4U);
     CHECK(round_trip_output.filename_prefix == "music-sync_");
 
     std::string analysis;
@@ -491,13 +507,14 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t3");
+    CHECK(line == "PVT_RENDER_OUTPUT\t4");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');
         const std::string key = line.substr(0U, tab);
         const bool v2_only = key.rfind("timing.clock.", 0U) == 0U
-                             || key.rfind("timing.music.", 0U) == 0U;
+                             || key.rfind("timing.music.", 0U) == 0U
+                             || key.rfind("paths.", 0U) == 0U;
         if (!v2_only) legacy << line << '\n';
     }
 
@@ -670,6 +687,12 @@ void test_directory_versions_and_names(const fs::path& directory) {
     initial_render.swings_enabled = false;
     initial_render.audio_reactive.wave_source = pvt::MusicFeature::Treble;
     initial_render.audio_reactive.wave_amount = 0.57;
+    document.project.canvas.motion_paths.push_back(
+        pvt::default_ellipse_path(91U, 100U, "Bundle ellipse"));
+    initial_render.waves.front().path.enabled = true;
+    initial_render.waves.front().path.path_id = 91U;
+    initial_render.waves.front().path.cycles_per_loop = 3;
+    initial_render.waves.front().path.follow_tangent = true;
     const std::string opened = document.last_opened_utc;
     const fs::path bundle = directory
                             / pvt::detail::path_from_utf8(
@@ -693,6 +716,9 @@ void test_directory_versions_and_names(const fs::path& directory) {
           == pvt::ClockInterpolation::Hold);
     CHECK(loaded.project.canvas.clock.time_interval_microseconds == 250000);
     CHECK(loaded.project.canvas.clock.meter.expression == "3+2+3/8");
+    CHECK(loaded.project.canvas.motion_paths.size() == 1U);
+    CHECK(loaded.project.canvas.motion_paths.front().name == "Bundle ellipse");
+    CHECK(loaded.project.canvas.motion_paths.front().nodes.size() == 4U);
     const auto& loaded_render = loaded.project.layers.front().render;
     CHECK(loaded_render.swings.front().center_x == 0.31);
     CHECK(loaded_render.swings.front().center_y == 0.69);
@@ -709,6 +735,9 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(loaded_render.audio_reactive.wave_source
           == pvt::MusicFeature::Treble);
     CHECK(loaded_render.audio_reactive.wave_amount == 0.57);
+    CHECK(loaded_render.waves.front().path.enabled);
+    CHECK(loaded_render.waves.front().path.path_id == 91U);
+    CHECK(loaded_render.waves.front().path.follow_tangent);
     loaded.project.layers[0].name = "Brighter base";
     loaded.project.canvas.clock.reverse = true;
     loaded.project.canvas.clock.meter.expression = "5+3/8";
@@ -1300,7 +1329,9 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(pvt::validate_project_bundle(as_utf8(checksum_bundle), nullptr, &error));
 
     std::string root = read_bytes(checksum_bundle / "metadata.txt");
-    CHECK(replace_once(root, "project.last_changed_with_version\t6.0.0\n",
+    CHECK(replace_once(root,
+                       "project.last_changed_with_version\t"
+                           + checksum_document.last_changed_with_version + "\n",
                        "project.last_changed_with_version\t99.0.0\n"));
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
@@ -1397,7 +1428,10 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         pvt::surface_obj_attachment_id(document.project.layers.front().uuid),
         as_utf8(obj_source), &obj_attachment, &error));
     CHECK(pvt::attach_project_file(
-        document, "image.cover", as_utf8(image_source),
+        document,
+        pvt::starting_image_attachment_id(
+            document.project.layers.front().uuid),
+        as_utf8(image_source),
         &image_attachment, &error));
     // A second logical reference with the same bytes and original filename
     // reuses the same readable bundle entry.
@@ -1434,6 +1468,14 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     surface.obj_path = obj_attachment.local_path;
     surface.obj_sha256 = obj_attachment.sha256;
     surface.obj_basename = obj_attachment.basename;
+    auto& starting_image =
+        document.project.layers.front().render.starting_image;
+    starting_image.enabled = true;
+    starting_image.fit = pvt::StartingImageFit::Contain;
+    starting_image.path = image_attachment.local_path;
+    starting_image.sha256 = image_attachment.sha256;
+    starting_image.basename = image_attachment.basename;
+    document.project.output.write_alpha = true;
 
     // Registration owns a managed copy immediately, so all originals may move
     // before the first save without losing the attachment.
@@ -1589,8 +1631,15 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
               loaded.project.layers.front().render.surface.obj_path))
           == obj_bytes);
     CHECK(read_bytes(pvt::detail::path_from_utf8(
-              pvt::project_attachment_path(loaded, "image.cover")))
+              pvt::project_attachment_path(
+                  loaded, pvt::starting_image_attachment_id(
+                              loaded.project.layers.front().uuid))))
           == image_bytes);
+    CHECK(loaded.project.layers.front().render.starting_image.enabled);
+    CHECK(loaded.project.layers.front().render.starting_image.fit
+          == pvt::StartingImageFit::Contain);
+    CHECK(loaded.project.layers.front().render.starting_image.sha256
+          == image_attachment.sha256);
 
     loaded.project.layers.front().name = "Second version";
     CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
@@ -1819,7 +1868,10 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::load_project_document(as_utf8(bundle), directly_edited, &error));
     CHECK(directly_edited.externally_modified && directly_edited.dirty);
     const pvt::ProjectAttachment* edited_image =
-        pvt::find_project_attachment(directly_edited, "image.cover");
+        pvt::find_project_attachment(
+            directly_edited,
+            pvt::starting_image_attachment_id(
+                directly_edited.project.layers.front().uuid));
     CHECK(edited_image != nullptr);
     if (edited_image != nullptr) {
         CHECK(edited_image->basename == "cover-edited.png");

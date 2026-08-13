@@ -1,5 +1,9 @@
 # Procedural Visualizer Tool
 
+Current product version: **0.9.0**. The version is read from `VERSION` by every
+build and appears in the GUI title, About PVT dialog, native application
+metadata, library package metadata, and saved-project provenance.
+
 A seamless-loop procedural image renderer with a reusable C++ library, command-line
 editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
@@ -78,9 +82,11 @@ and therefore needs network access on its first distribution build.
 ### Automated desktop packages
 
 GitHub Actions builds tested desktop packages after every push to `main`, for
-every pull-request update, and on manual request. Open the **Build desktop
-packages** workflow run on GitHub and download the artifact for the required
-platform:
+every pull-request update, on manual request, and for version tags. Permanent
+versioned downloads and their `SHA256SUMS.txt` are published on the
+[GitHub Releases page](https://github.com/gnaservicesinc/procedural_visualizer_tool/releases).
+The **Build desktop packages** workflow also retains per-commit artifacts for
+30 days:
 
 - `procedural-visualizer-tool-macos-arm64.zip` supports Apple Silicon Macs on
   macOS 13 or newer.
@@ -93,12 +99,11 @@ platform:
   built and tested on Ubuntu 24.04.
 
 Each package contains the Qt GUI, the `render9` command-line renderer, licenses,
-and documentation. Workflow artifacts are retained for 30 days. As an
-intentional project policy, the macOS app uses an ad-hoc signature and is not
-notarized, and the Windows executable is not Authenticode-signed. Users can
-approve the downloaded application through their platform's security controls,
-or build from source and sign the result locally. The workflow does not require
-or expect commercial signing credentials.
+and documentation. As an intentional project policy, the macOS app uses an
+ad-hoc signature and is not notarized, and the Windows executable is not
+Authenticode-signed. Users can approve the downloaded application through their
+platform's security controls, or build from source and sign the result locally.
+The workflow does not require or expect commercial signing credentials.
 
 ## What is configurable
 
@@ -110,7 +115,10 @@ or expect commercial signing credentials.
   is bottom-to-top; the GUI presents the topmost layer first.
 - Per-layer opacity and Normal (`none`), Soft Light, Grain Merge, Overlay,
   Color Dodge, Linear Burn, Color Burn, Difference, Subtract, Multiply, and Add
-  blend modes. Normal is ordinary Porter-Duff source-over compositing.
+  blend modes. Three destination-out modes use the current layer as a mask for
+  lower layers only: Erase uses source alpha, Color Eraser (tones) matches
+  linear-light color distance, and Color Eraser (brightness) removes darker
+  backdrop pixels. Layers above remain untouched.
 - Any number of waves from zero through the validated safety limit, with add,
   duplicate, remove, enable, and reorder controls.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
@@ -139,14 +147,18 @@ or expect commercial signing credentials.
   range/mix/quantization steps.
 - Per-layer closed motion presets: orbit, figure eight, bounce, and Lissajous,
   with center, horizontal/vertical travel, integer loop cycles, phase, rotation,
-  and optional scale pulsing. They provide useful animated placement now while
-  the more elaborate reusable cubic-path editor remains future work.
+  and optional scale pulsing. Projects can also own up to 32 reusable closed
+  cubic paths. The GUI edits stable nodes, explicit in/out handles, Corner,
+  Auto Smooth, Smooth, and Symmetric policies, and creates four-node cubic
+  ellipse approximations. Independent bindings drive the active layer, wave
+  sources, or effect centers with sync/free clocks, integer cycles, phase,
+  reverse, offsets, optional tangent following, and bounded arc-length sampling.
 - Draggable numbered effect centers in the preview. A local area radius of zero
   preserves whole-layer behavior; a positive radius creates a smoothly
   feathered circle around the center for zoom, ripple, shake, flag wave, and
   glow. Glow's blur radius remains a separate control. Texture-effect and Swing
-  overlays are explicitly marked as unprojected source/UV coordinates; mapped-
-  object overlays are final screen coordinates.
+  overlays use a labelled unwrapped source/UV inset whenever a non-plane
+  surface is active; mapped-object overlays remain final screen coordinates.
 - Transparent, black, white, or reflected out-of-frame handling for coordinate
   effects.
 - Multiple dynamic swing modulators with sine, triangle, smooth-pulse, and
@@ -171,6 +183,12 @@ or expect commercial signing credentials.
   source colors in linear light without changing alpha; lighting and effects
   may create other colors afterward. Presets never silently change
   whether the starting palette is enabled.
+- An optional embedded PNG starting image per layer, with Stretch, Contain,
+  Cover, and Tile fitting. It replaces procedural source generation and the
+  starting palette; effects, surface mapping, transforms, motion, quantization,
+  compositing, and export still run afterward. Files use the bounded
+  content-addressed attachment store, and a bounded shared decoded-image cache
+  avoids repeated work across frames and layers.
 - Per-layer horizontal/vertical flips and directional mirror symmetry
   (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
 - Independent feature toggles for displacement, slope lighting, spiral, and
@@ -212,6 +230,9 @@ begin in the home folder.
 Every GUI field edit and structural move participates in session undo/redo.
 **Settings > Application Settings…** (also available from the main toolbar)
 provides extensible General and Rendering pages for program-wide preferences.
+**Help > About PVT** shows the product version and GPLv3-or-later/no-warranty
+notice, and provides direct Project Website, Report a Bug, and Report a
+Vulnerability links through the system browser.
 The undo step limit, rendering backend, window layout, and dialog locations are
 stored with the platform's normal per-user settings service (`QSettings`), so
 they persist across projects and relaunches and are never placed inside a
@@ -717,7 +738,7 @@ cmake --build build-example --parallel
 ```
 
 Install the library, public header, CMake package metadata, CLI, license, and
-documentation with:
+documentation—and the GUI when it was enabled—with:
 
 ```sh
 cmake --install build --prefix /desired/prefix
@@ -736,6 +757,25 @@ The packaging check recursively rejects Mach-O dependencies that still point
 into `/opt`, `/usr/local`, or a user's home directory; rejects any binary whose
 minimum macOS version exceeds the chosen deployment target; requires the app
 and third-party license notices; and verifies the completed code signature.
+
+For a normal system Qt installation on Linux, the application can be built and
+installed conventionally:
+
+```sh
+cmake -S . -B build-linux -G Ninja \
+  -DPVT_BUILD_QT_GUI=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux --parallel
+cmake --install build-linux --prefix /usr/local
+```
+
+The default install relies on the system Qt runtime, as Linux package managers
+expect. Set `-DPVT_DEPLOY_QT_RUNTIME=ON` for a relocatable staging prefix on a
+supported Qt kit. The same option runs Qt's deployment script on Windows; it
+does not download dependencies.
+
+To bump the public version, run `scripts/bump-version.sh MAJOR.MINOR.PATCH`,
+then reconfigure. The script intentionally changes only `VERSION`, keeping one
+source of truth and leaving release notes, tags, builds, and uploads explicit.
 
 ## Direct CMake Qt build
 
@@ -761,13 +801,16 @@ The suite covers dynamic zero/one/ten-item configurations, deterministic frames,
 exact and near-seam continuity for every effect in both synchronization modes,
 texture/mapped-object stages, local effect and swing influence, starting
 palette ordering and toggle bypass, post-effects quantization,
-transforms, closed layer motion, particles, direction modes, alpha range and
+embedded starting-image decode/fitting/cache and CLI rendering, transforms,
+closed presets plus reusable cubic-path geometry/bindings/loop closure,
+particles, direction modes, alpha range and
 straight-alpha/glow composition,
 primitive mappings, rear-surface alpha/color compositing, bounded OBJ
 parsing/caching and
 two-sided perspective rendering, animated smooth/stepped block grouping and
 effect ordering, default glow visibility, memory and value limits, setup round
-trips and transactional failure, project/layer validation, every blend mode,
+trips and transactional failure, project/layer validation, every blend mode
+including destination-out erasers,
 opacity and paint order, ZIP/directory bundle round trips, immutable version
 append/no-change validation, semantic diffs, current/revert behavior, legacy
 promotion, checksum/fallback handling, readable attachment names and direct-edit
@@ -786,8 +829,8 @@ transactional cancellation, and the public library API. It also exercises CLI
 help, option rejection, and the
 multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's
 offscreen platform, exercises project/layer/bundle/synchronization state, verifies
-that Play installs advancing completed preview frames, and checks adaptive UI
-layout behavior.
+that Play installs advancing completed preview frames, opens and inspects About
+PVT and the reusable-path editor, and checks adaptive UI layout behavior.
 
 ## Live performance direction
 
@@ -814,30 +857,27 @@ choose whether the visuals react to the acoustic instrument, the effected
 pedal/looper chain, or both. NDI/Syphon/Spout-style output can follow after the
 local performance path is dependable.
 
-## Planned architecture (not implemented)
+## Post-1.0 roadmap
 
-The following requests are deliberately not represented as half-working fields
-or external-path shortcuts:
-
-- **Layer starting images:** the bounded, checksummed, readable attachment
-  store is implemented and can already retain generic image attachments. The
-  remaining work is the actual layer source-mode schema, decoder/cache, GUI,
-  and rendering path. Layers should reference the existing stable attachment
-  ID/digest while preview/export share an immutable decoded image. Procedural
-  generation with an optional starting palette and an embedded starting image
-  should be mutually exclusive source modes; either source then participates in
-  the same periodic effects, surfaces, transforms, and paths.
-- **Reusable closed motion paths:** paths should be named project resources,
-  separate from bindings that attach them to a wave, effect center, or mapped
-  object. A path will contain at least three nodes and closed cubic segments,
-  with stable node IDs and Corner, Auto Smooth, Smooth, and Symmetric handle
-  modes. Three arbitrary smooth nodes do not mathematically define an exact
-  ellipse, so the editor should include an ellipse tool that creates the usual
-  four-node cubic approximation. Each consumer binding owns enable, sync/free
-  clock, cycles, phase, direction, offset, and optional follow-tangent settings.
-  A bounded arc-length lookup table should provide visually uniform motion, and
-  the GUI needs a dedicated node/handle editor plus strict persistence
-  validation. This avoids duplicating geometry or baking one position per frame.
+- **PVT-Live / 1.1.x:** remain in this repository with the shared renderer and
+  project model while artist feedback defines a stage-focused mode or sibling
+  front end. Device input, incremental analysis, MIDI/OSC, display routing,
+  freeze/blackout, and watchdog behavior must be bounded and fail-safe.
+- **Linux distribution / 1.1.x:** build and debug Snapcraft packages in an
+  Ubuntu VM, then Debian packages and a Launchpad PPA in appropriate Debian and
+  Ubuntu test systems. These formats should not be guessed from macOS.
+- **GUI automation / 1.1.x:** expand beyond bounded smoke paths into every
+  editor, undo merge boundary, semantic diff, bit-depth transition, progress
+  path, and cancellation race.
+- **Creative controls / 1.1.x:** add more effect types and deeper parameters,
+  plus optional depth-map and normal-map inputs for selected layer regions.
+- **Platform parity:** Metal remains the tested accelerated backend. A portable
+  GPU backend is a goal only after native Linux/Windows validation is available.
+  The concrete design in [`PORTABILITY_ROADMAP.md`](PORTABILITY_ROADMAP.md)
+  uses Qt-hosted OpenGL for the existing editor, prefers Media Foundation for
+  native Windows movies and optional GStreamer for Linux, and reserves GLFW for
+  a possible lightweight Live front end rather than duplicating Qt inside the
+  editor. PNG/EXR sequences remain the dependable cross-platform export today.
 
 ## Current boundary
 
@@ -845,15 +885,12 @@ Plane, cylinder, sphere, and cube mappings have analytic CPU and Metal paths;
 custom OBJ mapping uses a bounded cached CPU parser and rasterizer. OBJ materials
 and textures are intentionally not loaded because the procedural frame supplies
 the surface image. Cooperative cancellation is checked within CPU rendering,
-Metal admission, effects, surface mapping, quantization, layer compositing, and
-OBJ rasterization. An in-flight GPU command buffer or image encoder already
-writing one atomic output file is allowed to finish, but its result is discarded
-before destination installation when cancellation is observed. Music, custom
-OBJ, and registered generic attachments are embedded under their content
-identity and exact original filename; starting-image rendering is not yet
-implemented. Compact closed layer-motion presets are implemented; reusable
-editable cubic paths remain planned work as described above. Live audio/data
-capture remains future work. See
+Metal admission, effects, surface mapping, quantization, layer compositing, OBJ
+rasterization, and every PNG/EXR output scanline. An in-flight GPU command
+buffer may finish, but its result is discarded before installation when
+cancellation is observed. Music, custom OBJ, and starting-image attachments are
+embedded under their content identity and exact original filename. Live
+audio/data capture and non-macOS native movie containers remain future work. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 
 This project is licensed under GPLv3. Applications distributed with the library

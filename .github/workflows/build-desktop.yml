@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -374,3 +376,59 @@ jobs:
           path: dist/${{ matrix.archive }}
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify tag matches product version
+        shell: bash
+        run: |
+          product_version=$(tr -d '\r\n' < VERSION)
+          if [[ "$GITHUB_REF_NAME" != "v$product_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION=$product_version" >&2
+            exit 1
+          fi
+
+      - name: Download verified platform packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        with:
+          pattern: procedural-visualizer-tool-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create checksums and release notes
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum procedural-visualizer-tool-* > SHA256SUMS.txt
+          cd ..
+          product_version=${GITHUB_REF_NAME#v}
+          cat > release-notes.md <<EOF
+          Procedural Visualizer Tool $product_version is the first public 0.9.x preview on the road to 1.0.0.
+
+          Highlights include embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, expanded music-responsive editing and export, project bundles, and the new About PVT/version workflow.
+
+          Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
+
+          Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows currently use the dependable CPU renderer and PNG/EXR sequence export while portable GPU and native movie backends are developed. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
+          EOF
+
+      - name: Publish GitHub pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release-assets/* \
+            --title "Procedural Visualizer Tool ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --verify-tag

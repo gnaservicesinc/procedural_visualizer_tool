@@ -7,8 +7,8 @@
 
 namespace pvt::detail {
 
-inline constexpr std::uint32_t kLayerConfigFormatVersion = 4U;
-inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 3U;
+inline constexpr std::uint32_t kLayerConfigFormatVersion = 5U;
+inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 4U;
 inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 1U;
 inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 1U;
 
@@ -28,10 +28,12 @@ PVT_API bool deserialize_setup_config(const std::string& serialized,
 // canvas/clock/export data. Readers retain every earlier codec version.
 bool serialize_layer_config(const RenderData& render,
                             std::string& serialized,
-                            std::string* error = nullptr);
+                            std::string* error = nullptr,
+                            const std::vector<CubicMotionPath>* motion_paths = nullptr);
 bool deserialize_layer_config(const std::string& serialized,
                               RenderData& destination,
-                              std::string* error = nullptr);
+                              std::string* error = nullptr,
+                              const std::vector<CubicMotionPath>* motion_paths = nullptr);
 
 bool serialize_render_output_config(const CanvasLoopConfig& canvas,
                                     const ExportConfig& output,

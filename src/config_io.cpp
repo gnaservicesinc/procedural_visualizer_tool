@@ -68,8 +68,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = 4096U;
 constexpr std::size_t kMaximumMusicFormatBytes = 64U;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 6U,
-              "config_io.cpp implements setup format version 6");
+static_assert(kSetupFormatVersion == 7U,
+              "config_io.cpp implements setup format version 7");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -175,10 +175,12 @@ bool parse_records(const std::string& contents,
                 setup_version = 5U;
             } else if (line == "PVT_SETUP\t6") {
                 setup_version = 6U;
+            } else if (line == "PVT_SETUP\t7") {
+                setup_version = 7U;
             } else {
                 return fail(error,
                             "Unsupported or malformed setup header; expected "
-                            "'PVT_SETUP\\t1' through 'PVT_SETUP\\t6'.");
+                            "'PVT_SETUP\\t1' through 'PVT_SETUP\\t7'.");
             }
         } else {
             const std::size_t tab = line.find('\t');
@@ -571,6 +573,22 @@ constexpr std::array<std::pair<std::string_view, SurfaceMapping>, 5U> kSurfaceMa
     {"custom_obj", SurfaceMapping::CustomObj},
 }};
 
+constexpr std::array<std::pair<std::string_view, StartingImageFit>, 4U>
+    kStartingImageFits{{
+        {"stretch", StartingImageFit::Stretch},
+        {"contain", StartingImageFit::Contain},
+        {"cover", StartingImageFit::Cover},
+        {"tile", StartingImageFit::Tile},
+    }};
+
+constexpr std::array<std::pair<std::string_view, PathHandleMode>, 4U>
+    kPathHandleModes{{
+        {"corner", PathHandleMode::Corner},
+        {"auto_smooth", PathHandleMode::AutoSmooth},
+        {"smooth", PathHandleMode::Smooth},
+        {"symmetric", PathHandleMode::Symmetric},
+    }};
+
 constexpr std::array<std::pair<std::string_view, Waveform>, 4U> kWaveforms{{
     {"sine", Waveform::Sine},
     {"triangle", Waveform::Triangle},
@@ -759,6 +777,25 @@ private:
     bool ok_ = true;
 };
 
+void add_path_binding_records(SetupBuilder& builder,
+                              std::string_view prefix,
+                              const PathBinding& binding) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    builder.add_bool(key("enabled"), binding.enabled);
+    builder.add_integer(key("path_id"), binding.path_id);
+    builder.add_bool(key("synchronized"), binding.synchronized);
+    builder.add_integer(key("cycles_per_loop"), binding.cycles_per_loop);
+    builder.add_double(key("phase_degrees"), binding.phase_degrees);
+    builder.add_bool(key("reverse"), binding.reverse);
+    builder.add_double(key("offset_x"), binding.offset_x);
+    builder.add_double(key("offset_y"), binding.offset_y);
+    builder.add_bool(key("follow_tangent"), binding.follow_tangent);
+}
+
 void add_music_records(SetupBuilder& builder, std::string_view prefix,
                        const MusicAnalysis& music) {
     const auto key = [prefix](std::string_view suffix) {
@@ -874,6 +911,12 @@ bool validate_persistence_bounds(const RenderConfig& config,
         return fail(error,
                     "Cannot save configuration: custom OBJ attachment metadata is invalid.");
     }
+    if (!is_lowercase_sha256(config.starting_image.sha256)
+        || config.starting_image.basename.size()
+               > kMaximumAttachmentBasenameBytes) {
+        return fail(error,
+                    "Cannot save configuration: starting-image attachment metadata is invalid.");
+    }
     const auto oversized_music_collections = [](const MusicAnalysis& candidate) {
         return candidate.beat_times_seconds.size() > kMaximumMusicBeats
                || candidate.tempo_points.size() > kMaximumMusicTempoPoints
@@ -934,6 +977,29 @@ bool serialize_setup(const RenderConfig& config,
                        config.clock.phase_offset_degrees);
     builder.add_bool("timing.clock.reverse", config.clock.reverse);
     builder.add_bool("timing.clock.data_only", config.clock.data_only);
+
+    builder.add_integer("paths.count", config.motion_paths.size());
+    for (std::size_t path_index = 0U;
+         path_index < config.motion_paths.size(); ++path_index) {
+        const CubicMotionPath& path = config.motion_paths[path_index];
+        builder.add_integer(indexed_key("paths", path_index, "id"), path.id);
+        builder.add_string(indexed_key("paths", path_index, "name"), path.name);
+        const std::string nodes = indexed_key("paths", path_index, "nodes");
+        builder.add_integer(nodes + ".count", path.nodes.size());
+        for (std::size_t node_index = 0U;
+             node_index < path.nodes.size(); ++node_index) {
+            const CubicPathNode& node = path.nodes[node_index];
+            builder.add_integer(indexed_key(nodes, node_index, "id"), node.id);
+            builder.add_double(indexed_key(nodes, node_index, "x"), node.x);
+            builder.add_double(indexed_key(nodes, node_index, "y"), node.y);
+            builder.add_double(indexed_key(nodes, node_index, "in_x"), node.in_x);
+            builder.add_double(indexed_key(nodes, node_index, "in_y"), node.in_y);
+            builder.add_double(indexed_key(nodes, node_index, "out_x"), node.out_x);
+            builder.add_double(indexed_key(nodes, node_index, "out_y"), node.out_y);
+            builder.add_enum(indexed_key(nodes, node_index, "handle_mode"),
+                             node.handle_mode, kPathHandleModes);
+        }
+    }
 
     const MusicAnalysis& music = config.clock.music;
     builder.add_integer("timing.music.schema_version", music.schema_version);
@@ -1019,6 +1085,8 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_integer(indexed_key("waves", index, "cycles_per_loop"), wave.cycles_per_loop);
         builder.add_double(indexed_key("waves", index, "phase_degrees"), wave.phase_degrees);
         builder.add_double(indexed_key("waves", index, "direction"), wave.direction);
+        add_path_binding_records(
+            builder, indexed_key("waves", index, "path") + ".", wave.path);
     }
 
     builder.add_integer("swings.count", config.swings.size());
@@ -1060,6 +1128,8 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("effects", index, "threshold"), effect.threshold);
         builder.add_double(indexed_key("effects", index, "soft_knee"), effect.soft_knee);
         builder.add_double(indexed_key("effects", index, "area_radius"), effect.area_radius);
+        add_path_binding_records(
+            builder, indexed_key("effects", index, "path") + ".", effect.path);
     }
 
     builder.add_bool("rhythm.swings_enabled", config.swings_enabled);
@@ -1124,6 +1194,13 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("surface.obj_sha256", config.surface.obj_sha256);
     builder.add_string("surface.obj_basename", config.surface.obj_basename);
 
+    builder.add_bool("source_image.enabled", config.starting_image.enabled);
+    builder.add_enum("source_image.fit", config.starting_image.fit,
+                     kStartingImageFits);
+    builder.add_string("source_image.path", config.starting_image.path);
+    builder.add_string("source_image.sha256", config.starting_image.sha256);
+    builder.add_string("source_image.basename", config.starting_image.basename);
+
     builder.add_bool("palette.enabled", config.palette.enabled);
     builder.add_string("palette.name", config.palette.name);
     builder.add_integer("palette.colors.count", config.palette.colors.size());
@@ -1149,7 +1226,11 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("motion.phase_degrees", config.motion.phase_degrees);
     builder.add_integer("motion.rotations_per_loop",
                         config.motion.rotations_per_loop);
+    builder.add_double("motion.rotation_offset_degrees",
+                       config.motion.rotation_offset_degrees);
     builder.add_double("motion.scale_pulse", config.motion.scale_pulse);
+    add_path_binding_records(builder, "motion.custom_path.",
+                             config.motion.custom_path);
 
     builder.add_integer("output.bit_depth", config.output.bit_depth);
     builder.add_integer("output.png_compression_level",
@@ -1296,6 +1377,30 @@ bool consume_clock_records(Records& records, std::string_view prefix,
            && consume_music_records(records, music_prefix, clock.music, error);
 }
 
+bool consume_path_binding_records(Records& records,
+                                  std::string_view prefix,
+                                  PathBinding& binding,
+                                  std::string* error) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    return consume_bool(records, key("enabled"), binding.enabled, error)
+           && consume_integer(records, key("path_id"), binding.path_id, error)
+           && consume_bool(records, key("synchronized"),
+                           binding.synchronized, error)
+           && consume_integer(records, key("cycles_per_loop"),
+                              binding.cycles_per_loop, error)
+           && consume_double(records, key("phase_degrees"),
+                             binding.phase_degrees, error)
+           && consume_bool(records, key("reverse"), binding.reverse, error)
+           && consume_double(records, key("offset_x"), binding.offset_x, error)
+           && consume_double(records, key("offset_y"), binding.offset_y, error)
+           && consume_bool(records, key("follow_tangent"),
+                           binding.follow_tangent, error);
+}
+
 bool deserialize_setup(Records& records,
                        std::uint32_t setup_version,
                        RenderConfig& candidate,
@@ -1306,6 +1411,65 @@ bool deserialize_setup(Records& records,
         || !consume_integer(records, "timing.total_frames", candidate.total_frames, error)
         || !consume_double(records, "timing.fps", candidate.fps, error)) {
         return false;
+    }
+
+    if (setup_version >= 7U) {
+        std::size_t path_count = 0U;
+        if (!consume_count(records, "paths.count", kMaximumMotionPaths,
+                           path_count, error)) {
+            return false;
+        }
+        candidate.motion_paths.assign(path_count, {});
+        for (std::size_t path_index = 0U;
+             path_index < path_count; ++path_index) {
+            CubicMotionPath& path = candidate.motion_paths[path_index];
+            const std::string nodes =
+                indexed_key("paths", path_index, "nodes");
+            std::size_t node_count = 0U;
+            if (!consume_integer(records,
+                                 indexed_key("paths", path_index, "id"),
+                                 path.id, error)
+                || !consume_string(records,
+                                   indexed_key("paths", path_index, "name"),
+                                   path.name, error)
+                || !consume_count(records, nodes + ".count",
+                                  kMaximumMotionPathNodes, node_count, error)) {
+                return false;
+            }
+            path.nodes.assign(node_count, {});
+            for (std::size_t node_index = 0U;
+                 node_index < node_count; ++node_index) {
+                CubicPathNode& node = path.nodes[node_index];
+                if (!consume_integer(records,
+                                     indexed_key(nodes, node_index, "id"),
+                                     node.id, error)
+                    || !consume_double(records,
+                                       indexed_key(nodes, node_index, "x"),
+                                       node.x, error)
+                    || !consume_double(records,
+                                       indexed_key(nodes, node_index, "y"),
+                                       node.y, error)
+                    || !consume_double(records,
+                                       indexed_key(nodes, node_index, "in_x"),
+                                       node.in_x, error)
+                    || !consume_double(records,
+                                       indexed_key(nodes, node_index, "in_y"),
+                                       node.in_y, error)
+                    || !consume_double(records,
+                                       indexed_key(nodes, node_index, "out_x"),
+                                       node.out_x, error)
+                    || !consume_double(records,
+                                       indexed_key(nodes, node_index, "out_y"),
+                                       node.out_y, error)
+                    || !consume_enum(records,
+                                     indexed_key(nodes, node_index,
+                                                 "handle_mode"),
+                                     node.handle_mode, kPathHandleModes,
+                                     error)) {
+                    return false;
+                }
+            }
+        }
     }
 
     if (setup_version >= 5U) {
@@ -1471,6 +1635,27 @@ bool deserialize_setup(Records& records,
         }
     }
 
+    if (setup_version >= 7U) {
+        if (!consume_bool(records, "source_image.enabled",
+                          candidate.starting_image.enabled, error)
+            || !consume_enum(records, "source_image.fit",
+                             candidate.starting_image.fit,
+                             kStartingImageFits, error)
+            || !consume_string(records, "source_image.path",
+                               candidate.starting_image.path, error)
+            || !consume_bounded_string(records, "source_image.sha256",
+                                       kSha256HexBytes,
+                                       candidate.starting_image.sha256, error)
+            || !consume_bounded_string(records, "source_image.basename",
+                                       kMaximumAttachmentBasenameBytes,
+                                       candidate.starting_image.basename, error)
+            || !is_lowercase_sha256(candidate.starting_image.sha256)) {
+            return fail(error,
+                        record_error("Invalid starting-image attachment metadata at setup key",
+                                     "source_image.sha256"));
+        }
+    }
+
     if (setup_version >= 6U) {
         if (!consume_bool(records, "timing.clock.data_only",
                           candidate.clock.data_only, error)
@@ -1505,6 +1690,12 @@ bool deserialize_setup(Records& records,
             || !consume_integer(records, indexed_key("waves", index, "cycles_per_loop"), wave.cycles_per_loop, error)
             || !consume_double(records, indexed_key("waves", index, "phase_degrees"), wave.phase_degrees, error)
             || !consume_double(records, indexed_key("waves", index, "direction"), wave.direction, error)) {
+            return false;
+        }
+        if (setup_version >= 7U
+            && !consume_path_binding_records(
+                records, indexed_key("waves", index, "path") + ".",
+                wave.path, error)) {
             return false;
         }
     }
@@ -1576,6 +1767,12 @@ bool deserialize_setup(Records& records,
         if (setup_version >= 4U
             && !consume_double(records, indexed_key("effects", index, "area_radius"),
                                effect.area_radius, error)) {
+            return false;
+        }
+        if (setup_version >= 7U
+            && !consume_path_binding_records(
+                records, indexed_key("effects", index, "path") + ".",
+                effect.path, error)) {
             return false;
         }
     }
@@ -1719,8 +1916,18 @@ bool deserialize_setup(Records& records,
                                candidate.motion.phase_degrees, error)
             || !consume_integer(records, "motion.rotations_per_loop",
                                 candidate.motion.rotations_per_loop, error)
+            || (setup_version >= 7U
+                && !consume_double(records, "motion.rotation_offset_degrees",
+                                   candidate.motion.rotation_offset_degrees,
+                                   error))
             || !consume_double(records, "motion.scale_pulse",
                                candidate.motion.scale_pulse, error))) {
+        return false;
+    }
+    if (setup_version >= 7U
+        && !consume_path_binding_records(records, "motion.custom_path.",
+                                         candidate.motion.custom_path,
+                                         error)) {
         return false;
     }
 

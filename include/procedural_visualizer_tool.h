@@ -22,12 +22,14 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 6;
+constexpr std::uint32_t kSetupFormatVersion = 7;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
 constexpr std::size_t kMaximumLayers = 64;
 constexpr std::size_t kMaximumPaletteColors = 256;
+constexpr std::size_t kMaximumMotionPaths = 32;
+constexpr std::size_t kMaximumMotionPathNodes = 128;
 constexpr std::size_t kBuiltInPaletteCount = 6;
 // Dense music analysis is stored transactionally with the setup. The 8 MiB
 // ceiling remains hostile-input bounded while leaving room for all 8192 rich
@@ -83,6 +85,20 @@ enum class SurfaceMapping : std::uint8_t {
     CustomObj
 };
 
+enum class StartingImageFit : std::uint8_t {
+    Stretch = 0,
+    Contain,
+    Cover,
+    Tile
+};
+
+enum class PathHandleMode : std::uint8_t {
+    Corner = 0,
+    AutoSmooth,
+    Smooth,
+    Symmetric
+};
+
 enum class Waveform : std::uint8_t {
     Sine = 0,
     Triangle,
@@ -118,7 +134,13 @@ enum class BlendMode : std::uint8_t {
     Difference,
     Subtract,
     Multiply,
-    Add
+    Add,
+    // Destination-out modes use this layer as a mask for the already rendered
+    // layers below it. They never paint color and cannot affect later layers
+    // above them in the stack.
+    Erase,
+    ColorEraseTones,
+    ColorEraseBrightness
 };
 
 // Rendering execution policy is deliberately separate from project/setup
@@ -304,6 +326,38 @@ struct AudioReactiveConfig {
     double color_amount_degrees = 180.0;
 };
 
+struct CubicPathNode {
+    std::uint64_t id = 0;
+    double x = 0.5;
+    double y = 0.5;
+    double in_x = 0.0;
+    double in_y = 0.0;
+    double out_x = 0.0;
+    double out_y = 0.0;
+    PathHandleMode handle_mode = PathHandleMode::Smooth;
+};
+
+struct CubicMotionPath {
+    std::uint64_t id = 0;
+    std::string name = "Path";
+    std::vector<CubicPathNode> nodes;
+};
+
+struct PathBinding {
+    bool enabled = false;
+    std::uint64_t path_id = 0;
+    bool synchronized = true;
+    int cycles_per_loop = 1;
+    double phase_degrees = 0.0;
+    bool reverse = false;
+    double offset_x = 0.0;
+    double offset_y = 0.0;
+    bool follow_tangent = false;
+    // Evaluation scratch populated on a per-frame RenderConfig copy. It is
+    // intentionally not persisted as authored path-binding state.
+    double resolved_tangent_degrees = 0.0;
+};
+
 struct WaveConfig {
     std::uint64_t id = 0;
     std::string name;
@@ -319,6 +373,7 @@ struct WaveConfig {
     // 0.0 is horizontal propagation, 0.5 is radial/all-directions, and
     // 1.0 is vertical propagation. Intermediate values blend continuously.
     double direction = 0.5;
+    PathBinding path;
 };
 
 struct SwingConfig {
@@ -388,6 +443,7 @@ struct EffectConfig {
     // legacy behavior. Positive values use a smoothly feathered circular area
     // around center_x/center_y, measured against the shorter canvas edge.
     double area_radius = 0.0;
+    PathBinding path;
 };
 
 // Palette component values are authored in display/sRGB space. When enabled,
@@ -428,7 +484,11 @@ struct LayerMotionConfig {
     // Whole rotations per loop and a symmetric scale pulse keep the seam
     // closed. scale_pulse=0 is neutral; 0.5 spans 0.5x through 1.5x.
     int rotations_per_loop = 0;
+    double rotation_offset_degrees = 0.0;
     double scale_pulse = 0.0;
+    // A reusable cubic-path binding overrides only the built-in placement
+    // path. Rotation and scale pulse remain independently composable.
+    PathBinding custom_path;
 };
 
 struct AlphaConfig {
@@ -473,6 +533,17 @@ struct SurfaceConfig {
     std::string obj_basename;
 };
 
+// An embedded starting image replaces procedural base generation and the
+// starting palette, then flows through Texture effects, surface mapping,
+// transforms, mapped-object effects, and quantization like any other source.
+struct StartingImageConfig {
+    bool enabled = false;
+    StartingImageFit fit = StartingImageFit::Cover;
+    std::string path;
+    std::string sha256;
+    std::string basename;
+};
+
 struct ExportConfig {
     int bit_depth = 8; // 8/16 write PNG; 32 writes full-float EXR.
     // libpng/zlib compression level: 0 stores without deflate compression and
@@ -497,6 +568,7 @@ struct CanvasLoopConfig {
     int total_frames = 480;
     double fps = 60.0;
     ClockConfig clock;
+    std::vector<CubicMotionPath> motion_paths;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live
@@ -530,6 +602,7 @@ struct RenderData {
     AlphaConfig alpha;
     QuantizationConfig quantization;
     SurfaceConfig surface;
+    StartingImageConfig starting_image;
     PaletteConfig palette;
     LayerTransformConfig transform;
     LayerMotionConfig motion;
@@ -544,6 +617,7 @@ struct RenderConfig : RenderData {
     int total_frames = 480;
     double fps = 60.0;
     ClockConfig clock;
+    std::vector<CubicMotionPath> motion_paths;
 
     ExportConfig output;
 };
@@ -639,6 +713,11 @@ PVT_API std::string generate_uuid();
 PVT_API WaveConfig default_wave(std::size_t index = 0);
 PVT_API SwingConfig default_swing(std::size_t index = 0);
 PVT_API EffectConfig default_effect(EffectType type);
+// Creates the standard four-node cubic approximation of an ellipse. Callers
+// provide stable nonzero path/node IDs before inserting it into a project.
+PVT_API CubicMotionPath default_ellipse_path(std::uint64_t path_id,
+                                             std::uint64_t first_node_id,
+                                             std::string name = "Ellipse");
 // Built-in palette indexes beyond the final preset wrap.
 PVT_API PaletteConfig default_palette(std::size_t index = 0);
 PVT_API std::uint64_t allocate_id(const RenderData& render);
@@ -774,6 +853,7 @@ PVT_API const char* effect_space_name(EffectSpace value);
 PVT_API const char* edge_mode_name(EdgeMode value);
 PVT_API const char* dither_method_name(DitherMethod value);
 PVT_API const char* surface_mapping_name(SurfaceMapping value);
+PVT_API const char* starting_image_fit_name(StartingImageFit value);
 PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
 PVT_API const char* mirror_mode_name(MirrorMode value);

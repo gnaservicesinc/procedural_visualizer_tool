@@ -8,6 +8,7 @@
 #include "../src/audio_playback.h"
 #include "../src/config_codec.h"
 #include "../src/project_bundle.h"
+#include "../src/source_image.h"
 
 #include <QAbstractButton>
 #include <QAbstractItemView>
@@ -20,6 +21,9 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
+#include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -57,10 +61,13 @@
 #include <QStandardItemModel>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QUrl>
 #include <QUndoCommand>
 #include <QUndoStack>
 #include <QUuid>
@@ -97,7 +104,7 @@ QString custom_new_project_defaults_path() {
 }
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "6.0.0"
+#  define PVT_PROGRAM_VERSION "development"
 #endif
 
 std::optional<std::vector<std::uint64_t>> numeric_version(std::string_view value) {
@@ -452,6 +459,12 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_path));
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_sha256));
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_basename));
+    bytes = saturating_add(bytes,
+                           estimated_string_bytes(render.starting_image.path));
+    bytes = saturating_add(bytes,
+                           estimated_string_bytes(render.starting_image.sha256));
+    bytes = saturating_add(bytes,
+                           estimated_string_bytes(render.starting_image.basename));
     bytes = saturating_add(bytes, estimated_string_bytes(render.palette.name));
     bytes = saturating_add(
         bytes, render.palette.colors.capacity() * sizeof(pvt::PaletteColor));
@@ -473,6 +486,13 @@ std::size_t estimated_canvas_bytes(const pvt::CanvasLoopConfig& canvas) {
         bytes, music.tempo_points.capacity() * sizeof(pvt::MusicTempoPoint));
     bytes = saturating_add(
         bytes, music.feature_samples.capacity() * sizeof(pvt::MusicFeatureSample));
+    bytes = saturating_add(
+        bytes, canvas.motion_paths.capacity() * sizeof(pvt::CubicMotionPath));
+    for (const auto& path : canvas.motion_paths) {
+        bytes = saturating_add(bytes, estimated_string_bytes(path.name));
+        bytes = saturating_add(
+            bytes, path.nodes.capacity() * sizeof(pvt::CubicPathNode));
+    }
     return bytes;
 }
 
@@ -532,11 +552,15 @@ bool attachments_equal(const std::vector<pvt::ProjectAttachment>& left,
 }
 
 bool render_data_equal(const pvt::RenderData& left,
-                       const pvt::RenderData& right) {
+                       const pvt::RenderData& right,
+                       const std::vector<pvt::CubicMotionPath>* left_paths = nullptr,
+                       const std::vector<pvt::CubicMotionPath>* right_paths = nullptr) {
     std::string left_bytes;
     std::string right_bytes;
-    return pvt::detail::serialize_layer_config(left, left_bytes, nullptr)
-           && pvt::detail::serialize_layer_config(right, right_bytes, nullptr)
+    return pvt::detail::serialize_layer_config(
+               left, left_bytes, nullptr, left_paths)
+           && pvt::detail::serialize_layer_config(
+               right, right_bytes, nullptr, right_paths)
            && left_bytes == right_bytes;
 }
 
@@ -566,7 +590,10 @@ bool project_config_equal(const pvt::ProjectConfig& left,
         const auto& b = right.layers[index];
         if (a.uuid != b.uuid || a.file_id != b.file_id || a.name != b.name
             || a.enabled != b.enabled || a.blend_mode != b.blend_mode
-            || a.opacity != b.opacity || !render_data_equal(a.render, b.render)) {
+            || a.opacity != b.opacity
+            || !render_data_equal(a.render, b.render,
+                                  &left.canvas.motion_paths,
+                                  &right.canvas.motion_paths)) {
             return false;
         }
     }
@@ -1965,6 +1992,36 @@ QWidget* MainWindow::createLayerSettingsPage() {
     rhythm->addRow(tr("Ghost lag (degrees)"), ghost_lag_);
     layout->addWidget(rhythm_group);
 
+    starting_image_group_ = new QGroupBox(tr("Starting image source"));
+    starting_image_group_->setCheckable(true);
+    auto* source_form = new QFormLayout(starting_image_group_);
+    auto* source_row = new QWidget;
+    auto* source_row_layout = new QHBoxLayout(source_row);
+    source_row_layout->setContentsMargins(0, 0, 0, 0);
+    starting_image_path_ = new QLineEdit;
+    starting_image_path_->setReadOnly(true);
+    starting_image_path_->setPlaceholderText(tr("No embedded PNG selected"));
+    starting_image_browse_ = new QPushButton(tr("Choose…"));
+    starting_image_clear_ = new QPushButton(tr("Clear"));
+    source_row_layout->addWidget(starting_image_path_, 1);
+    source_row_layout->addWidget(starting_image_browse_);
+    source_row_layout->addWidget(starting_image_clear_);
+    starting_image_fit_ = new QComboBox;
+    for (const auto fit : {pvt::StartingImageFit::Stretch,
+                           pvt::StartingImageFit::Contain,
+                           pvt::StartingImageFit::Cover,
+                           pvt::StartingImageFit::Tile}) {
+        add_enum_item(starting_image_fit_,
+                      QString::fromUtf8(pvt::starting_image_fit_name(fit)), fit);
+    }
+    source_form->addRow(tr("Embedded PNG"), source_row);
+    source_form->addRow(tr("Fit"), starting_image_fit_);
+    starting_image_group_->setToolTip(tr(
+        "Replaces procedural base generation and the starting palette for this "
+        "layer. Texture effects, surfaces, transforms, mapped effects, and "
+        "quantization still apply."));
+    layout->addWidget(starting_image_group_);
+
     auto* pattern_group = new QGroupBox(tr("Procedural features"));
     auto* pattern = new QFormLayout(pattern_group);
     displacement_enabled_ = new QCheckBox(tr("Displacement enabled"));
@@ -2038,6 +2095,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion_phase_->setSuffix(QChar(0x00b0));
     motion_rotations_ = integer_editor(-1000, 1000);
     motion_scale_pulse_ = real_editor(0.0, 0.95, 4, 0.01);
+    motion_paths_edit_ = new QPushButton(tr("Edit reusable paths and bindings…"));
     motion->addRow(tr("Closed path"), motion_path_);
     motion->addRow(tr("Path center X"), motion_center_x_);
     motion->addRow(tr("Path center Y"), motion_center_y_);
@@ -2048,6 +2106,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion->addRow(tr("Starting phase"), motion_phase_);
     motion->addRow(tr("Rotations per loop"), motion_rotations_);
     motion->addRow(tr("Scale pulse"), motion_scale_pulse_);
+    motion->addRow(motion_paths_edit_);
     motion_group_->setToolTip(
         tr("A lightweight path animator. Integer cycles, rotations, and scale "
            "pulses close exactly at the project loop seam."));
@@ -2188,6 +2247,18 @@ QWidget* MainWindow::createLayerSettingsPage() {
             rememberDialogLocation(selected);
             (void)setSurfaceObjSource(selected);
         }
+    });
+    connect(starting_image_browse_, &QPushButton::clicked, this, [this] {
+        const QString selected = QFileDialog::getOpenFileName(
+            this, tr("Choose starting image"), usableDialogDirectory(),
+            tr("PNG image (*.png)"));
+        if (!selected.isEmpty()) {
+            rememberDialogLocation(selected);
+            (void)setStartingImageSource(selected);
+        }
+    });
+    connect(starting_image_clear_, &QPushButton::clicked, this, [this] {
+        (void)setStartingImageSource({});
     });
     connect(apply_preset, &QPushButton::clicked, this, [this] {
         applyPalettePreset(static_cast<std::size_t>(
@@ -2594,7 +2665,9 @@ void MainWindow::createLayerDock() {
                             pvt::BlendMode::ColorDodge, pvt::BlendMode::LinearBurn,
                             pvt::BlendMode::ColorBurn, pvt::BlendMode::Difference,
                             pvt::BlendMode::Subtract, pvt::BlendMode::Multiply,
-                            pvt::BlendMode::Add}) {
+                            pvt::BlendMode::Add, pvt::BlendMode::Erase,
+                            pvt::BlendMode::ColorEraseTones,
+                            pvt::BlendMode::ColorEraseBrightness}) {
         QString label = QString::fromUtf8(pvt::blend_mode_name(mode));
         if (mode == pvt::BlendMode::Normal) {
             label = tr("Normal (none)");
@@ -2849,6 +2922,8 @@ void MainWindow::createToolbar() {
     auto* view_menu = menuBar()->addMenu(tr("&View"));
     auto* settings_menu = menuBar()->addMenu(tr("&Settings"));
     settings_menu->setObjectName(QStringLiteral("settingsMenu"));
+    auto* help_menu = menuBar()->addMenu(tr("&Help"));
+    help_menu->setObjectName(QStringLiteral("helpMenu"));
     auto* toolbar = addToolBar(tr("Project"));
     toolbar->setObjectName(QStringLiteral("projectToolbar"));
     toolbar->setMovable(false);
@@ -2904,6 +2979,11 @@ void MainWindow::createToolbar() {
     connect(settings_action_, &QAction::triggered,
             this, &MainWindow::showApplicationSettings);
     view_menu->addAction(layers_dock_->toggleViewAction());
+    about_action_ = new QAction(tr("About PVT…"), this);
+    about_action_->setObjectName(QStringLiteral("aboutPvtAction"));
+    help_menu->addAction(about_action_);
+    connect(about_action_, &QAction::triggered,
+            this, &MainWindow::showAboutDialog);
 
     connect(new_action_, &QAction::triggered, this, [this] {
         if (!documentReplacementAllowed()) return;
@@ -2975,6 +3055,515 @@ void MainWindow::createToolbar() {
     });
     connect(video_export_action_, &QAction::triggered,
             this, &MainWindow::startVideoExport);
+}
+
+void MainWindow::showAboutDialog() {
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("aboutPvtDialog"));
+    dialog.setWindowTitle(tr("About PVT"));
+    dialog.setModal(true);
+    dialog.setMinimumWidth(520);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* title = new QLabel(
+        tr("<h2>Procedural Visualizer Tool %1</h2>")
+            .arg(QStringLiteral(PVT_PROGRAM_VERSION)));
+    title->setTextFormat(Qt::RichText);
+    layout->addWidget(title);
+
+    auto* description = new QLabel(tr(
+        "Create deterministic, seamlessly looping procedural art, layered "
+        "compositions, image sequences, and music-synchronized visuals."));
+    description->setWordWrap(true);
+    layout->addWidget(description);
+
+    auto* license = new QLabel(tr(
+        "PVT is free software licensed under the GNU General Public License "
+        "version 3 or later. It comes with no warranty. Third-party notices "
+        "are included with source and packaged distributions."));
+    license->setWordWrap(true);
+    layout->addWidget(license);
+
+    const auto add_link_button = [&dialog, layout](const QString& text,
+                                                   const QString& url) {
+        auto* button = new QPushButton(text);
+        button->setProperty("pvtExternalUrl", url);
+        QObject::connect(button, &QPushButton::clicked, &dialog,
+                         [&dialog, url] {
+            if (!QDesktopServices::openUrl(QUrl(url))) {
+                QMessageBox::warning(
+                    &dialog, QObject::tr("Could not open link"),
+                    QObject::tr("Open this address in a browser:\n\n%1")
+                        .arg(url));
+            }
+        });
+        layout->addWidget(button);
+    };
+    add_link_button(tr("Project Website"),
+                    QStringLiteral("https://github.com/gnaservicesinc/procedural_visualizer_tool"));
+    add_link_button(tr("Report a Bug"),
+                    QStringLiteral("https://github.com/gnaservicesinc/procedural_visualizer_tool/issues/new"));
+    add_link_button(tr("Report a Vulnerability"),
+                    QStringLiteral("https://github.com/gnaservicesinc/procedural_visualizer_tool/security/advisories/new"));
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    dialog.exec();
+}
+
+void MainWindow::showMotionPathEditor() {
+    if (music_analysis_active_) return;
+
+    const ProjectDocumentState before = captureProjectState();
+    const std::string before_active_uuid = active_layer_uuid_;
+    pvt::ProjectConfig edited_project = project_;
+    std::vector<pvt::CubicMotionPath> paths = project_.canvas.motion_paths;
+    pvt::RenderData render = static_cast<const pvt::RenderData&>(config_);
+
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("motionPathEditor"));
+    dialog.setWindowTitle(tr("Reusable motion paths"));
+    dialog.resize(980, 680);
+    auto* outer = new QVBoxLayout(&dialog);
+    auto* explanation = new QLabel(tr(
+        "Paths are project-wide closed cubic loops. Geometry is shared, while each "
+        "layer, wave, or effect owns its own clock, offset, direction, and tangent "
+        "settings. The final node always connects back to the first."));
+    explanation->setWordWrap(true);
+    outer->addWidget(explanation);
+
+    auto* splitter = new QSplitter(Qt::Vertical);
+    outer->addWidget(splitter, 1);
+
+    auto* geometry_page = new QWidget;
+    auto* geometry_layout = new QVBoxLayout(geometry_page);
+    auto* path_row = new QHBoxLayout;
+    auto* path_selector = new QComboBox;
+    path_selector->setObjectName(QStringLiteral("motionPathSelector"));
+    auto* path_name = new QLineEdit;
+    path_name->setMaxLength(static_cast<int>(kMaximumNameBytes));
+    auto* add_ellipse = new QPushButton(tr("Add ellipse"));
+    auto* remove_path = new QPushButton(tr("Remove path"));
+    path_row->addWidget(new QLabel(tr("Path")));
+    path_row->addWidget(path_selector, 1);
+    path_row->addWidget(new QLabel(tr("Name")));
+    path_row->addWidget(path_name, 1);
+    path_row->addWidget(add_ellipse);
+    path_row->addWidget(remove_path);
+    geometry_layout->addLayout(path_row);
+
+    auto* nodes = new QTableWidget;
+    nodes->setObjectName(QStringLiteral("motionPathNodes"));
+    nodes->setColumnCount(8);
+    nodes->setHorizontalHeaderLabels(
+        {tr("Node ID"), tr("X"), tr("Y"), tr("In X"), tr("In Y"),
+         tr("Out X"), tr("Out Y"), tr("Handle mode")});
+    nodes->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    nodes->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    nodes->verticalHeader()->setVisible(false);
+    nodes->setAlternatingRowColors(true);
+    nodes->setSelectionBehavior(QAbstractItemView::SelectRows);
+    geometry_layout->addWidget(nodes, 1);
+    auto* node_row = new QHBoxLayout;
+    auto* add_node = new QPushButton(tr("Add node"));
+    auto* remove_node = new QPushButton(tr("Remove node"));
+    auto* fit_handles = new QPushButton(tr("Fit selected handles"));
+    node_row->addWidget(add_node);
+    node_row->addWidget(remove_node);
+    node_row->addWidget(fit_handles);
+    node_row->addStretch(1);
+    geometry_layout->addLayout(node_row);
+    splitter->addWidget(geometry_page);
+
+    auto* binding_page = new QGroupBox(tr("Consumer binding"));
+    auto* binding = new QFormLayout(binding_page);
+    auto* consumer = new QComboBox;
+    consumer->setObjectName(QStringLiteral("motionPathConsumer"));
+    consumer->addItem(tr("Whole active layer"), 0);
+    for (std::size_t index = 0U; index < render.waves.size(); ++index) {
+        consumer->addItem(
+            tr("Wave: %1").arg(QString::fromStdString(render.waves[index].name)),
+            static_cast<int>(index + 1U));
+    }
+    for (std::size_t index = 0U; index < render.effects.size(); ++index) {
+        consumer->addItem(
+            tr("Effect center: %1")
+                .arg(QString::fromStdString(render.effects[index].name)),
+            static_cast<int>(10000U + index));
+    }
+    auto* binding_enabled = new QCheckBox(tr("Follow a reusable path"));
+    auto* binding_path = new QComboBox;
+    auto* binding_sync = new QCheckBox(tr("Use synchronized project clock"));
+    auto* binding_cycles = new QSpinBox;
+    binding_cycles->setRange(-1000, 1000);
+    auto* binding_phase = new QDoubleSpinBox;
+    binding_phase->setRange(-36000.0, 36000.0);
+    binding_phase->setDecimals(3);
+    binding_phase->setSuffix(QChar(0x00b0));
+    auto* binding_reverse = new QCheckBox(tr("Reverse direction"));
+    auto* binding_offset_x = new QDoubleSpinBox;
+    auto* binding_offset_y = new QDoubleSpinBox;
+    for (auto* editor : {binding_offset_x, binding_offset_y}) {
+        editor->setRange(-10.0, 10.0);
+        editor->setDecimals(4);
+        editor->setSingleStep(0.01);
+    }
+    auto* binding_tangent = new QCheckBox(tr("Follow tangent orientation"));
+    binding->addRow(tr("Target"), consumer);
+    binding->addRow(binding_enabled);
+    binding->addRow(tr("Path"), binding_path);
+    binding->addRow(binding_sync);
+    binding->addRow(tr("Cycles per loop"), binding_cycles);
+    binding->addRow(tr("Starting phase"), binding_phase);
+    binding->addRow(binding_reverse);
+    binding->addRow(tr("Horizontal offset"), binding_offset_x);
+    binding->addRow(tr("Vertical offset"), binding_offset_y);
+    binding->addRow(binding_tangent);
+    splitter->addWidget(binding_page);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    outer->addWidget(buttons);
+
+    bool refreshing_geometry = false;
+    bool refreshing_binding = false;
+
+    const auto current_path = [&]() -> pvt::CubicMotionPath* {
+        const int index = path_selector->currentIndex();
+        return index >= 0 && static_cast<std::size_t>(index) < paths.size()
+                   ? &paths[static_cast<std::size_t>(index)] : nullptr;
+    };
+    const auto current_binding = [&]() -> pvt::PathBinding* {
+        const int code = consumer->currentData().toInt();
+        if (code == 0) return &render.motion.custom_path;
+        if (code > 0 && code < 10000) {
+            const std::size_t index = static_cast<std::size_t>(code - 1);
+            return index < render.waves.size() ? &render.waves[index].path : nullptr;
+        }
+        if (code >= 10000) {
+            const std::size_t index = static_cast<std::size_t>(code - 10000);
+            return index < render.effects.size() ? &render.effects[index].path : nullptr;
+        }
+        return nullptr;
+    };
+
+    const auto commit_nodes = [&]() -> bool {
+        if (refreshing_geometry) return true;
+        auto* path = current_path();
+        if (path == nullptr || nodes->rowCount() != static_cast<int>(path->nodes.size())) {
+            return path == nullptr;
+        }
+        for (int row = 0; row < nodes->rowCount(); ++row) {
+            auto& node = path->nodes[static_cast<std::size_t>(row)];
+            std::array<double*, 6U> destinations{{
+                &node.x, &node.y, &node.in_x, &node.in_y,
+                &node.out_x, &node.out_y}};
+            for (int column = 1; column <= 6; ++column) {
+                bool ok = false;
+                const double value = nodes->item(row, column)->text().toDouble(&ok);
+                if (!ok || !std::isfinite(value) || value < -10.0 || value > 10.0) {
+                    return false;
+                }
+                *destinations[static_cast<std::size_t>(column - 1)] = value;
+            }
+            if (auto* mode = qobject_cast<QComboBox*>(nodes->cellWidget(row, 7))) {
+                node.handle_mode = static_cast<pvt::PathHandleMode>(
+                    mode->currentData().toInt());
+            }
+        }
+        return true;
+    };
+
+    std::function<void()> refresh_nodes;
+    refresh_nodes = [&] {
+        refreshing_geometry = true;
+        nodes->clearContents();
+        const auto* path = current_path();
+        nodes->setRowCount(path == nullptr ? 0 : static_cast<int>(path->nodes.size()));
+        if (path != nullptr) {
+            path_name->setText(QString::fromStdString(path->name));
+            for (int row = 0; row < nodes->rowCount(); ++row) {
+                const auto& node = path->nodes[static_cast<std::size_t>(row)];
+                auto* id = new QTableWidgetItem(QString::number(node.id));
+                id->setFlags(id->flags() & ~Qt::ItemIsEditable);
+                nodes->setItem(row, 0, id);
+                const std::array<double, 6U> values{{
+                    node.x, node.y, node.in_x, node.in_y,
+                    node.out_x, node.out_y}};
+                for (int column = 1; column <= 6; ++column) {
+                    nodes->setItem(row, column, new QTableWidgetItem(
+                        QString::number(values[static_cast<std::size_t>(column - 1)],
+                                        'g', 10)));
+                }
+                auto* mode = new QComboBox;
+                mode->addItem(tr("Corner"), static_cast<int>(pvt::PathHandleMode::Corner));
+                mode->addItem(tr("Auto smooth"), static_cast<int>(pvt::PathHandleMode::AutoSmooth));
+                mode->addItem(tr("Smooth"), static_cast<int>(pvt::PathHandleMode::Smooth));
+                mode->addItem(tr("Symmetric"), static_cast<int>(pvt::PathHandleMode::Symmetric));
+                mode->setCurrentIndex(mode->findData(static_cast<int>(node.handle_mode)));
+                connect(mode, &QComboBox::currentIndexChanged, &dialog,
+                        [&, mode, row] {
+                    if (refreshing_geometry) return;
+                    if (auto* selected = current_path(); selected != nullptr
+                        && static_cast<std::size_t>(row) < selected->nodes.size()) {
+                        selected->nodes[static_cast<std::size_t>(row)].handle_mode =
+                            static_cast<pvt::PathHandleMode>(mode->currentData().toInt());
+                    }
+                });
+                nodes->setCellWidget(row, 7, mode);
+            }
+        } else {
+            path_name->clear();
+        }
+        path_name->setEnabled(path != nullptr);
+        remove_path->setEnabled(path != nullptr);
+        add_node->setEnabled(path != nullptr);
+        remove_node->setEnabled(path != nullptr && path->nodes.size() > 3U);
+        fit_handles->setEnabled(path != nullptr);
+        refreshing_geometry = false;
+    };
+
+    const auto refresh_binding_paths = [&] {
+        const QSignalBlocker blocker(binding_path);
+        binding_path->clear();
+        for (const auto& path : paths) {
+            binding_path->addItem(QString::fromStdString(path.name),
+                                  QVariant::fromValue<qulonglong>(path.id));
+        }
+    };
+    const auto load_binding = [&] {
+        refreshing_binding = true;
+        const auto* value = current_binding();
+        refresh_binding_paths();
+        if (value != nullptr) {
+            binding_enabled->setChecked(value->enabled);
+            const int path_index = binding_path->findData(
+                QVariant::fromValue<qulonglong>(value->path_id));
+            binding_path->setCurrentIndex(path_index >= 0 ? path_index : 0);
+            binding_sync->setChecked(value->synchronized);
+            binding_cycles->setValue(value->cycles_per_loop);
+            binding_phase->setValue(value->phase_degrees);
+            binding_reverse->setChecked(value->reverse);
+            binding_offset_x->setValue(value->offset_x);
+            binding_offset_y->setValue(value->offset_y);
+            binding_tangent->setChecked(value->follow_tangent);
+        }
+        binding_enabled->setEnabled(!paths.empty());
+        binding_path->setEnabled(!paths.empty());
+        refreshing_binding = false;
+    };
+    const auto update_binding = [&] {
+        if (refreshing_binding) return;
+        auto* value = current_binding();
+        if (value == nullptr) return;
+        value->enabled = binding_enabled->isChecked() && !paths.empty();
+        value->path_id = binding_path->currentIndex() >= 0
+                             ? binding_path->currentData().toULongLong() : 0U;
+        value->synchronized = binding_sync->isChecked();
+        value->cycles_per_loop = binding_cycles->value();
+        value->phase_degrees = binding_phase->value();
+        value->reverse = binding_reverse->isChecked();
+        value->offset_x = binding_offset_x->value();
+        value->offset_y = binding_offset_y->value();
+        value->follow_tangent = binding_tangent->isChecked();
+    };
+
+    const auto refresh_paths = [&](std::uint64_t selected_id = 0U) {
+        const QSignalBlocker blocker(path_selector);
+        path_selector->clear();
+        int selected = -1;
+        for (std::size_t index = 0U; index < paths.size(); ++index) {
+            path_selector->addItem(QString::fromStdString(paths[index].name),
+                                   QVariant::fromValue<qulonglong>(paths[index].id));
+            if (paths[index].id == selected_id) selected = static_cast<int>(index);
+        }
+        if (selected < 0 && !paths.empty()) selected = 0;
+        path_selector->setCurrentIndex(selected);
+        refresh_nodes();
+        load_binding();
+    };
+
+    connect(path_selector, &QComboBox::currentIndexChanged, &dialog,
+            [&] { refresh_nodes(); });
+    connect(path_name, &QLineEdit::editingFinished, &dialog, [&] {
+        if (refreshing_geometry) return;
+        auto* path = current_path();
+        if (path == nullptr) return;
+        if (!valid_text(path_name->text(), TextRule::Name)) {
+            path_name->setText(QString::fromStdString(path->name));
+            return;
+        }
+        path->name = path_name->text().toStdString();
+        const QSignalBlocker blocker(path_selector);
+        path_selector->setItemText(path_selector->currentIndex(), path_name->text());
+        load_binding();
+    });
+    connect(nodes, &QTableWidget::itemChanged, &dialog,
+            [&](QTableWidgetItem*) { (void)commit_nodes(); });
+    connect(add_ellipse, &QPushButton::clicked, &dialog, [&] {
+        if (paths.size() >= pvt::kMaximumMotionPaths) {
+            QMessageBox::warning(&dialog, tr("Path limit reached"),
+                                 tr("A project can contain at most 32 reusable paths."));
+            return;
+        }
+        std::uint64_t maximum = 0U;
+        for (const auto& path : paths) {
+            maximum = std::max(maximum, path.id);
+            for (const auto& node : path.nodes) maximum = std::max(maximum, node.id);
+        }
+        if (maximum > std::numeric_limits<std::uint64_t>::max() - 5U) return;
+        const std::uint64_t id = maximum + 1U;
+        paths.push_back(pvt::default_ellipse_path(id, id + 1U,
+                                                  "Ellipse " + std::to_string(paths.size() + 1U)));
+        refresh_paths(id);
+    });
+    connect(remove_path, &QPushButton::clicked, &dialog, [&] {
+        const int index = path_selector->currentIndex();
+        if (index < 0 || static_cast<std::size_t>(index) >= paths.size()) return;
+        const std::uint64_t removed_id = paths[static_cast<std::size_t>(index)].id;
+        paths.erase(paths.begin() + index);
+        const auto clear_removed = [removed_id](pvt::PathBinding& value) {
+            if (value.path_id == removed_id) {
+                value.enabled = false;
+                value.path_id = 0U;
+            }
+        };
+        clear_removed(render.motion.custom_path);
+        for (auto& wave : render.waves) clear_removed(wave.path);
+        for (auto& effect : render.effects) clear_removed(effect.path);
+        for (auto& layer : edited_project.layers) {
+            clear_removed(layer.render.motion.custom_path);
+            for (auto& wave : layer.render.waves) clear_removed(wave.path);
+            for (auto& effect : layer.render.effects) clear_removed(effect.path);
+        }
+        refresh_paths();
+    });
+    connect(add_node, &QPushButton::clicked, &dialog, [&] {
+        auto* path = current_path();
+        if (path == nullptr || path->nodes.size() >= pvt::kMaximumMotionPathNodes) return;
+        (void)commit_nodes();
+        std::uint64_t id = 0U;
+        for (const auto& node : path->nodes) id = std::max(id, node.id);
+        if (id == std::numeric_limits<std::uint64_t>::max()) return;
+        pvt::CubicPathNode node;
+        node.id = id + 1U;
+        if (!path->nodes.empty()) {
+            node.x = (path->nodes.back().x + path->nodes.front().x) * 0.5;
+            node.y = (path->nodes.back().y + path->nodes.front().y) * 0.5;
+        }
+        node.handle_mode = pvt::PathHandleMode::AutoSmooth;
+        path->nodes.push_back(node);
+        refresh_nodes();
+        nodes->selectRow(nodes->rowCount() - 1);
+    });
+    connect(remove_node, &QPushButton::clicked, &dialog, [&] {
+        auto* path = current_path();
+        const int row = nodes->currentRow();
+        if (path == nullptr || path->nodes.size() <= 3U || row < 0
+            || static_cast<std::size_t>(row) >= path->nodes.size()) return;
+        path->nodes.erase(path->nodes.begin() + row);
+        refresh_nodes();
+    });
+    connect(fit_handles, &QPushButton::clicked, &dialog, [&] {
+        auto* path = current_path();
+        const int row = nodes->currentRow();
+        if (path == nullptr || row < 0
+            || static_cast<std::size_t>(row) >= path->nodes.size()) return;
+        (void)commit_nodes();
+        const std::size_t index = static_cast<std::size_t>(row);
+        auto& node = path->nodes[index];
+        const auto& previous = path->nodes[(index + path->nodes.size() - 1U)
+                                           % path->nodes.size()];
+        const auto& next = path->nodes[(index + 1U) % path->nodes.size()];
+        double tangent_x = next.x - previous.x;
+        double tangent_y = next.y - previous.y;
+        const double tangent_length = std::hypot(tangent_x, tangent_y);
+        if (tangent_length <= 1.0e-12) return;
+        tangent_x /= tangent_length;
+        tangent_y /= tangent_length;
+        double in_length = std::hypot(node.in_x, node.in_y);
+        double out_length = std::hypot(node.out_x, node.out_y);
+        const double auto_in = std::hypot(node.x - previous.x,
+                                          node.y - previous.y) / 3.0;
+        const double auto_out = std::hypot(next.x - node.x,
+                                           next.y - node.y) / 3.0;
+        if (node.handle_mode == pvt::PathHandleMode::Corner) return;
+        if (node.handle_mode == pvt::PathHandleMode::AutoSmooth) {
+            in_length = auto_in;
+            out_length = auto_out;
+        } else if (node.handle_mode == pvt::PathHandleMode::Symmetric) {
+            const double shared = in_length + out_length > 1.0e-12
+                                      ? (in_length + out_length) * 0.5
+                                      : (auto_in + auto_out) * 0.5;
+            in_length = shared;
+            out_length = shared;
+        } else {
+            if (in_length <= 1.0e-12) in_length = auto_in;
+            if (out_length <= 1.0e-12) out_length = auto_out;
+        }
+        node.in_x = -tangent_x * in_length;
+        node.in_y = -tangent_y * in_length;
+        node.out_x = tangent_x * out_length;
+        node.out_y = tangent_y * out_length;
+        refresh_nodes();
+        nodes->selectRow(row);
+    });
+
+    connect(consumer, &QComboBox::currentIndexChanged, &dialog, load_binding);
+    connect(binding_enabled, &QCheckBox::toggled, &dialog, update_binding);
+    connect(binding_path, &QComboBox::currentIndexChanged, &dialog, update_binding);
+    connect(binding_sync, &QCheckBox::toggled, &dialog, update_binding);
+    connect(binding_cycles, &QSpinBox::valueChanged, &dialog, update_binding);
+    connect(binding_phase, &QDoubleSpinBox::valueChanged, &dialog, update_binding);
+    connect(binding_reverse, &QCheckBox::toggled, &dialog, update_binding);
+    connect(binding_offset_x, &QDoubleSpinBox::valueChanged, &dialog, update_binding);
+    connect(binding_offset_y, &QDoubleSpinBox::valueChanged, &dialog, update_binding);
+    connect(binding_tangent, &QCheckBox::toggled, &dialog, update_binding);
+
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        if (!commit_nodes()) {
+            QMessageBox::warning(&dialog, tr("Invalid path node"),
+                                 tr("Every path coordinate and handle must be a number from -10 to 10."));
+            return;
+        }
+        if (auto* path = current_path(); path != nullptr) {
+            if (!valid_text(path_name->text(), TextRule::Name)) {
+                QMessageBox::warning(&dialog, tr("Invalid path name"),
+                                     tr("Give the selected path a non-empty portable name."));
+                return;
+            }
+            path->name = path_name->text().toStdString();
+        }
+        edited_project.canvas.motion_paths = paths;
+        const auto active = std::find_if(
+            edited_project.layers.begin(), edited_project.layers.end(),
+            [this](const pvt::LayerConfig& layer) {
+                return layer.uuid == active_layer_uuid_;
+            });
+        if (active != edited_project.layers.end()) active->render = render;
+        const pvt::ValidationResult validation = pvt::validate(edited_project);
+        if (!validation.ok) {
+            QMessageBox::warning(&dialog, tr("Invalid path configuration"),
+                                 QString::fromStdString(validation.message));
+            return;
+        }
+        dialog.accept();
+    });
+
+    refresh_paths();
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    project_ = std::move(edited_project);
+    loadActiveConfiguration();
+    if (document_ != nullptr) document_->project = project_;
+    loadLayerEditors();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    recordProjectStateChange(tr("Edit reusable motion paths"), before,
+                             before_active_uuid);
+    status_->setText(tr("Updated reusable motion paths and active-layer bindings."));
 }
 
 void MainWindow::connectEditors() {
@@ -3181,8 +3770,12 @@ void MainWindow::connectEditors() {
     }
     connect(motion_group_, &QGroupBox::toggled, this,
             [this] { applyGlobalEditor(motion_group_); });
+    connect(motion_paths_edit_, &QPushButton::clicked, this,
+            &MainWindow::showMotionPathEditor);
+    connect(starting_image_group_, &QGroupBox::toggled, this,
+            [this] { applyGlobalEditor(starting_image_group_); });
     for (auto* editor : {surface_mapping_, quantization_mode_, bit_depth_, dither_method_,
-                         transform_mirror_, motion_path_}) {
+                         transform_mirror_, motion_path_, starting_image_fit_}) {
         connect(editor, &QComboBox::currentIndexChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -3431,6 +4024,7 @@ void MainWindow::syncProjectGlobals() {
     project_.canvas.total_frames = config_.total_frames;
     project_.canvas.fps = config_.fps;
     project_.canvas.clock = config_.clock;
+    project_.canvas.motion_paths = config_.motion_paths;
     project_.output = config_.output;
 }
 
@@ -3475,7 +4069,7 @@ void MainWindow::refreshLayerList() {
         item->setData(Qt::UserRole, QString::fromStdString(layer.uuid));
         item->setToolTip(index == 0U
                              ? tr("Bottom/base layer. Its blend mode has no lower layer to affect.")
-                             : tr("This layer is composited over every enabled layer below it."));
+                             : tr("This layer is composited over every enabled layer below it. Eraser modes remove lower-layer coverage without affecting layers above."));
         if (layer.uuid == active_layer_uuid_) {
             selected_row = static_cast<int>(display);
         }
@@ -3510,7 +4104,7 @@ void MainWindow::loadLayerEditors() {
         layer_blend_->setEnabled(index != 0U);
         layer_blend_->setToolTip(index == 0U
                                      ? tr("The bottom layer has nothing beneath it to blend with.")
-                                     : tr("Blend applies this layer over the enabled layers below."));
+                                     : tr("Blend applies this layer over the enabled layers below. Eraser modes are destination-out masks and never paint over later layers above."));
     }
     populating_ = was_populating;
 }
@@ -3554,8 +4148,9 @@ void MainWindow::duplicateLayer() {
     const bool copy_obj = !layer.render.surface.obj_sha256.empty();
     const bool copy_music =
         !layer.render.layer_clock.clock.music.source_sha256.empty();
+    const bool copy_image = !layer.render.starting_image.sha256.empty();
     std::unique_ptr<pvt::ProjectDocument> staged_document;
-    if (copy_obj || copy_music) {
+    if (copy_obj || copy_music || copy_image) {
         if (document_ == nullptr) {
             QMessageBox::critical(this, tr("Could not duplicate layer"),
                                   tr("The project attachment registry is unavailable."));
@@ -3631,6 +4226,32 @@ void MainWindow::duplicateLayer() {
         layer.render.layer_clock.clock.music.source_basename =
             duplicate_attachment.basename;
     }
+    if (copy_image) {
+        const pvt::ProjectAttachment* source_attachment =
+            pvt::find_project_attachment(
+                *staged_document,
+                pvt::starting_image_attachment_id(source->uuid));
+        if (source_attachment == nullptr || source_attachment->local_path.empty()) {
+            QMessageBox::critical(
+                this, tr("Could not duplicate layer"),
+                tr("The embedded starting image is unavailable."));
+            return;
+        }
+        pvt::ProjectAttachment duplicate_attachment;
+        std::string attachment_error;
+        if (!pvt::attach_project_file(
+                *staged_document,
+                pvt::starting_image_attachment_id(layer.uuid),
+                source_attachment->local_path, &duplicate_attachment,
+                &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not duplicate layer"),
+                                  QString::fromStdString(attachment_error));
+            return;
+        }
+        layer.render.starting_image.path = duplicate_attachment.local_path;
+        layer.render.starting_image.sha256 = duplicate_attachment.sha256;
+        layer.render.starting_image.basename = duplicate_attachment.basename;
+    }
     if (staged_document != nullptr) {
         document_ = std::move(staged_document);
     }
@@ -3678,6 +4299,7 @@ void MainWindow::removeLayer() {
         }
         for (const std::string& reference_id : {
                  pvt::surface_obj_attachment_id(layer->uuid),
+                 pvt::starting_image_attachment_id(layer->uuid),
                  pvt::layer_music_attachment_id(layer->uuid)}) {
             std::string detach_error;
             if (!pvt::detach_project_file(
@@ -3792,6 +4414,83 @@ bool MainWindow::setSurfaceObjSource(const QString& source_path) {
     return true;
 }
 
+bool MainWindow::setStartingImageSource(const QString& source_path) {
+    if (populating_ || activeLayer() == nullptr) return false;
+    if (document_ == nullptr) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+        document_->project = project_;
+    }
+    if (!source_path.isEmpty()
+        && QFileInfo(source_path).suffix().compare(
+               QStringLiteral("png"), Qt::CaseInsensitive) != 0) {
+        QMessageBox::warning(this, tr("Unsupported starting image"),
+                             tr("PVT currently accepts PNG starting images."));
+        return false;
+    }
+
+    auto before = captureActiveState();
+    const std::string reference_id =
+        pvt::starting_image_attachment_id(active_layer_uuid_);
+    std::string attachment_error;
+    if (source_path.isEmpty()) {
+        if (!pvt::detach_project_file(*document_, reference_id,
+                                      &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not clear starting image"),
+                                  QString::fromStdString(attachment_error));
+            return false;
+        }
+        config_.starting_image = {};
+    } else {
+        const QString resolved = QDir::isAbsolutePath(source_path)
+            ? QDir::cleanPath(source_path)
+            : QDir::cleanPath(
+                  QDir(startup_working_directory_).absoluteFilePath(source_path));
+        if (!pvt::detail::validate_starting_image_source(
+                resolved.toStdString(), &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not decode starting image"),
+                                  QString::fromStdString(attachment_error));
+            return false;
+        }
+        pvt::ProjectAttachment attached;
+        if (!pvt::attach_project_file(
+                *document_, reference_id, resolved.toStdString(), &attached,
+                &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not embed starting image"),
+                                  QString::fromStdString(attachment_error));
+            return false;
+        }
+        config_.starting_image.enabled = true;
+        config_.starting_image.path = attached.local_path;
+        config_.starting_image.sha256 = attached.sha256;
+        config_.starting_image.basename = attached.basename;
+        config_.output.write_alpha = true;
+    }
+
+    syncActiveRender();
+    syncProjectGlobals();
+    document_->project = project_;
+    document_->dirty = true;
+    {
+        const QSignalBlocker group_blocker(starting_image_group_);
+        starting_image_group_->setChecked(config_.starting_image.enabled);
+        starting_image_path_->setText(
+            QString::fromStdString(config_.starting_image.basename));
+    }
+    preview_->setConfiguration(config_);
+    updateOutputEditorValidity();
+    schedulePreview();
+    recordActiveStateChange(
+        source_path.isEmpty() ? tr("Clear starting image")
+                              : tr("Embed starting image"),
+        std::move(before));
+    status_->setText(source_path.isEmpty()
+        ? tr("Cleared the active layer's starting image.")
+        : tr("Embedded %1 as the active layer's starting image.")
+              .arg(QString::fromStdString(config_.starting_image.basename)));
+    return true;
+}
+
 MainWindow::ActiveDocumentState MainWindow::captureActiveState() const {
     ActiveDocumentState state;
     if (const auto* layer = activeLayer()) {
@@ -3851,7 +4550,9 @@ void MainWindow::recordActiveStateChange(const QString& text,
     if (restoring_undo_) return;
     const std::string uuid = active_layer_uuid_;
     ActiveDocumentState after = captureActiveState();
-    if (render_data_equal(before.render, after.render)
+    if (render_data_equal(before.render, after.render,
+                          &before.canvas.motion_paths,
+                          &after.canvas.motion_paths)
         && output_data_equal(before.canvas, before.output,
                              after.canvas, after.output)
         && attachments_equal(before.attachments, after.attachments)) {
@@ -4018,7 +4719,8 @@ void MainWindow::updateWindowTitle() {
                                                     : project_.name);
     setWindowFilePath(current_project_path_);
     setWindowModified(hasUnsavedChanges());
-    setWindowTitle(tr("%1[*] — Procedural Visualizer Tool").arg(name));
+    setWindowTitle(tr("%1[*] — PVT %2")
+                       .arg(name, QStringLiteral(PVT_PROGRAM_VERSION)));
 }
 
 void MainWindow::updateCompatibilityWarning() {
@@ -4685,6 +5387,7 @@ void MainWindow::updateMusicTransactionGuards() {
     if (layers_dock_ != nullptr) layers_dock_->setEnabled(editable);
     if (surface_obj_path_ != nullptr) surface_obj_path_->setEnabled(editable);
     if (surface_obj_browse_ != nullptr) surface_obj_browse_->setEnabled(editable);
+    if (starting_image_group_ != nullptr) starting_image_group_->setEnabled(editable);
     if (tabs_ != nullptr) {
         for (int index = 0; index < tabs_->count(); ++index) {
             if (tabs_->widget(index) != synchronization_page_) {
@@ -5275,6 +5978,10 @@ void MainWindow::loadGlobalEditors() {
     wall_mix_->setValue(config_.wall_mix);
     hue_cycles_->setValue(config_.hue_cycles);
     saturation_->setValue(config_.saturation);
+    starting_image_group_->setChecked(config_.starting_image.enabled);
+    starting_image_path_->setText(
+        QString::fromStdString(config_.starting_image.basename));
+    select_enum(starting_image_fit_, config_.starting_image.fit);
     surface_enabled_->setChecked(config_.surface.enabled);
     select_enum(surface_mapping_, config_.surface.mapping);
     surface_obj_path_->setText(QString::fromStdString(config_.surface.obj_path));
@@ -5917,6 +6624,19 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.hue_cycles = hue_cycles_->value();
     } else if (changed_editor == saturation_) {
         config_.saturation = saturation_->value();
+    } else if (changed_editor == starting_image_group_) {
+        if (starting_image_group_->isChecked()
+            && config_.starting_image.path.empty()) {
+            const QSignalBlocker blocker(starting_image_group_);
+            starting_image_group_->setChecked(false);
+            status_->setText(tr("Choose a PNG before enabling the starting image."));
+            return;
+        }
+        config_.starting_image.enabled = starting_image_group_->isChecked();
+        if (config_.starting_image.enabled) config_.output.write_alpha = true;
+    } else if (changed_editor == starting_image_fit_) {
+        config_.starting_image.fit = static_cast<pvt::StartingImageFit>(
+            starting_image_fit_->currentData().toInt());
     } else if (changed_editor == transform_flip_horizontal_) {
         config_.transform.flip_horizontal =
             transform_flip_horizontal_->isChecked();
@@ -7314,6 +8034,61 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
     }
+    bool inspected_motion_path_editor = false;
+    QTimer::singleShot(0, this, [this, &inspected_motion_path_editor] {
+        if (auto* dialog = findChild<QDialog*>(
+                QStringLiteral("motionPathEditor"))) {
+            inspected_motion_path_editor =
+                dialog->findChild<QComboBox*>(
+                    QStringLiteral("motionPathSelector")) != nullptr
+                && dialog->findChild<QTableWidget*>(
+                    QStringLiteral("motionPathNodes")) != nullptr
+                && dialog->findChild<QComboBox*>(
+                    QStringLiteral("motionPathConsumer")) != nullptr;
+            dialog->reject();
+        }
+    });
+    showMotionPathEditor();
+    if (!inspected_motion_path_editor) {
+        if (error != nullptr) {
+            *error = tr("The reusable motion-path editor is incomplete or malformed.");
+        }
+        return false;
+    }
+    bool inspected_about = false;
+    QTimer::singleShot(0, this, [this, &inspected_about] {
+        if (auto* dialog = findChild<QDialog*>(
+                QStringLiteral("aboutPvtDialog"))) {
+            bool website = false;
+            bool bug = false;
+            bool vulnerability = false;
+            bool version = false;
+            for (const QPushButton* button :
+                 dialog->findChildren<QPushButton*>()) {
+                const QString url = button->property("pvtExternalUrl").toString();
+                website = website || url.endsWith(
+                    QStringLiteral("/procedural_visualizer_tool"));
+                bug = bug || url.endsWith(
+                    QStringLiteral("/procedural_visualizer_tool/issues/new"));
+                vulnerability = vulnerability || url.endsWith(
+                    QStringLiteral("/procedural_visualizer_tool/security/advisories/new"));
+            }
+            for (const QLabel* label : dialog->findChildren<QLabel*>()) {
+                version = version || label->text().contains(
+                    QStringLiteral(PVT_PROGRAM_VERSION));
+            }
+            inspected_about = website && bug && vulnerability
+                              && version;
+            dialog->reject();
+        }
+    });
+    showAboutDialog();
+    if (!inspected_about) {
+        if (error != nullptr) {
+            *error = tr("About PVT is missing its version or reporting links.");
+        }
+        return false;
+    }
     if (findChild<QComboBox*>(QStringLiteral("exportTarget")) != nullptr) {
         if (error != nullptr) {
             *error = tr("The removed MP4 export target is still exposed by the GUI.");
@@ -7776,7 +8551,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
     if (!windowTitle().startsWith(QString::fromStdString(project_.name))
-        || !windowTitle().contains(tr("Procedural Visualizer Tool"))) {
+        || !windowTitle().contains(tr("PVT"))) {
         if (error != nullptr) {
             *error = tr("The project name was not reflected in the window title.");
         }

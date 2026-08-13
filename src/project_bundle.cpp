@@ -35,7 +35,7 @@
 #endif
 
 #ifndef PVT_PROGRAM_VERSION
-#  define PVT_PROGRAM_VERSION "6.0.0"
+#  define PVT_PROGRAM_VERSION "development"
 #endif
 
 namespace pvt {
@@ -510,18 +510,24 @@ std::string blend_token(BlendMode mode) {
         case BlendMode::Subtract: return "subtract";
         case BlendMode::Multiply: return "multiply";
         case BlendMode::Add: return "add";
+        case BlendMode::Erase: return "erase";
+        case BlendMode::ColorEraseTones: return "color_erase_tones";
+        case BlendMode::ColorEraseBrightness: return "color_erase_brightness";
     }
     return {};
 }
 
 bool parse_blend(const std::string& token, BlendMode& mode) {
-    constexpr std::array<std::pair<std::string_view, BlendMode>, 11U> values{{
+    constexpr std::array<std::pair<std::string_view, BlendMode>, 14U> values{{
         {"none", BlendMode::Normal}, {"soft_light", BlendMode::SoftLight},
         {"grain_merge", BlendMode::GrainMerge}, {"overlay", BlendMode::Overlay},
         {"color_dodge", BlendMode::ColorDodge}, {"linear_burn", BlendMode::LinearBurn},
         {"color_burn", BlendMode::ColorBurn}, {"difference", BlendMode::Difference},
         {"subtract", BlendMode::Subtract}, {"multiply", BlendMode::Multiply},
         {"add", BlendMode::Add},
+        {"erase", BlendMode::Erase},
+        {"color_erase_tones", BlendMode::ColorEraseTones},
+        {"color_erase_brightness", BlendMode::ColorEraseBrightness},
     }};
     for (const auto& value : values) {
         if (token == value.first) {
@@ -1408,7 +1414,9 @@ bool project_content_digest(const ProjectConfig& project,
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
         std::string layer_bytes;
-        if (!detail::serialize_layer_config(layer.render, layer_bytes, error)) return false;
+        if (!detail::serialize_layer_config(
+                layer.render, layer_bytes, error,
+                &project.canvas.motion_paths)) return false;
         std::string layer_digest;
         if (!detail::sha256_hex(layer_bytes, layer_digest, error)) return false;
         builder.integer(indexed("layers", index, "file_id"), layer.file_id);
@@ -1652,7 +1660,9 @@ bool load_snapshot(const detail::BundleFileSet& files,
         if (!hash_matches(*layer_bytes, manifest.layer_digests[index],
                           layer_hash_matches, error)) return false;
         external = external || !layer_hash_matches;
-        if (!detail::deserialize_layer_config(*layer_bytes, layer.render, error)) {
+        if (!detail::deserialize_layer_config(
+                *layer_bytes, layer.render, error,
+                &candidate.canvas.motion_paths)) {
             return false;
         }
     }
@@ -1700,6 +1710,16 @@ bool load_snapshot(const detail::BundleFileSet& files,
                         || obj->basename != surface.obj_basename))) {
                 return fail(error,
                             "Custom OBJ configuration and its embedded attachment disagree.");
+            }
+            const StartingImageConfig& source = layer.render.starting_image;
+            const ProjectAttachment* image =
+                attachment_for(starting_image_attachment_id(layer.uuid));
+            if (source.sha256.empty() != (image == nullptr)
+                || (image != nullptr
+                    && (image->sha256 != source.sha256
+                        || image->basename != source.basename))) {
+                return fail(error,
+                            "Starting-image configuration and its embedded attachment disagree.");
             }
         }
     }
@@ -1823,6 +1843,12 @@ bool load_snapshot(const detail::BundleFileSet& files,
                 surface.obj_sha256 = obj->sha256;
                 surface.obj_basename = obj->basename;
             }
+            StartingImageConfig& source = layer.render.starting_image;
+            if (const ProjectAttachment* image = attachment_for(
+                    starting_image_attachment_id(layer.uuid))) {
+                source.sha256 = image->sha256;
+                source.basename = image->basename;
+            }
         }
     }
     const std::string prefix = std::to_string(version) + "/";
@@ -1930,18 +1956,33 @@ bool materialize_snapshot_attachments(
                 local_music = std::move(replacement);
             }
         }
-        if (layer.render.surface.obj_sha256.empty()) continue;
-        const std::string reference_id =
-            surface_obj_attachment_id(layer.uuid);
-        const auto found = std::find_if(
-            attachments.begin(), attachments.end(),
-            [&reference_id](const ProjectAttachment& attachment) {
-                return attachment.reference_id == reference_id;
-            });
-        if (found == attachments.end()) {
-            return fail(error, "Custom OBJ attachment disappeared during materialization.");
+        if (!layer.render.surface.obj_sha256.empty()) {
+            const std::string reference_id =
+                surface_obj_attachment_id(layer.uuid);
+            const auto found = std::find_if(
+                attachments.begin(), attachments.end(),
+                [&reference_id](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == reference_id;
+                });
+            if (found == attachments.end()) {
+                return fail(error, "Custom OBJ attachment disappeared during materialization.");
+            }
+            layer.render.surface.obj_path = found->local_path;
         }
-        layer.render.surface.obj_path = found->local_path;
+        if (!layer.render.starting_image.sha256.empty()) {
+            const std::string reference_id =
+                starting_image_attachment_id(layer.uuid);
+            const auto found = std::find_if(
+                attachments.begin(), attachments.end(),
+                [&reference_id](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == reference_id;
+                });
+            if (found == attachments.end()) {
+                return fail(error,
+                            "Starting-image attachment disappeared during materialization.");
+            }
+            layer.render.starting_image.path = found->local_path;
+        }
     }
     const ValidationResult validation = validate(project);
     return validation.ok
@@ -2342,7 +2383,9 @@ bool build_version(ProjectConfig project,
     for (const LayerConfig& layer : project.layers) {
         std::string layer_bytes;
         std::string digest;
-        if (!detail::serialize_layer_config(layer.render, layer_bytes, error)
+        if (!detail::serialize_layer_config(
+                layer.render, layer_bytes, error,
+                &project.canvas.motion_paths)
             || !detail::sha256_hex(layer_bytes, digest, error)) return false;
         files.files[version_path(number, std::to_string(layer.file_id) + ".pvt")] =
             std::move(layer_bytes);
@@ -2568,6 +2611,10 @@ std::string surface_obj_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".surface.obj";
 }
 
+std::string starting_image_attachment_id(const std::string& layer_uuid) {
+    return "layer." + layer_uuid + ".source.image";
+}
+
 std::string layer_music_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".clock.music";
 }
@@ -2755,6 +2802,11 @@ bool make_independent_project_copy(const ProjectDocument& source,
         for (LayerConfig& layer : attachment_free.layers) {
             layer.render.surface.obj_sha256.clear();
             layer.render.surface.obj_basename.clear();
+            layer.render.starting_image.sha256.clear();
+            layer.render.starting_image.basename.clear();
+            if (layer.render.starting_image.enabled) {
+                layer.render.starting_image.enabled = false;
+            }
             layer.render.layer_clock.clock.music.source_sha256.clear();
             layer.render.layer_clock.clock.music.source_basename.clear();
             if (layer.render.layer_clock.clock.mode == ClockMode::Music) {
@@ -2783,11 +2835,17 @@ bool make_independent_project_copy(const ProjectDocument& source,
                 layer_music_attachment_id(source.project.layers[index].uuid);
             const std::string new_music_id =
                 layer_music_attachment_id(candidate.project.layers[index].uuid);
+            const std::string old_image_id = starting_image_attachment_id(
+                source.project.layers[index].uuid);
+            const std::string new_image_id = starting_image_attachment_id(
+                candidate.project.layers[index].uuid);
             for (ProjectAttachment& attachment : candidate.attachments) {
                 if (attachment.reference_id == old_id) {
                     attachment.reference_id = new_id;
                 } else if (attachment.reference_id == old_music_id) {
                     attachment.reference_id = new_music_id;
+                } else if (attachment.reference_id == old_image_id) {
+                    attachment.reference_id = new_image_id;
                 }
             }
         }
@@ -3109,7 +3167,9 @@ bool semantic_fields(const ProjectConfig& project,
                 << layer.opacity;
         fields[layer_prefix + "opacity"] = opacity.str();
         std::string render;
-        if (!detail::serialize_layer_config(layer.render, render, error)
+        if (!detail::serialize_layer_config(
+                layer.render, render, error,
+                &project.canvas.motion_paths)
             || !add_codec_fields(layer_prefix + "render.", render, fields)) {
             return fail(error, "Could not build semantic layer diff.");
         }
@@ -3221,6 +3281,78 @@ bool sync_project_attachment_references(ProjectDocument& document,
                               ".surface.obj") == 0
                        && expected_obj_references.find(attachment.reference_id)
                               == expected_obj_references.end();
+            }),
+        document.attachments.end());
+
+    std::set<std::string> expected_starting_image_references;
+    for (LayerConfig& layer : document.project.layers) {
+        StartingImageConfig& source = layer.render.starting_image;
+        const std::string reference_id =
+            starting_image_attachment_id(layer.uuid);
+        expected_starting_image_references.insert(reference_id);
+        auto existing = std::find_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&reference_id](const ProjectAttachment& attachment) {
+                return attachment.reference_id == reference_id;
+            });
+        if (source.path.empty()) {
+            if (!source.sha256.empty()
+                && existing != document.attachments.end()
+                && existing->sha256 == source.sha256
+                && existing->basename == source.basename
+                && !existing->local_path.empty()) {
+                source.path = existing->local_path;
+                continue;
+            }
+            source.sha256.clear();
+            source.basename.clear();
+            if (!detach_project_file(document, reference_id, error)) return false;
+            continue;
+        }
+        if (existing != document.attachments.end()
+            && existing->sha256 == source.sha256
+            && existing->basename == source.basename
+            && !existing->local_path.empty()
+            && equivalent_path(source.path, existing->local_path)) {
+            continue;
+        }
+        std::error_code status_error;
+        const fs::file_status source_status = fs::symlink_status(
+            detail::path_from_utf8(source.path), status_error);
+        if ((status_error || !fs::is_regular_file(source_status)
+             || fs::is_symlink(source_status)
+             || attachment_path_is_reparse_point(
+                 detail::path_from_utf8(source.path)))
+            && existing != document.attachments.end()
+            && existing->sha256 == source.sha256
+            && existing->basename == source.basename
+            && !existing->local_path.empty()) {
+            source.path = existing->local_path;
+            continue;
+        }
+        ProjectAttachment attached;
+        if (!attach_project_file(document, reference_id, source.path,
+                                 &attached, error)) {
+            return false;
+        }
+        source.sha256 = attached.sha256;
+        source.basename = attached.basename;
+        source.path = attached.local_path;
+    }
+    document.attachments.erase(
+        std::remove_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&expected_starting_image_references](
+                const ProjectAttachment& attachment) {
+                constexpr std::string_view suffix = ".source.image";
+                return attachment.reference_id.rfind("layer.", 0U) == 0U
+                       && attachment.reference_id.size() > suffix.size()
+                       && attachment.reference_id.compare(
+                              attachment.reference_id.size() - suffix.size(),
+                              suffix.size(), suffix) == 0
+                       && expected_starting_image_references.find(
+                              attachment.reference_id)
+                              == expected_starting_image_references.end();
             }),
         document.attachments.end());
 

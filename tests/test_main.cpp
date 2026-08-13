@@ -1,4 +1,5 @@
 #include "procedural_visualizer_tool.h"
+#include "../src/config_codec.h"
 #include "../src/path_utf8.h"
 
 #include <png.h>
@@ -125,6 +126,101 @@ double mean_absolute_difference(const pvt::Image& a, const pvt::Image& b) {
                           - static_cast<double>(b.pixels[i]));
     }
     return total / static_cast<double>(a.pixels.size());
+}
+
+bool write_test_png(const fs::path& path, png_uint_32 width,
+                    png_uint_32 height,
+                    const std::vector<unsigned char>& pixels) {
+    png_image image{};
+    image.version = PNG_IMAGE_VERSION;
+    image.width = width;
+    image.height = height;
+    image.format = PNG_FORMAT_RGBA;
+    return pixels.size() == PNG_IMAGE_SIZE(image)
+           && png_image_write_to_file(&image, path.string().c_str(), 0,
+                                      pixels.data(), 0, nullptr) != 0;
+}
+
+void test_starting_images_and_reusable_paths(const fs::path& directory) {
+    const fs::path source = directory / "starting-image.png";
+    CHECK(write_test_png(
+        source, 2U, 2U,
+        {255U, 0U, 0U, 255U, 0U, 255U, 0U, 255U,
+         0U, 0U, 255U, 255U, 255U, 255U, 255U, 0U}));
+
+    pvt::RenderConfig image_config = pvt::default_config();
+    image_config.width = 16;
+    image_config.height = 16;
+    image_config.block_size = 1;
+    image_config.output.write_alpha = true;
+    image_config.starting_image.enabled = true;
+    image_config.starting_image.path = source.string();
+    image_config.starting_image.fit = pvt::StartingImageFit::Stretch;
+    image_config.waves.clear();
+    image_config.swings.clear();
+    image_config.effects.clear();
+    image_config.displacement_enabled = false;
+    image_config.lighting_enabled = false;
+    image_config.spiral_enabled = false;
+    image_config.wall_reflection_enabled = false;
+    pvt::Image stretched;
+    std::string error;
+    const bool stretched_ok =
+        pvt::render_frame_at_phase(image_config, 0.0, stretched, &error);
+    if (!stretched_ok) std::cerr << "starting-image render: " << error << '\n';
+    CHECK(stretched_ok);
+    CHECK(stretched.width == 16 && stretched.height == 16);
+    CHECK(stretched.pixel(0, 0) != nullptr);
+    if (const float* pixel = stretched.pixel(0, 0)) {
+        CHECK(pixel[0] > 0.5F && pixel[1] < 0.2F && pixel[2] < 0.2F);
+    }
+    if (const float* pixel = stretched.pixel(15, 15)) {
+        CHECK(pixel[3] < 0.5F);
+    }
+    image_config.starting_image.fit = pvt::StartingImageFit::Tile;
+    pvt::Image tiled;
+    const bool tiled_ok =
+        pvt::render_frame_at_phase(image_config, 0.0, tiled, &error);
+    if (!tiled_ok) std::cerr << "tiled starting-image render: " << error << '\n';
+    CHECK(tiled_ok);
+    if (const float* first = tiled.pixel(0, 0);
+        first != nullptr && tiled.pixel(2, 0) != nullptr) {
+        const float* repeated = tiled.pixel(2, 0);
+        CHECK(std::equal(first, first + 4, repeated));
+    }
+
+    pvt::RenderConfig path_config = pvt::default_config();
+    make_small(path_config);
+    path_config.motion_paths.push_back(
+        pvt::default_ellipse_path(500U, 600U, "Test ellipse"));
+    path_config.waves.front().path.enabled = true;
+    path_config.waves.front().path.path_id = 500U;
+    path_config.waves.front().path.cycles_per_loop = 1;
+    path_config.waves.front().path.follow_tangent = true;
+    path_config.motion.enabled = true;
+    path_config.motion.custom_path.enabled = true;
+    path_config.motion.custom_path.path_id = 500U;
+    path_config.motion.custom_path.cycles_per_loop = 1;
+    path_config.motion.custom_path.follow_tangent = true;
+    path_config.output.write_alpha = true;
+    CHECK(pvt::validate(path_config).ok);
+    pvt::Image start;
+    pvt::Image middle;
+    pvt::Image seam;
+    CHECK(pvt::render_frame_at_phase(path_config, 0.0, start, &error));
+    CHECK(pvt::render_frame_at_phase(path_config, 0.25, middle, &error));
+    CHECK(pvt::render_frame_at_phase(path_config, 1.0, seam, &error));
+    CHECK(start.pixels == seam.pixels);
+    CHECK(mean_absolute_difference(start, middle) > 0.00001);
+
+    std::string serialized;
+    CHECK(pvt::detail::serialize_setup_config(path_config, serialized, &error));
+    pvt::RenderConfig loaded;
+    CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
+    CHECK(loaded.motion_paths.size() == 1U);
+    CHECK(loaded.motion_paths.front().nodes.size() == 4U);
+    CHECK(loaded.waves.front().path.enabled);
+    CHECK(loaded.motion.custom_path.follow_tangent);
 }
 
 void test_image_access_and_transactional_render() {
@@ -1609,9 +1705,35 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
             setup.erase(position, newline + 1U - position);
         }
     };
+    const auto erase_records_with_fragment = [](std::string& setup,
+                                                const std::string& fragment) {
+        std::size_t line_start = 0U;
+        while (line_start < setup.size()) {
+            const std::size_t newline = setup.find('\n', line_start);
+            if (newline == std::string::npos) break;
+            const std::size_t tab = setup.find('\t', line_start);
+            if (tab != std::string::npos && tab < newline
+                && setup.substr(line_start, tab - line_start).find(fragment)
+                       != std::string::npos) {
+                setup.erase(line_start, newline + 1U - line_start);
+                continue;
+            }
+            line_start = newline + 1U;
+        }
+    };
 
-    const auto version_six_bytes = read_bytes(first);
-    std::string version_five(version_six_bytes.begin(), version_six_bytes.end());
+    const auto version_seven_bytes = read_bytes(first);
+    std::string version_six(version_seven_bytes.begin(), version_seven_bytes.end());
+    CHECK(version_six.rfind("PVT_SETUP\t7\n", 0U) == 0U);
+    version_six.replace(0U, std::string("PVT_SETUP\t7").size(),
+                        "PVT_SETUP\t6");
+    erase_records_with_prefix(version_six, "source_image.");
+    erase_records_with_prefix(version_six, "paths.");
+    erase_record(version_six, "motion.rotation_offset_degrees");
+    erase_records_with_prefix(version_six, "motion.custom_path.");
+    erase_records_with_fragment(version_six, ".path.");
+
+    std::string version_five = version_six;
     CHECK(version_five.rfind("PVT_SETUP\t6\n", 0U) == 0U);
     version_five.replace(0U, std::string("PVT_SETUP\t6").size(),
                          "PVT_SETUP\t5");
@@ -1768,8 +1890,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(pvt::save_setup(loaded, float_round_trip.string(), &error));
     CHECK(read_bytes(float_setup) == read_bytes(float_round_trip));
 
-    std::string oversized_analysis(version_six_bytes.begin(),
-                                   version_six_bytes.end());
+    std::string oversized_analysis(version_seven_bytes.begin(),
+                                   version_seven_bytes.end());
     const std::string feature_count = "timing.music.feature_samples.count\t2\n";
     const std::size_t feature_count_at = oversized_analysis.find(feature_count);
     CHECK(feature_count_at != std::string::npos);
@@ -2320,6 +2442,7 @@ int main(int argc, char** argv) {
     test_synchronized_clocks_and_music();
     test_image_access_and_transactional_render();
     test_cancellable_single_layer_render();
+    test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
     test_direction_alpha_and_surfaces(source_root);
     test_partial_alpha_glow_composition();

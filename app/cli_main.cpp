@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 #include "audio_analysis.h"
 #include "project_bundle.h"
+#include "source_image.h"
 
 #include <algorithm>
 #include <cctype>
@@ -14,6 +15,10 @@
 #include <string>
 
 namespace {
+
+#ifndef PVT_PROGRAM_VERSION
+#  define PVT_PROGRAM_VERSION "development"
+#endif
 
 using pvt::EffectType;
 using pvt::ProjectDocument;
@@ -1429,11 +1434,7 @@ bool version_is_newer(const std::string& candidate, const std::string& current) 
 }
 
 void warn_if_created_by_newer_version(const ProjectDocument& document) {
-#ifdef PVT_PROGRAM_VERSION
     const std::string current = PVT_PROGRAM_VERSION;
-#else
-    const std::string current = "6.0.0";
-#endif
     const bool newer_created = version_is_newer(document.created_with_version, current);
     const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
     if (document.newer_program_version || newer_created || newer_changed) {
@@ -1489,7 +1490,11 @@ bool prompt_blend_mode(pvt::BlendMode& mode) {
                         {pvt::BlendMode::Difference, "Difference"},
                         {pvt::BlendMode::Subtract, "Subtract"},
                         {pvt::BlendMode::Multiply, "Multiply"},
-                        {pvt::BlendMode::Add, "Add"}});
+                        {pvt::BlendMode::Add, "Add"},
+                        {pvt::BlendMode::Erase, "Erase lower layers"},
+                        {pvt::BlendMode::ColorEraseTones, "Color eraser (tones)"},
+                        {pvt::BlendMode::ColorEraseBrightness,
+                         "Color eraser (brightness)"}});
 }
 
 void configure_project_and_layers(CliState& state) {
@@ -1622,6 +1627,19 @@ void configure_project_and_layers(CliState& state) {
                 copy.render.layer_clock.clock.music.source_sha256 = attached.sha256;
                 copy.render.layer_clock.clock.music.source_basename = attached.basename;
             }
+            if (!copy.render.starting_image.sha256.empty()) {
+                pvt::ProjectAttachment attached;
+                if (!duplicate_attachment(
+                        pvt::starting_image_attachment_id(
+                            project.layers[first_index].uuid),
+                        pvt::starting_image_attachment_id(copy.uuid), attached)) {
+                    std::cout << "The embedded starting image is unavailable.\n";
+                    continue;
+                }
+                copy.render.starting_image.path = attached.local_path;
+                copy.render.starting_image.sha256 = attached.sha256;
+                copy.render.starting_image.basename = attached.basename;
+            }
             state.document.attachments = std::move(staged_document.attachments);
             state.document.attachment_cache =
                 std::move(staged_document.attachment_cache);
@@ -1641,6 +1659,8 @@ void configure_project_and_layers(CliState& state) {
             bool detached = true;
             for (const std::string& reference_id : {
                      pvt::surface_obj_attachment_id(
+                         project.layers[first_index].uuid),
+                     pvt::starting_image_attachment_id(
                          project.layers[first_index].uuid),
                      pvt::layer_music_attachment_id(
                          project.layers[first_index].uuid)}) {
@@ -2067,6 +2087,7 @@ bool interactive_menu(CliState& state) {
 
 void print_help(const char* program) {
     std::cout
+        << "Procedural Visualizer Tool " << PVT_PROGRAM_VERSION << "\n\n"
         << "Usage:\n"
         << "  " << program << "                         Interactive menu\n"
         << "  " << program << " --render [options]      Render a composite sequence\n"
@@ -2075,7 +2096,8 @@ void print_help(const char* program) {
         << "Project and layer options:\n"
         << "  --project-name TEXT --layer N (1 is bottom) --add-layer NAME\n"
         << "  --blend none|softlight|grain-merge|overlay|color-dodge|linear-burn|\n"
-        << "          burn|difference|subtract|multiply|add\n"
+        << "          burn|difference|subtract|multiply|add|erase|\n"
+        << "          color-erase-tones|color-erase-brightness\n"
         << "  --layer-opacity N --enable-layer --disable-layer\n"
         << "  --alpha --no-alpha                 Final RGB/RGBA channel selection\n"
         << "  --alpha-modulation --no-alpha-modulation  Active-layer artwork\n\n"
@@ -2097,6 +2119,8 @@ void print_help(const char* program) {
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
         << "  (0 uses the bounded default of 2)\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping and final alpha)\n"
+        << "  --starting-image PNG --image-fit stretch|contain|cover|tile\n"
+        << "  --no-starting-image\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
         << "  --output-dir PATH --prefix TEXT --start-frame N --digits N\n"
         << "  --overwrite\n\n"
@@ -2105,7 +2129,7 @@ void print_help(const char* program) {
         << "  --save FILE                         Save a versioned bundle\n"
         << "  --save-default                      Save to <portable project name>.zip\n"
         << "  --save-legacy FILE                  Explicit one-layer .pvt export\n"
-        << "  --list-versions --help\n\n"
+        << "  --list-versions --version --help\n\n"
         << "Options are processed from left to right. Put --load before overrides.\n"
         << "Normal saves never overwrite an imported legacy .pvt. The explicit\n"
         << "--save-legacy escape hatch is rejected for multi-layer projects.\n"
@@ -2133,6 +2157,7 @@ bool option_takes_value(const std::string& option) {
            || option == "--png-compression" || option == "--workers"
            || option == "--backend" || option == "--gpu-in-flight"
            || option == "--obj"
+           || option == "--starting-image" || option == "--image-fit"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
            || option == "--start-frame" || option == "--digits";
 }
@@ -2161,9 +2186,28 @@ bool parse_blend_mode(const std::string& text, pvt::BlendMode& mode) {
         mode = pvt::BlendMode::Multiply;
     } else if (value == "add") {
         mode = pvt::BlendMode::Add;
+    } else if (value == "erase") {
+        mode = pvt::BlendMode::Erase;
+    } else if (value == "color-erase-tones"
+               || value == "color_erase_tones") {
+        mode = pvt::BlendMode::ColorEraseTones;
+    } else if (value == "color-erase-brightness"
+               || value == "color_erase_brightness") {
+        mode = pvt::BlendMode::ColorEraseBrightness;
     } else {
         return false;
     }
+    return true;
+}
+
+bool parse_starting_image_fit(const std::string& text,
+                              pvt::StartingImageFit& fit) {
+    const std::string value = lower_ascii(text);
+    if (value == "stretch") fit = pvt::StartingImageFit::Stretch;
+    else if (value == "contain") fit = pvt::StartingImageFit::Contain;
+    else if (value == "cover") fit = pvt::StartingImageFit::Cover;
+    else if (value == "tile") fit = pvt::StartingImageFit::Tile;
+    else return false;
     return true;
 }
 
@@ -2352,6 +2396,15 @@ int main(int argc, char** argv) {
             print_help(argv[0]);
             return EXIT_SUCCESS;
         }
+        if (option == "--version" || option == "-V") {
+            if (argc != 2) {
+                std::cerr << "Option '--version' must be used by itself.\n";
+                return EXIT_FAILURE;
+            }
+            std::cout << "Procedural Visualizer Tool "
+                      << PVT_PROGRAM_VERSION << '\n';
+            return EXIT_SUCCESS;
+        }
         if (option == "--self-test") {
             if (argc != 2) {
                 std::cerr << "Option '--self-test' must be used by itself.\n";
@@ -2434,6 +2487,12 @@ int main(int argc, char** argv) {
         if (option == "--no-audio-reactive") {
             mark_changed(state.document.project.layers.at(state.active_layer)
                              .render.audio_reactive.enabled,
+                         false);
+            continue;
+        }
+        if (option == "--no-starting-image") {
+            mark_changed(state.document.project.layers.at(state.active_layer)
+                             .render.starting_image.enabled,
                          false);
             continue;
         }
@@ -2704,6 +2763,52 @@ int main(int argc, char** argv) {
                 config.output.write_alpha = true;
                 return changed;
             });
+        } else if (option == "--starting-image"
+                   && valid_output_directory(value)) {
+            std::string source_error;
+            if (!pvt::detail::validate_starting_image_source(
+                    value, &source_error)) {
+                std::cerr << "Could not decode the starting image: "
+                          << source_error << '\n';
+                return EXIT_FAILURE;
+            }
+            ProjectDocument candidate = state.document;
+            pvt::ProjectAttachment attached;
+            std::string attachment_error;
+            const std::string reference_id = pvt::starting_image_attachment_id(
+                candidate.project.layers.at(state.active_layer).uuid);
+            if (!pvt::attach_project_file(candidate, reference_id, value,
+                                          &attached, &attachment_error)) {
+                std::cerr << "Could not embed the starting image: "
+                          << attachment_error << '\n';
+                return EXIT_FAILURE;
+            }
+            state.document = std::move(candidate);
+            mutate_active([&](RenderConfig& config) {
+                const bool changed = !config.starting_image.enabled
+                                     || config.starting_image.path
+                                            != attached.local_path
+                                     || config.starting_image.sha256
+                                            != attached.sha256
+                                     || config.starting_image.basename
+                                            != attached.basename
+                                     || !config.output.write_alpha;
+                config.starting_image.enabled = true;
+                config.starting_image.path = attached.local_path;
+                config.starting_image.sha256 = attached.sha256;
+                config.starting_image.basename = attached.basename;
+                config.output.write_alpha = true;
+                return changed;
+            });
+        } else if (option == "--image-fit") {
+            pvt::StartingImageFit fit;
+            if (!parse_starting_image_fit(value, fit)) {
+                std::cerr << "Image fit must be stretch, contain, cover, or tile.\n";
+                return EXIT_FAILURE;
+            }
+            mark_changed(state.document.project.layers.at(state.active_layer)
+                             .render.starting_image.fit,
+                         fit);
         } else if (option == "--dither") {
             pvt::DitherMethod method;
             if (value == "blue") {
