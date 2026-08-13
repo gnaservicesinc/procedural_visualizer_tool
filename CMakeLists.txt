@@ -5,8 +5,16 @@ endif()
 
 option(PVT_ENABLE_DISTRIBUTION
     "Add a target that stages a self-contained macOS application" OFF)
+option(PVT_BUILD_QT_GUI "Build the Qt 6 interactive GUI" OFF)
+set(PVT_DEPLOY_QT_RUNTIME_DEFAULT OFF)
+if(PVT_BUILD_QT_GUI AND (APPLE OR WIN32))
+    # Those platforms do not normally provide a package-manager Qt runtime at
+    # the installed executable's lookup path. A fresh GUI install should run.
+    set(PVT_DEPLOY_QT_RUNTIME_DEFAULT ON)
+endif()
 option(PVT_DEPLOY_QT_RUNTIME
-    "Deploy the Qt runtime and plugins when installing the GUI" OFF)
+    "Deploy the Qt runtime and plugins when installing the GUI"
+    ${PVT_DEPLOY_QT_RUNTIME_DEFAULT})
 # Set this before project() initializes compiler flags. Qt 6.5 supports this
 # baseline, and every native API used by the application is availability-
 # guarded where necessary. A caller's explicit deployment target still wins.
@@ -17,14 +25,20 @@ if(PVT_ENABLE_DISTRIBUTION AND CMAKE_HOST_APPLE
         "Minimum macOS version for generated binaries" FORCE)
 endif()
 
-project(ProceduralVisualizerTool VERSION 6.0.0 LANGUAGES CXX)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" PVT_PRODUCT_VERSION
+    LIMIT_COUNT 1)
+if(NOT PVT_PRODUCT_VERSION MATCHES
+   "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
+    message(FATAL_ERROR
+        "VERSION must contain one SemVer core such as 0.9.0 or 1.0.0.")
+endif()
+project(ProceduralVisualizerTool VERSION "${PVT_PRODUCT_VERSION}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)
 include(CMakePackageConfigHelpers)
 
 option(PVT_BUILD_CLI "Build the command-line renderer" ON)
-option(PVT_BUILD_QT_GUI "Build the Qt 6 interactive GUI" OFF)
 option(PVT_BUILD_EXAMPLES "Build the C++ library API example" OFF)
 option(PVT_ENABLE_METAL "Build the optional Apple Metal rendering backend" ON)
 set(PVT_DISTRIBUTION_CODE_SIGN_IDENTITY "-" CACHE STRING
@@ -114,6 +128,8 @@ add_library(ProceduralVisualizerTool
     src/obj_surface.cpp
     src/obj_surface.h
     src/path_utf8.h
+    src/source_image.cpp
+    src/source_image.h
     src/windows_file_install.h
 )
 
@@ -616,6 +632,10 @@ if(BUILD_TESTING)
     if(PVT_BUILD_CLI)
         add_test(NAME pvt_cli_self_test COMMAND render9 --self-test)
         add_test(NAME pvt_cli_help COMMAND render9 --help)
+        add_test(NAME pvt_cli_version COMMAND render9 --version)
+        set_tests_properties(pvt_cli_version PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "Procedural Visualizer Tool ${PROJECT_VERSION}")
         add_test(NAME pvt_cli_rejects_unknown_option
             COMMAND ${CMAKE_COMMAND}
                 -DPROGRAM=$<TARGET_FILE:render9>
@@ -653,6 +673,13 @@ if(BUILD_TESTING)
                 --png-compression 0
                 --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-custom-obj
                 --prefix obj_ --overwrite)
+        add_test(NAME pvt_cli_starting_image_render
+            COMMAND render9 --render
+                --width 32 --height 32 --block-size 2 --frames 2
+                --starting-image ${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png
+                --image-fit contain --png-compression 0
+                --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-starting-image
+                --prefix image_ --overwrite)
         add_test(NAME pvt_cli_project_bundle
             COMMAND ${CMAKE_COMMAND}
                 -DPROGRAM=$<TARGET_FILE:render9>
@@ -685,11 +712,19 @@ if(PVT_BUILD_QT_GUI)
             TARGET ProceduralVisualizerToolGui
             OUTPUT_SCRIPT pvt_qt_deploy_script)
         install(SCRIPT "${pvt_qt_deploy_script}")
+        if(WIN32)
+            if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
+                message(FATAL_ERROR
+                    "The Qt offscreen platform plugin is required for installed-package validation.")
+            endif()
+            install(FILES "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+                DESTINATION plugins/platforms)
+        endif()
     endif()
 endif()
 install(FILES include/procedural_visualizer_tool.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(FILES README.md IMPLEMENTATION_STATUS.md LICENSE
+install(FILES README.md IMPLEMENTATION_STATUS.md PORTABILITY_ROADMAP.md LICENSE
     DESTINATION ${CMAKE_INSTALL_DOCDIR})
 if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI)
     install(FILES third_party/miniaudio/LICENSE

@@ -143,6 +143,26 @@ void test_blend_modes() {
     expect_opaque_blend(pvt::BlendMode::Multiply, 0.1875);
     expect_opaque_blend(pvt::BlendMode::Add, 1.0);
 
+    // Destination-out modes preserve straight RGB while changing only the
+    // already-composited lower coverage.
+    pvt::Image erased = solid(0.25F, 0.8F);
+    std::string erase_error;
+    CHECK(pvt::composite_over(solid(0.75F, 0.5F), erased,
+                              pvt::BlendMode::Erase, 1.0, &erase_error));
+    CHECK(close_enough(erased.pixels[0U], 0.25));
+    CHECK(close_enough(erased.pixels[3U], 0.4));
+
+    erased = solid(0.25F, 1.0F);
+    CHECK(pvt::composite_over(solid(0.25F, 1.0F), erased,
+                              pvt::BlendMode::ColorEraseTones, 1.0,
+                              &erase_error));
+    CHECK(close_enough(erased.pixels[3U], 0.0));
+    erased = solid(0.25F, 1.0F);
+    CHECK(pvt::composite_over(solid(0.75F, 1.0F), erased,
+                              pvt::BlendMode::ColorEraseBrightness, 1.0,
+                              &erase_error));
+    CHECK(close_enough(erased.pixels[3U], 0.0));
+
     std::string error;
     pvt::Image backdrop = solid(0.75F);
     CHECK(pvt::composite_over(solid(0.25F), backdrop,
@@ -183,7 +203,9 @@ void test_blend_modes() {
         pvt::BlendMode::ColorDodge, pvt::BlendMode::LinearBurn,
         pvt::BlendMode::ColorBurn, pvt::BlendMode::Difference,
         pvt::BlendMode::Subtract, pvt::BlendMode::Multiply,
-        pvt::BlendMode::Add};
+        pvt::BlendMode::Add, pvt::BlendMode::Erase,
+        pvt::BlendMode::ColorEraseTones,
+        pvt::BlendMode::ColorEraseBrightness};
     for (const pvt::BlendMode mode : modes) {
         CHECK(std::string(pvt::blend_mode_name(mode)) != "Unknown blend mode");
         pvt::Image finite = solid(-4.0F, 0.37F);
@@ -426,7 +448,9 @@ void test_project_rendering_order_equivalence_and_seam() {
         pvt::BlendMode::ColorDodge, pvt::BlendMode::LinearBurn,
         pvt::BlendMode::ColorBurn, pvt::BlendMode::Difference,
         pvt::BlendMode::Subtract, pvt::BlendMode::Multiply,
-        pvt::BlendMode::Add};
+        pvt::BlendMode::Add, pvt::BlendMode::Erase,
+        pvt::BlendMode::ColorEraseTones,
+        pvt::BlendMode::ColorEraseBrightness};
     for (const pvt::BlendMode mode : modes) {
         project.layers[1U].blend_mode = mode;
         pvt::Image phase_zero;

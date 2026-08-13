@@ -521,6 +521,27 @@ bool metal_backend_available(std::string* device_name,
 
 bool metal_backend_supports(const RenderConfig& config,
                             std::string* reason) {
+    if (config.starting_image.enabled) {
+        if (reason != nullptr) {
+            *reason = "Starting-image layers currently decode and sample on the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
+        }
+        return false;
+    }
+    const bool bound_path = config.motion.custom_path.enabled
+        || std::any_of(config.waves.begin(), config.waves.end(),
+                       [](const WaveConfig& wave) {
+                           return wave.path.enabled;
+                       })
+        || std::any_of(config.effects.begin(), config.effects.end(),
+                       [](const EffectConfig& effect) {
+                           return effect.path.enabled;
+                       });
+    if (bound_path) {
+        if (reason != nullptr) {
+            *reason = "Reusable cubic-path bindings currently use the reference CPU sampler; use CPU + GPU for automatic per-layer fallback.";
+        }
+        return false;
+    }
     if (surface_has_work(config.surface)
         && config.surface.mapping == SurfaceMapping::CustomObj) {
         if (reason != nullptr) {

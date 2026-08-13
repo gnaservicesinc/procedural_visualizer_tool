@@ -8,6 +8,11 @@
 int main(int argc, char** argv) {
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Procedural Visualizer Tool"));
+    QApplication::setApplicationDisplayName(
+        QStringLiteral("Procedural Visualizer Tool"));
+#ifdef PVT_PROGRAM_VERSION
+    QApplication::setApplicationVersion(QStringLiteral(PVT_PROGRAM_VERSION));
+#endif
     QApplication::setOrganizationName(QStringLiteral("GNA Services"));
 
     MainWindow window;

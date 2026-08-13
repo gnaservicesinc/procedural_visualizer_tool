@@ -78,8 +78,43 @@ QRectF PreviewWidget::imageRectangle() const {
             fitted.width(), fitted.height()};
 }
 
+bool PreviewWidget::sourceOverlayActive() const {
+    if (!config_.surface.enabled
+        || config_.surface.mapping == pvt::SurfaceMapping::Plane) {
+        return false;
+    }
+    if (overlay_mode_ == OverlayMode::Swings) {
+        return true;
+    }
+    return overlay_mode_ == OverlayMode::Effects
+           && selected_effect_
+           && *selected_effect_ < config_.effects.size()
+           && config_.effects[*selected_effect_].space
+                  == pvt::EffectSpace::Texture;
+}
+
+QRectF PreviewWidget::sourceOverlayRectangle() const {
+    const QRectF output = imageRectangle();
+    const double inset_width = std::max(140.0, output.width() * 0.34);
+    const double aspect = static_cast<double>(std::max(1, config_.height))
+                          / static_cast<double>(std::max(1, config_.width));
+    const double inset_height = std::max(
+        90.0, std::min(output.height() * 0.46, inset_width * aspect));
+    return {output.right() - inset_width - 12.0,
+            output.top() + 12.0, inset_width, inset_height};
+}
+
+QRectF PreviewWidget::handleRectangle(std::size_t index) const {
+    const bool source_space = overlay_mode_ == OverlayMode::Swings
+        || (overlay_mode_ == OverlayMode::Effects
+            && index < config_.effects.size()
+            && config_.effects[index].space == pvt::EffectSpace::Texture);
+    return sourceOverlayActive() && source_space
+               ? sourceOverlayRectangle() : imageRectangle();
+}
+
 QPointF PreviewWidget::handlePosition(std::size_t index) const {
-    const QRectF target = imageRectangle();
+    const QRectF target = handleRectangle(index);
     double x = 0.5;
     double y = 0.5;
     switch (overlay_mode_) {
@@ -185,13 +220,36 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     painter.setPen(QPen(QColor(160, 164, 173), 1.0));
     painter.drawRect(target);
 
+    if (sourceOverlayActive()) {
+        const QRectF uv = sourceOverlayRectangle();
+        painter.fillRect(uv, QColor(18, 20, 25, 232));
+        painter.setPen(QPen(QColor(92, 98, 112), 1.0, Qt::DashLine));
+        for (int division = 1; division < 4; ++division) {
+            const double fraction = static_cast<double>(division) / 4.0;
+            painter.drawLine(QPointF(uv.left() + uv.width() * fraction, uv.top()),
+                             QPointF(uv.left() + uv.width() * fraction, uv.bottom()));
+            painter.drawLine(QPointF(uv.left(), uv.top() + uv.height() * fraction),
+                             QPointF(uv.right(), uv.top() + uv.height() * fraction));
+        }
+        painter.setPen(QPen(QColor(110, 215, 235), 2.0));
+        painter.drawRect(uv);
+        const QRectF label(uv.left() + 5.0, uv.top() + 3.0,
+                           uv.width() - 10.0, 20.0);
+        painter.fillRect(label, QColor(10, 12, 15, 190));
+        painter.setPen(QColor(225, 247, 252));
+        painter.drawText(label, Qt::AlignLeft | Qt::AlignVCenter,
+                         tr("UNWRAPPED SOURCE / UV"));
+    }
+
     QString overlay_hint;
     switch (overlay_mode_) {
         case OverlayMode::Waves:
             overlay_hint = tr("Source coordinate (before surface and layer transform)");
             break;
         case OverlayMode::Swings:
-            overlay_hint = tr("Source/UV coordinate; dotted radius is unprojected");
+            overlay_hint = sourceOverlayActive()
+                ? tr("Edit source/UV position in the inset; output remains projected")
+                : tr("Source/UV coordinate");
             break;
         case OverlayMode::Effects:
             if (selected_effect_ && *selected_effect_ < config_.effects.size()) {
@@ -199,7 +257,9 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
                 if (effect.type == pvt::EffectType::BlockScale) {
                     overlay_hint = tr("Block Scale affects the whole image; it has no center");
                 } else if (effect.space == pvt::EffectSpace::Texture) {
-                    overlay_hint = tr("UV = Texture source coordinate; dotted radius is unprojected");
+                    overlay_hint = sourceOverlayActive()
+                        ? tr("Edit Texture UV position in the inset; output remains projected")
+                        : tr("UV = Texture source coordinate");
                 } else {
                     overlay_hint = tr("M = Mapped-object coordinate; dashed radius is final canvas space");
                 }
@@ -232,8 +292,10 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
         }
         const double radius_fraction = handleRadiusFraction(index);
         if (radius_fraction > 0.0) {
+            const QRectF handle_target = handleRectangle(index);
             const double radius = radius_fraction
-                                  * std::min(target.width(), target.height());
+                                  * std::min(handle_target.width(),
+                                             handle_target.height());
             QColor ring = color;
             ring.setAlpha(handleEnabled(index) ? 185 : 80);
             const bool source_space =
@@ -321,7 +383,7 @@ void PreviewWidget::moveHandle(const QPointF& position) {
         || *dragged_handle_ >= handleCount()) {
         return;
     }
-    const QRectF target = imageRectangle();
+    const QRectF target = handleRectangle(*dragged_handle_);
     if (target.width() <= 0.0 || target.height() <= 0.0) {
         return;
     }

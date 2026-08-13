@@ -2,6 +2,7 @@
 
 #include "frame_renderer_internal.h"
 #include "obj_surface.h"
+#include "source_image.h"
 
 #include <algorithm>
 #include <array>
@@ -216,6 +217,46 @@ bool valid_enum(SurfaceMapping value) {
             return true;
     }
     return false;
+}
+
+bool valid_enum(StartingImageFit value) {
+    switch (value) {
+        case StartingImageFit::Stretch:
+        case StartingImageFit::Contain:
+        case StartingImageFit::Cover:
+        case StartingImageFit::Tile:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(PathHandleMode value) {
+    switch (value) {
+        case PathHandleMode::Corner:
+        case PathHandleMode::AutoSmooth:
+        case PathHandleMode::Smooth:
+        case PathHandleMode::Symmetric:
+            return true;
+    }
+    return false;
+}
+
+bool valid_path_binding(const PathBinding& binding,
+                        const std::vector<CubicMotionPath>& paths) {
+    if (binding.cycles_per_loop < -1000 || binding.cycles_per_loop > 1000
+        || !finite_in_range(binding.phase_degrees, -36000.0, 36000.0)
+        || !finite_in_range(binding.offset_x, -10.0, 10.0)
+        || !finite_in_range(binding.offset_y, -10.0, 10.0)
+        || !finite_in_range(binding.resolved_tangent_degrees,
+                            -360.0, 360.0)) {
+        return false;
+    }
+    if (!binding.enabled) return true;
+    return binding.path_id != 0U
+           && std::any_of(paths.begin(), paths.end(),
+                          [&binding](const CubicMotionPath& path) {
+                              return path.id == binding.path_id;
+                          });
 }
 
 bool valid_enum(Waveform value) {
@@ -1055,6 +1096,11 @@ double wave_coordinate(const WaveConfig& wave, double x, double y,
     const double dy = (y - source_y) / short_side;
     const double radial = std::hypot(dx, dy);
 
+    if (wave.path.enabled && wave.path.follow_tangent) {
+        const double angle = radians(wave.path.resolved_tangent_degrees);
+        return std::cos(angle) * dx + std::sin(angle) * dy;
+    }
+
     if (wave.direction < 0.5) {
         return mix_value(radial, dx, 1.0 - 2.0 * wave.direction);
     }
@@ -1448,6 +1494,16 @@ const char* surface_mapping_name(SurfaceMapping value) {
     return "Unknown";
 }
 
+const char* starting_image_fit_name(StartingImageFit value) {
+    switch (value) {
+        case StartingImageFit::Stretch: return "Stretch";
+        case StartingImageFit::Contain: return "Contain";
+        case StartingImageFit::Cover: return "Cover";
+        case StartingImageFit::Tile: return "Tile";
+    }
+    return "Unknown";
+}
+
 const char* waveform_name(Waveform value) {
     switch (value) {
         case Waveform::Sine: return "Sine";
@@ -1582,6 +1638,41 @@ EffectConfig default_effect(EffectType type) {
     return effect;
 }
 
+CubicMotionPath default_ellipse_path(std::uint64_t path_id,
+                                     std::uint64_t first_node_id,
+                                     std::string name) {
+    constexpr double kappa = 0.5522847498307936;
+    constexpr double radius_x = 0.32;
+    constexpr double radius_y = 0.22;
+    CubicMotionPath path;
+    path.id = path_id;
+    path.name = std::move(name);
+    path.nodes.resize(4U);
+    const auto set = [first_node_id](CubicPathNode& node,
+                                     std::uint64_t offset,
+                                     double x, double y,
+                                     double in_x, double in_y,
+                                     double out_x, double out_y) {
+        node.id = first_node_id + offset;
+        node.x = x;
+        node.y = y;
+        node.in_x = in_x;
+        node.in_y = in_y;
+        node.out_x = out_x;
+        node.out_y = out_y;
+        node.handle_mode = PathHandleMode::Symmetric;
+    };
+    set(path.nodes[0], 0U, 0.5 + radius_x, 0.5,
+        0.0, -kappa * radius_y, 0.0, kappa * radius_y);
+    set(path.nodes[1], 1U, 0.5, 0.5 + radius_y,
+        kappa * radius_x, 0.0, -kappa * radius_x, 0.0);
+    set(path.nodes[2], 2U, 0.5 - radius_x, 0.5,
+        0.0, kappa * radius_y, 0.0, -kappa * radius_y);
+    set(path.nodes[3], 3U, 0.5, 0.5 - radius_y,
+        -kappa * radius_x, 0.0, kappa * radius_x, 0.0);
+    return path;
+}
+
 PaletteConfig default_palette(std::size_t index) {
     PaletteConfig palette;
     palette.enabled = true;
@@ -1673,6 +1764,7 @@ ProjectConfig default_project() {
     project.canvas.total_frames = legacy.total_frames;
     project.canvas.fps = legacy.fps;
     project.canvas.clock = legacy.clock;
+    project.canvas.motion_paths = legacy.motion_paths;
     project.output = legacy.output;
     project.layers.push_back(default_layer(0));
     return project;
@@ -1689,6 +1781,7 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
     config.total_frames = canvas.total_frames;
     config.fps = canvas.fps;
     config.clock = canvas.clock;
+    config.motion_paths = canvas.motion_paths;
     config.output = output;
     return config;
 }
@@ -1923,6 +2016,32 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (config.effects.size() > kMaximumEffects) {
         return invalid_result("The configuration contains too many effects.");
     }
+    if (config.motion_paths.size() > kMaximumMotionPaths) {
+        return invalid_result("The configuration contains more than 32 reusable motion paths.");
+    }
+    std::unordered_set<std::uint64_t> path_identifiers;
+    for (const CubicMotionPath& path : config.motion_paths) {
+        if (path.id == 0U || !path_identifiers.insert(path.id).second
+            || !valid_name(path.name) || path.nodes.size() < 3U
+            || path.nodes.size() > kMaximumMotionPathNodes) {
+            return invalid_result(
+                "Reusable motion paths need unique nonzero IDs, valid names, and 3 to 128 nodes.");
+        }
+        std::unordered_set<std::uint64_t> node_identifiers;
+        for (const CubicPathNode& node : path.nodes) {
+            if (node.id == 0U || !node_identifiers.insert(node.id).second
+                || !valid_enum(node.handle_mode)
+                || !finite_in_range(node.x, -10.0, 10.0)
+                || !finite_in_range(node.y, -10.0, 10.0)
+                || !finite_in_range(node.in_x, -10.0, 10.0)
+                || !finite_in_range(node.in_y, -10.0, 10.0)
+                || !finite_in_range(node.out_x, -10.0, 10.0)
+                || !finite_in_range(node.out_y, -10.0, 10.0)) {
+                return invalid_result(
+                    "A reusable motion path contains an invalid node, handle, or duplicate ID.");
+            }
+        }
+    }
 
     std::unordered_set<std::uint64_t> identifiers;
     identifiers.reserve(config.waves.size() + config.swings.size() + config.effects.size());
@@ -1945,7 +2064,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !finite_in_range(wave.spatial_frequency, 0.0, 1000.0)
             || wave.cycles_per_loop < -1000 || wave.cycles_per_loop > 1000
             || !finite_in_range(wave.phase_degrees, -36000.0, 36000.0)
-            || !finite_in_range(wave.direction, 0.0, 1.0)) {
+            || !finite_in_range(wave.direction, 0.0, 1.0)
+            || !valid_path_binding(wave.path, config.motion_paths)) {
             return invalid_result("Wave " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -1998,7 +2118,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                 static_cast<double>(kMaximumDimension))
             || !finite_in_range(effect.threshold, 0.0, 64.0)
             || !finite_in_range(effect.soft_knee, 0.0, 1.0)
-            || !finite_in_range(effect.area_radius, 0.0, 10.0)) {
+            || !finite_in_range(effect.area_radius, 0.0, 10.0)
+            || !valid_path_binding(effect.path, config.motion_paths)) {
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -2131,7 +2252,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_in_range(config.motion.phase_degrees, -36000.0, 36000.0)
         || config.motion.rotations_per_loop < -1000
         || config.motion.rotations_per_loop > 1000
-        || !finite_in_range(config.motion.scale_pulse, 0.0, 0.95)) {
+        || !finite_in_range(config.motion.rotation_offset_degrees,
+                            -36000.0, 36000.0)
+        || !finite_in_range(config.motion.scale_pulse, 0.0, 0.95)
+        || !valid_path_binding(config.motion.custom_path,
+                               config.motion_paths)) {
         return invalid_result(
             "Layer motion path, placement, cycles, rotation, or scale is out of range.");
     }
@@ -2174,12 +2299,30 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result(
             "A custom OBJ surface requires a valid runtime path or embedded attachment identity.");
     }
+    if (!valid_enum(config.starting_image.fit)
+        || (!config.starting_image.path.empty()
+            && !valid_path_text(config.starting_image.path,
+                                kMaximumPathBytes, false))
+        || (config.starting_image.sha256.empty()
+                != config.starting_image.basename.empty())
+        || (!config.starting_image.sha256.empty()
+            && (!valid_lower_hex_digest(config.starting_image.sha256)
+                || config.starting_image.basename.size()
+                       > kMaximumAttachmentBasenameBytes
+                || !valid_music_basename(config.starting_image.basename)))
+        || (config.starting_image.enabled
+            && config.starting_image.path.empty()
+            && config.starting_image.sha256.empty())) {
+        return invalid_result(
+            "An enabled starting image requires a valid PNG runtime path or embedded attachment identity.");
+    }
     if (include_export) {
         const bool has_transparent_surface =
             surface_has_render_work(config.surface)
             && config.surface.mapping != SurfaceMapping::Plane;
         if (!config.alpha.enabled && !config.output.write_alpha
             && (has_transparent_edge_effect || has_transparent_surface
+                || config.starting_image.enabled
                 || motion_has_render_work(config.motion))) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
@@ -3476,6 +3619,165 @@ void apply_layer_transform(Image& image,
     }
 }
 
+struct CubicPathSample {
+    double x = 0.5;
+    double y = 0.5;
+    double tangent_x = 1.0;
+    double tangent_y = 0.0;
+};
+
+CubicPathSample cubic_path_at(const CubicPathNode& first,
+                              const CubicPathNode& second, double time) {
+    const double inverse = 1.0 - time;
+    const double p0x = first.x;
+    const double p0y = first.y;
+    const double p1x = first.x + first.out_x;
+    const double p1y = first.y + first.out_y;
+    const double p2x = second.x + second.in_x;
+    const double p2y = second.y + second.in_y;
+    const double p3x = second.x;
+    const double p3y = second.y;
+    CubicPathSample result;
+    result.x = inverse * inverse * inverse * p0x
+               + 3.0 * inverse * inverse * time * p1x
+               + 3.0 * inverse * time * time * p2x
+               + time * time * time * p3x;
+    result.y = inverse * inverse * inverse * p0y
+               + 3.0 * inverse * inverse * time * p1y
+               + 3.0 * inverse * time * time * p2y
+               + time * time * time * p3y;
+    result.tangent_x = 3.0 * inverse * inverse * (p1x - p0x)
+                       + 6.0 * inverse * time * (p2x - p1x)
+                       + 3.0 * time * time * (p3x - p2x);
+    result.tangent_y = 3.0 * inverse * inverse * (p1y - p0y)
+                       + 6.0 * inverse * time * (p2y - p1y)
+                       + 3.0 * time * time * (p3y - p2y);
+    return result;
+}
+
+CubicPathSample sample_cubic_path(const CubicMotionPath& path,
+                                  double normalized_position) {
+    struct ArcEntry {
+        double length = 0.0;
+        std::size_t segment = 0U;
+        double time = 0.0;
+        CubicPathSample sample;
+    };
+    constexpr int subdivisions = 32;
+    std::vector<ArcEntry> arc;
+    arc.reserve(path.nodes.size() * subdivisions + 1U);
+    CubicPathSample previous = cubic_path_at(path.nodes.back(),
+                                             path.nodes.front(), 1.0);
+    arc.push_back({0.0, 0U, 0.0, previous});
+    double length = 0.0;
+    for (std::size_t segment = 0U; segment < path.nodes.size(); ++segment) {
+        const auto& first = path.nodes[segment];
+        const auto& second = path.nodes[(segment + 1U) % path.nodes.size()];
+        for (int step = 1; step <= subdivisions; ++step) {
+            const double time = static_cast<double>(step) / subdivisions;
+            CubicPathSample sample = cubic_path_at(first, second, time);
+            length += std::hypot(sample.x - previous.x,
+                                 sample.y - previous.y);
+            arc.push_back({length, segment, time, sample});
+            previous = sample;
+        }
+    }
+    if (length <= 1.0e-12) return arc.front().sample;
+    normalized_position -= std::floor(normalized_position);
+    if (normalized_position < 0.0) normalized_position += 1.0;
+    const double target = normalized_position * length;
+    const auto upper = std::lower_bound(
+        arc.begin(), arc.end(), target,
+        [](const ArcEntry& entry, double value) {
+            return entry.length < value;
+        });
+    if (upper == arc.begin()) return upper->sample;
+    if (upper == arc.end()) return arc.back().sample;
+    const auto lower = upper - 1;
+    const double span = upper->length - lower->length;
+    const double mix = span > 1.0e-12
+                           ? (target - lower->length) / span : 0.0;
+    CubicPathSample result;
+    result.x = lower->sample.x
+               + (upper->sample.x - lower->sample.x) * mix;
+    result.y = lower->sample.y
+               + (upper->sample.y - lower->sample.y) * mix;
+    result.tangent_x = lower->sample.tangent_x
+                       + (upper->sample.tangent_x
+                          - lower->sample.tangent_x) * mix;
+    result.tangent_y = lower->sample.tangent_y
+                       + (upper->sample.tangent_y
+                          - lower->sample.tangent_y) * mix;
+    return result;
+}
+
+const CubicMotionPath* find_motion_path(const RenderConfig& config,
+                                        std::uint64_t id) {
+    const auto found = std::find_if(
+        config.motion_paths.begin(), config.motion_paths.end(),
+        [id](const CubicMotionPath& path) { return path.id == id; });
+    return found == config.motion_paths.end() ? nullptr : &*found;
+}
+
+CubicPathSample bound_path_sample(const RenderConfig& config,
+                                  const PathBinding& binding,
+                                  double loop_phase,
+                                  const MotionClockState& motion_clock) {
+    const CubicMotionPath* path = find_motion_path(config, binding.path_id);
+    if (path == nullptr) return {};
+    double clock = binding.synchronized ? motion_clock.global_phase : loop_phase;
+    double position = static_cast<double>(binding.cycles_per_loop)
+                          * clock / kTau
+                      + binding.phase_degrees / 360.0;
+    if (binding.reverse) position = -position;
+    CubicPathSample sample = sample_cubic_path(*path, position);
+    sample.x += binding.offset_x;
+    sample.y += binding.offset_y;
+    return sample;
+}
+
+void resolve_path_bindings(RenderConfig& config, double loop_phase,
+                           const MotionClockState& motion_clock) {
+    for (WaveConfig& wave : config.waves) {
+        if (!wave.path.enabled) continue;
+        const CubicPathSample sample = bound_path_sample(
+            config, wave.path, loop_phase, motion_clock);
+        wave.x_percent = sample.x * 100.0;
+        wave.y_percent = sample.y * 100.0;
+        if (wave.path.follow_tangent) {
+            wave.path.resolved_tangent_degrees =
+                std::atan2(sample.tangent_y, sample.tangent_x)
+                * 180.0 / kPi;
+        }
+    }
+    for (EffectConfig& effect : config.effects) {
+        if (!effect.path.enabled) continue;
+        const CubicPathSample sample = bound_path_sample(
+            config, effect.path, loop_phase, motion_clock);
+        effect.center_x = sample.x;
+        effect.center_y = sample.y;
+        if (effect.path.follow_tangent) {
+            effect.angle_degrees = std::atan2(sample.tangent_y,
+                                              sample.tangent_x)
+                                   * 180.0 / kPi;
+        }
+    }
+    if (config.motion.enabled && config.motion.custom_path.enabled) {
+        const CubicPathSample sample = bound_path_sample(
+            config, config.motion.custom_path, loop_phase, motion_clock);
+        config.motion.path = LayerMotionPath::None;
+        config.motion.center_x = sample.x;
+        config.motion.center_y = sample.y;
+        config.motion.travel_x = 0.0;
+        config.motion.travel_y = 0.0;
+        if (config.motion.custom_path.follow_tangent) {
+            config.motion.rotation_offset_degrees +=
+                std::atan2(sample.tangent_y, sample.tangent_x)
+                * 180.0 / kPi;
+        }
+    }
+}
+
 double triangle_motion(double phase) {
     return (2.0 / 3.141592653589793238462643383279502884)
            * std::asin(std::sin(phase));
@@ -3532,7 +3834,8 @@ void apply_layer_motion(const Image& source, Image& destination,
     const double source_x = 0.5 * static_cast<double>(source.width - 1);
     const double source_y = 0.5 * static_cast<double>(source.height - 1);
     const double rotation = static_cast<double>(motion.rotations_per_loop)
-                            * loop_phase;
+                                * loop_phase
+                            + radians(motion.rotation_offset_degrees);
     const double cosine = std::cos(-rotation);
     const double sine = std::sin(-rotation);
     const double scale = std::max(
@@ -3581,37 +3884,48 @@ bool render_frame_at_timeline_sample_cancellable(
             kTau * wrap_unit(timeline.normalized_phase);
         const MotionClockState motion_clock =
             prepare_motion_clock(config, loop_phase);
+        RenderConfig resolved_config = config;
+        resolve_path_bindings(resolved_config, loop_phase, motion_clock);
+        const RenderConfig& render = resolved_config;
         Image current;
         Image scratch;
         Image auxiliary;
-        generate_base_image(config, loop_phase, motion_clock, timeline.music,
-                            current, cancel);
+        if (render.starting_image.enabled) {
+            if (!detail::render_starting_image(
+                    render.starting_image, render.width, render.height,
+                    current, cancel, error)) {
+                return false;
+            }
+        } else {
+            generate_base_image(render, loop_phase, motion_clock,
+                                timeline.music, current, cancel);
+        }
 
         const auto apply_effect_stage = [&](EffectSpace stage) {
-            for (const EffectConfig& authored_effect : config.effects) {
+            for (const EffectConfig& authored_effect : render.effects) {
                 throw_if_cancelled(cancel);
                 if (authored_effect.space != stage) {
                     continue;
                 }
                 EffectConfig effect = authored_effect;
-                if (config.audio_reactive.enabled
-                    && config.audio_reactive.effects_enabled
-                    && (!config.audio_reactive.synchronized_only
+                if (render.audio_reactive.enabled
+                    && render.audio_reactive.effects_enabled
+                    && (!render.audio_reactive.synchronized_only
                         || effect.synchronized)) {
                     effect.intensity *= std::max(
-                        0.0, 1.0 + config.audio_reactive.effect_amount
+                        0.0, 1.0 + render.audio_reactive.effect_amount
                                        * music_feature_value(
                                            timeline.music,
-                                           config.audio_reactive.effect_source));
+                                           render.audio_reactive.effect_source));
                 }
                 if (!effect_has_render_work(effect)) continue;
                 const double phase = effect_phase(
-                    config, effect, loop_phase, motion_clock);
+                    render, effect, loop_phase, motion_clock);
                 if (effect.type == EffectType::Glow) {
                     apply_glow(current, scratch, auxiliary, effect, phase, cancel);
                 } else if (effect.type == EffectType::BlockScale) {
                     apply_block_scale(current, scratch, effect, phase,
-                                      config.block_size, cancel);
+                                      render.block_size, cancel);
                     current.pixels.swap(scratch.pixels);
                 } else if (effect.type == EffectType::ParticleField) {
                     apply_particle_field(current, scratch, effect, phase, cancel);
@@ -3632,15 +3946,15 @@ bool render_frame_at_timeline_sample_cancellable(
         // surface's visibility mask and lighting must not crop or shade the
         // planar source in that state. Plane mapping remains active whenever its
         // configured phase or per-loop rotation can produce a 2D rotation.
-        if (surface_has_render_work(config.surface)) {
-            if (config.surface.mapping == SurfaceMapping::CustomObj) {
+        if (surface_has_render_work(render.surface)) {
+            if (render.surface.mapping == SurfaceMapping::CustomObj) {
                 // OBJ mapping builds its transactional mapped image locally.
                 // Release the no-longer-needed effect scratch allocation so
                 // that local image occupies the surface-work buffer already
                 // included by central peak-memory validation.
                 scratch = Image{};
             }
-            if (!apply_surface_mapping(current, scratch, config.surface,
+            if (!apply_surface_mapping(current, scratch, render.surface,
                                        loop_phase, error, cancel)) {
                 return false;
             }
@@ -3650,14 +3964,14 @@ bool render_frame_at_timeline_sample_cancellable(
         // mapped-object effects afterward keeps their centers in honest screen
         // coordinates (including with mirrors/flips) and lets Shake move the
         // already transformed primitive as one object.
-        apply_layer_transform(current, config.transform, cancel);
-        if (motion_has_render_work(config.motion)) {
-            apply_layer_motion(current, scratch, config.motion,
+        apply_layer_transform(current, render.transform, cancel);
+        if (motion_has_render_work(render.motion)) {
+            apply_layer_motion(current, scratch, render.motion,
                                loop_phase, cancel);
             current.pixels.swap(scratch.pixels);
         }
         apply_effect_stage(EffectSpace::Surface);
-        apply_quantization(current, config.quantization, cancel);
+        apply_quantization(current, render.quantization, cancel);
         throw_if_cancelled(cancel);
 
         destination.width = current.width;

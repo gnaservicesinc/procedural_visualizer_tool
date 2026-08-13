@@ -37,10 +37,11 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 13U> prefixes{{
+    constexpr std::array<std::string_view, 14U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
+        "source_image.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -52,7 +53,7 @@ bool is_render_key(std::string_view key) {
 
 bool is_output_key(std::string_view key) {
     return starts_with(key, "canvas.") || starts_with(key, "timing.")
-           || starts_with(key, "output.");
+           || starts_with(key, "output.") || starts_with(key, "paths.");
 }
 
 bool is_setup_v5_key(std::string_view key) {
@@ -70,6 +71,16 @@ bool is_setup_v6_key(std::string_view key) {
            || starts_with(key, "motion.");
 }
 
+bool is_setup_v7_key(std::string_view key) {
+    return starts_with(key, "source_image.")
+           || starts_with(key, "paths.")
+           || key == "motion.rotation_offset_degrees"
+           || starts_with(key, "motion.custom_path.")
+           || ((starts_with(key, "waves.")
+                || starts_with(key, "effects."))
+               && key.find(".path.") != std::string_view::npos);
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -81,7 +92,8 @@ bool supported_layer_version(const std::string& serialized,
             layer_version = version;
             setup_version = version == 1U ? 3U
                             : version == 2U ? 4U
-                            : version == 3U ? 5U : 6U;
+                            : version == 3U ? 5U
+                            : version == 4U ? 6U : 7U;
             return true;
         }
     }
@@ -99,7 +111,8 @@ bool supported_render_output_version(const std::string& serialized,
             || starts_with(serialized, header + "\r\n")) {
             output_version = version;
             setup_version = version == 1U ? 4U
-                            : version == 2U ? 5U : 6U;
+                            : version == 2U ? 5U
+                            : version == 3U ? 6U : 7U;
             return true;
         }
     }
@@ -212,7 +225,8 @@ bool synthesize_setup(const std::string& partial,
                       bool partial_is_render,
                       std::uint32_t setup_version,
                       std::string& destination,
-                      std::string* error) {
+                      std::string* error,
+                      const std::vector<CubicMotionPath>* motion_paths = nullptr) {
     std::vector<std::string_view> partial_records;
     if (!split_document(partial, expected_header, partial_records, error)) {
         return false;
@@ -227,6 +241,9 @@ bool synthesize_setup(const std::string& partial,
     }
 
     ProjectConfig defaults = default_project();
+    if (motion_paths != nullptr) {
+        defaults.canvas.motion_paths = *motion_paths;
+    }
     if (partial_is_render) {
         defaults.output.write_alpha = true;
     }
@@ -261,6 +278,9 @@ bool synthesize_setup(const std::string& partial,
         if (setup_version < 6U && is_setup_v6_key(key)) {
             continue;
         }
+        if (setup_version < 7U && is_setup_v7_key(key)) {
+            continue;
+        }
         if (is_render_key(key) != partial_is_render) {
             destination.append(line);
             destination.push_back('\n');
@@ -280,7 +300,8 @@ bool synthesize_setup(const std::string& partial,
 
 bool serialize_layer_config(const RenderData& render,
                             std::string& serialized,
-                            std::string* error) {
+                            std::string* error,
+                            const std::vector<CubicMotionPath>* motion_paths) {
     clear_error(error);
     try {
         ProjectConfig project = default_project();
@@ -288,11 +309,17 @@ bool serialize_layer_config(const RenderData& render,
             return fail(error, "The default project does not contain a layer.");
         }
         project.layers.front().render = render;
+        if (motion_paths != nullptr) {
+            project.canvas.motion_paths = *motion_paths;
+        }
         // An extracted cache path is a runtime implementation detail. Once an
         // OBJ has a content identity, only its digest and display basename are
         // portable project semantics.
         if (!project.layers.front().render.surface.obj_sha256.empty()) {
             project.layers.front().render.surface.obj_path.clear();
+        }
+        if (!project.layers.front().render.starting_image.sha256.empty()) {
+            project.layers.front().render.starting_image.path.clear();
         }
         // Layer validity must not depend on an arbitrary final RGB/RGBA choice.
         // The project-global output codec validates that choice separately.
@@ -321,7 +348,8 @@ bool serialize_layer_config(const RenderData& render,
 
 bool deserialize_layer_config(const std::string& serialized,
                               RenderData& destination,
-                              std::string* error) {
+                              std::string* error,
+                              const std::vector<CubicMotionPath>* motion_paths) {
     clear_error(error);
     try {
         std::uint32_t layer_version = 0U;
@@ -332,7 +360,8 @@ bool deserialize_layer_config(const std::string& serialized,
         std::string setup;
         if (!synthesize_setup(serialized,
                               "PVT_LAYER\t" + std::to_string(layer_version),
-                              true, setup_version, setup, error)) {
+                              true, setup_version, setup, error,
+                              motion_paths)) {
             return false;
         }
         RenderConfig loaded;
@@ -409,6 +438,7 @@ bool deserialize_render_output_config(const std::string& serialized,
         candidate_canvas.total_frames = loaded.total_frames;
         candidate_canvas.fps = loaded.fps;
         candidate_canvas.clock = std::move(loaded.clock);
+        candidate_canvas.motion_paths = std::move(loaded.motion_paths);
         ExportConfig candidate_output = loaded.output;
         canvas = std::move(candidate_canvas);
         output = std::move(candidate_output);

@@ -163,6 +163,7 @@ private:
     void removeLayer();
     void moveActiveLayer(int direction);
     bool setSurfaceObjSource(const QString& sourcePath);
+    bool setStartingImageSource(const QString& sourcePath);
     void updateWindowTitle();
     void updateCompatibilityWarning();
     void noteDocumentChange();
@@ -171,6 +172,8 @@ private:
     void restoreUserSettings();
     void saveUserSettings();
     void showApplicationSettings();
+    void showAboutDialog();
+    void showMotionPathEditor();
     bool hasCustomNewProjectDefaults() const;
     std::unique_ptr<pvt::ProjectDocument> makeNewProjectDocument(
         QString* warning = nullptr) const;
@@ -351,6 +354,7 @@ private:
     QAction* undo_action_ = nullptr;
     QAction* redo_action_ = nullptr;
     QAction* settings_action_ = nullptr;
+    QAction* about_action_ = nullptr;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;
@@ -512,6 +516,11 @@ private:
     QDoubleSpinBox* surface_curvature_ = nullptr;
     QDoubleSpinBox* surface_lighting_ = nullptr;
     QPushButton* surface_obj_browse_ = nullptr;
+    QGroupBox* starting_image_group_ = nullptr;
+    QLineEdit* starting_image_path_ = nullptr;
+    QComboBox* starting_image_fit_ = nullptr;
+    QPushButton* starting_image_browse_ = nullptr;
+    QPushButton* starting_image_clear_ = nullptr;
     QCheckBox* transform_flip_horizontal_ = nullptr;
     QCheckBox* transform_flip_vertical_ = nullptr;
     QComboBox* transform_mirror_ = nullptr;
@@ -526,6 +535,7 @@ private:
     QDoubleSpinBox* motion_phase_ = nullptr;
     QSpinBox* motion_rotations_ = nullptr;
     QDoubleSpinBox* motion_scale_pulse_ = nullptr;
+    QPushButton* motion_paths_edit_ = nullptr;
     QCheckBox* palette_enabled_ = nullptr;
     QLineEdit* palette_name_ = nullptr;
     QComboBox* palette_preset_ = nullptr;
