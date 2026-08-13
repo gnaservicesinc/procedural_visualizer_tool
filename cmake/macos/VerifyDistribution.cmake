@@ -4,6 +4,7 @@ endif()
 
 set(_pvt_required_items
     "Contents/MacOS/Procedural Visualizer Tool"
+    "Contents/MacOS/pvt-render"
     "Contents/Resources/ProceduralVisualizerTool.icns"
     "Contents/Frameworks/QtCore.framework/Versions/A/QtCore"
     "Contents/Frameworks/QtGui.framework/Versions/A/QtGui"
@@ -21,6 +22,22 @@ foreach(_pvt_item IN LISTS _pvt_required_items)
             "Distribution is incomplete: ${_pvt_item} is missing from ${PVT_APP_BUNDLE}.")
     endif()
 endforeach()
+
+if(NOT DEFINED PVT_PRODUCT_VERSION OR PVT_PRODUCT_VERSION STREQUAL "")
+    message(FATAL_ERROR "PVT_PRODUCT_VERSION is required for CLI verification.")
+endif()
+execute_process(
+    COMMAND "${PVT_APP_BUNDLE}/Contents/MacOS/pvt-render" --version
+    RESULT_VARIABLE _pvt_cli_result
+    OUTPUT_VARIABLE _pvt_cli_output
+    ERROR_VARIABLE _pvt_cli_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _pvt_cli_result EQUAL 0
+   OR NOT _pvt_cli_output STREQUAL
+      "Procedural Visualizer Tool ${PVT_PRODUCT_VERSION}")
+    message(FATAL_ERROR
+        "Embedded pvt-render failed version verification: ${_pvt_cli_output}${_pvt_cli_error}")
+endif()
 
 file(GLOB_RECURSE _pvt_bundle_files LIST_DIRECTORIES FALSE
     "${PVT_APP_BUNDLE}/Contents/*")

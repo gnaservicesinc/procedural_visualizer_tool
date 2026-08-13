@@ -293,7 +293,7 @@ jobs:
           fi
           xvfb-run --auto-servernum \
             ./package/bin/procedural-visualizer-tool --smoke-test
-          ./package/bin/render9 --self-test
+          ./package/bin/pvt-render --self-test
 
       - name: Install Windows package
         if: runner.os == 'Windows'
@@ -325,7 +325,7 @@ jobs:
             "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" `
             "--smoke-test"
           Invoke-PackageCheck `
-            "$env:GITHUB_WORKSPACE/package/bin/render9.exe" "--self-test"
+            "$env:GITHUB_WORKSPACE/package/bin/pvt-render.exe" "--self-test"
 
       - name: Verify and stage macOS package
         if: runner.os == 'macOS'
@@ -335,12 +335,12 @@ jobs:
           "$app/Contents/MacOS/Procedural Visualizer Tool" --smoke-test
           lipo "$app/Contents/MacOS/Procedural Visualizer Tool" \
             -verify_arch arm64
-          lipo build/render9 -verify_arch arm64
-          codesign --force --sign - build/render9
+          lipo "$app/Contents/MacOS/pvt-render" -verify_arch arm64
+          "$app/Contents/MacOS/pvt-render" --self-test
           package="$GITHUB_WORKSPACE/procedural-visualizer-tool-macos-arm64"
           mkdir -p "$package"
           ditto "$app" "$package/Procedural Visualizer Tool.app"
-          cp build/render9 README.md LICENSE "$package/"
+          cp README.md LICENSE "$package/"
 
       - name: Package Linux artifact
         if: runner.os == 'Linux'
@@ -417,6 +417,8 @@ jobs:
           Highlights include embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, expanded music-responsive editing and export, project bundles, and the new About PVT/version workflow.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
+
+          The optional command-line renderer is named pvt-render. It is embedded inside the macOS application bundle and installed under bin/ in the Linux and Windows packages.
 
           Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows currently use the dependable CPU renderer and PNG/EXR sequence export while portable GPU and native movie backends are developed. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
           EOF

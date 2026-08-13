@@ -47,6 +47,10 @@ if(PVT_ENABLE_DISTRIBUTION AND NOT PVT_BUILD_QT_GUI)
     message(FATAL_ERROR
         "PVT_ENABLE_DISTRIBUTION requires PVT_BUILD_QT_GUI=ON.")
 endif()
+if(PVT_ENABLE_DISTRIBUTION AND NOT PVT_BUILD_CLI)
+    message(FATAL_ERROR
+        "PVT_ENABLE_DISTRIBUTION requires PVT_BUILD_CLI=ON so the named command-line renderer can be embedded in the application.")
+endif()
 if(PVT_DEPLOY_QT_RUNTIME AND NOT PVT_BUILD_QT_GUI)
     message(FATAL_ERROR
         "PVT_DEPLOY_QT_RUNTIME requires PVT_BUILD_QT_GUI=ON.")
@@ -355,26 +359,28 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
 endif()
 
 if(PVT_BUILD_CLI)
-    add_executable(render9 app/cli_main.cpp)
-    target_compile_features(render9 PRIVATE cxx_std_17)
-    set_target_properties(render9 PROPERTIES CXX_EXTENSIONS NO)
+    add_executable(pvt_render_cli app/cli_main.cpp)
+    target_compile_features(pvt_render_cli PRIVATE cxx_std_17)
+    set_target_properties(pvt_render_cli PROPERTIES
+        CXX_EXTENSIONS NO
+        OUTPUT_NAME "pvt-render")
     if(APPLE OR UNIX)
         file(RELATIVE_PATH pvt_cli_install_library_path
             "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
     endif()
     if(APPLE)
-        set_target_properties(render9 PROPERTIES
+        set_target_properties(pvt_render_cli PROPERTIES
             INSTALL_RPATH "@executable_path/${pvt_cli_install_library_path}")
     elseif(UNIX)
-        set_target_properties(render9 PROPERTIES
+        set_target_properties(pvt_render_cli PROPERTIES
             INSTALL_RPATH "\$ORIGIN/${pvt_cli_install_library_path}")
     endif()
-    target_link_libraries(render9 PRIVATE
+    target_link_libraries(pvt_render_cli PRIVATE
         ProceduralVisualizerTool::Bundle
         ProceduralVisualizerTool::Audio)
-    target_compile_definitions(render9 PRIVATE
+    target_compile_definitions(pvt_render_cli PRIVATE
         PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
-    pvt_enable_warnings(render9)
+    pvt_enable_warnings(pvt_render_cli)
 endif()
 
 if(PVT_BUILD_EXAMPLES)
@@ -522,6 +528,12 @@ if(PVT_BUILD_QT_GUI)
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                     "${PVT_DISTRIBUTION_LIBPNG_LICENSE}"
                     "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses/libpng-LICENSE.txt"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_FILE:pvt_render_cli>"
+                    "${PVT_DISTRIBUTION_APP}/Contents/MacOS/pvt-render"
+            COMMAND /usr/bin/codesign --force
+                    --sign "${PVT_DISTRIBUTION_CODE_SIGN_IDENTITY}"
+                    "${PVT_DISTRIBUTION_APP}/Contents/MacOS/pvt-render"
             COMMAND "${PVT_MACDEPLOYQT}"
                     "${PVT_DISTRIBUTION_APP}"
                     -always-overwrite
@@ -530,9 +542,10 @@ if(PVT_BUILD_QT_GUI)
             COMMAND "${CMAKE_COMMAND}"
                     "-DPVT_APP_BUNDLE=${PVT_DISTRIBUTION_APP}"
                     "-DPVT_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                    "-DPVT_PRODUCT_VERSION=${PROJECT_VERSION}"
                     "-DPVT_VTOOL=${PVT_VTOOL}"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/VerifyDistribution.cmake"
-            DEPENDS ProceduralVisualizerToolGui
+            DEPENDS ProceduralVisualizerToolGui pvt_render_cli
             COMMENT "Staging and verifying a self-contained macOS application"
             VERBATIM)
     endif()
@@ -630,51 +643,51 @@ if(BUILD_TESTING)
         COMMAND pvt_obj_surface_tests ${CMAKE_CURRENT_SOURCE_DIR})
 
     if(PVT_BUILD_CLI)
-        add_test(NAME pvt_cli_self_test COMMAND render9 --self-test)
-        add_test(NAME pvt_cli_help COMMAND render9 --help)
-        add_test(NAME pvt_cli_version COMMAND render9 --version)
+        add_test(NAME pvt_cli_self_test COMMAND pvt_render_cli --self-test)
+        add_test(NAME pvt_cli_help COMMAND pvt_render_cli --help)
+        add_test(NAME pvt_cli_version COMMAND pvt_render_cli --version)
         set_tests_properties(pvt_cli_version PROPERTIES
             PASS_REGULAR_EXPRESSION
                 "Procedural Visualizer Tool ${PROJECT_VERSION}")
         add_test(NAME pvt_cli_rejects_unknown_option
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -DTEST_CASE=unknown-option
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_rejects_self_test_conflict
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -DTEST_CASE=self-test-conflict
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_rejects_bad_png_compression
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -DTEST_CASE=invalid-compression
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_rejects_bad_backend
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -DTEST_CASE=invalid-backend
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_rejects_bad_gpu_bound
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -DTEST_CASE=invalid-gpu-bound
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_eof_aborts_save
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -DTEST_CASE=eof-save
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_custom_obj_render
-            COMMAND render9 --render
+            COMMAND pvt_render_cli --render
                 --width 32 --height 32 --block-size 2 --frames 2
                 --obj ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/obj/closed_cube.obj
                 --png-compression 0
                 --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-custom-obj
                 --prefix obj_ --overwrite)
         add_test(NAME pvt_cli_starting_image_render
-            COMMAND render9 --render
+            COMMAND pvt_render_cli --render
                 --width 32 --height 32 --block-size 2 --frames 2
                 --starting-image ${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png
                 --image-fit contain --png-compression 0
@@ -682,7 +695,7 @@ if(BUILD_TESTING)
                 --prefix image_ --overwrite)
         add_test(NAME pvt_cli_project_bundle
             COMMAND ${CMAKE_COMMAND}
-                -DPROGRAM=$<TARGET_FILE:render9>
+                -DPROGRAM=$<TARGET_FILE:pvt_render_cli>
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestCliBundle.cmake)
     endif()
 
@@ -700,7 +713,7 @@ install(TARGETS ProceduralVisualizerTool
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(PVT_BUILD_CLI)
-    install(TARGETS render9
+    install(TARGETS pvt_render_cli
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 if(PVT_BUILD_QT_GUI)
