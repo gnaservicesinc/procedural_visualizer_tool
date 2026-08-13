@@ -224,10 +224,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
           cmake -S . -B build -G "Visual Studio 17 2022" `
             -A "${{ matrix.cmake-arch }}" -T ClangCL `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
-            -DQT_HOST_PATH="$env:QT_HOST_ROOT" `
+            -DQT_HOST_PATH="$qtHostPath" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg-triplet }}" `
             -DPVT_BUILD_CLI=ON `
