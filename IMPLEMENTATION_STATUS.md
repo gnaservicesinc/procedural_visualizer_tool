@@ -483,7 +483,7 @@ so no OpenSSL runtime leaked into the executable.
 
 Targeted CLI integration passed on 2026-08-08: warning-clean C++17/C++20 syntax
 compilation,
-`render9` build/self-test, CLI CTest 8/8, two-layer composite PNG export, first
+`pvt-render` build/self-test, CLI CTest 8/8, two-layer composite PNG export, first
 ZIP and unpacked directory saves, bundle reload/version listing, clean-save full
 validation with no added version, and legacy `.pvt` import to a separate default
 ZIP without overwriting the source. A root-integrity-mismatch fixture recording
@@ -503,7 +503,7 @@ rejection.
 
 Previous baseline passed on 2026-08-05:
 
-- Release C++17 library/CLI build, CTest 10/10, and `render9 --self-test`.
+- Release C++17 library/CLI build, CTest 10/10, and `pvt-render --self-test`.
 - Release C++20 compatibility build and CTest 10/10.
 - Qt-enabled Release build with an explicit Qt prefix, CTest 11/11, offscreen
   smoke launch, setup round-trip, precision, UTF-8 validator, automatic alpha,

@@ -25,29 +25,29 @@ configure:
 		$(QT_PREFIX_ARG) $(CMAKE_CONFIGURE_ARGS)
 
 run: all
-	@if [ -x "$(BUILD_DIR)/render9" ]; then \
-		"$(BUILD_DIR)/render9"; \
-	elif [ -x "$(BUILD_DIR)/render9.exe" ]; then \
-		"$(BUILD_DIR)/render9.exe"; \
-	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/render9" ]; then \
-		"$(BUILD_DIR)/$(BUILD_TYPE)/render9"; \
-	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/render9.exe" ]; then \
-		"$(BUILD_DIR)/$(BUILD_TYPE)/render9.exe"; \
+	@if [ -x "$(BUILD_DIR)/pvt-render" ]; then \
+		"$(BUILD_DIR)/pvt-render"; \
+	elif [ -x "$(BUILD_DIR)/pvt-render.exe" ]; then \
+		"$(BUILD_DIR)/pvt-render.exe"; \
+	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render" ]; then \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render"; \
+	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render.exe" ]; then \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render.exe"; \
 	else \
-		echo "Could not locate render9 in $(BUILD_DIR)." >&2; exit 1; \
+		echo "Could not locate pvt-render in $(BUILD_DIR)." >&2; exit 1; \
 	fi
 
 render: all
-	@if [ -x "$(BUILD_DIR)/render9" ]; then \
-		"$(BUILD_DIR)/render9" --render $(ARGS); \
-	elif [ -x "$(BUILD_DIR)/render9.exe" ]; then \
-		"$(BUILD_DIR)/render9.exe" --render $(ARGS); \
-	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/render9" ]; then \
-		"$(BUILD_DIR)/$(BUILD_TYPE)/render9" --render $(ARGS); \
-	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/render9.exe" ]; then \
-		"$(BUILD_DIR)/$(BUILD_TYPE)/render9.exe" --render $(ARGS); \
+	@if [ -x "$(BUILD_DIR)/pvt-render" ]; then \
+		"$(BUILD_DIR)/pvt-render" --render $(ARGS); \
+	elif [ -x "$(BUILD_DIR)/pvt-render.exe" ]; then \
+		"$(BUILD_DIR)/pvt-render.exe" --render $(ARGS); \
+	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render" ]; then \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render" --render $(ARGS); \
+	elif [ -x "$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render.exe" ]; then \
+		"$(BUILD_DIR)/$(BUILD_TYPE)/pvt-render.exe" --render $(ARGS); \
 	else \
-		echo "Could not locate render9 in $(BUILD_DIR)." >&2; exit 1; \
+		echo "Could not locate pvt-render in $(BUILD_DIR)." >&2; exit 1; \
 	fi
 
 gui:

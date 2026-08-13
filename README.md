@@ -98,12 +98,16 @@ The **Build desktop packages** workflow also retains per-commit artifacts for
   `procedural-visualizer-tool-linux-arm64.tar.gz` are native Linux directories
   built and tested on Ubuntu 24.04.
 
-Each package contains the Qt GUI, the `render9` command-line renderer, licenses,
-and documentation. As an intentional project policy, the macOS app uses an
-ad-hoc signature and is not notarized, and the Windows executable is not
-Authenticode-signed. Users can approve the downloaded application through their
-platform's security controls, or build from source and sign the result locally.
-The workflow does not require or expect commercial signing credentials.
+Each package contains the Qt GUI, the optional `pvt-render` command-line
+renderer, licenses, and documentation. On macOS, the renderer is kept inside
+`Procedural Visualizer Tool.app/Contents/MacOS/` so the archive presents one
+obvious application instead of a stray historical executable. Linux and
+Windows install it under `bin/`. As an intentional project policy, the macOS
+app uses an ad-hoc signature and is not notarized, and the Windows executable is
+not Authenticode-signed. Users can approve the downloaded application through
+their platform's security controls, or build from source and sign the result
+locally. The workflow does not require or expect commercial signing
+credentials.
 
 ## What is configurable
 
@@ -384,16 +388,16 @@ can choose the upper bound explicitly:
 
 ```sh
 # Hardware-concurrency auto selection (also the default)
-./build/render9 --render --workers 0
+./build/pvt-render --render --workers 0
 
 # Reproducible sequential reference, or an explicit bounded pool
-./build/render9 --render --workers 1
-./build/render9 --render --workers 12
+./build/pvt-render --render --workers 1
+./build/pvt-render --render --workers 12
 
 # Manual backend selection and optional Metal admission bound
-./build/render9 --render --backend cpu
-./build/render9 --render --backend cpu+gpu --gpu-in-flight 2
-./build/render9 --render --backend gpu
+./build/pvt-render --render --backend cpu
+./build/pvt-render --render --backend cpu+gpu --gpu-in-flight 2
+./build/pvt-render --render --backend gpu
 ```
 
 The requested value is capped by the frame count, the reported hardware
@@ -456,8 +460,8 @@ Normal Save always writes a project bundle, even for one layer. The default name
 is the portable project name plus `.zip`:
 
 ```sh
-./build/render9 --project-name "Midnight Bonfire" --save-default
-./build/render9 --load "Midnight Bonfire.zip" --render
+./build/pvt-render --project-name "Midnight Bonfire" --save-default
+./build/pvt-render --load "Midnight Bonfire.zip" --render
 ```
 
 ZIP bundles and unpacked bundle directories contain the same human-readable
@@ -605,7 +609,7 @@ clock/motion/particle data above.
 Common CLI overrides can be layered on defaults or on a loaded project:
 
 ```sh
-./build/render9 --load "Midnight Bonfire.zip" --render \
+./build/pvt-render --load "Midnight Bonfire.zip" --render \
   --width 640 --height 360 --block-size 4 \
   --frames 120 --fps 30 --waves 10 --workers 0 \
   --alpha --bit-depth 16 --png-compression 5 --dither blue \
@@ -616,7 +620,7 @@ Layer selectors and modifiers are also processed left-to-right. `--layer 1`
 selects the bottom layer; `--add-layer NAME` adds and selects a new top layer:
 
 ```sh
-./build/render9 --load "Midnight Bonfire.zip" \
+./build/pvt-render --load "Midnight Bonfire.zip" \
   --add-layer "Hot sparks" --blend add --layer-opacity 0.42 \
   --waves 5 --alpha-modulation --save "Midnight Bonfire.zip"
 ```
@@ -624,7 +628,7 @@ selects the bottom layer; `--add-layer NAME` adds and selects a new top layer:
 To wrap the generated image around a mesh from the command line:
 
 ```sh
-./build/render9 --render --obj meshes/model.obj \
+./build/pvt-render --render --obj meshes/model.obj \
   --frames 120 --png-compression 5 --output-dir preview
 ```
 
@@ -635,7 +639,7 @@ project's managed attachment cache immediately.
 To analyze a song, let it drive selected controls, and save a portable project:
 
 ```sh
-./build/render9 --music tracks/live-tempo.flac \
+./build/pvt-render --music tracks/live-tempo.flac \
   --music-tempo detected \
   --fps 30 --save "Live Tempo.zip"
 ```
@@ -653,7 +657,7 @@ The interactive CLI editor additionally exposes active-layer clocks, their
 duration and Data-only policies, layer motion presets, and particle controls;
 scripted workflows can configure those fields in the GUI or load a saved bundle.
 
-Run `./build/render9 --help` for all options. Existing matching output files are
+Run `./build/pvt-render --help` for all options. Existing matching output files are
 protected unless `--overwrite` is explicit. A full sequence collision preflight
 runs before frame zero, and each frame is installed atomically. Overwriting a
 regular file preserves its explicit permission mode; overwriting a symlink replaces
