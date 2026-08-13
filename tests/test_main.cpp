@@ -1723,6 +1723,44 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     };
 
     const auto version_seven_bytes = read_bytes(first);
+
+    // Semantic recovery must not depend on alphabetical group ordering. A
+    // custom motion binding is invalid until its reusable path is admitted,
+    // while an unrelated bad canvas field forces the grouped recovery path.
+    pvt::RenderConfig dependent = pvt::default_config();
+    make_small(dependent);
+    dependent.motion_paths.push_back(
+        pvt::default_ellipse_path(700U, 800U, "Recovery ellipse"));
+    dependent.motion.enabled = true;
+    dependent.motion.custom_path.enabled = true;
+    dependent.motion.custom_path.path_id = 700U;
+    dependent.motion.custom_path.follow_tangent = true;
+    std::string dependent_setup;
+    CHECK(pvt::detail::serialize_setup_config(
+        dependent, dependent_setup, &error));
+    const std::string valid_width =
+        "canvas.width\t" + std::to_string(dependent.width) + "\n";
+    const std::size_t valid_width_at = dependent_setup.find(valid_width);
+    CHECK(valid_width_at != std::string::npos);
+    if (valid_width_at != std::string::npos) {
+        dependent_setup.replace(valid_width_at, valid_width.size(),
+                                "canvas.width\t0\n");
+    }
+    pvt::RenderConfig dependent_recovered;
+    CHECK(pvt::detail::deserialize_setup_config(
+        dependent_setup, dependent_recovered, &error));
+    CHECK(dependent_recovered.width > 0);
+    CHECK(dependent_recovered.motion_paths.size() == 1U);
+    CHECK(dependent_recovered.motion.custom_path.enabled);
+    CHECK(dependent_recovered.motion.custom_path.path_id == 700U);
+    CHECK(std::any_of(
+        dependent_recovered.output_compatibility.records.begin(),
+        dependent_recovered.output_compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "canvas.width" && record.value == "0"
+                   && record.rejected;
+        }));
+
     std::string version_six(version_seven_bytes.begin(), version_seven_bytes.end());
     CHECK(version_six.rfind("PVT_SETUP\t7\n", 0U) == 0U);
     version_six.replace(0U, std::string("PVT_SETUP\t7").size(),
@@ -1880,6 +1918,16 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(read_bytes(first) == valid_setup_bytes);
     original.width = loaded.width;
 
+    pvt::RenderConfig malformed_preservation = original;
+    malformed_preservation.source_compatibility.records.push_back(
+        {"Not-A-Valid-Key", "value", false});
+    const fs::path malformed_preservation_path =
+        directory / "malformed-preservation.pvt";
+    CHECK(!pvt::save_setup(malformed_preservation,
+                           malformed_preservation_path.string(), &error));
+    CHECK(error.find("no preserved data was discarded") != std::string::npos);
+    CHECK(!fs::exists(malformed_preservation_path));
+
     original.output.bit_depth = 32;
     original.output.dither_enabled = true; // Saving must normalize this to off.
     const fs::path float_setup = directory / "float.pvt";
@@ -1909,9 +1957,35 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     }
     loaded.width = 555;
     loaded.clock.mode = pvt::ClockMode::Frame;
-    CHECK(!pvt::load_setup(oversized_setup.string(), loaded, &error));
-    CHECK(loaded.width == 555);
-    CHECK(loaded.clock.mode == pvt::ClockMode::Frame);
+    CHECK(pvt::load_setup(oversized_setup.string(), loaded, &error));
+    CHECK(loaded.width == original.width);
+    CHECK(loaded.clock.mode == original.clock.mode);
+    CHECK(loaded.clock.music.feature_samples.size()
+          <= pvt::kMaximumMusicFeatureSamples);
+    CHECK(std::any_of(
+        loaded.clock.music.compatibility.records.begin(),
+        loaded.clock.music.compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "timing.music.feature_samples.count"
+                   && record.rejected;
+        }));
+    const fs::path recovered_setup = directory / "recovered-analysis.pvt";
+    CHECK(pvt::save_setup(loaded, recovered_setup.string(), &error));
+    const auto recovered_bytes = read_bytes(recovered_setup);
+    const std::string recovered_text(recovered_bytes.begin(),
+                                     recovered_bytes.end());
+    CHECK(recovered_text.find("compatibility.rejected.count\t")
+          != std::string::npos);
+    pvt::RenderConfig recovered_round_trip;
+    CHECK(pvt::load_setup(recovered_setup.string(), recovered_round_trip,
+                          &error));
+    CHECK(std::any_of(
+        recovered_round_trip.clock.music.compatibility.records.begin(),
+        recovered_round_trip.clock.music.compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "timing.music.feature_samples.count"
+                   && record.rejected;
+        }));
 
     const auto unchanged = read_bytes(second);
     const int width_before = loaded.width;

@@ -14,10 +14,12 @@
 #include <locale>
 #include <map>
 #include <new>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -74,6 +76,72 @@ static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
 using Records = std::map<std::string, std::string>;
+
+bool starts_with(std::string_view text, std::string_view prefix) {
+    return text.size() >= prefix.size()
+           && text.compare(0U, prefix.size(), prefix) == 0;
+}
+
+bool render_record_key(std::string_view key) {
+    constexpr std::array<std::string_view, 14U> prefixes{{
+        "waves.", "swings.", "effects.", "rhythm.", "appearance.",
+        "audio_reactive.", "alpha.", "quantization.", "surface.",
+        "palette.", "transform.", "layer_clock.", "motion.",
+        "source_image.",
+    }};
+    return std::any_of(prefixes.begin(), prefixes.end(),
+                       [key](std::string_view prefix) {
+                           return starts_with(key, prefix);
+                       });
+}
+
+bool setup_v5_record(std::string_view key) {
+    return starts_with(key, "timing.clock.")
+           || starts_with(key, "timing.music.")
+           || key == "rhythm.swings_enabled"
+           || starts_with(key, "audio_reactive.")
+           || key == "surface.obj_sha256"
+           || key == "surface.obj_basename";
+}
+
+bool setup_v2_record(std::string_view key) {
+    return key == "surface.obj_path"
+           || key == "output.png_compression_level";
+}
+
+bool setup_v3_record(std::string_view key) {
+    return key == "output.write_alpha";
+}
+
+bool setup_v4_record(std::string_view key) {
+    const auto suffix = [key](std::string_view value) {
+        return key.size() >= value.size()
+               && key.compare(key.size() - value.size(), value.size(), value)
+                      == 0;
+    };
+    return starts_with(key, "palette.") || starts_with(key, "transform.")
+           || (starts_with(key, "swings.")
+               && (suffix(".center_x") || suffix(".center_y")
+                   || suffix(".radius")))
+           || (starts_with(key, "effects.")
+               && (suffix(".space") || suffix(".area_radius")));
+}
+
+bool setup_v6_record(std::string_view key) {
+    return key == "timing.clock.data_only"
+           || starts_with(key, "layer_clock.")
+           || starts_with(key, "motion.");
+}
+
+bool setup_v7_record(std::string_view key) {
+    return starts_with(key, "source_image.")
+           || starts_with(key, "paths.")
+           || key == "motion.rotation_offset_degrees"
+           || starts_with(key, "motion.custom_path.")
+           || ((starts_with(key, "waves.")
+                || starts_with(key, "effects."))
+               && key.find(".path.") != std::string_view::npos);
+}
 
 void clear_error(std::string* error) {
     if (error != nullptr) {
@@ -163,25 +231,26 @@ bool parse_records(const std::string& contents,
         }
 
         if (line_number == 1U) {
-            if (line == "PVT_SETUP\t1") {
-                setup_version = 1U;
-            } else if (line == "PVT_SETUP\t2") {
-                setup_version = 2U;
-            } else if (line == "PVT_SETUP\t3") {
-                setup_version = 3U;
-            } else if (line == "PVT_SETUP\t4") {
-                setup_version = 4U;
-            } else if (line == "PVT_SETUP\t5") {
-                setup_version = 5U;
-            } else if (line == "PVT_SETUP\t6") {
-                setup_version = 6U;
-            } else if (line == "PVT_SETUP\t7") {
-                setup_version = 7U;
-            } else {
+            constexpr std::string_view prefix = "PVT_SETUP\t";
+            if (!starts_with(line, prefix) || line.size() == prefix.size()) {
                 return fail(error,
                             "Unsupported or malformed setup header; expected "
-                            "'PVT_SETUP\\t1' through 'PVT_SETUP\\t7'.");
+                            "'PVT_SETUP\\t' followed by a positive version.");
             }
+            std::uint32_t declared_version = 0U;
+            const std::string_view number = line.substr(prefix.size());
+            const auto parsed = std::from_chars(
+                number.data(), number.data() + number.size(),
+                declared_version, 10);
+            if (parsed.ec != std::errc{}
+                || parsed.ptr != number.data() + number.size()
+                || declared_version == 0U) {
+                return fail(error,
+                            "Unsupported or malformed setup header; expected "
+                            "'PVT_SETUP\\t' followed by a positive version.");
+            }
+            setup_version = std::min(declared_version,
+                                     kSetupFormatVersion);
         } else {
             const std::size_t tab = line.find('\t');
             if (tab == std::string_view::npos || line.find('\t', tab + 1U) != std::string_view::npos) {
@@ -1979,6 +2048,449 @@ bool deserialize_setup(Records& records,
     return true;
 }
 
+void remember_preserved(ConfigCompatibility& compatibility,
+                        std::string key,
+                        std::string value,
+                        bool rejected) {
+    const auto duplicate = std::find_if(
+        compatibility.records.begin(), compatibility.records.end(),
+        [&key, &value](const PreservedConfigRecord& record) {
+            return record.key == key && record.value == value;
+        });
+    if (duplicate == compatibility.records.end()) {
+        compatibility.records.push_back(
+            {std::move(key), std::move(value), rejected});
+    } else if (rejected) {
+        duplicate->rejected = true;
+    }
+}
+
+void remember_note(ConfigCompatibility& compatibility, std::string note) {
+    if (std::find(compatibility.repair_notes.begin(),
+                  compatibility.repair_notes.end(), note)
+        == compatibility.repair_notes.end()) {
+        compatibility.repair_notes.push_back(std::move(note));
+    }
+}
+
+bool safe_record_value(std::string_view value) {
+    if (value.size() > kMaximumLineBytes) return false;
+    for (const char raw : value) {
+        const unsigned char byte = static_cast<unsigned char>(raw);
+        if (byte < 0x20U || byte > 0x7eU) return false;
+    }
+    return true;
+}
+
+void extract_rejected_envelope(Records& records,
+                               Records& authored,
+                               ConfigCompatibility& compatibility) {
+    constexpr std::string_view prefix = "compatibility.rejected.";
+    std::vector<std::pair<std::string, std::string>> envelope;
+    for (auto iterator = records.begin(); iterator != records.end();) {
+        if (starts_with(iterator->first, prefix)) {
+            envelope.push_back(*iterator);
+            iterator = records.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+    if (envelope.empty()) return;
+
+    Records encoded(envelope.begin(), envelope.end());
+    std::size_t count = 0U;
+    bool well_formed = false;
+    const auto count_record = encoded.find("compatibility.rejected.count");
+    if (count_record != encoded.end()) {
+        std::uint64_t parsed = 0U;
+        well_formed = parse_integer_exact(count_record->second, parsed)
+                      && parsed <= kMaximumRecordCount;
+        if (well_formed) count = static_cast<std::size_t>(parsed);
+    }
+    std::set<std::string> consumed;
+    std::vector<std::pair<std::string, std::string>> recovered;
+    if (well_formed) {
+        for (std::size_t index = 0U; index < count; ++index) {
+            const std::string base = "compatibility.rejected."
+                                     + std::to_string(index);
+            const auto key_record = encoded.find(base + ".key");
+            const auto value_record = encoded.find(base + ".value");
+            std::string key;
+            std::string value;
+            if (key_record == encoded.end() || value_record == encoded.end()
+                || !percent_decode(key_record->second, key)
+                || !percent_decode(value_record->second, value)
+                || !valid_key(key) || !safe_record_value(value)) {
+                well_formed = false;
+                break;
+            }
+            recovered.emplace_back(std::move(key), std::move(value));
+        }
+    }
+    if (well_formed) {
+        consumed.insert("compatibility.rejected.count");
+        for (std::size_t index = 0U; index < count; ++index) {
+            const std::string base = "compatibility.rejected."
+                                     + std::to_string(index);
+            consumed.insert(base + ".key");
+            consumed.insert(base + ".value");
+        }
+        std::set<std::string> retried_keys;
+        for (const auto& item : recovered) {
+            if (retried_keys.insert(item.first).second) {
+                authored[item.first] = item.second;
+                records[item.first] = item.second;
+            } else {
+                remember_preserved(compatibility, item.first, item.second,
+                                   true);
+                remember_note(
+                    compatibility,
+                    "Kept an alternate original value for field '"
+                        + item.first + "' without using it.");
+            }
+        }
+    }
+    if (!well_formed) {
+        remember_note(compatibility,
+                      "Kept a malformed compatibility recovery envelope without using it.");
+    }
+    for (const auto& item : envelope) {
+        if (consumed.find(item.first) == consumed.end()) {
+            remember_preserved(compatibility, item.first, item.second, true);
+        }
+    }
+}
+
+bool record_belongs_to_version(std::string_view key,
+                               std::uint32_t setup_version) {
+    return !((setup_version < 2U && setup_v2_record(key))
+             || (setup_version < 3U && setup_v3_record(key))
+             || (setup_version < 4U && setup_v4_record(key))
+             || (setup_version < 5U && setup_v5_record(key))
+             || (setup_version < 6U && setup_v6_record(key))
+             || (setup_version < 7U && setup_v7_record(key)));
+}
+
+bool build_default_records(std::uint32_t setup_version,
+                           Records& defaults,
+                           std::string* error) {
+    std::string serialized;
+    if (!serialize_setup(default_config(), serialized, error)) return false;
+    std::uint32_t parsed_version = 0U;
+    if (!parse_records(serialized, defaults, parsed_version, error)) return false;
+    for (auto iterator = defaults.begin(); iterator != defaults.end();) {
+        if (!record_belongs_to_version(iterator->first, setup_version)) {
+            iterator = defaults.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+    return true;
+}
+
+bool quoted_error_key(std::string_view message, std::string& key) {
+    const std::size_t end = message.rfind('\'');
+    if (end == std::string_view::npos) return false;
+    const std::size_t start = message.rfind('\'', end - 1U);
+    if (start == std::string_view::npos || start + 1U == end) return false;
+    key.assign(message.substr(start + 1U, end - start - 1U));
+    return valid_key(key);
+}
+
+enum class RecoveryAttempt {
+    Success,
+    SemanticFailure,
+    Unrecoverable,
+};
+
+RecoveryAttempt decode_with_record_repair(
+    Records& working,
+    const Records& defaults,
+    const Records& authored,
+    std::uint32_t setup_version,
+    RenderConfig& destination,
+    ConfigCompatibility& compatibility,
+    std::string* error) {
+    const std::size_t maximum_attempts =
+        working.size() + defaults.size() + 32U;
+    for (std::size_t attempt = 0U; attempt < maximum_attempts; ++attempt) {
+        Records decoding = working;
+        RenderConfig candidate;
+        std::string failure;
+        if (deserialize_setup(decoding, setup_version, candidate, &failure)) {
+            destination = std::move(candidate);
+            if (error != nullptr) error->clear();
+            return RecoveryAttempt::Success;
+        }
+        std::string key;
+        if (!quoted_error_key(failure, key)) {
+            if (error != nullptr) *error = std::move(failure);
+            return starts_with(error != nullptr ? *error : failure,
+                               "Loaded setup failed validation:")
+                       ? RecoveryAttempt::SemanticFailure
+                       : RecoveryAttempt::Unrecoverable;
+        }
+        const auto current = working.find(key);
+        const auto fallback = defaults.find(key);
+        if (starts_with(failure, "Unknown setup key")) {
+            if (current == working.end()) {
+                if (error != nullptr) *error = std::move(failure);
+                return RecoveryAttempt::Unrecoverable;
+            }
+            const auto original = authored.find(key);
+            if (original != authored.end()) {
+                remember_preserved(compatibility, key, original->second, false);
+                remember_note(compatibility,
+                              "Kept unknown field '" + key
+                                  + "' without using it.");
+            }
+            working.erase(current);
+            continue;
+        }
+        if (fallback == defaults.end()) {
+            if (error != nullptr) *error = std::move(failure);
+            return RecoveryAttempt::Unrecoverable;
+        }
+        if (current == working.end()) {
+            working.emplace(key, fallback->second);
+            remember_note(compatibility,
+                          "Rebuilt missing field '" + key
+                              + "' from a safe default.");
+            continue;
+        }
+        if (current->second == fallback->second) {
+            if (error != nullptr) *error = std::move(failure);
+            return RecoveryAttempt::SemanticFailure;
+        }
+        const auto original = authored.find(key);
+        if (original != authored.end()) {
+            remember_preserved(compatibility, key, original->second, true);
+        }
+        current->second = fallback->second;
+        remember_note(compatibility,
+                      "Replaced unusable field '" + key
+                          + "' with a safe default and kept its original value.");
+    }
+    return RecoveryAttempt::Unrecoverable;
+}
+
+std::string recovery_group(std::string_view key) {
+    constexpr std::array<std::string_view, 19U> groups{{
+        "paths.", "timing.music.", "timing.clock.", "canvas.",
+        "output.", "waves.", "swings.", "effects.", "layer_clock.",
+        "palette.", "surface.", "source_image.", "motion.", "alpha.",
+        "quantization.", "transform.", "audio_reactive.", "appearance.",
+        "rhythm.",
+    }};
+    for (const std::string_view group : groups) {
+        if (starts_with(key, group)) return std::string(group);
+    }
+    return std::string(key);
+}
+
+bool collection_recovery_group(std::string_view group) {
+    return group == "paths." || group == "waves." || group == "swings."
+           || group == "effects." || group == "palette."
+           || group == "timing.music." || group == "layer_clock.";
+}
+
+bool recover_setup_records(Records records,
+                           std::uint32_t setup_version,
+                           RenderConfig& destination,
+                           ConfigCompatibility& compatibility,
+                           std::string* error) {
+    Records authored = records;
+    extract_rejected_envelope(records, authored, compatibility);
+    authored = records;
+
+    Records defaults;
+    if (!build_default_records(setup_version, defaults, error)) return false;
+
+    Records working = records;
+    RenderConfig candidate;
+    const RecoveryAttempt direct = decode_with_record_repair(
+        working, defaults, authored, setup_version, candidate,
+        compatibility, error);
+    if (direct == RecoveryAttempt::Success) {
+        destination = std::move(candidate);
+        return true;
+    }
+
+    // Typed parsing succeeded but one or more combinations were semantically
+    // unsafe. Rebuild from the known-good template and admit independent field
+    // groups one at a time. This keeps valid portions instead of rejecting the
+    // entire save while avoiding use of a partially invalid configuration.
+    Records accepted = defaults;
+    std::map<std::string, Records> groups;
+    for (const auto& record : authored) {
+        if (record_belongs_to_version(record.first, setup_version)) {
+            groups[recovery_group(record.first)].insert(record);
+        }
+    }
+    ConfigCompatibility greedy_compatibility = compatibility;
+    // Some otherwise-valid groups depend on another group (for example a
+    // wave can bind to a reusable path, and a music clock depends on its
+    // analysis). Retry deferred groups whenever admitting another group may
+    // have satisfied that dependency. Map ordering must never decide which
+    // valid user settings survive recovery.
+    bool made_progress = true;
+    while (made_progress && !groups.empty()) {
+        made_progress = false;
+        for (auto grouped = groups.begin(); grouped != groups.end();) {
+            Records trial = accepted;
+            if (collection_recovery_group(grouped->first)) {
+                for (auto iterator = trial.begin(); iterator != trial.end();) {
+                    if (starts_with(iterator->first, grouped->first)) {
+                        iterator = trial.erase(iterator);
+                    } else {
+                        ++iterator;
+                    }
+                }
+            }
+            for (const auto& record : grouped->second) {
+                trial[record.first] = record.second;
+            }
+            ConfigCompatibility trial_compatibility = greedy_compatibility;
+            RenderConfig trial_candidate;
+            std::string trial_error;
+            const RecoveryAttempt result = decode_with_record_repair(
+                trial, defaults, authored, setup_version, trial_candidate,
+                trial_compatibility, &trial_error);
+            if (result == RecoveryAttempt::Success) {
+                accepted = std::move(trial);
+                candidate = std::move(trial_candidate);
+                greedy_compatibility = std::move(trial_compatibility);
+                grouped = groups.erase(grouped);
+                made_progress = true;
+            } else {
+                ++grouped;
+            }
+        }
+    }
+    for (const auto& grouped : groups) {
+        for (const auto& record : grouped.second) {
+            remember_preserved(greedy_compatibility, record.first,
+                               record.second, true);
+        }
+        remember_note(greedy_compatibility,
+                      "Kept but did not use invalid field group '"
+                          + grouped.first + "'.");
+    }
+    Records final_records = accepted;
+    ConfigCompatibility final_compatibility = greedy_compatibility;
+    const RecoveryAttempt final_result = decode_with_record_repair(
+        final_records, defaults, authored, setup_version, candidate,
+        final_compatibility, error);
+    if (final_result != RecoveryAttempt::Success) return false;
+    compatibility = std::move(final_compatibility);
+    destination = std::move(candidate);
+    return true;
+}
+
+void distribute_compatibility(RenderConfig& config,
+                              ConfigCompatibility compatibility) {
+    for (PreservedConfigRecord& record : compatibility.records) {
+        if (starts_with(record.key, "timing.music.")) {
+            config.clock.music.compatibility.records.push_back(
+                std::move(record));
+        } else if (render_record_key(record.key)) {
+            config.source_compatibility.records.push_back(std::move(record));
+        } else {
+            config.output_compatibility.records.push_back(std::move(record));
+        }
+    }
+    for (std::string& note : compatibility.repair_notes) {
+        std::string key;
+        if (quoted_error_key(note, key)
+            && starts_with(key, "timing.music.")) {
+            config.clock.music.compatibility.repair_notes.push_back(
+                std::move(note));
+        } else if (!key.empty() && render_record_key(key)) {
+            config.source_compatibility.repair_notes.push_back(std::move(note));
+        } else {
+            config.output_compatibility.repair_notes.push_back(std::move(note));
+        }
+    }
+}
+
+bool append_setup_compatibility(std::string& serialized,
+                                const ConfigCompatibility& compatibility,
+                                std::string* error) {
+    Records existing;
+    std::uint32_t version = 0U;
+    if (!parse_records(serialized, existing, version, error)) return false;
+    std::map<std::string, std::string> unknown;
+    std::vector<PreservedConfigRecord> rejected;
+    for (const PreservedConfigRecord& record : compatibility.records) {
+        if (!valid_key(record.key) || !safe_record_value(record.value)) {
+            return fail(error,
+                        "Cannot save malformed preserved field '"
+                            + record.key
+                            + "'; no preserved data was discarded.");
+        }
+        if (!record.rejected
+            && !starts_with(record.key, "compatibility.rejected.")
+            && existing.find(record.key) == existing.end()) {
+            const auto inserted = unknown.emplace(record.key, record.value);
+            if (!inserted.second && inserted.first->second != record.value) {
+                rejected.push_back(record);
+            }
+        } else {
+            rejected.push_back(record);
+        }
+    }
+    const auto append_line = [&](std::string_view key,
+                                 std::string_view value) -> bool {
+        const std::size_t addition = key.size() + value.size() + 2U;
+        if (serialized.size() > kMaximumSetupBytes - addition) {
+            return fail(error,
+                        "Preserved compatibility data exceeds the 8 MiB setup limit.");
+        }
+        serialized.append(key);
+        serialized.push_back('\t');
+        serialized.append(value);
+        serialized.push_back('\n');
+        return true;
+    };
+    for (const auto& record : unknown) {
+        if (!append_line(record.first, record.second)) return false;
+    }
+    std::sort(rejected.begin(), rejected.end(),
+              [](const PreservedConfigRecord& left,
+                 const PreservedConfigRecord& right) {
+                  return std::tie(left.key, left.value)
+                         < std::tie(right.key, right.value);
+              });
+    rejected.erase(std::unique(
+                       rejected.begin(), rejected.end(),
+                       [](const PreservedConfigRecord& left,
+                          const PreservedConfigRecord& right) {
+                           return left.key == right.key
+                                  && left.value == right.value;
+                       }),
+                   rejected.end());
+    if (!rejected.empty()
+        && !append_line("compatibility.rejected.count",
+                        std::to_string(rejected.size()))) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < rejected.size(); ++index) {
+        std::string key;
+        std::string value;
+        if (!percent_encode(rejected[index].key, key)
+            || !percent_encode(rejected[index].value, value)
+            || !append_line("compatibility.rejected."
+                                + std::to_string(index) + ".key",
+                            key)
+            || !append_line("compatibility.rejected."
+                                + std::to_string(index) + ".value",
+                            value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 #if defined(_WIN32)
 
 std::wstring utf8_to_wide(const std::string& utf8) {
@@ -2259,9 +2771,12 @@ bool deserialize_setup_config(const std::string& serialized,
             return false;
         }
         RenderConfig candidate;
-        if (!deserialize_setup(records, setup_version, candidate, error)) {
+        ConfigCompatibility compatibility;
+        if (!recover_setup_records(std::move(records), setup_version,
+                                   candidate, compatibility, error)) {
             return false;
         }
+        distribute_compatibility(candidate, std::move(compatibility));
         destination = std::move(candidate);
         return true;
     } catch (const std::bad_alloc&) {
@@ -2287,6 +2802,18 @@ bool save_setup(const RenderConfig& config,
         }
         std::string serialized;
         if (!detail::serialize_setup_config(config, serialized, error)) {
+            return false;
+        }
+        ConfigCompatibility compatibility = config.source_compatibility;
+        compatibility.records.insert(
+            compatibility.records.end(),
+            config.output_compatibility.records.begin(),
+            config.output_compatibility.records.end());
+        compatibility.records.insert(
+            compatibility.records.end(),
+            config.clock.music.compatibility.records.begin(),
+            config.clock.music.compatibility.records.end());
+        if (!append_setup_compatibility(serialized, compatibility, error)) {
             return false;
         }
         return atomic_write_setup(path, serialized, error);

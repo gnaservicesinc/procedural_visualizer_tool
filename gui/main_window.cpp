@@ -107,45 +107,6 @@ QString custom_new_project_defaults_path() {
 #  define PVT_PROGRAM_VERSION "development"
 #endif
 
-std::optional<std::vector<std::uint64_t>> numeric_version(std::string_view value) {
-    const std::size_t suffix = value.find_first_of("-+");
-    if (suffix != std::string_view::npos) value = value.substr(0U, suffix);
-    if (value.empty()) return std::nullopt;
-    std::vector<std::uint64_t> parts;
-    for (std::size_t begin = 0U; begin < value.size();) {
-        const std::size_t end = value.find('.', begin);
-        const std::string_view part = value.substr(
-            begin, end == std::string_view::npos ? value.size() - begin : end - begin);
-        if (part.empty()) return std::nullopt;
-        std::uint64_t number = 0U;
-        for (const char character : part) {
-            if (character < '0' || character > '9') return std::nullopt;
-            const auto digit = static_cast<std::uint64_t>(character - '0');
-            if (number > (std::numeric_limits<std::uint64_t>::max() - digit) / 10U) {
-                return std::nullopt;
-            }
-            number = number * 10U + digit;
-        }
-        parts.push_back(number);
-        if (end == std::string_view::npos) break;
-        begin = end + 1U;
-    }
-    return parts;
-}
-
-bool program_version_is_newer(std::string_view candidate) {
-    const auto left = numeric_version(candidate);
-    const auto right = numeric_version(PVT_PROGRAM_VERSION);
-    if (!left || !right) return false;
-    const std::size_t count = std::max(left->size(), right->size());
-    for (std::size_t index = 0U; index < count; ++index) {
-        const auto left_part = index < left->size() ? (*left)[index] : 0U;
-        const auto right_part = index < right->size() ? (*right)[index] : 0U;
-        if (left_part != right_part) return left_part > right_part;
-    }
-    return false;
-}
-
 class LambdaUndoCommand final : public QUndoCommand {
 public:
     LambdaUndoCommand(QString text, std::function<void()> undo,
@@ -439,6 +400,22 @@ std::size_t estimated_string_bytes(const std::string& value) {
     return saturating_add(sizeof(std::string), value.capacity() + 1U);
 }
 
+std::size_t estimated_compatibility_bytes(
+    const pvt::ConfigCompatibility& compatibility) {
+    std::size_t bytes = saturating_add(
+        compatibility.records.capacity()
+            * sizeof(pvt::PreservedConfigRecord),
+        compatibility.repair_notes.capacity() * sizeof(std::string));
+    for (const pvt::PreservedConfigRecord& record : compatibility.records) {
+        bytes = saturating_add(bytes, estimated_string_bytes(record.key));
+        bytes = saturating_add(bytes, estimated_string_bytes(record.value));
+    }
+    for (const std::string& note : compatibility.repair_notes) {
+        bytes = saturating_add(bytes, estimated_string_bytes(note));
+    }
+    return bytes;
+}
+
 std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     std::size_t bytes = sizeof(pvt::RenderData);
     bytes = saturating_add(bytes,
@@ -468,6 +445,11 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     bytes = saturating_add(bytes, estimated_string_bytes(render.palette.name));
     bytes = saturating_add(
         bytes, render.palette.colors.capacity() * sizeof(pvt::PaletteColor));
+    bytes = saturating_add(
+        bytes, estimated_compatibility_bytes(render.source_compatibility));
+    bytes = saturating_add(
+        bytes, estimated_compatibility_bytes(
+                   render.layer_clock.clock.music.compatibility));
     return bytes;
 }
 
@@ -486,6 +468,10 @@ std::size_t estimated_canvas_bytes(const pvt::CanvasLoopConfig& canvas) {
         bytes, music.tempo_points.capacity() * sizeof(pvt::MusicTempoPoint));
     bytes = saturating_add(
         bytes, music.feature_samples.capacity() * sizeof(pvt::MusicFeatureSample));
+    bytes = saturating_add(
+        bytes, estimated_compatibility_bytes(music.compatibility));
+    bytes = saturating_add(
+        bytes, estimated_compatibility_bytes(canvas.output_compatibility));
     bytes = saturating_add(
         bytes, canvas.motion_paths.capacity() * sizeof(pvt::CubicMotionPath));
     for (const auto& path : canvas.motion_paths) {
@@ -4025,6 +4011,7 @@ void MainWindow::syncProjectGlobals() {
     project_.canvas.fps = config_.fps;
     project_.canvas.clock = config_.clock;
     project_.canvas.motion_paths = config_.motion_paths;
+    project_.canvas.output_compatibility = config_.output_compatibility;
     project_.output = config_.output;
 }
 
@@ -4726,26 +4713,15 @@ void MainWindow::updateWindowTitle() {
 void MainWindow::updateCompatibilityWarning() {
     compatibility_warning_.clear();
     if (document_ != nullptr) {
-        QStringList newer_versions;
-        if (program_version_is_newer(document_->created_with_version)) {
-            newer_versions.push_back(
-                tr("created with %1")
-                    .arg(QString::fromStdString(document_->created_with_version)));
-        }
-        if (program_version_is_newer(document_->last_changed_with_version)) {
-            newer_versions.push_back(
-                tr("last changed with %1")
-                    .arg(QString::fromStdString(document_->last_changed_with_version)));
-        }
-        if (document_->newer_program_version && newer_versions.isEmpty()) {
-            newer_versions.push_back(tr("saved by an unknown newer version"));
-        }
-        if (!newer_versions.isEmpty()) {
-            compatibility_warning_ =
-                tr("Newer-version bundle (%1). It can be opened, but saving with %2 "
-                   "may discard fields this version does not understand.")
-                    .arg(newer_versions.join(tr(", ")),
-                         QString::fromUtf8(PVT_PROGRAM_VERSION));
+        const pvt::ProjectRecoveryInfo recovery =
+            pvt::project_recovery_info(document_->project);
+        if (recovery.preserved_fields != 0U || !recovery.notes.empty()) {
+            compatibility_warning_ = tr(
+                "Recovered this save by applying every safe setting and repairing "
+                "missing or unusable data. Preserved %1 original/unrecognized "
+                "field(s); %2 were not safe to use. Saving keeps them.")
+                .arg(recovery.preserved_fields)
+                .arg(recovery.rejected_fields);
         }
     }
     if (compatibility_warning_label_ != nullptr) {
@@ -9617,10 +9593,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     document_->created_with_version = "999.0.0";
     updateCompatibilityWarning();
-    if (compatibility_warning_.isEmpty() || compatibility_warning_label_->isHidden()
-        || !compatibility_warning_.contains(tr("saving"), Qt::CaseInsensitive)) {
+    if (!compatibility_warning_.isEmpty()
+        || !compatibility_warning_label_->isHidden()) {
         if (error != nullptr) {
-            *error = tr("A newer bundle version did not produce a persistent save-risk warning.");
+            *error = tr("A version number alone incorrectly produced a save-risk warning.");
+        }
+        return false;
+    }
+    document_->project.canvas.output_compatibility.records.push_back(
+        {"future.output.sparkle", "maximum", false});
+    updateCompatibilityWarning();
+    if (compatibility_warning_.isEmpty() || compatibility_warning_label_->isHidden()
+        || !compatibility_warning_.contains(tr("keeps"),
+                                            Qt::CaseInsensitive)) {
+        if (error != nullptr) {
+            *error = tr("Preserved future data did not produce an accurate recovery notice.");
         }
         return false;
     }
@@ -9864,6 +9851,8 @@ bool MainWindow::saveIndependentRenamedCopy(
         snapshot.canvas.total_frames = config_.total_frames;
         snapshot.canvas.fps = config_.fps;
         snapshot.canvas.clock = config_.clock;
+        snapshot.canvas.motion_paths = config_.motion_paths;
+        snapshot.canvas.output_compatibility = config_.output_compatibility;
         snapshot.output = config_.output;
         snapshot.name = project_name;
 

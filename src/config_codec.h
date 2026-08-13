@@ -10,7 +10,7 @@ namespace pvt::detail {
 inline constexpr std::uint32_t kLayerConfigFormatVersion = 5U;
 inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 4U;
 inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 1U;
-inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 1U;
+inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 2U;
 
 // In-memory access to the installed legacy codec. These are exported only so
 // the non-installed bundle helper can reuse the exact parser when the main
@@ -21,6 +21,14 @@ PVT_API bool serialize_setup_config(const RenderConfig& config,
 PVT_API bool deserialize_setup_config(const std::string& serialized,
                                       RenderConfig& destination,
                                       std::string* error = nullptr);
+
+// Appends bounded unknown records and rejected-value recovery envelopes after
+// a canonical codec has selected its layer/output subset.
+bool append_config_compatibility(
+    std::string& serialized,
+    const ConfigCompatibility* first,
+    const ConfigCompatibility* second = nullptr,
+    std::string* error = nullptr);
 
 // Internal, deterministic text codecs used by project bundles. They share the
 // strict record grammar and bounds of legacy PVT_SETUP files, but deliberately

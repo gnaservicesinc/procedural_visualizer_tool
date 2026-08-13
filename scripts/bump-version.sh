@@ -2,12 +2,12 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 MAJOR.MINOR.PATCH" >&2
+    echo "Usage: $0 MAJOR.MINOR.PATCH[-PRERELEASE]" >&2
     exit 2
 fi
 
-if ! printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
-    echo "Version must be a SemVer core such as 0.9.1 or 1.0.0." >&2
+if ! printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+    echo "Version must be SemVer such as 0.9.1 or 1.0.0-RC1." >&2
     exit 2
 fi
 

@@ -233,7 +233,7 @@ bool prepare_temporary_movie(const std::string& destination,
                              bool overwrite, TemporaryMovie& temporary,
                              std::string* error) {
     if (destination.empty()) return fail(error, "Video destination is empty.");
-    const fs::path output = fs::u8path(destination);
+    const fs::path output(destination);
     const fs::path parent = output.parent_path().empty()
                                 ? fs::current_path() : output.parent_path();
     std::error_code filesystem_error;
@@ -318,7 +318,7 @@ bool install_temporary_movie(TemporaryMovie& temporary,
                               + std::strerror(errno));
     }
     temporary.path.clear();
-    const fs::path output = fs::u8path(destination);
+    const fs::path output(destination);
     const fs::path parent = output.parent_path().empty()
                                 ? fs::current_path() : output.parent_path();
     const int directory = ::open(parent.string().c_str(), O_RDONLY);

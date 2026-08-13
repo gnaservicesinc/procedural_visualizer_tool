@@ -28,11 +28,13 @@ endif()
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" PVT_PRODUCT_VERSION
     LIMIT_COUNT 1)
 if(NOT PVT_PRODUCT_VERSION MATCHES
-   "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
+   "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$")
     message(FATAL_ERROR
-        "VERSION must contain one SemVer core such as 0.9.0 or 1.0.0.")
+        "VERSION must contain SemVer such as 0.9.0 or 1.0.0-RC1.")
 endif()
-project(ProceduralVisualizerTool VERSION "${PVT_PRODUCT_VERSION}" LANGUAGES CXX)
+string(REGEX REPLACE "-.*$" "" PVT_PRODUCT_VERSION_CORE
+    "${PVT_PRODUCT_VERSION}")
+project(ProceduralVisualizerTool VERSION "${PVT_PRODUCT_VERSION_CORE}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -347,7 +349,7 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
         CXX_EXTENSIONS NO
         POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(ProceduralVisualizerBundle PRIVATE
-        PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
+        PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
     target_include_directories(ProceduralVisualizerBundle PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
     target_link_libraries(ProceduralVisualizerBundle
@@ -379,7 +381,7 @@ if(PVT_BUILD_CLI)
         ProceduralVisualizerTool::Bundle
         ProceduralVisualizerTool::Audio)
     target_compile_definitions(pvt_render_cli PRIVATE
-        PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
+        PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
     pvt_enable_warnings(pvt_render_cli)
 endif()
 
@@ -486,7 +488,7 @@ if(PVT_BUILD_QT_GUI)
             "-framework VideoToolbox")
     endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
-        PVT_PROGRAM_VERSION="${PROJECT_VERSION}")
+        PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
     pvt_enable_warnings(ProceduralVisualizerToolGui)
 
     if(PVT_ENABLE_DISTRIBUTION)
@@ -542,7 +544,7 @@ if(PVT_BUILD_QT_GUI)
             COMMAND "${CMAKE_COMMAND}"
                     "-DPVT_APP_BUNDLE=${PVT_DISTRIBUTION_APP}"
                     "-DPVT_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                    "-DPVT_PRODUCT_VERSION=${PROJECT_VERSION}"
+                    "-DPVT_PRODUCT_VERSION=${PVT_PRODUCT_VERSION}"
                     "-DPVT_VTOOL=${PVT_VTOOL}"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/VerifyDistribution.cmake"
             DEPENDS ProceduralVisualizerToolGui pvt_render_cli
@@ -648,7 +650,7 @@ if(BUILD_TESTING)
         add_test(NAME pvt_cli_version COMMAND pvt_render_cli --version)
         set_tests_properties(pvt_cli_version PROPERTIES
             PASS_REGULAR_EXPRESSION
-                "Procedural Visualizer Tool ${PROJECT_VERSION}")
+                "Procedural Visualizer Tool ${PVT_PRODUCT_VERSION}")
         add_test(NAME pvt_cli_rejects_unknown_option
             COMMAND ${CMAKE_COMMAND}
                 -DPROGRAM=$<TARGET_FILE:pvt_render_cli>

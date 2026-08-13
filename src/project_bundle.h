@@ -72,6 +72,12 @@ struct BundleSaveReport {
     bool promoted_external_change = false;
 };
 
+struct ProjectRecoveryInfo {
+    std::size_t preserved_fields = 0U;
+    std::size_t rejected_fields = 0U;
+    std::vector<std::string> notes;
+};
+
 struct ProjectDocument {
     ProjectConfig project;
     std::string source_path;
@@ -100,10 +106,16 @@ struct ProjectDocument {
 
 ProjectDocument default_project_document();
 
+// Summarizes bounded compatibility data retained by the active snapshot.
+// Program version strings alone are deliberately not treated as damage or a
+// save risk; only actual repairs or unrecognized records appear here.
+ProjectRecoveryInfo project_recovery_info(const ProjectConfig& project);
+
 // Builds a detached, independent document from one current project snapshot.
 // The project and every layer receive fresh UUIDs; bundle history, source
-// association, stale-write tokens, and compatibility provenance are not
-// copied. Saving the result therefore creates a new version-0 bundle and
+// association, and stale-write tokens are not copied. Preserved configuration
+// fields are part of the snapshot and do follow it so Save Copy cannot lose
+// future-version data. Saving the result creates a new version-0 bundle and
 // cannot overwrite the source project through an inherited identity.
 bool make_independent_project_copy(const ProjectConfig& project,
                                    ProjectDocument& destination,

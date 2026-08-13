@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **0.9.0**. The version is read from `VERSION` by every
+Current product version: **1.0.0-RC1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -564,21 +564,25 @@ Load is read-only and transactional. It tries the valid `current` snapshot first
 then numeric directories from highest to lowest until one validates. Missing or
 broken pointers therefore do not destroy recoverable work. A checksum mismatch
 is reported neutrally as an external change/integrity mismatch, not proof of who
-or what changed it: parseable, centrally valid data opens dirty and is promoted
-to a first-class new version on the next explicit Save; invalid snapshots are
-skipped. Opening alone never rewrites the bundle.
-
-If bundle metadata records a creating or last-changing program version newer
-than the running application, the project still loads when otherwise valid, but
-the CLI and GUI warn before the user saves with older code. This is advisory rather
-than a data-hostile version gate.
+or what changed it: parseable data opens dirty and is promoted to a first-class
+new version on the next explicit Save. Typed setup recovery applies every safe
+field, rebuilds missing or unusable fields from bounded defaults, keeps unknown
+records verbatim, and stores rejected original values in a recovery envelope so
+later builds can retry them. The CLI and GUI report actual repairs or preserved
+data; a program version number alone never produces a false save-risk warning.
+Future positive setup, layer, output, music-analysis, root-metadata, and version-
+metadata headers are read through the newest understood schema when its required
+structure is present. Unknown mutable root records are round-tripped; immutable
+historical metadata remains byte-for-byte intact. Structurally unsafe snapshots
+are skipped. Opening alone never rewrites the bundle.
 
 Archive and directory input is treated as hostile. Readers bound entry count,
 per-file/expanded size, path length, compression ratio, metadata records, layers,
 and versions; reject traversal, absolute/drive/UNC paths, NUL or malformed UTF-8,
 case-colliding duplicates, encrypted/multidisk archives, symlinks and special
 files, unsupported compression, unexpected tree entries, CRC failures, and
-unparseable or invalid typed values. Unpacked bundles ignore regular `.DS_Store`
+structurally ambiguous records such as duplicate keys. Typed field damage is
+recovered without weakening those archive/tree boundaries. Unpacked bundles ignore regular `.DS_Store`
 files because Finder can create them merely by browsing a directory; ZIP bundles
 remain exact and do not allow such extra entries. ZIP replacement and new directory-version commits use
 checked sibling staging and atomic rename operations. Save also refuses a stale
@@ -586,12 +590,13 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-5 remain importable;
-current explicit legacy output is setup format 6. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-7 remain importable;
+current explicit legacy output is setup format 7. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
-motion, and particle settings. Older files receive neutral compatibility
+motion, and particle settings. Format 7 adds starting images and reusable cubic
+motion paths. Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
@@ -601,8 +606,8 @@ more than one layer exists.
 
 Version 4.0.1 corrected the 4.0.0 palette-stage bug without changing its schema:
 an enabled v4 palette selects starting colors instead of rewriting the final
-effected image. Versions 5 and 6 add the synchronization/music/asset and local
-clock/motion/particle data above.
+effected image. Versions 5 through 7 add the synchronization/music/asset,
+local clock/motion/particle, starting-image, and reusable-path data above.
 
 ## Scripted rendering
 
@@ -777,7 +782,7 @@ expect. Set `-DPVT_DEPLOY_QT_RUNTIME=ON` for a relocatable staging prefix on a
 supported Qt kit. The same option runs Qt's deployment script on Windows; it
 does not download dependencies.
 
-To bump the public version, run `scripts/bump-version.sh MAJOR.MINOR.PATCH`,
+To bump the public version, run `scripts/bump-version.sh MAJOR.MINOR.PATCH[-PRERELEASE]`,
 then reconfigure. The script intentionally changes only `VERSION`, keeping one
 source of truth and leaving release notes, tags, builds, and uploads explicit.
 

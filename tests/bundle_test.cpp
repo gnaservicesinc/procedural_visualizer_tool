@@ -400,15 +400,26 @@ void test_layer_codec_backward_compatibility() {
     CHECK(loaded.swings_enabled);
     CHECK(!loaded.audio_reactive.enabled);
 
-    // Failed loads are transactional even when a syntactically valid record is
-    // placed in the wrong layer/output block.
-    pvt::RenderData untouched = original;
-    untouched.phrase_warp = 0.123456;
+    // A field in the wrong block is kept verbatim but not applied.
+    pvt::RenderData recovered = original;
+    recovered.phrase_warp = 0.123456;
     const std::string malformed_layer =
         version_three + "timing.clock.mode\tdefault\n";
-    CHECK(!pvt::detail::deserialize_layer_config(
-        malformed_layer, untouched, &error));
-    CHECK(untouched.phrase_warp == 0.123456);
+    CHECK(pvt::detail::deserialize_layer_config(
+        malformed_layer, recovered, &error));
+    CHECK(recovered.phrase_warp == original.phrase_warp);
+    CHECK(std::any_of(
+        recovered.source_compatibility.records.begin(),
+        recovered.source_compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "timing.clock.mode"
+                   && record.value == "default";
+        }));
+    std::string recovered_layer;
+    CHECK(pvt::detail::serialize_layer_config(
+        recovered, recovered_layer, &error, &motion_paths));
+    CHECK(recovered_layer.find("timing.clock.mode\tdefault\n")
+          != std::string::npos);
 }
 
 void test_render_output_codec_backward_compatibility() {
@@ -480,7 +491,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t1\n", 0U) == 0U);
     CHECK(pvt::detail::serialize_split_render_output_config(
         canvas, output, split_output, &error));
-    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t1\n", 0U) == 0U);
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t2\n", 0U) == 0U);
     CHECK(split_output.find("timing.music.") == std::string::npos);
     CHECK(split_output.size() < version_two.size());
     pvt::CanvasLoopConfig combined_canvas;
@@ -491,6 +502,44 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(pvt::detail::serialize_render_output_config(
         combined_canvas, combined_output, combined_canonical, &error));
     CHECK(combined_canonical == version_two);
+
+    const std::string split_with_misplaced_music =
+        split_output + "timing.music.duration_seconds\t999\n";
+    pvt::CanvasLoopConfig misplaced_canvas;
+    pvt::ExportConfig misplaced_output;
+    CHECK(pvt::detail::deserialize_split_render_output_config(
+        split_with_misplaced_music, analysis, misplaced_canvas,
+        misplaced_output, &error));
+    CHECK(misplaced_canvas.clock.music.duration_seconds == 2.0);
+    CHECK(std::any_of(
+        misplaced_canvas.output_compatibility.records.begin(),
+        misplaced_canvas.output_compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "timing.music.duration_seconds"
+                   && record.value == "999";
+        }));
+
+    // Split v1 shipped before reusable paths. It must map to setup v6 instead
+    // of being reinterpreted as today's schema and demanding paths.count.
+    std::istringstream split_input(split_output);
+    std::ostringstream legacy_split;
+    std::string split_line;
+    CHECK(static_cast<bool>(std::getline(split_input, split_line)));
+    legacy_split << "PVT_RENDER_OUTPUT_SPLIT\t1\n";
+    while (std::getline(split_input, split_line)) {
+        const std::string key = split_line.substr(0U, split_line.find('\t'));
+        if (key.rfind("paths.", 0U) != 0U) {
+            legacy_split << split_line << '\n';
+        }
+    }
+    pvt::CanvasLoopConfig legacy_split_canvas;
+    pvt::ExportConfig legacy_split_output;
+    CHECK(pvt::detail::deserialize_split_render_output_config(
+        legacy_split.str(), analysis, legacy_split_canvas,
+        legacy_split_output, &error));
+    CHECK(legacy_split_canvas.motion_paths.empty());
+    CHECK(legacy_split_canvas.clock.mode == pvt::ClockMode::Music);
+    CHECK(legacy_split_output.filename_prefix == "music-sync_");
     pvt::MusicAnalysis analysis_round_trip;
     CHECK(pvt::detail::deserialize_music_analysis_config(
         analysis, analysis_round_trip, &error));
@@ -499,9 +548,22 @@ void test_render_output_codec_backward_compatibility() {
     const std::string malformed_analysis =
         analysis + "output.filename_prefix\twrong-block\n";
     analysis_round_trip.source_basename = "unchanged.wav";
-    CHECK(!pvt::detail::deserialize_music_analysis_config(
+    CHECK(pvt::detail::deserialize_music_analysis_config(
         malformed_analysis, analysis_round_trip, &error));
-    CHECK(analysis_round_trip.source_basename == "unchanged.wav");
+    CHECK(analysis_round_trip.source_basename == "meter test.wav");
+    CHECK(std::any_of(
+        analysis_round_trip.compatibility.records.begin(),
+        analysis_round_trip.compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "output.filename_prefix"
+                   && record.value == "wrong-block";
+        }));
+    std::string future_analysis = malformed_analysis;
+    future_analysis.replace(0U, std::string("PVT_MUSIC_ANALYSIS\t1").size(),
+                            "PVT_MUSIC_ANALYSIS\t999");
+    CHECK(pvt::detail::deserialize_music_analysis_config(
+        future_analysis, analysis_round_trip, &error));
+    CHECK(analysis_round_trip.source_basename == "meter test.wav");
 
     std::istringstream input(version_two);
     std::ostringstream legacy;
@@ -531,9 +593,16 @@ void test_render_output_codec_backward_compatibility() {
     loaded_legacy.width = 777;
     const std::string malformed =
         version_two + "audio_reactive.enabled\t1\n";
-    CHECK(!pvt::detail::deserialize_render_output_config(
+    CHECK(pvt::detail::deserialize_render_output_config(
         malformed, loaded_legacy, loaded_legacy_output, &error));
-    CHECK(loaded_legacy.width == 777);
+    CHECK(loaded_legacy.width == 320);
+    CHECK(std::any_of(
+        loaded_legacy.output_compatibility.records.begin(),
+        loaded_legacy.output_compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "audio_reactive.enabled"
+                   && record.value == "1";
+        }));
 }
 
 void test_sha_and_archive_guards(const fs::path& directory) {
@@ -693,6 +762,10 @@ void test_directory_versions_and_names(const fs::path& directory) {
     initial_render.waves.front().path.path_id = 91U;
     initial_render.waves.front().path.cycles_per_loop = 3;
     initial_render.waves.front().path.follow_tangent = true;
+    document.project.canvas.output_compatibility.records.push_back(
+        {"future.output.sparkle", "maximum", false});
+    document.project.canvas.output_compatibility.repair_notes.push_back(
+        "Recovered a missing test field.");
     const std::string opened = document.last_opened_utc;
     const fs::path bundle = directory
                             / pvt::detail::path_from_utf8(
@@ -701,6 +774,8 @@ void test_directory_versions_and_names(const fs::path& directory) {
     pvt::BundleSaveReport report;
     CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
     CHECK(report.created_version && report.version == 0U);
+    CHECK(document.project.canvas.output_compatibility.repair_notes.empty());
+    CHECK(document.project.canvas.output_compatibility.records.size() == 1U);
     CHECK(document.last_opened_utc == opened);
     CHECK(!document.last_saved_utc.empty());
     CHECK(fs::is_regular_file(fs::symlink_status(bundle / "current")));
@@ -738,6 +813,13 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(loaded_render.waves.front().path.enabled);
     CHECK(loaded_render.waves.front().path.path_id == 91U);
     CHECK(loaded_render.waves.front().path.follow_tangent);
+    CHECK(std::any_of(
+        loaded.project.canvas.output_compatibility.records.begin(),
+        loaded.project.canvas.output_compatibility.records.end(),
+        [](const pvt::PreservedConfigRecord& record) {
+            return record.key == "future.output.sparkle"
+                   && record.value == "maximum";
+        }));
     loaded.project.layers[0].name = "Brighter base";
     loaded.project.canvas.clock.reverse = true;
     loaded.project.canvas.clock.meter.expression = "5+3/8";
@@ -1338,6 +1420,48 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     pvt::ProjectDocument newer;
     CHECK(pvt::load_project_document(as_utf8(checksum_bundle), newer, &error));
     CHECK(newer.newer_program_version);
+
+    // A future root header and unknown records are not, by themselves,
+    // evidence of damage. Parse the known structural fields and preserve the
+    // rest when the mutable root file is rewritten.
+    CHECK(replace_once(root, "PVT_BUNDLE\t1\n", "PVT_BUNDLE\t999\n"));
+    root.append("future.root.sparkle\tmaximum\n");
+    CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
+    CHECK(rewrite_root_checksum(checksum_bundle));
+    pvt::ProjectDocument future_root;
+    CHECK(pvt::load_project_document(as_utf8(checksum_bundle), future_root,
+                                     &error));
+    future_root.project.layers[0].name = "Future root round trip";
+    CHECK(pvt::save_project_document(future_root, as_utf8(checksum_bundle),
+                                     &report, &error));
+    root = read_bytes(checksum_bundle / "metadata.txt");
+    CHECK(root.rfind("PVT_BUNDLE\t999\n", 0U) == 0U);
+    CHECK(root.find("future.root.sparkle\tmaximum\n")
+          != std::string::npos);
+
+    pvt::ProjectDocument future_manifest = pvt::default_project_document();
+    future_manifest.project.name = "Future Version Metadata";
+    const fs::path future_manifest_bundle =
+        directory / portable_root(future_manifest.project.name);
+    CHECK(pvt::save_project_document(
+        future_manifest, as_utf8(future_manifest_bundle), &report, &error));
+    std::string future_version_bytes =
+        read_bytes(future_manifest_bundle / "0" / "metadata.txt");
+    CHECK(replace_once(future_version_bytes, "PVT_VERSION\t4\n",
+                       "PVT_VERSION\t999\n"));
+    future_version_bytes.append("future.version.sparkle\tmaximum\n");
+    CHECK(write_bytes(future_manifest_bundle / "0" / "metadata.txt",
+                      future_version_bytes));
+    pvt::ProjectDocument future_manifest_loaded;
+    CHECK(pvt::load_project_document(as_utf8(future_manifest_bundle),
+                                     future_manifest_loaded, &error));
+    CHECK(future_manifest_loaded.externally_modified);
+    future_manifest_loaded.project.layers[0].name = "Promoted safely";
+    CHECK(pvt::save_project_document(future_manifest_loaded,
+                                     as_utf8(future_manifest_bundle),
+                                     &report, &error));
+    CHECK(read_bytes(future_manifest_bundle / "0" / "metadata.txt")
+          == future_version_bytes);
 
     // Unicode C1 controls are rejected even when the root checksum is updated.
     const std::string newer_root = root;

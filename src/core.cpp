@@ -1765,6 +1765,7 @@ ProjectConfig default_project() {
     project.canvas.fps = legacy.fps;
     project.canvas.clock = legacy.clock;
     project.canvas.motion_paths = legacy.motion_paths;
+    project.canvas.output_compatibility = legacy.output_compatibility;
     project.output = legacy.output;
     project.layers.push_back(default_layer(0));
     return project;
@@ -1783,6 +1784,7 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
     config.clock = canvas.clock;
     config.motion_paths = canvas.motion_paths;
     config.output = output;
+    config.output_compatibility = canvas.output_compatibility;
     return config;
 }
 

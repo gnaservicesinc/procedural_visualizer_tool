@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -8,11 +8,27 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 0.9.0 and has one source of truth in
+The public product version is now 1.0.0-RC1 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
-`scripts/bump-version.sh` performs a validated SemVer bump without silently
+`scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The RC1 persistence pass fixes the split-render-output v1 migration boundary
+that incorrectly required `paths.count` in pre-path bundles. Setup/layer/output
+readers now salvage every independently valid typed field, rebuild missing or
+unusable values from bounded defaults, retain unknown records verbatim, and
+store rejected originals in a recovery envelope for later builds to retry.
+Actual recovery data drives GUI/CLI notices; historical product-version strings
+alone no longer produce a false data-loss warning. The supplied 12-version
+`In stages it unfolds Fire.zip` and expanded directory both load, validate,
+copy, and reopen without rewriting history. Legacy `.pvt` import also now keeps
+the project clock and reusable paths instead of silently resetting them.
+The accompanying logic audit fixed compatibility loss in GUI Save Copy, CLI
+edits, and project-global synchronization; made dependent recovery groups retry
+after their prerequisites; retained unknown future root/version metadata; and
+refuses a save rather than silently dropping malformed internal preservation
+data.
 
 This pass also closes former remaining-work items 2 through 6. Layers can use a
 bounded embedded PNG source with Stretch, Contain, Cover, or Tile fitting and a
@@ -258,7 +274,7 @@ consumers do not inherit minizip requirements.
 | 18 | Layer compositing | Complete | Sequential bounded float-RGBA compositing implements all 11 requested modes plus opacity; only one layer frame and one accumulator are retained. |
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
-| 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, external-change promotion, semantic diff, Make Current, revert-as-new, and advisory newer-program warnings preserve recoverability. |
+| 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, field-level recovery/preservation, external-change promotion, semantic diff, Make Current, and revert-as-new preserve recoverability. |
 | 22 | Legacy compatibility without overwrite | Complete | Setup v1-v6 imports remain supported with neutral defaults; setup v7 adds starting images and reusable-path bindings/geometry. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |

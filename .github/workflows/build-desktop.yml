@@ -412,9 +412,9 @@ jobs:
           cd ..
           product_version=${GITHUB_REF_NAME#v}
           cat > release-notes.md <<EOF
-          Procedural Visualizer Tool $product_version is the first public 0.9.x preview on the road to 1.0.0.
+          Procedural Visualizer Tool $product_version is a release candidate for 1.0.0.
 
-          Highlights include embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, expanded music-responsive editing and export, project bundles, and the new About PVT/version workflow.
+          Highlights include resilient project recovery with lossless unknown-field preservation, embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, expanded music-responsive editing and export, and versioned project bundles.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 

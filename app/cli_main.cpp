@@ -1378,70 +1378,25 @@ std::string lower_ascii(std::string value) {
     return value;
 }
 
-bool parse_numeric_version(const std::string& text,
-                           std::vector<std::uint64_t>& components) {
-    if (text.empty() || text.size() > 64U) {
-        return false;
+void report_recovered_fields(const ProjectDocument& document) {
+    const pvt::ProjectRecoveryInfo recovery =
+        pvt::project_recovery_info(document.project);
+    if (recovery.preserved_fields == 0U && recovery.notes.empty()) return;
+    std::cerr << "Recovered project settings: applied every safe field and kept "
+              << recovery.preserved_fields << " unrecognized/original field(s)"
+              << " for lossless future saves";
+    if (recovery.rejected_fields != 0U) {
+        std::cerr << " (" << recovery.rejected_fields
+                  << " could not be used safely)";
     }
-    std::vector<std::uint64_t> parsed;
-    std::size_t cursor = 0U;
-    while (cursor < text.size() && parsed.size() < 8U) {
-        if (!std::isdigit(static_cast<unsigned char>(text[cursor]))) {
-            return false;
-        }
-        std::uint64_t value = 0U;
-        while (cursor < text.size()
-               && std::isdigit(static_cast<unsigned char>(text[cursor]))) {
-            const unsigned digit = static_cast<unsigned>(text[cursor] - '0');
-            if (value > (1000000000ULL - digit) / 10ULL) {
-                return false;
-            }
-            value = value * 10ULL + digit;
-            ++cursor;
-        }
-        parsed.push_back(value);
-        if (cursor == text.size() || text[cursor] == '-' || text[cursor] == '+') {
-            break;
-        }
-        if (text[cursor] != '.') {
-            return false;
-        }
-        ++cursor;
-        if (cursor == text.size()) {
-            return false;
-        }
+    std::cerr << ".\n";
+    const std::size_t shown = std::min<std::size_t>(recovery.notes.size(), 3U);
+    for (std::size_t index = 0U; index < shown; ++index) {
+        std::cerr << "  - " << recovery.notes[index] << '\n';
     }
-    if (parsed.empty() || parsed.size() > 8U
-        || (cursor < text.size() && text[cursor] != '-' && text[cursor] != '+')) {
-        return false;
-    }
-    components = std::move(parsed);
-    return true;
-}
-
-bool version_is_newer(const std::string& candidate, const std::string& current) {
-    std::vector<std::uint64_t> candidate_parts;
-    std::vector<std::uint64_t> current_parts;
-    if (!parse_numeric_version(candidate, candidate_parts)
-        || !parse_numeric_version(current, current_parts)) {
-        return false;
-    }
-    const std::size_t count = std::max(candidate_parts.size(), current_parts.size());
-    candidate_parts.resize(count, 0U);
-    current_parts.resize(count, 0U);
-    return std::lexicographical_compare(current_parts.begin(), current_parts.end(),
-                                        candidate_parts.begin(), candidate_parts.end());
-}
-
-void warn_if_created_by_newer_version(const ProjectDocument& document) {
-    const std::string current = PVT_PROGRAM_VERSION;
-    const bool newer_created = version_is_newer(document.created_with_version, current);
-    const bool newer_changed = version_is_newer(document.last_changed_with_version, current);
-    if (document.newer_program_version || newer_created || newer_changed) {
-        std::cerr << "Warning: this project records creating version "
-                  << document.created_with_version << " and last-changing version "
-                  << document.last_changed_with_version << ", newer than this "
-                  << current << " build. Loading did not modify it; review it before saving.\n";
+    if (recovery.notes.size() > shown) {
+        std::cerr << "  - " << (recovery.notes.size() - shown)
+                  << " additional repair note(s).\n";
     }
 }
 
@@ -1468,6 +1423,8 @@ void commit_active_render(CliState& state, const RenderConfig& config, bool chan
     project.canvas.total_frames = config.total_frames;
     project.canvas.fps = config.fps;
     project.canvas.clock = config.clock;
+    project.canvas.motion_paths = config.motion_paths;
+    project.canvas.output_compatibility = config.output_compatibility;
     project.output = config.output;
     project.layers.at(state.active_layer).render =
         static_cast<const pvt::RenderData&>(config);
@@ -2038,7 +1995,7 @@ bool interactive_menu(CliState& state) {
                 if (pvt::load_project_document(path, loaded, &error)) {
                     state.document = std::move(loaded);
                     state.active_layer = 0;
-                    warn_if_created_by_newer_version(state.document);
+                    report_recovered_fields(state.document);
                     std::cout << (state.document.legacy_import
                                       ? "Imported legacy setup. Its .pvt source will never "
                                         "be overwritten by a normal save.\n"
@@ -2517,7 +2474,7 @@ int main(int argc, char** argv) {
             state.document = std::move(loaded);
             state.active_layer = 0;
             loaded_document = true;
-            warn_if_created_by_newer_version(state.document);
+            report_recovered_fields(state.document);
         } else if (option == "--save") {
             bundle_to_save = value;
         } else if (option == "--save-legacy") {

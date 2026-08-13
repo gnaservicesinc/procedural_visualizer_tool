@@ -246,6 +246,23 @@ struct MusicTempoPoint {
     double confidence = 0.0;
 };
 
+// Lossless forward-compatibility data retained while loading a setup written
+// by another build. Unknown records keep their original key/value pair.
+// Rejected records were recognized but could not be used safely (for example,
+// a future enum token or an out-of-range number); serializers keep those in a
+// reserved recovery envelope so a later build can try the original value
+// again. Repair notes are user-facing diagnostics and are not serialized.
+struct PreservedConfigRecord {
+    std::string key;
+    std::string value;
+    bool rejected = false;
+};
+
+struct ConfigCompatibility {
+    std::vector<PreservedConfigRecord> records;
+    std::vector<std::string> repair_notes;
+};
+
 // Bounded deterministic analysis stored with a project. Project bundles embed
 // the audio under a collision-safe content identity while preserving its exact
 // filename and extension. Versions link it by digest and basename. Feature
@@ -265,6 +282,7 @@ struct MusicAnalysis {
     std::vector<double> beat_times_seconds;
     std::vector<MusicTempoPoint> tempo_points;
     std::vector<MusicFeatureSample> feature_samples;
+    ConfigCompatibility compatibility;
 };
 
 // BPM is measured against tempo_note_denominator (4 means quarter-note BPM).
@@ -569,6 +587,7 @@ struct CanvasLoopConfig {
     double fps = 60.0;
     ClockConfig clock;
     std::vector<CubicMotionPath> motion_paths;
+    ConfigCompatibility output_compatibility;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live
@@ -606,6 +625,7 @@ struct RenderData {
     PaletteConfig palette;
     LayerTransformConfig transform;
     LayerMotionConfig motion;
+    ConfigCompatibility source_compatibility;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -620,6 +640,7 @@ struct RenderConfig : RenderData {
     std::vector<CubicMotionPath> motion_paths;
 
     ExportConfig output;
+    ConfigCompatibility output_compatibility;
 };
 
 struct LayerConfig {
