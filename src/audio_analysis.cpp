@@ -38,11 +38,14 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr std::uint32_t kAnalysisSampleRate = 44100U;
-constexpr std::uint64_t kMaximumDurationSeconds = 2U * 60U * 60U;
+constexpr std::uint64_t kMaximumDurationSeconds =
+    static_cast<std::uint64_t>((std::numeric_limits<int>::max)());
 constexpr std::uint64_t kMaximumSourceBytes = kMaximumEmbeddedAssetBytes;
-constexpr std::uint32_t kMinimumSourceSampleRate = 8000U;
-constexpr std::uint32_t kMaximumSourceSampleRate = 384000U;
-constexpr std::uint32_t kMaximumSourceChannels = 32U;
+constexpr std::uint32_t kMinimumSourceSampleRate = 1U;
+constexpr std::uint32_t kMaximumSourceSampleRate =
+    (std::numeric_limits<std::uint32_t>::max)();
+constexpr std::uint32_t kMaximumSourceChannels =
+    (std::numeric_limits<std::uint32_t>::max)();
 constexpr std::uint64_t kDecodeChunkFrames = 4096U;
 constexpr std::uint64_t kHashChunkBytes = 1024U * 1024U;
 constexpr std::uint64_t kProgressTotal = 1000U;
@@ -116,6 +119,24 @@ std::uint64_t scaled_progress(std::uint64_t completed,
                                  / static_cast<long double>(total);
     const long double span = static_cast<long double>(end - begin);
     return begin + static_cast<std::uint64_t>(fraction * span);
+}
+
+std::size_t proportional_index(std::size_t position,
+                               std::size_t item_count,
+                               std::size_t output_count) {
+    if (position == 0U || item_count == 0U || output_count == 0U) return 0U;
+    if (position >= output_count) return item_count;
+    const std::size_t quotient = item_count / output_count;
+    const std::size_t remainder = item_count % output_count;
+    const std::size_t base = position * quotient;
+    const std::size_t scaled_remainder =
+        remainder <= (std::numeric_limits<std::size_t>::max)() / position
+            ? position * remainder / output_count
+            : static_cast<std::size_t>(
+                  static_cast<long double>(position)
+                  * static_cast<long double>(remainder)
+                  / static_cast<long double>(output_count));
+    return base + scaled_remainder;
 }
 
 std::uint32_t rotate_right(std::uint32_t value, unsigned count) {
@@ -307,7 +328,7 @@ bool preflight_path(const std::string& path,
                     fs::path& native_path,
                     std::uint64_t& file_size,
                     std::string* error) {
-    if (path.empty() || path.size() > 4096U
+    if (path.empty() || path.size() > kMaximumUiItems
         || path.find('\0') != std::string::npos) {
         return fail(error, "The music source path is empty or invalid.");
     }
@@ -323,7 +344,7 @@ bool preflight_path(const std::string& path,
     const std::uintmax_t size = fs::file_size(native_path, status_error);
     if (status_error || size == 0U || size > kMaximumSourceBytes) {
         return fail(error,
-                    "The music source is empty, unreadable, or exceeds the portable 512 MiB attachment limit.");
+                    "The music source is empty, unreadable, or exceeds the signed-int portable attachment limit.");
     }
     file_size = static_cast<std::uint64_t>(size);
     return true;
@@ -447,11 +468,7 @@ bool preflight_wave(const fs::path& path,
     std::uint16_t block_align = 0U;
     std::uint64_t offset = 12U;
     std::uint64_t data_bytes = 0U;
-    std::size_t chunks = 0U;
     while (offset + 8U <= riff_end) {
-        if (++chunks > 65536U) {
-            return fail(error, "The WAV source contains too many chunks.");
-        }
         input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
         std::array<std::uint8_t, 8U> chunk {};
         input.read(reinterpret_cast<char*>(chunk.data()),
@@ -549,8 +566,8 @@ struct TempoObservation {
 class AdaptiveBeatObserver {
 public:
     AdaptiveBeatObserver() {
-        beat_times_.reserve(kMaximumObserverBeats);
-        tempo_.reserve(kMaximumObserverTempoPoints);
+        beat_times_.reserve(4096U);
+        tempo_.reserve(4096U);
         tracker_ = btt_new_default();
         if (tracker_ == nullptr) {
             failed_ = true;
@@ -606,21 +623,12 @@ public:
 
 private:
     static constexpr std::size_t kObserverBufferFrames = 512U;
-    static constexpr std::size_t kMaximumObserverBeats = 30000U;
-    static constexpr std::size_t kMaximumObserverTempoPoints = 30000U;
     static constexpr std::uint64_t kTempoObservationFrames = 11025U;
 
     static void beat_callback(void* context,
                               unsigned long long sample_time) noexcept {
         auto* observer = static_cast<AdaptiveBeatObserver*>(context);
-        if (observer == nullptr || observer->failed_
-            || observer->beat_times_.size() == kMaximumObserverBeats) {
-            if (observer != nullptr
-                && observer->beat_times_.size() == kMaximumObserverBeats) {
-                observer->failed_ = true;
-            }
-            return;
-        }
+        if (observer == nullptr || observer->failed_) return;
         try {
             const double time = static_cast<double>(sample_time)
                                 / static_cast<double>(kAnalysisSampleRate);
@@ -645,10 +653,6 @@ private:
 
     void observe_tempo() {
         while (samples_processed_ >= next_tempo_observation_) {
-            if (tempo_.size() == kMaximumObserverTempoPoints) {
-                failed_ = true;
-                return;
-            }
             const double bpm = btt_get_tempo_bpm(tracker_);
             if (std::isfinite(bpm) && bpm >= 55.0 && bpm <= 210.0) {
                 tempo_.push_back(TempoObservation {
@@ -1643,8 +1647,9 @@ bool detect_beats(const std::vector<HopRecord>& records,
     } else {
         analysis.tempo_points.reserve(kMaximumMusicTempoPoints);
         for (std::size_t output = 0U; output < kMaximumMusicTempoPoints; ++output) {
-            const std::size_t source = output * (local_points.size() - 1U)
-                                       / (kMaximumMusicTempoPoints - 1U);
+            const std::size_t source = proportional_index(
+                output, local_points.size() - 1U,
+                kMaximumMusicTempoPoints - 1U);
             if (analysis.tempo_points.empty()
                 || local_points[source].time_seconds
                        > analysis.tempo_points.back().time_seconds) {
@@ -1691,8 +1696,8 @@ bool build_features(const std::vector<HopRecord>& records,
                 880U + scaled_progress(index, count, 0U, 100U))) {
             return false;
         }
-        const std::size_t begin = index * records.size() / count;
-        std::size_t end = (index + 1U) * records.size() / count;
+        const std::size_t begin = proportional_index(index, records.size(), count);
+        std::size_t end = proportional_index(index + 1U, records.size(), count);
         end = (std::max)(end, begin + 1U);
         double energy_sum = 0.0;
         double bass_sum = 0.0;
@@ -1822,11 +1827,13 @@ bool analyze_impl(const std::string& path,
                                          metadata_result));
     }
     if (source_channels == 0U || source_channels > kMaximumSourceChannels) {
-        return fail(error, "The music source must contain between 1 and 32 channels.");
+        return fail(error,
+                    "The music source channel count exceeds the decoder's uint32 representation.");
     }
     if (source_rate < kMinimumSourceSampleRate
         || source_rate > kMaximumSourceSampleRate) {
-        return fail(error, "The music source sample rate must be between 8 kHz and 384 kHz.");
+        return fail(error,
+                    "The music source sample rate must fit the decoder's nonzero uint32 representation.");
     }
     if (decoder.value.outputFormat != ma_format_f32
         || decoder.value.outputChannels != 1U
@@ -1842,7 +1849,8 @@ bool analyze_impl(const std::string& path,
     }
     const std::uint64_t maximum_frames = kMaximumDurationSeconds * source_rate;
     if (declared_frames > maximum_frames) {
-        return fail(error, "The music source exceeds the two-hour analysis limit.");
+        return fail(error,
+                    "The music source duration exceeds the signed-int project/API time capacity.");
     }
 
     std::vector<float> decoded(static_cast<std::size_t>(kDecodeChunkFrames));
@@ -1897,7 +1905,8 @@ bool analyze_impl(const std::string& path,
     resampler.finish(source_frames);
     accumulator.finish();
     if (!beat_observer.finish()) {
-        return fail(error, "The adaptive beat tracker exceeded its bounded event cache.");
+        return fail(error,
+                    "The adaptive beat tracker could not allocate additional event storage.");
     }
     if (!progress.report(kDecodeProgressEnd)) {
         return false;

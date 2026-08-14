@@ -22,17 +22,17 @@ namespace {
 
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr double kTau = 2.0 * kPi;
-constexpr int kMaximumDimension = 16384;
-constexpr int kMaximumFrames = 1000000;
-constexpr std::size_t kMaximumPeakBytes = std::size_t{1} << 30;
-constexpr std::size_t kMaximumNameBytes = 256;
-constexpr std::size_t kMaximumPathBytes = 4096;
-constexpr std::size_t kMaximumPrefixBytes = 128;
-constexpr std::size_t kMaximumMeterExpressionBytes = 256;
-constexpr std::size_t kMaximumMeterMeasures = 32;
-constexpr std::size_t kMaximumMeterGroups = 256;
-constexpr int kMaximumMeterValue = 1024;
-constexpr double kMaximumMusicDurationSeconds = 1000000.0;
+constexpr int kMaximumDimension = (std::numeric_limits<int>::max)();
+constexpr int kMaximumFrames = (std::numeric_limits<int>::max)();
+constexpr std::size_t kMaximumNameBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumPathBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumPrefixBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumMeterExpressionBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumMeterMeasures = kMaximumUiItems;
+constexpr std::size_t kMaximumMeterGroups = kMaximumUiItems;
+constexpr int kMaximumMeterValue = (std::numeric_limits<int>::max)();
+constexpr double kMaximumMusicDurationSeconds =
+    static_cast<double>((std::numeric_limits<int>::max)());
 
 struct Color {
     double r = 0.0;
@@ -111,7 +111,7 @@ bool valid_name(const std::string& value) {
 }
 
 bool valid_path_text(const std::string& value, std::size_t maximum_size, bool prefix) {
-    if (value.empty() || value.size() >= maximum_size) {
+    if (value.empty() || value.size() > maximum_size) {
         return false;
     }
     for (char raw_character : value) {
@@ -431,7 +431,7 @@ bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
                             std::string& message) {
     parsed = ParsedMeter{};
     if (expression.empty() || expression.size() > kMaximumMeterExpressionBytes) {
-        message = "Meter expression must contain 1 to 256 bytes.";
+        message = "Meter expression must contain text within the signed-int API limit.";
         return false;
     }
 
@@ -439,7 +439,7 @@ bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
     std::ostringstream canonical;
     while (true) {
         if (parsed.measures.size() >= kMaximumMeterMeasures) {
-            message = "Meter expression contains more than 32 mixed measures.";
+            message = "Meter expression contains more measures than the signed-int API can index.";
             return false;
         }
         skip_meter_space(expression, position);
@@ -479,7 +479,7 @@ bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
             // spelling such as 3+2+2/8 deliberately preserves larger groups.
             if (static_cast<std::size_t>(numerators.front())
                     > kMaximumMeterGroups - parsed.pulse_pattern.size()) {
-                message = "Meter expression expands to more than 256 pulses.";
+                message = "Meter expression expands beyond the signed-int pulse index limit.";
                 return false;
             }
             measure.reserve(static_cast<std::size_t>(numerators.front()));
@@ -489,7 +489,7 @@ bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
         } else {
             if (numerators.size()
                 > kMaximumMeterGroups - parsed.pulse_pattern.size()) {
-                message = "Meter expression expands to more than 256 pulses.";
+                message = "Meter expression expands beyond the signed-int pulse index limit.";
                 return false;
             }
             measure.reserve(numerators.size());
@@ -547,7 +547,7 @@ bool effective_frame_count_impl(int stored_count, double fps,
                                 const ClockConfig& clock, int& result,
                                 std::string& message) {
     if (stored_count < 2 || stored_count > kMaximumFrames) {
-        message = "Frame count must be between 2 and 1000000.";
+        message = "Frame count must be between 2 and INT_MAX.";
         return false;
     }
     if (!finite_in_range(fps, 1.0, 240.0)) {
@@ -586,7 +586,7 @@ bool effective_frame_count_impl(int stored_count, double fps,
         std::ceil(duration * static_cast<long double>(fps));
     if (!(frames >= 1.0L)
         || frames > static_cast<long double>(kMaximumFrames)) {
-        message = "Music duration and FPS require more than 1000000 frames.";
+        message = "Music duration and FPS require more than INT_MAX frames.";
         return false;
     }
     result = static_cast<int>(frames);
@@ -700,7 +700,6 @@ double meter_position_at(const std::vector<double>& pulse_seconds,
 
 std::vector<double> music_anchors(const ClockConfig& clock) {
     std::vector<double> selected;
-    selected.reserve(clock.music.beat_times_seconds.size() * 2U + 2U);
     selected.push_back(0.0);
     const auto& beats = clock.music.beat_times_seconds;
     if (clock.music_tempo == MusicTempoMode::Half) {
@@ -1153,8 +1152,7 @@ struct SpatialSwingSample {
 
 struct MotionClockState {
     double global_phase = 0.0;
-    std::array<SpatialSwingSample, kMaximumSwings> spatial_swings{};
-    std::size_t spatial_swing_count = 0U;
+    std::vector<SpatialSwingSample> spatial_swings;
 };
 
 MotionClockState prepare_motion_clock(const RenderConfig& config,
@@ -1165,6 +1163,7 @@ MotionClockState prepare_motion_clock(const RenderConfig& config,
     if (!config.swings_enabled) {
         return state;
     }
+    state.spatial_swings.reserve(config.swings.size());
     for (const SwingConfig& swing : config.swings) {
         if (!swing.enabled) {
             continue;
@@ -1179,12 +1178,8 @@ MotionClockState prepare_motion_clock(const RenderConfig& config,
             state.global_phase += contribution;
             continue;
         }
-        // Validation guarantees the configured collection fits this bounded
-        // array. Keeping it inline avoids a per-frame heap allocation.
-        if (state.spatial_swing_count < state.spatial_swings.size()) {
-            state.spatial_swings[state.spatial_swing_count++] = {
-                swing.center_x, swing.center_y, swing.radius, contribution};
-        }
+        state.spatial_swings.push_back(
+            {swing.center_x, swing.center_y, swing.radius, contribution});
     }
     return state;
 }
@@ -1192,8 +1187,7 @@ MotionClockState prepare_motion_clock(const RenderConfig& config,
 double motion_phase_at(const MotionClockState& state, double x, double y,
                        int width, int height) {
     double result = state.global_phase;
-    for (std::size_t index = 0U; index < state.spatial_swing_count; ++index) {
-        const SpatialSwingSample& swing = state.spatial_swings[index];
+    for (const SpatialSwingSample& swing : state.spatial_swings) {
         result += swing.contribution * circular_influence(
             swing.center_x, swing.center_y, swing.radius, x, y,
             width, height);
@@ -1267,6 +1261,20 @@ float stored_channel(double value) {
     }
     constexpr double maximum = static_cast<double>(std::numeric_limits<float>::max());
     return static_cast<float>(clamp_value(value, -maximum, maximum));
+}
+
+int clamped_floor_int(double value) {
+    const double bounded = clamp_value(
+        value, static_cast<double>((std::numeric_limits<int>::min)()),
+        static_cast<double>((std::numeric_limits<int>::max)()));
+    return static_cast<int>(std::floor(bounded));
+}
+
+int clamped_ceil_int(double value) {
+    const double bounded = clamp_value(
+        value, static_cast<double>((std::numeric_limits<int>::min)()),
+        static_cast<double>((std::numeric_limits<int>::max)()));
+    return static_cast<int>(std::ceil(bounded));
 }
 
 std::size_t pixel_offset_unchecked(const Image& image, int x, int y) {
@@ -1908,7 +1916,6 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
 
 std::uint64_t allocate_id(const RenderData& render) {
     std::unordered_set<std::uint64_t> used;
-    used.reserve(render.waves.size() + render.swings.size() + render.effects.size());
     std::uint64_t maximum = 0;
     const auto remember = [&](std::uint64_t id) {
         if (id != 0) {
@@ -1960,14 +1967,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                bool validate_layer_clock = true) {
     if (config.width < 16 || config.width > kMaximumDimension
         || config.height < 16 || config.height > kMaximumDimension) {
-        return invalid_result("Width and height must each be between 16 and 16384 pixels.");
+        return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
     }
     if (config.block_size < 1
         || config.block_size > std::max(config.width, config.height)) {
         return invalid_result("Block size must be between 1 and the larger image dimension.");
     }
     if (config.total_frames < 2 || config.total_frames > kMaximumFrames) {
-        return invalid_result("Frame count must be between 2 and 1000000.");
+        return invalid_result("Frame count must be between 2 and INT_MAX.");
     }
     if (!finite_in_range(config.fps, 1.0, 240.0)) {
         return invalid_result("FPS must be finite and between 1 and 240.");
@@ -1982,9 +1989,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (config.clock.frame_interval < 1
         || config.clock.frame_interval > kMaximumFrames
         || config.clock.time_interval_microseconds < 1
-        || config.clock.time_interval_microseconds > INT64_C(1000000000000)
-        || config.clock.beat_offset_microseconds < INT64_C(-86400000000)
-        || config.clock.beat_offset_microseconds > INT64_C(86400000000)
+        // These fields are persisted as int64 microseconds. Positivity is the
+        // only additional semantic requirement for an interval.
         || !finite_in_range(config.clock.phase_offset_degrees,
                             -36000.0, 36000.0)) {
         return invalid_result("Clock intervals, offset, or phase are outside their allowed range.");
@@ -2010,10 +2016,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             && !valid_lower_hex_digest(music.source_sha256))
         || (!music.source_basename.empty()
             && !valid_music_basename(music.source_basename))
-        || music.source_format.size() > 64U
+        || music.source_format.size() > kMaximumNameBytes
         || (!music.source_format.empty() && !valid_name(music.source_format))
-        || music.source_sample_rate > 768000U
-        || music.source_channel_count > 64U
         || !finite_in_range(music.duration_seconds, 0.0,
                             kMaximumMusicDurationSeconds)
         || !finite_in_range(music.detected_bpm, 0.0, 1000.0)
@@ -2021,7 +2025,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || music.beat_times_seconds.size() > kMaximumMusicBeats
         || music.tempo_points.size() > kMaximumMusicTempoPoints
         || music.feature_samples.size() > kMaximumMusicFeatureSamples) {
-        return invalid_result("Music analysis metadata is invalid or exceeds its safety limits.");
+        return invalid_result(
+            "Music analysis metadata is invalid or exceeds a representation/API limit.");
     }
     double previous_beat = -1.0;
     for (const double beat : music.beat_times_seconds) {
@@ -2134,7 +2139,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result("The configuration contains too many effects.");
     }
     if (config.motion_paths.size() > kMaximumMotionPaths) {
-        return invalid_result("The configuration contains more than 32 reusable motion paths.");
+        return invalid_result("The reusable motion-path count exceeds the signed-int UI/API limit.");
     }
     std::unordered_set<std::uint64_t> path_identifiers;
     for (const CubicMotionPath& path : config.motion_paths) {
@@ -2142,7 +2147,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !valid_name(path.name) || path.nodes.size() < 3U
             || path.nodes.size() > kMaximumMotionPathNodes) {
             return invalid_result(
-                "Reusable motion paths need unique nonzero IDs, valid names, and 3 to 128 nodes.");
+                "Reusable motion paths need unique nonzero IDs, valid names, and at least three nodes within the signed-int UI/API limit.");
         }
         std::unordered_set<std::uint64_t> node_identifiers;
         for (const CubicPathNode& node : path.nodes) {
@@ -2161,7 +2166,6 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
 
     std::unordered_set<std::uint64_t> identifiers;
-    identifiers.reserve(config.waves.size() + config.swings.size() + config.effects.size());
     const auto accept_id = [&identifiers](std::uint64_t id) {
         return id != 0 && identifiers.insert(id).second;
     };
@@ -2214,7 +2218,6 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     // conservative upper bound for sequential additive glow amplification so
     // every accepted setup remains representable by 32-bit float channels.
     double logarithmic_color_bound = std::log(8.0);
-    long double particle_stamp_work = 0.0L;
     for (std::size_t index = 0; index < config.effects.size(); ++index) {
         const EffectConfig& effect = config.effects[index];
         if (!accept_id(effect.id)) {
@@ -2228,7 +2231,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !finite_in_range(effect.phase_degrees, -36000.0, 36000.0)
             || !finite_in_range(effect.intensity, 0.0, 100.0)
             || !finite_in_range(effect.magnitude, 0.0, 10.0)
-            || !finite_in_range(effect.frequency, 0.0, 1000.0)
+            || !finite_in_range(
+                effect.frequency, 0.0,
+                effect.type == EffectType::ParticleField
+                    ? static_cast<double>((std::numeric_limits<int>::max)())
+                    : 1000.0)
             || !finite_in_range(effect.secondary, -100.0, 100.0)
             || !finite_in_range(effect.center_x, -10.0, 10.0)
             || !finite_in_range(effect.center_y, -10.0, 10.0)
@@ -2254,14 +2261,16 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                   "and whole quantization steps from 0 to 100.");
         }
         if (effect.type == EffectType::ParticleField
-            && (effect.frequency < 1.0 || effect.frequency > 1000.0
+            && (effect.frequency < 1.0
+                || effect.frequency
+                       > static_cast<double>((std::numeric_limits<int>::max)())
                 || std::floor(effect.frequency) != effect.frequency
                 || effect.radius_pixels <= 0.0
                 || effect.secondary < 0.0 || effect.secondary > 1.0
                 || effect.threshold > 1.0)) {
             return invalid_result(
                 "Particle field effect " + std::to_string(index + 1U)
-                + " requires 1 to 1000 whole particles, positive size, and "
+                + " requires a positive whole particle count fitting signed int, positive size, and "
                   "trail/core controls from 0 to 1.");
         }
         const bool active_effect = effect_has_render_work(effect);
@@ -2269,27 +2278,6 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         const bool active_particles = active_effect
                                       && effect.type
                                              == EffectType::ParticleField;
-        if (active_particles) {
-            const long double canvas_pixels =
-                static_cast<long double>(config.width)
-                * static_cast<long double>(config.height);
-            const long double stamp_side = std::ceil(
-                5.0L * static_cast<long double>(effect.radius_pixels)) + 2.0L;
-            const long double stamp_pixels = std::min(
-                canvas_pixels, stamp_side * stamp_side);
-            const long double trails = 1.0L + std::round(
-                static_cast<long double>(effect.secondary) * 12.0L);
-            particle_stamp_work += static_cast<long double>(effect.frequency)
-                                   * trails * stamp_pixels;
-            const long double maximum_particle_work = std::max(
-                20000000.0L, 8.0L * canvas_pixels);
-            if (particle_stamp_work > maximum_particle_work) {
-                return invalid_result(
-                    "The enabled particle fields exceed the bounded per-frame "
-                    "stamp budget; reduce particle count, trail amount, radius, "
-                    "or the number of particle effects.");
-            }
-        }
         has_enabled_effect = has_enabled_effect || active_effect;
         has_enabled_glow = has_enabled_glow || active_glow;
         has_transparent_edge_effect = has_transparent_edge_effect
@@ -2350,7 +2338,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || config.palette.colors.size() > kMaximumPaletteColors
         || (config.palette.enabled && config.palette.colors.empty())) {
         return invalid_result(
-            "An enabled starting palette needs 1 to 256 colors and a valid name.");
+            "An enabled starting palette needs at least one color, a valid name, and a color count that fits the signed-int UI/API index.");
     }
     for (const PaletteColor& color : config.palette.colors) {
         if (!finite_in_range(color.red, 0.0, 1.0)
@@ -2461,9 +2449,26 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !valid_path_text(config.output.output_directory, kMaximumPathBytes, false)
             || !valid_path_text(config.output.filename_prefix, kMaximumPrefixBytes, true)
             || config.output.first_frame_number < 0
-            || config.output.first_frame_number > 1000000000
-            || config.output.filename_digits < 1 || config.output.filename_digits > 12) {
+            || config.output.first_frame_number > (std::numeric_limits<int>::max)()
+            || config.output.filename_digits < 1
+            || static_cast<std::size_t>(config.output.filename_digits)
+                   > kMaximumOutputFilenameBytes) {
             return invalid_result("One or more output values are invalid.");
+        }
+        const std::int64_t last_frame_number =
+            static_cast<std::int64_t>(config.output.first_frame_number)
+            + static_cast<std::int64_t>(config.total_frames) - 1;
+        const std::size_t number_bytes = std::max(
+            static_cast<std::size_t>(config.output.filename_digits),
+            std::to_string(last_frame_number).size());
+        const std::size_t extension_bytes = 4U; // .png or .exr
+        if (config.output.filename_prefix.size()
+                > kMaximumOutputFilenameBytes - extension_bytes
+            || number_bytes
+                   > kMaximumOutputFilenameBytes - extension_bytes
+                          - config.output.filename_prefix.size()) {
+            return invalid_result(
+                "The export prefix, frame number, and extension exceed the portable 255-byte filename-component limit.");
         }
     }
 
@@ -2504,18 +2509,6 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         // Validate against the transparent, multi-layer path. Opaque images
         // automatically use a smaller nearest-fragment buffer at render time.
         peak_bytes += obj_working_bytes;
-        if (detail::kObjSurfaceMaximumMeshAndProjectionBytes
-            > std::numeric_limits<std::size_t>::max() - peak_bytes) {
-            return invalid_result("The custom OBJ mesh memory estimate overflowed.");
-        }
-        peak_bytes += detail::kObjSurfaceMaximumMeshAndProjectionBytes;
-    }
-    if (peak_bytes > kMaximumPeakBytes) {
-        std::ostringstream message;
-        message << "Estimated peak rendering memory is "
-                << (peak_bytes / (1024U * 1024U))
-                << " MiB, above the 1024 MiB safety budget.";
-        return invalid_result(message.str(), peak_bytes);
     }
 
     ValidationResult result;
@@ -2620,9 +2613,13 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         prepare_starting_palette(config.palette);
 
     std::size_t block_counter = 0U;
-    for (int block_y = 0; block_y < config.height; block_y += config.block_size) {
+    for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
+         block_y_wide += config.block_size) {
+        const int block_y = static_cast<int>(block_y_wide);
         throw_if_cancelled(cancel);
-        for (int block_x = 0; block_x < config.width; block_x += config.block_size) {
+        for (std::int64_t block_x_wide = 0; block_x_wide < config.width;
+             block_x_wide += config.block_size) {
+            const int block_x = static_cast<int>(block_x_wide);
             if ((block_counter++ & 63U) == 0U) {
                 throw_if_cancelled(cancel);
             }
@@ -2630,19 +2627,21 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 motion_clock, static_cast<double>(block_x),
                 static_cast<double>(block_y), config.width, config.height);
             const double motion_phase_right =
-                motion_clock.spatial_swing_count == 0U
+                motion_clock.spatial_swings.empty()
                     ? motion_phase
                     : motion_phase_at(
                           motion_clock,
-                          static_cast<double>(block_x + config.block_size),
+                          static_cast<double>(block_x)
+                              + static_cast<double>(config.block_size),
                           static_cast<double>(block_y), config.width,
                           config.height);
             const double motion_phase_down =
-                motion_clock.spatial_swing_count == 0U
+                motion_clock.spatial_swings.empty()
                     ? motion_phase
                     : motion_phase_at(
                           motion_clock, static_cast<double>(block_x),
-                          static_cast<double>(block_y + config.block_size),
+                          static_cast<double>(block_y)
+                              + static_cast<double>(config.block_size),
                           config.width, config.height);
             const double ghost_phase = motion_phase
                                        - radians(config.ghost_lag_degrees);
@@ -2651,13 +2650,15 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                                    motion_phase,
                                                    music);
             const double height_right = wave_height(config,
-                                                     block_x + config.block_size,
+                                                     static_cast<double>(block_x_wide)
+                                                         + config.block_size,
                                                      block_y,
                                                      independent_loop_phase,
                                                      motion_phase_right,
                                                      music);
             const double height_down = wave_height(config, block_x,
-                                                    block_y + config.block_size,
+                                                    static_cast<double>(block_y_wide)
+                                                        + config.block_size,
                                                     independent_loop_phase,
                                                     motion_phase_down,
                                                     music);
@@ -2741,8 +2742,10 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             // Effects, surface lighting, and later stages remain free to create
             // colors outside the starting palette. Selecting once per block
             // also avoids the old width*height*palette-size restriction pass.
-            const int end_x = std::min(block_x + config.block_size, config.width);
-            const int end_y = std::min(block_y + config.block_size, config.height);
+            const int end_x = static_cast<int>(std::min<std::int64_t>(
+                block_x_wide + config.block_size, config.width));
+            const int end_y = static_cast<int>(std::min<std::int64_t>(
+                block_y_wide + config.block_size, config.height));
             for (int y = block_y; y < end_y; ++y) {
                 throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
@@ -3037,15 +3040,15 @@ void apply_particle_field(const Image& source, Image& destination,
             const double px = center_x - direction_x * trail_distance;
             const double py = center_y - direction_y * trail_distance;
             const int minimum_x = std::max(
-                0, static_cast<int>(std::floor(px - 2.5 * local_radius)));
+                0, clamped_floor_int(px - 2.5 * local_radius));
             const int maximum_x = std::min(
                 source.width - 1,
-                static_cast<int>(std::ceil(px + 2.5 * local_radius)));
+                clamped_ceil_int(px + 2.5 * local_radius));
             const int minimum_y = std::max(
-                0, static_cast<int>(std::floor(py - 2.5 * local_radius)));
+                0, clamped_floor_int(py - 2.5 * local_radius));
             const int maximum_y = std::min(
                 source.height - 1,
-                static_cast<int>(std::ceil(py + 2.5 * local_radius)));
+                clamped_ceil_int(py + 2.5 * local_radius));
             const double trail_gain = (1.0 - 0.82 * trail_fraction) * twinkle;
             for (int y = minimum_y; y <= maximum_y; ++y) {
                 for (int x = minimum_x; x <= maximum_x; ++x) {
@@ -3791,7 +3794,11 @@ CubicPathSample sample_cubic_path(const CubicMotionPath& path,
     };
     constexpr int subdivisions = 32;
     std::vector<ArcEntry> arc;
-    arc.reserve(path.nodes.size() * subdivisions + 1U);
+    if (path.nodes.size() <= (arc.max_size() - 1U)
+                                 / static_cast<std::size_t>(subdivisions)) {
+        arc.reserve(path.nodes.size() * static_cast<std::size_t>(subdivisions)
+                    + 1U);
+    }
     CubicPathSample previous = cubic_path_at(path.nodes.back(),
                                              path.nodes.front(), 1.0);
     arc.push_back({0.0, 0U, 0.0, previous});
@@ -4159,10 +4166,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
         prepare_motion_clock(config, candidate.loop_phase);
     const AudioReactiveConfig& audio = effective_audio_reactive(config);
     candidate.global_motion_phase = motion_clock.global_phase;
-    candidate.spatial_swings.reserve(motion_clock.spatial_swing_count);
-    for (std::size_t index = 0U;
-         index < motion_clock.spatial_swing_count; ++index) {
-        const SpatialSwingSample& swing = motion_clock.spatial_swings[index];
+    candidate.spatial_swings.reserve(motion_clock.spatial_swings.size());
+    for (const SpatialSwingSample& swing : motion_clock.spatial_swings) {
         candidate.spatial_swings.push_back(
             {swing.center_x, swing.center_y, swing.radius,
              swing.contribution});

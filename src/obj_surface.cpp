@@ -630,7 +630,8 @@ bool apply_obj_surface_mapping(const Image& source,
             layer.height = source.height;
             layer.pixels.resize(pixel_count * 4U);
 
-            for (std::size_t peel = 0U; peel < kObjSurfaceMaximumLayers; ++peel) {
+            bool first_layer = true;
+            for (;;) {
                 throw_if_cancelled(cancel);
                 LayerFragments fragments{previous_depth, next_depth, layer};
                 rasterize_mesh(*mesh, projected, world_normals, source,
@@ -647,7 +648,7 @@ bool apply_obj_surface_mapping(const Image& source,
                     }
                     ++hit_count;
                     const Color fragment = load_color(layer, pixel);
-                    const Color accumulated = peel == 0U
+                    const Color accumulated = first_layer
                         ? fragment : composite_over(load_color(mapped, pixel), fragment);
                     store_color(mapped, pixel, accumulated);
                     if (accumulated.a < kOpaqueThreshold) {
@@ -661,6 +662,7 @@ bool apply_obj_surface_mapping(const Image& source,
                 if (hit_count == 0U || transparent_count == 0U) {
                     break;
                 }
+                first_layer = false;
             }
         }
 

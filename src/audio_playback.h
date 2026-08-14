@@ -46,7 +46,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Writes a bounded stereo float32 WAV mix for native movie export. The caller
+// Writes a format-bounded stereo float32 WAV mix for native movie export. The caller
 // supplies a private temporary destination; partial output is removed on any
 // decode, write, or cancellation failure.
 bool write_mix_wav(const std::vector<PlaybackTrack>& tracks,

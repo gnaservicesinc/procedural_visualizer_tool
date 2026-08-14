@@ -523,7 +523,7 @@ void test_portable_source_boundary_and_links(const fs::path& directory) {
     std::string error;
     CHECK(!pvt::audio::analyze_music_file(oversized.string(), destination,
                                           {}, nullptr, &error));
-    CHECK(error.find("512 MiB") != std::string::npos);
+    CHECK(error.find("signed-int portable attachment limit") != std::string::npos);
     CHECK(destination.analyzer_version == "unchanged");
 
     const fs::path target = directory / "link-target.wav";
@@ -626,7 +626,7 @@ void test_long_track_density_and_transient(const fs::path& directory) {
     CHECK(pvt::audio::analyze_music_file(path.string(), analysis,
                                          {}, nullptr, &error));
     CHECK(error.empty());
-    CHECK(analysis.feature_samples.size() == pvt::kMaximumMusicFeatureSamples);
+    CHECK(analysis.feature_samples.size() > 8192U);
     const double spacing = analysis.duration_seconds
                            / static_cast<double>(analysis.feature_samples.size());
     CHECK(spacing <= 0.0221);

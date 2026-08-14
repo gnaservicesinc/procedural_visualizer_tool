@@ -274,12 +274,6 @@ bool AudioPlayback::start_mix(const std::vector<PlaybackTrack>& tracks,
             impl_->uninitialize();
             return fail(error, "Audio mix tracks require a source and finite, positive timing values.");
         }
-        const double decoder_rate_exact =
-            static_cast<double>(kPlaybackSampleRate) / track.playback_rate;
-        if (decoder_rate_exact < 1000.0 || decoder_rate_exact > 384000.0) {
-            impl_->uninitialize();
-            return fail(error, "An audible layer is outside the supported playback/stretch range; use Smart loop fit for a short clip, choose a shorter source, or enable Data only.");
-        }
         std::unique_ptr<Impl::Voice> voice;
         try {
             voice = std::make_unique<Impl::Voice>();
@@ -378,9 +372,11 @@ bool write_mix_wav(const std::vector<PlaybackTrack>& tracks,
         || !std::isfinite(duration_seconds) || duration_seconds <= 0.0) {
         return fail(error, "Audio export requires tracks, a temporary destination, and a positive duration.");
     }
-    constexpr std::uint64_t kMaximumMixSeconds = 2U * 60U * 60U;
+    constexpr std::uint64_t kMaximumMixSeconds =
+        static_cast<std::uint64_t>((std::numeric_limits<int>::max)());
     if (duration_seconds > static_cast<double>(kMaximumMixSeconds)) {
-        return fail(error, "Audio export exceeds the supported two-hour duration.");
+        return fail(error,
+                    "Audio export duration exceeds the signed-int project/API time capacity.");
     }
     const std::uint64_t total_frames = static_cast<std::uint64_t>(
         std::ceil(duration_seconds * static_cast<double>(kPlaybackSampleRate)));
@@ -412,11 +408,6 @@ bool write_mix_wav(const std::vector<PlaybackTrack>& tracks,
                 || !std::isfinite(track.stop_after_seconds)
                 || track.stop_after_seconds < 0.0) {
                 return fail(error, "An audio-export track has invalid timing values.");
-            }
-            const double exact_rate = static_cast<double>(kPlaybackSampleRate)
-                                      / track.playback_rate;
-            if (exact_rate < 1000.0 || exact_rate > 384000.0) {
-                return fail(error, "An audible layer is outside the supported playback/stretch range; use Smart loop fit for a short clip, choose a shorter source, or enable Data only.");
             }
             auto voice = std::make_unique<OfflineVoice>();
             if (!prepare_rate_adjusted_decoder(

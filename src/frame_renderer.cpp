@@ -34,7 +34,7 @@ bool validate_frame_options(const FrameRenderOptions& options,
     if (options.maximum_gpu_frames_in_flight
         > kMaximumGpuFramesInFlight) {
         return fail(error,
-                    "GPU frames in flight must be between 0 and 8.");
+                    "GPU frames in flight must fit the signed-int API limit.");
     }
     return true;
 }

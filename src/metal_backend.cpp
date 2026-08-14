@@ -654,10 +654,14 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         static_cast<NS::UInteger>(config.width),
         static_cast<NS::UInteger>(config.height), 1U);
     const auto block_grid = MTL::Size(
-        static_cast<NS::UInteger>((config.width + config.block_size - 1)
-                                  / config.block_size),
-        static_cast<NS::UInteger>((config.height + config.block_size - 1)
-                                  / config.block_size), 1U);
+        static_cast<NS::UInteger>(
+            (static_cast<std::uint64_t>(config.width)
+             + static_cast<std::uint64_t>(config.block_size) - 1U)
+            / static_cast<std::uint64_t>(config.block_size)),
+        static_cast<NS::UInteger>(
+            (static_cast<std::uint64_t>(config.height)
+             + static_cast<std::uint64_t>(config.block_size) - 1U)
+            / static_cast<std::uint64_t>(config.block_size)), 1U);
 
     encode_grid(command_buffer, context.pipeline(Pipeline::Base), block_grid,
                 [&](MTL::ComputeCommandEncoder* encoder) {

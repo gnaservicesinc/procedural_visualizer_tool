@@ -17,7 +17,7 @@ namespace audio {
 using AudioProgressCallback =
     std::function<bool(std::uint64_t completed, std::uint64_t total)>;
 
-// Decodes a bounded WAV, FLAC, or MP3 source and creates the cached analysis
+// Decodes a representation-bounded WAV, FLAC, or MP3 source and creates the cached analysis
 // consumed by Music clocks. The destination is changed only after the complete
 // file has been decoded, analyzed, and hashed successfully.
 bool analyze_music_file(const std::string& path,

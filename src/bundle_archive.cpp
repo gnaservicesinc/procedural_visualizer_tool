@@ -48,15 +48,13 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::size_t kMaximumBundleEntries = 32768U;
-constexpr std::size_t kMaximumBundleBytes =
-    std::size_t{1024} * 1024U * 1024U;
-// Layer setup entries can contain the bounded 8192-sample rich music cache.
-// Project metadata itself retains its stricter 4 MiB parser limit.
-constexpr std::size_t kMaximumMetadataFileBytes = 8U * 1024U * 1024U;
-constexpr std::size_t kMaximumAssetFileBytes =
-    std::size_t{512} * 1024U * 1024U;
-constexpr std::size_t kMaximumArchivePathBytes = 4096U;
+constexpr std::size_t kMaximumBundleEntries =
+    static_cast<std::size_t>((std::numeric_limits<int>::max)());
+constexpr std::size_t kMaximumBundleBytes = kMaximumBundleEntries;
+// Metadata and rich music-cache entries share the signed-int archive/API bound.
+constexpr std::size_t kMaximumMetadataFileBytes = kMaximumBundleEntries;
+constexpr std::size_t kMaximumAssetFileBytes = kMaximumBundleEntries;
+constexpr std::size_t kMaximumArchivePathBytes = kMaximumBundleEntries;
 constexpr std::uint64_t kMaximumCompressionRatio = 1000U;
 
 bool path_is_reparse_point(const fs::path& path) {
@@ -415,7 +413,7 @@ bool validate_file_set(const BundleFileSet& files, std::string* error) {
         return fail(error, "Bundle root name is invalid.");
     }
     if (files.files.empty() || files.files.size() > kMaximumBundleEntries) {
-        return fail(error, "Bundle has no files or exceeds the 32768-entry limit.");
+        return fail(error, "Bundle has no files or exceeds the signed-int entry limit.");
     }
     std::set<std::string> folded_paths;
     std::size_t total_bytes = 0U;
@@ -430,11 +428,11 @@ bool validate_file_set(const BundleFileSet& files, std::string* error) {
         if (entry.second.size() > entry_size_limit(entry.first)) {
             return fail(error,
                         asset_entry_path(entry.first)
-                            ? "Bundle asset exceeds the 512 MiB file limit."
-                            : "Bundle non-asset entry exceeds the 8 MiB file limit.");
+                            ? "Bundle asset exceeds the signed-int entry limit."
+                            : "Bundle non-asset entry exceeds the signed-int file limit.");
         }
         if (total_bytes > kMaximumBundleBytes - entry.second.size()) {
-            return fail(error, "Bundle exceeds the 1 GiB expanded-size limit.");
+            return fail(error, "Bundle exceeds the signed-int expanded-size limit.");
         }
         total_bytes += entry.second.size();
     }
@@ -891,7 +889,7 @@ bool read_zip(const std::string& path,
             return fail(error, "Project ZIP has malformed entry metadata.");
         }
         if (++entries > kMaximumBundleEntries) {
-            return fail(error, "Project ZIP exceeds the 32768-entry limit.");
+            return fail(error, "Project ZIP exceeds the signed-int entry limit.");
         }
         const std::string archive_path(info->filename, info->filename_size);
         if (archive_path.find('\0') != std::string::npos
@@ -953,8 +951,8 @@ bool read_zip(const std::string& path,
                        > maximum_entry_bytes) {
                 return fail(error,
                             asset_entry_path(relative)
-                                ? "Project ZIP asset exceeds the 512 MiB file limit."
-                                : "Project ZIP non-asset entry exceeds the 8 MiB file limit.");
+                                ? "Project ZIP asset exceeds the signed-int entry limit."
+                                : "Project ZIP non-asset entry exceeds the signed-int file limit.");
             }
             if (info->compressed_size <= 0 && info->uncompressed_size > 0) {
                 return fail(error, "Project ZIP entry has an invalid compressed size.");
@@ -971,7 +969,7 @@ bool read_zip(const std::string& path,
             }
             const std::size_t size = static_cast<std::size_t>(info->uncompressed_size);
             if (total_bytes > kMaximumBundleBytes - size) {
-                return fail(error, "Project ZIP exceeds the 1 GiB expanded-size limit.");
+                return fail(error, "Project ZIP exceeds the signed-int expanded-size limit.");
             }
             std::string bytes(size, '\0');
             if (mz_zip_reader_entry_open(reader.handle) != MZ_OK) {
@@ -1281,7 +1279,7 @@ bool read_bundle_file_set(const std::string& path,
                 return false;
             }
             if (total_bytes > kMaximumBundleBytes - bytes.size()) {
-                return fail(error, "Unpacked bundle exceeds the 1 GiB size limit.");
+                return fail(error, "Unpacked bundle exceeds the signed-int size limit.");
             }
             total_bytes += bytes.size();
             candidate.files.emplace(relative, std::move(bytes));

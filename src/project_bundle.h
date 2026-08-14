@@ -14,8 +14,8 @@ constexpr std::uint32_t kProjectBundleFormatVersion = 1;
 constexpr std::size_t kMaximumProjectAttachmentBytes =
     kMaximumEmbeddedAssetBytes;
 constexpr std::size_t kMaximumProjectBundleExpandedBytes =
-    std::size_t{1024} * 1024U * 1024U;
-constexpr std::size_t kMaximumProjectAttachmentReferences = 4096U;
+    kMaximumUiItems;
+constexpr std::size_t kMaximumProjectAttachmentReferences = kMaximumUiItems;
 inline constexpr const char* kMusicSourceAttachmentId = "music.source";
 
 struct ProjectAttachmentCache;

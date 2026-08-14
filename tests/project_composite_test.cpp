@@ -429,20 +429,22 @@ void test_project_validation() {
 
     invalid = pvt::default_project();
     make_small(invalid);
-    for (std::size_t index = 1U; index <= pvt::kMaximumLayers; ++index) {
+    for (std::size_t index = 1U; index < 65U; ++index) {
         invalid.layers.push_back(pvt::default_layer(index));
     }
     invalid.output.write_alpha = true;
-    CHECK(invalid.layers.size() == pvt::kMaximumLayers + 1U);
-    CHECK(!pvt::validate(invalid).ok);
+    CHECK(invalid.layers.size() == 65U);
+    CHECK(pvt::validate(invalid).ok); // The former 64-layer policy cap is gone.
 
-    // Each individual default layer fits, but project transactionality plus
-    // the accumulator must remain inside the same 1 GiB process budget.
+    // Large but addressable estimates remain valid; allocation availability is
+    // determined by the machine that actually renders the frame.
     invalid = pvt::default_project();
     invalid.canvas.width = 5000;
     invalid.canvas.height = 5000;
     invalid.canvas.block_size = 16;
-    CHECK(!pvt::validate(invalid).ok);
+    const auto large_project = pvt::validate(invalid);
+    CHECK(large_project.ok);
+    CHECK(large_project.estimated_peak_bytes > std::size_t{1} << 30U);
 }
 
 void test_project_rendering_order_equivalence_and_seam() {
@@ -638,14 +640,15 @@ void test_layer_groups() {
 }
 
 void test_project_cancellation_during_layer_render() {
+    constexpr std::size_t cancellation_wave_count = 512U;
     pvt::ProjectConfig project = pvt::default_project();
     project.canvas.width = 1024;
     project.canvas.height = 1024;
     project.canvas.block_size = 1;
     pvt::RenderData& render = project.layers[0U].render;
-    render.waves.reserve(pvt::kMaximumWaves);
+    render.waves.reserve(cancellation_wave_count);
     for (std::size_t index = render.waves.size();
-        index < pvt::kMaximumWaves; ++index) {
+        index < cancellation_wave_count; ++index) {
         pvt::WaveConfig wave = pvt::default_wave(index);
         wave.id = static_cast<std::uint64_t>(1000U + index);
         render.waves.push_back(std::move(wave));

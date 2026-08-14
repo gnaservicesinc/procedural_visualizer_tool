@@ -68,6 +68,18 @@ int main(int argc, char** argv) {
                        unchanged, &error, tiny_limits)) {
         return fail(5, "triangle limit was not enforced");
     }
+    const ObjLoadLimits system_limits;
+    if (system_limits.maximum_file_bytes
+            != (std::numeric_limits<std::size_t>::max)()
+        || system_limits.maximum_line_bytes
+               != (std::numeric_limits<std::size_t>::max)()
+        || system_limits.maximum_positions != ObjCorner::missing
+        || system_limits.maximum_polygon_corners
+               != (std::numeric_limits<std::uint32_t>::max)()
+        || system_limits.maximum_mesh_bytes
+               != (std::numeric_limits<std::size_t>::max)()) {
+        return fail(5, "default OBJ limits are not derived from representation bounds");
+    }
     const std::string concave =
         "v 0 0 0\nv 2 0 0\nv 1 1 0\nv 2 2 0\nv 0 2 0\n"
         "f 1 2 3 4 5\n";

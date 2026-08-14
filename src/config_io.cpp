@@ -66,14 +66,14 @@ namespace {
 // versions remain accepted with neutral defaults for every field introduced
 // later.
 
-constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
-constexpr std::size_t kMaximumKeyBytes = 128U;
-constexpr std::size_t kMaximumDecodedStringBytes = 64U * 1024U;
-constexpr std::size_t kMaximumRecordCount = 131072U;
-constexpr std::size_t kMaximumMeterExpressionBytes = 256U;
-constexpr std::size_t kMaximumAnalyzerVersionBytes = 256U;
-constexpr std::size_t kMaximumMusicBasenameBytes = 4096U;
-constexpr std::size_t kMaximumMusicFormatBytes = 64U;
+constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumDecodedStringBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumRecordCount = kMaximumUiItems;
+constexpr std::size_t kMaximumMeterExpressionBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumAnalyzerVersionBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
 static_assert(kSetupFormatVersion == 9U,
@@ -231,7 +231,7 @@ bool parse_records(const std::string& contents,
         const std::size_t raw_end = newline == std::string::npos ? contents.size() : newline;
         if (raw_end - line_start > kMaximumLineBytes) {
             return fail(error, "Setup line " + std::to_string(line_number + 1U)
-                                   + " exceeds the 256 KiB line limit.");
+                                   + " exceeds the signed-int line limit.");
         }
 
         std::string_view line(contents.data() + line_start, raw_end - line_start);
@@ -284,7 +284,7 @@ bool parse_records(const std::string& contents,
                                        + " has an invalid or overlong key.");
             }
             if (records.size() >= kMaximumRecordCount) {
-                return fail(error, "Setup file exceeds the 131072-record limit.");
+                return fail(error, "Setup file exceeds the signed-int record limit.");
             }
 
             std::string key(key_view);
@@ -309,7 +309,7 @@ bool parse_records(const std::string& contents,
 bool read_setup_file(const std::string& path, std::string& contents, std::string* error) {
     if (path.empty() || path.size() > kMaximumDecodedStringBytes
         || path.find('\0') != std::string::npos) {
-        return fail(error, "Setup path is empty, contains a NUL byte, or exceeds 64 KiB.");
+        return fail(error, "Setup path is empty, contains a NUL byte, or exceeds the signed-int text API limit.");
     }
 
     const std::filesystem::path native_path = detail::path_from_utf8(path);
@@ -326,7 +326,7 @@ bool read_setup_file(const std::string& path, std::string& contents, std::string
         if (count > 0) {
             const std::size_t byte_count = static_cast<std::size_t>(count);
             if (contents.size() > kMaximumSetupBytes - byte_count) {
-                return fail(error, "Setup file exceeds the 8 MiB input limit.");
+                return fail(error, "Setup file exceeds the signed-int input limit.");
             }
             contents.append(buffer.data(), byte_count);
         }
@@ -452,8 +452,17 @@ bool percent_encode(std::string_view decoded, std::string& encoded) {
         return false;
     }
     constexpr char hexadecimal[] = "0123456789ABCDEF";
+    std::size_t encoded_size = 0U;
+    for (const char raw_character : decoded) {
+        const unsigned char character = static_cast<unsigned char>(raw_character);
+        const std::size_t addition = is_unreserved(character) ? 1U : 3U;
+        if (addition > kMaximumDecodedStringBytes - encoded_size) {
+            return false;
+        }
+        encoded_size += addition;
+    }
     encoded.clear();
-    encoded.reserve(decoded.size() * 3U);
+    encoded.reserve(encoded_size);
     for (const char raw_character : decoded) {
         const unsigned char character = static_cast<unsigned char>(raw_character);
         if (is_unreserved(character)) {
@@ -868,12 +877,12 @@ public:
             return false;
         }
         if (key.size() + value.size() + 1U > kMaximumLineBytes) {
-            ok_ = fail(error_, record_error("Serialized setup line exceeds 256 KiB at key", key));
+            ok_ = fail(error_, record_error("Serialized setup line exceeds the signed-int limit at key", key));
             return false;
         }
         const std::size_t added = key.size() + value.size() + 2U;
         if (contents_.size() > kMaximumSetupBytes - added) {
-            ok_ = fail(error_, "Serialized setup exceeds the 8 MiB format limit.");
+            ok_ = fail(error_, "Serialized setup exceeds the signed-int format limit.");
             return false;
         }
         contents_.append(key);
@@ -917,7 +926,7 @@ public:
     bool add_string(std::string_view key, const std::string& value) {
         std::string encoded;
         if (!percent_encode(value, encoded)) {
-            ok_ = fail(error_, record_error("String exceeds the 64 KiB setup limit at key", key));
+            ok_ = fail(error_, record_error("String exceeds the signed-int setup limit at key", key));
             return false;
         }
         return add(key, encoded);
@@ -1080,7 +1089,7 @@ bool validate_persistence_bounds(const RenderConfig& config,
     if (config.clock.meter.expression.size() > kMaximumMeterExpressionBytes
         || config.layer_clock.clock.meter.expression.size()
                > kMaximumMeterExpressionBytes) {
-        return fail(error, "Cannot save configuration: the meter expression exceeds 256 bytes.");
+        return fail(error, "Cannot save configuration: the meter expression exceeds the signed-int text limit.");
     }
     const auto oversized_music_text = [](const MusicAnalysis& candidate) {
         return candidate.analyzer_version.size() > kMaximumAnalyzerVersionBytes
@@ -2386,8 +2395,15 @@ RecoveryAttempt decode_with_record_repair(
     RenderConfig& destination,
     ConfigCompatibility& compatibility,
     std::string* error) {
+    // Every unsuccessful repair either erases one authored key or inserts/
+    // replaces one key with its default. This exact state-transition bound
+    // prevents cycles without imposing an unrelated attempt ceiling.
+    const std::size_t remaining =
+        (std::numeric_limits<std::size_t>::max)() - working.size();
     const std::size_t maximum_attempts =
-        working.size() + defaults.size() + 32U;
+        defaults.size() >= remaining
+            ? (std::numeric_limits<std::size_t>::max)()
+            : working.size() + defaults.size() + 1U;
     for (std::size_t attempt = 0U; attempt < maximum_attempts; ++attempt) {
         Records decoding = working;
         RenderConfig candidate;
@@ -2616,10 +2632,21 @@ bool append_setup_compatibility(std::string& serialized,
     }
     const auto append_line = [&](std::string_view key,
                                  std::string_view value) -> bool {
-        const std::size_t addition = key.size() + value.size() + 2U;
-        if (serialized.size() > kMaximumSetupBytes - addition) {
+        std::size_t final_size = serialized.size();
+        if (key.size() > kMaximumSetupBytes - final_size) {
             return fail(error,
-                        "Preserved compatibility data exceeds the 8 MiB setup limit.");
+                        "Preserved compatibility data exceeds the signed-int setup limit.");
+        }
+        final_size += key.size();
+        if (1U > kMaximumSetupBytes - final_size) {
+            return fail(error,
+                        "Preserved compatibility data exceeds the signed-int setup limit.");
+        }
+        ++final_size;
+        if (value.size() > kMaximumSetupBytes - final_size
+            || 1U > kMaximumSetupBytes - final_size - value.size()) {
+            return fail(error,
+                        "Preserved compatibility data exceeds the signed-int setup limit.");
         }
         serialized.append(key);
         serialized.push_back('\t');
@@ -2938,7 +2965,7 @@ bool deserialize_setup_config(const std::string& serialized,
     clear_error(error);
     try {
         if (serialized.size() > kMaximumSetupBytes) {
-            return fail(error, "Setup data exceeds the 8 MiB input limit.");
+            return fail(error, "Setup data exceeds the signed-int input limit.");
         }
         Records records;
         std::uint32_t setup_version = 0U;
@@ -2973,7 +3000,7 @@ bool save_setup(const RenderConfig& config,
     try {
         if (path.empty() || path.size() > kMaximumDecodedStringBytes
             || path.find('\0') != std::string::npos) {
-            return fail(error, "Setup path is empty, contains a NUL byte, or exceeds 64 KiB.");
+            return fail(error, "Setup path is empty, contains a NUL byte, or exceeds the signed-int text API limit.");
         }
         std::string serialized;
         if (!detail::serialize_setup_config(config, serialized, error)) {

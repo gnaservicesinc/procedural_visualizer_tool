@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -23,27 +24,33 @@
 namespace pvt {
 
 constexpr std::uint32_t kSetupFormatVersion = 9;
-constexpr std::size_t kMaximumWaves = 256;
-constexpr std::size_t kMaximumEffects = 256;
-constexpr std::size_t kMaximumSwings = 64;
-constexpr std::size_t kMaximumLayers = 64;
+// Author-facing collections are displayed and indexed by Qt APIs whose count
+// type is int.  Do not impose smaller policy caps: allocation failure and the
+// checked render-memory arithmetic are the real limits below this API bound.
+constexpr std::size_t kMaximumUiItems =
+    static_cast<std::size_t>((std::numeric_limits<int>::max)());
+constexpr std::size_t kMaximumWaves = kMaximumUiItems;
+constexpr std::size_t kMaximumEffects = kMaximumUiItems;
+constexpr std::size_t kMaximumSwings = kMaximumUiItems;
+constexpr std::size_t kMaximumLayers = kMaximumUiItems;
 constexpr std::size_t kMaximumLayerGroups = kMaximumLayers;
-constexpr std::size_t kMaximumPaletteColors = 256;
-constexpr std::size_t kMaximumMotionPaths = 32;
-constexpr std::size_t kMaximumMotionPathNodes = 128;
+constexpr std::size_t kMaximumPaletteColors = kMaximumUiItems;
+constexpr std::size_t kMaximumMotionPaths = kMaximumUiItems;
+constexpr std::size_t kMaximumMotionPathNodes = kMaximumUiItems;
 constexpr std::size_t kBuiltInPaletteCount = 6;
-// Dense music analysis is stored transactionally with the setup. The 8 MiB
-// ceiling remains hostile-input bounded while leaving room for all 8192 rich
-// spectral samples in the human-diffable text format.
-constexpr std::size_t kMaximumSetupBytes = 8U * 1024U * 1024U;
-constexpr std::size_t kMaximumSequenceWorkers = 256;
-constexpr std::size_t kMaximumGpuFramesInFlight = 8;
-constexpr std::size_t kMaximumMusicFeatureSamples = 8192;
-constexpr std::size_t kMaximumMusicBeats = 4096;
-constexpr std::size_t kMaximumMusicTempoPoints = 256;
+// The text codec, CLI, and Qt editors ultimately expose signed-int counts.
+// Their bounds replace the former small product-policy ceilings.
+constexpr std::size_t kMaximumSetupBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumSequenceWorkers = kMaximumUiItems;
+constexpr std::size_t kMaximumGpuFramesInFlight = kMaximumUiItems;
+constexpr std::size_t kMaximumMusicFeatureSamples = kMaximumUiItems;
+constexpr std::size_t kMaximumMusicBeats = kMaximumUiItems;
+constexpr std::size_t kMaximumMusicTempoPoints = kMaximumUiItems;
 constexpr std::size_t kMaximumAttachmentBasenameBytes = 255;
-constexpr std::size_t kMaximumEmbeddedAssetBytes =
-    std::size_t{512} * 1024U * 1024U;
+// Export basenames use the same broadly portable filesystem-component bound.
+constexpr std::size_t kMaximumOutputFilenameBytes = 255;
+// Bundle entries are materialized by APIs with signed-int interoperability.
+constexpr std::size_t kMaximumEmbeddedAssetBytes = kMaximumUiItems;
 constexpr std::size_t kDefaultSequenceMemoryBudgetBytes =
     std::size_t{2} << 30U;
 

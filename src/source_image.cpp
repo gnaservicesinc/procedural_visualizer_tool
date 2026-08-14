@@ -20,8 +20,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::size_t kMaximumDecodedStartingImagePixels = 16U * 1024U * 1024U;
-
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) *error = std::move(message);
     return false;
@@ -62,7 +60,7 @@ bool inspect_source(const std::string& path, std::uintmax_t& file_size,
     }
     file_size = fs::file_size(native, code);
     if (code || file_size == 0U || file_size > kMaximumEmbeddedAssetBytes) {
-        return fail(error, "Starting image file is empty, unreadable, or exceeds 512 MiB.");
+        return fail(error, "Starting image file is empty, unreadable, or exceeds the signed-int bundle-entry limit.");
     }
     modified = fs::last_write_time(native, code);
     return !code || fail(error, "Could not inspect the starting image timestamp.");
@@ -91,15 +89,18 @@ bool decode_png(const std::string& path, std::shared_ptr<const Image>& decoded,
         std::fclose(file);
         return fail(error, "Could not read starting PNG metadata: " + message);
     }
+    const std::uint64_t decoded_pixels =
+        static_cast<std::uint64_t>(png.width) * png.height;
     if (png.width == 0U || png.height == 0U
         || png.width > static_cast<png_uint_32>(std::numeric_limits<int>::max())
         || png.height > static_cast<png_uint_32>(std::numeric_limits<int>::max())
-        || static_cast<std::uint64_t>(png.width) * png.height
-               > kMaximumDecodedStartingImagePixels) {
+        || decoded_pixels
+               > (std::numeric_limits<std::size_t>::max)()
+                     / (4U * sizeof(png_uint_16))) {
         png_image_free(&png);
         std::fclose(file);
         return fail(error,
-                    "Starting PNG dimensions are invalid or exceed the 16-megapixel decoded limit.");
+                    "Starting PNG dimensions are invalid or exceed addressable decoded storage.");
     }
     png.format = PNG_FORMAT_LINEAR_RGB_ALPHA;
     const int decoded_width = static_cast<int>(png.width);

@@ -24,9 +24,16 @@ using pvt::EffectType;
 using pvt::ProjectDocument;
 using pvt::RenderConfig;
 
-constexpr std::size_t kMaximumNameBytes = 256;
-constexpr std::size_t kMaximumPathBytes = 4095;
-constexpr std::size_t kMaximumPrefixBytes = 127;
+constexpr std::size_t kMaximumNameBytes =
+    static_cast<std::size_t>((std::numeric_limits<int>::max)());
+constexpr std::size_t kMaximumPathBytes = kMaximumNameBytes;
+constexpr std::size_t kMaximumPrefixBytes = kMaximumNameBytes;
+// User-facing milliseconds are converted to persisted int64 microseconds.
+// This conversion-safe bound is derived from that representation.
+constexpr double kMaximumClockMilliseconds =
+    static_cast<double>((std::numeric_limits<std::int64_t>::max)()
+                        / INT64_C(1000000))
+    * 1000.0;
 
 // The interactive editor uses this to distinguish visiting an editor from
 // actually changing a value. That preserves the bundle invariant that a
@@ -484,8 +491,7 @@ bool configure_palette(RenderConfig& config) {
         }
         if (input == "a" || input == "A") {
             if (config.palette.colors.size() >= pvt::kMaximumPaletteColors) {
-                std::cout << "The safety limit of " << pvt::kMaximumPaletteColors
-                          << " palette colors has been reached.\n";
+                std::cout << "The signed-int UI/API color index is exhausted.\n";
                 continue;
             }
             const pvt::PaletteColor next = config.palette.colors.empty()
@@ -608,8 +614,7 @@ void configure_waves(RenderConfig& config) {
         }
         if (input == "a" || input == "A") {
             if (config.waves.size() >= pvt::kMaximumWaves) {
-                std::cout << "The safety limit of " << pvt::kMaximumWaves
-                          << " waves has been reached.\n";
+                std::cout << "The signed-int UI/API wave index is exhausted.\n";
                 continue;
             }
             auto wave = pvt::default_wave(config.waves.size());
@@ -731,7 +736,8 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
         case EffectType::Glow:
             return prompt_real("Bloom/glow strength", effect.intensity, 0.0, 100.0)
                    && prompt_real("Pulse depth", effect.secondary, -100.0, 100.0)
-                   && prompt_real("Radius (pixels)", effect.radius_pixels, 0.0, 16384.0)
+                   && prompt_real("Radius (pixels)", effect.radius_pixels, 0.0,
+                                  static_cast<double>((std::numeric_limits<int>::max)()))
                    && prompt_real("Linear-luminance threshold (lower affects more)",
                                   effect.threshold, 0.0, 64.0)
                    && prompt_real("Soft knee", effect.soft_knee, 0.0, 1.0);
@@ -761,12 +767,14 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
             if (!prompt_real("Spark brightness", effect.intensity, 0.0, 100.0)
                 || !prompt_real("Travel per loop (fraction of short edge)",
                                 effect.magnitude, 0.0, 10.0)
-                || !prompt_int("Particle count", particles, 1, 1000)
+                || !prompt_int("Particle count", particles, 1,
+                               (std::numeric_limits<int>::max)())
                 || !prompt_real("Trail amount", effect.secondary, 0.0, 1.0)
                 || !prompt_real("Travel angle (degrees)", effect.angle_degrees,
                                 -36000.0, 36000.0)
                 || !prompt_real("Particle radius (pixels)", effect.radius_pixels,
-                                0.01, 16384.0)
+                                0.01,
+                                static_cast<double>((std::numeric_limits<int>::max)()))
                 || !prompt_real("White-hot core", effect.threshold, 0.0, 1.0)
                 || !prompt_real("Glow softness", effect.soft_knee, 0.0, 1.0)) {
                 return false;
@@ -806,8 +814,7 @@ void configure_effects(RenderConfig& config) {
         }
         if (input == "a" || input == "A") {
             if (config.effects.size() >= pvt::kMaximumEffects) {
-                std::cout << "The safety limit of " << pvt::kMaximumEffects
-                          << " effects has been reached.\n";
+                std::cout << "The signed-int UI/API effect index is exhausted.\n";
                 continue;
             }
             auto effect = pvt::default_effect(choose_effect_type());
@@ -881,7 +888,7 @@ bool prompt_meter_expression(std::string& expression) {
         }
         std::string description;
         std::string error;
-        if (input.size() <= 256U
+        if (input.size() <= kMaximumNameBytes
             && pvt::describe_meter(input, description, &error)) {
             g_prompt_changed = g_prompt_changed || expression != input;
             expression = std::move(input);
@@ -1055,7 +1062,8 @@ void configure_active_layer_clock(RenderConfig& config,
         || !prompt_real("Layer clock phase offset (degrees)",
                         clock.phase_offset_degrees, -36000.0, 36000.0)) return;
     if (clock.mode == pvt::ClockMode::Frame) {
-        if (!prompt_int("Frames per pulse", clock.frame_interval, 1, 1000000)
+        if (!prompt_int("Frames per pulse", clock.frame_interval, 1,
+                        (std::numeric_limits<int>::max)())
             || !prompt_enum("Interval fit", clock.fit,
                             {{pvt::ClockFit::Exact, "Exact interval"},
                              {pvt::ClockFit::FitSequence, "Fit whole sequence"}})) return;
@@ -1063,7 +1071,7 @@ void configure_active_layer_clock(RenderConfig& config,
         double milliseconds =
             static_cast<double>(clock.time_interval_microseconds) / 1000.0;
         if (!prompt_real("Milliseconds per pulse", milliseconds, 0.001,
-                         86400000.0)
+                         kMaximumClockMilliseconds)
             || !prompt_enum("Interval fit", clock.fit,
                             {{pvt::ClockFit::Exact, "Exact interval"},
                              {pvt::ClockFit::FitSequence, "Fit whole sequence"}})) return;
@@ -1073,7 +1081,8 @@ void configure_active_layer_clock(RenderConfig& config,
         if (!prompt_meter_expression(clock.meter.expression)
             || !prompt_real("Tempo (BPM)", clock.meter.bpm, 1.0, 1000.0)
             || !prompt_int("BPM note denominator",
-                           clock.meter.tempo_note_denominator, 1, 1024)
+                           clock.meter.tempo_note_denominator, 1,
+                           (std::numeric_limits<int>::max)())
             || !prompt_enum("Interval fit", clock.fit,
                             {{pvt::ClockFit::Exact, "Exact tempo"},
                              {pvt::ClockFit::FitSequence, "Fit whole measures"}})) return;
@@ -1091,7 +1100,8 @@ void configure_active_layer_clock(RenderConfig& config,
         double offset_ms =
             static_cast<double>(clock.beat_offset_microseconds) / 1000.0;
         if (!prompt_real("Beat offset (milliseconds)", offset_ms,
-                         -86400000.0, 86400000.0)) return;
+                         -kMaximumClockMilliseconds,
+                         kMaximumClockMilliseconds)) return;
         clock.beat_offset_microseconds =
             static_cast<std::int64_t>(std::llround(offset_ms * 1000.0));
         if (first_layer_music && !clock.music.source_sha256.empty()) {
@@ -1122,8 +1132,7 @@ void configure_swings(RenderConfig& config) {
         }
         if (input == "a" || input == "A") {
             if (config.swings.size() >= pvt::kMaximumSwings) {
-                std::cout << "The safety limit of " << pvt::kMaximumSwings
-                          << " swing modulators has been reached.\n";
+                std::cout << "The signed-int UI/API swing index is exhausted.\n";
                 continue;
             }
             auto swing = pvt::default_swing(config.swings.size());
@@ -1208,7 +1217,8 @@ void configure_synchronization(RenderConfig& config,
     }
 
     if (config.clock.mode == pvt::ClockMode::Frame) {
-        if (!prompt_int("Frames per pulse", config.clock.frame_interval, 1, 1000000)
+        if (!prompt_int("Frames per pulse", config.clock.frame_interval, 1,
+                        (std::numeric_limits<int>::max)())
             || !prompt_enum("Interval fit", config.clock.fit,
                             {{pvt::ClockFit::Exact,
                               "Exact interval (partial final interval allowed)"},
@@ -1220,7 +1230,8 @@ void configure_synchronization(RenderConfig& config,
         double milliseconds =
             static_cast<double>(config.clock.time_interval_microseconds) / 1000.0;
         const double before = milliseconds;
-        if (!prompt_real("Milliseconds per pulse", milliseconds, 0.001, 86400000.0)
+        if (!prompt_real("Milliseconds per pulse", milliseconds, 0.001,
+                         kMaximumClockMilliseconds)
             || !prompt_enum("Interval fit", config.clock.fit,
                             {{pvt::ClockFit::Exact,
                               "Exact interval (partial final interval allowed)"},
@@ -1238,7 +1249,8 @@ void configure_synchronization(RenderConfig& config,
         if (!prompt_meter_expression(config.clock.meter.expression)
             || !prompt_real("Tempo (BPM)", config.clock.meter.bpm, 1.0, 1000.0)
             || !prompt_int("BPM note denominator (4 quarter, 8 eighth, etc.)",
-                           config.clock.meter.tempo_note_denominator, 1, 1024)
+                           config.clock.meter.tempo_note_denominator, 1,
+                           (std::numeric_limits<int>::max)())
             || !prompt_enum("Interval fit", config.clock.fit,
                             {{pvt::ClockFit::Exact,
                               "Exact tempo (partial final measure allowed)"},
@@ -1264,7 +1276,8 @@ void configure_synchronization(RenderConfig& config,
             static_cast<double>(config.clock.beat_offset_microseconds) / 1000.0;
         const double before = offset_ms;
         if (!prompt_real("Beat offset (milliseconds)", offset_ms,
-                         -86400000.0, 86400000.0)) {
+                         -kMaximumClockMilliseconds,
+                         kMaximumClockMilliseconds)) {
             return;
         }
         const auto next = static_cast<std::int64_t>(std::llround(offset_ms * 1000.0));
@@ -1309,11 +1322,13 @@ void configure_synchronization(RenderConfig& config,
 
 void configure_canvas(RenderConfig& config) {
     std::cout << "\n-- Canvas and timing --\n";
-    prompt_int("Width", config.width, 16, 16384);
-    prompt_int("Height", config.height, 16, 16384);
-    prompt_int("Block size", config.block_size, 1, 16384);
+    prompt_int("Width", config.width, 16, (std::numeric_limits<int>::max)());
+    prompt_int("Height", config.height, 16, (std::numeric_limits<int>::max)());
+    prompt_int("Block size", config.block_size, 1,
+               (std::numeric_limits<int>::max)());
     prompt_real("Playback FPS", config.fps, 1.0, 240.0);
-    prompt_int("Frames per loop", config.total_frames, 2, 1000000);
+    prompt_int("Frames per loop", config.total_frames, 2,
+               (std::numeric_limits<int>::max)());
 }
 
 void configure_surface(RenderConfig& config,
@@ -1432,8 +1447,10 @@ void configure_export(RenderConfig& config) {
     prompt_bool("Write final alpha channel (RGBA)", config.output.write_alpha);
     prompt_text("Output directory", config.output.output_directory, kMaximumPathBytes);
     prompt_filename_prefix(config.output.filename_prefix);
-    prompt_int("First frame number", config.output.first_frame_number, 0, 1000000000);
-    prompt_int("Minimum zero-padding digits", config.output.filename_digits, 1, 12);
+    prompt_int("First frame number", config.output.first_frame_number, 0,
+               (std::numeric_limits<int>::max)());
+    prompt_int("Minimum zero-padding digits", config.output.filename_digits, 1,
+               static_cast<int>(pvt::kMaximumOutputFilenameBytes));
     prompt_bool("Overwrite matching existing frames", config.output.overwrite_existing);
 
     for (;;) {
@@ -1593,8 +1610,7 @@ void configure_project_and_layers(CliState& state) {
         }
         if (input == "a" || input == "A") {
             if (count >= pvt::kMaximumLayers) {
-                std::cout << "The safety limit of " << pvt::kMaximumLayers
-                          << " layers has been reached.\n";
+                std::cout << "The signed-int UI/API layer index is exhausted.\n";
                 continue;
             }
             auto layer = pvt::default_layer(count);
@@ -1646,7 +1662,7 @@ void configure_project_and_layers(CliState& state) {
         } else if (action == 'c' || action == 'C') {
             if (command >> extra || count >= pvt::kMaximumLayers) {
                 std::cout << (count >= pvt::kMaximumLayers
-                                  ? "The layer safety limit has been reached.\n"
+                                  ? "The signed-int UI/API layer index is exhausted.\n"
                                   : "Duplicate accepts one row number.\n");
                 continue;
             }
@@ -2709,25 +2725,29 @@ int main(int argc, char** argv) {
         } else if (option == "--layer-opacity"
                    && parse_real(value, 0.0, 1.0, real)) {
             mark_changed(state.document.project.layers.at(state.active_layer).opacity, real);
-        } else if (option == "--width" && parse_integer(value, 16, 16384, integer)) {
+        } else if (option == "--width"
+                   && parse_integer(value, 16, (std::numeric_limits<int>::max)(), integer)) {
             mutate_active([&](RenderConfig& config) {
                 if (config.width == integer) return false;
                 config.width = static_cast<int>(integer);
                 return true;
             });
-        } else if (option == "--height" && parse_integer(value, 16, 16384, integer)) {
+        } else if (option == "--height"
+                   && parse_integer(value, 16, (std::numeric_limits<int>::max)(), integer)) {
             mutate_active([&](RenderConfig& config) {
                 if (config.height == integer) return false;
                 config.height = static_cast<int>(integer);
                 return true;
             });
-        } else if (option == "--block-size" && parse_integer(value, 1, 16384, integer)) {
+        } else if (option == "--block-size"
+                   && parse_integer(value, 1, (std::numeric_limits<int>::max)(), integer)) {
             mutate_active([&](RenderConfig& config) {
                 if (config.block_size == integer) return false;
                 config.block_size = static_cast<int>(integer);
                 return true;
             });
-        } else if (option == "--frames" && parse_integer(value, 2, 1000000, integer)) {
+        } else if (option == "--frames"
+                   && parse_integer(value, 2, (std::numeric_limits<int>::max)(), integer)) {
             mutate_active([&](RenderConfig& config) {
                 if (config.total_frames == integer) return false;
                 config.total_frames = static_cast<int>(integer);
@@ -2762,17 +2782,17 @@ int main(int argc, char** argv) {
             }
             mark_changed(state.document.project.canvas.clock.fit, fit);
         } else if (option == "--pulse-frames"
-                   && parse_integer(value, 1, 1000000, integer)) {
+                   && parse_integer(value, 1, (std::numeric_limits<int>::max)(), integer)) {
             mark_changed(state.document.project.canvas.clock.frame_interval,
                          static_cast<int>(integer));
         } else if (option == "--pulse-ms"
-                   && parse_real(value, 0.001, 86400000.0, real)) {
+                   && parse_real(value, 0.001, kMaximumClockMilliseconds, real)) {
             mark_changed(state.document.project.canvas.clock.time_interval_microseconds,
                          static_cast<std::int64_t>(std::llround(real * 1000.0)));
         } else if (option == "--meter") {
             std::string description;
             std::string meter_error;
-            if (value.size() > 256U
+            if (value.size() > kMaximumNameBytes
                 || !pvt::describe_meter(value, description, &meter_error)) {
                 std::cerr << "Invalid meter: " << meter_error << '\n';
                 return EXIT_FAILURE;
@@ -2781,7 +2801,7 @@ int main(int argc, char** argv) {
         } else if (option == "--bpm" && parse_real(value, 1.0, 1000.0, real)) {
             mark_changed(state.document.project.canvas.clock.meter.bpm, real);
         } else if (option == "--tempo-note"
-                   && parse_integer(value, 1, 1024, integer)) {
+                   && parse_integer(value, 1, (std::numeric_limits<int>::max)(), integer)) {
             mark_changed(state.document.project.canvas.clock.meter.tempo_note_denominator,
                          static_cast<int>(integer));
         } else if (option == "--clock-phase"
@@ -2852,7 +2872,8 @@ int main(int argc, char** argv) {
             }
             mark_changed(state.document.project.canvas.clock.music_tempo, tempo);
         } else if (option == "--beat-offset-ms"
-                   && parse_real(value, -86400000.0, 86400000.0, real)) {
+                   && parse_real(value, -kMaximumClockMilliseconds,
+                                 kMaximumClockMilliseconds, real)) {
             mark_changed(state.document.project.canvas.clock.beat_offset_microseconds,
                          static_cast<std::int64_t>(std::llround(real * 1000.0)));
         } else if (option == "--waves" && parse_integer(value, 0,
@@ -2986,10 +3007,12 @@ int main(int argc, char** argv) {
         } else if (option == "--prefix" && valid_filename_prefix(value)) {
             mark_changed(state.document.project.output.filename_prefix, value);
         } else if (option == "--start-frame"
-                   && parse_integer(value, 0, 1000000000, integer)) {
+                   && parse_integer(value, 0, (std::numeric_limits<int>::max)(), integer)) {
             mark_changed(state.document.project.output.first_frame_number,
                          static_cast<int>(integer));
-        } else if (option == "--digits" && parse_integer(value, 1, 12, integer)) {
+        } else if (option == "--digits"
+                   && parse_integer(value, 1,
+                                    pvt::kMaximumOutputFilenameBytes, integer)) {
             mark_changed(state.document.project.output.filename_digits,
                          static_cast<int>(integer));
         } else {

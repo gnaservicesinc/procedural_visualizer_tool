@@ -16,7 +16,7 @@
 namespace pvt::detail {
 namespace {
 
-constexpr std::size_t kMaximumCodecLineBytes = 256U * 1024U;
+constexpr std::size_t kMaximumCodecLineBytes = kMaximumUiItems;
 
 static_assert(std::is_nothrow_move_assignable_v<RenderData>);
 static_assert(std::is_nothrow_move_assignable_v<CanvasLoopConfig>);
@@ -39,6 +39,40 @@ void clear_error(std::string* error) {
 bool starts_with(std::string_view text, std::string_view prefix) {
     return text.size() >= prefix.size()
            && text.compare(0U, prefix.size(), prefix) == 0;
+}
+
+bool checked_add_within(std::size_t& total, std::size_t addition,
+                        std::size_t maximum) {
+    if (addition > maximum - total) return false;
+    total += addition;
+    return true;
+}
+
+bool append_bounded_line(std::string& destination, std::string_view line) {
+    std::size_t final_size = destination.size();
+    if (!checked_add_within(final_size, line.size(), kMaximumSetupBytes)
+        || !checked_add_within(final_size, 1U, kMaximumSetupBytes)) {
+        return false;
+    }
+    destination.append(line);
+    destination.push_back('\n');
+    return true;
+}
+
+bool append_bounded_record(std::string& destination, std::string_view key,
+                           std::string_view value) {
+    std::size_t final_size = destination.size();
+    if (!checked_add_within(final_size, key.size(), kMaximumSetupBytes)
+        || !checked_add_within(final_size, 1U, kMaximumSetupBytes)
+        || !checked_add_within(final_size, value.size(), kMaximumSetupBytes)
+        || !checked_add_within(final_size, 1U, kMaximumSetupBytes)) {
+        return false;
+    }
+    destination.append(key);
+    destination.push_back('\t');
+    destination.append(value);
+    destination.push_back('\n');
+    return true;
 }
 
 bool document_version(const std::string& serialized,
@@ -180,7 +214,7 @@ bool valid_ascii_record(std::string_view line, std::string_view& key) {
         return false;
     }
     key = line.substr(0U, tab);
-    if (key.empty() || key.size() > 128U) {
+    if (key.empty() || key.size() > kMaximumUiItems) {
         return false;
     }
     for (const char raw : line) {
@@ -197,9 +231,21 @@ bool valid_ascii_record(std::string_view line, std::string_view& key) {
 
 bool recovery_percent_encode(std::string_view decoded, std::string& encoded) {
     constexpr char hexadecimal[] = "0123456789ABCDEF";
+    std::size_t encoded_size = 0U;
+    for (const char raw : decoded) {
+        const unsigned char value = static_cast<unsigned char>(raw);
+        const bool unreserved = (value >= 'A' && value <= 'Z')
+                                || (value >= 'a' && value <= 'z')
+                                || (value >= '0' && value <= '9')
+                                || value == '-' || value == '.'
+                                || value == '_' || value == '~';
+        if (!checked_add_within(encoded_size, unreserved ? 1U : 3U,
+                                kMaximumSetupBytes)) {
+            return false;
+        }
+    }
     encoded.clear();
-    if (decoded.size() > kMaximumSetupBytes / 3U) return false;
-    encoded.reserve(decoded.size() * 3U);
+    encoded.reserve(encoded_size);
     for (const char raw : decoded) {
         const unsigned char value = static_cast<unsigned char>(raw);
         const bool unreserved = (value >= 'A' && value <= 'Z')
@@ -226,7 +272,7 @@ bool split_document(const std::string& serialized,
         return fail(error, "Configuration data is empty.");
     }
     if (serialized.size() > kMaximumSetupBytes) {
-        return fail(error, "Configuration data exceeds the 8 MiB limit.");
+        return fail(error, "Configuration data exceeds the signed-int format limit.");
     }
 
     std::size_t start = 0U;
@@ -284,11 +330,9 @@ bool filter_setup(const std::string& setup,
             return fail(error, "The legacy setup codec produced an unclassified key.");
         }
         if (render == keep_render) {
-            if (destination.size() > kMaximumSetupBytes - line.size() - 1U) {
-                return fail(error, "Filtered configuration exceeds the 8 MiB limit.");
+            if (!append_bounded_line(destination, line)) {
+                return fail(error, "Filtered configuration exceeds the signed-int format limit.");
             }
-            destination.append(line);
-            destination.push_back('\n');
         }
     }
     return true;
@@ -359,7 +403,7 @@ bool synthesize_setup(const std::string& partial,
     }
 
     destination.clear();
-    destination.reserve(default_setup.size() + partial.size());
+    destination.reserve(default_setup.size());
     destination.append(setup_header);
     destination.push_back('\n');
     for (const std::string_view line : default_records) {
@@ -391,11 +435,9 @@ bool synthesize_setup(const std::string& partial,
         }
     }
     for (const std::string_view line : usable_records) {
-        if (destination.size() > kMaximumSetupBytes - line.size() - 1U) {
-            return fail(error, "Combined configuration exceeds the 8 MiB limit.");
+        if (!append_bounded_line(destination, line)) {
+            return fail(error, "Combined configuration exceeds the signed-int format limit.");
         }
-        destination.append(line);
-        destination.push_back('\n');
     }
     return true;
 }
@@ -475,15 +517,10 @@ bool append_config_compatibility(
 
     const auto append_line = [&](std::string_view key,
                                  std::string_view value) -> bool {
-        const std::size_t addition = key.size() + value.size() + 2U;
-        if (serialized.size() > kMaximumSetupBytes - addition) {
+        if (!append_bounded_record(serialized, key, value)) {
             return fail(error,
-                        "Preserved compatibility data exceeds the 8 MiB configuration limit.");
+                        "Preserved compatibility data exceeds the signed-int configuration limit.");
         }
-        serialized.append(key);
-        serialized.push_back('\t');
-        serialized.append(value);
-        serialized.push_back('\n');
         return true;
     };
     for (const auto& record : unknown) {
@@ -732,11 +769,9 @@ bool serialize_music_analysis_config(const MusicAnalysis& analysis,
         for (const std::string_view line : records) {
             const std::string_view key = line.substr(0U, line.find('\t'));
             if (!starts_with(key, "timing.music.")) continue;
-            if (serialized.size() > kMaximumSetupBytes - line.size() - 1U) {
-                return fail(error, "Music analysis exceeds the 8 MiB limit.");
+            if (!append_bounded_line(serialized, line)) {
+                return fail(error, "Music analysis exceeds the signed-int format limit.");
             }
-            serialized.append(line);
-            serialized.push_back('\n');
         }
         return append_config_compatibility(
             serialized, &analysis.compatibility, nullptr, error);
@@ -799,7 +834,7 @@ bool deserialize_music_analysis_config(const std::string& serialized,
                             default_records, error)) return false;
 
         std::string combined;
-        combined.reserve(default_setup.size() + serialized.size());
+        combined.reserve(default_setup.size());
         combined.append(setup_header);
         combined.push_back('\n');
         for (const std::string_view line : default_records) {
@@ -809,11 +844,9 @@ bool deserialize_music_analysis_config(const std::string& serialized,
             combined.push_back('\n');
         }
         for (const std::string_view line : usable_analysis_records) {
-            if (combined.size() > kMaximumSetupBytes - line.size() - 1U) {
-                return fail(error, "Music analysis exceeds the 8 MiB limit.");
+            if (!append_bounded_line(combined, line)) {
+                return fail(error, "Music analysis exceeds the signed-int format limit.");
             }
-            combined.append(line);
-            combined.push_back('\n');
         }
         RenderConfig loaded;
         if (!deserialize_setup_config(combined, loaded, error)) return false;
@@ -863,11 +896,9 @@ bool serialize_split_render_output_config(const CanvasLoopConfig& canvas,
             if (!is_output_key(key) || starts_with(key, "timing.music.")) {
                 continue;
             }
-            if (serialized.size() > kMaximumSetupBytes - line.size() - 1U) {
-                return fail(error, "Split render/output data exceeds the 8 MiB limit.");
+            if (!append_bounded_line(serialized, line)) {
+                return fail(error, "Split render/output data exceeds the signed-int format limit.");
             }
-            serialized.append(line);
-            serialized.push_back('\n');
         }
         return append_config_compatibility(
             serialized, &canvas.output_compatibility, nullptr, error);
@@ -938,7 +969,7 @@ bool deserialize_split_render_output_config(
         }
 
         std::string combined;
-        combined.reserve(serialized.size() + canonical_analysis_bytes.size());
+        combined.reserve(serialized.size());
         combined.append("PVT_RENDER_OUTPUT\t");
         // Split v1 predates reusable motion paths and corresponds to regular
         // render/output v3 (setup v6). Treating it as today's current schema
@@ -949,16 +980,16 @@ bool deserialize_split_render_output_config(
                                   : kRenderOutputConfigFormatVersion));
         combined.push_back('\n');
         for (const std::string_view line : usable_split_records) {
-            combined.append(line);
-            combined.push_back('\n');
+            if (!append_bounded_line(combined, line)) {
+                return fail(error,
+                            "Combined render/output data exceeds the signed-int format limit.");
+            }
         }
         for (const std::string_view line : canonical_analysis_records) {
-            if (combined.size() > kMaximumSetupBytes - line.size() - 1U) {
+            if (!append_bounded_line(combined, line)) {
                 return fail(error,
-                            "Combined render/output and analysis data exceeds the 8 MiB limit.");
+                            "Combined render/output and analysis data exceeds the signed-int format limit.");
             }
-            combined.append(line);
-            combined.push_back('\n');
         }
         CanvasLoopConfig candidate_canvas;
         ExportConfig candidate_output;

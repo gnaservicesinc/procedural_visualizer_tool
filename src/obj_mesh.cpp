@@ -22,8 +22,9 @@ namespace pvt {
 namespace detail {
 namespace {
 
-constexpr std::size_t kMaximumPathBytes = 4095U;
-constexpr std::size_t kMaximumNumericTokenBytes = 128U;
+constexpr std::size_t kMaximumPathBytes =
+    static_cast<std::size_t>((std::numeric_limits<int>::max)());
+constexpr std::size_t kMaximumNumericTokenBytes = kMaximumPathBytes;
 constexpr double kGeometryEpsilon = 1.0e-12;
 
 void clear_error(std::string* error) {
@@ -617,7 +618,7 @@ bool load_obj_mesh(const std::string& utf8_path,
     clear_error(error);
     if (utf8_path.empty() || utf8_path.size() > kMaximumPathBytes
         || utf8_path.find('\0') != std::string::npos) {
-        return fail(error, "OBJ path is empty, contains NUL, or exceeds 4095 bytes.");
+        return fail(error, "OBJ path is empty, contains NUL, or exceeds the signed-int text API limit.");
     }
     try {
         const std::filesystem::path path = path_from_utf8(utf8_path);
@@ -711,7 +712,7 @@ bool inspect_obj_file(const std::string& utf8_path,
                       std::string* error) {
     if (utf8_path.empty() || utf8_path.size() > kMaximumPathBytes
         || utf8_path.find('\0') != std::string::npos) {
-        return fail(error, "OBJ path is empty, contains NUL, or exceeds 4095 bytes.");
+        return fail(error, "OBJ path is empty, contains NUL, or exceeds the signed-int text API limit.");
     }
     std::error_code path_error;
     const std::filesystem::path requested = path_from_utf8(utf8_path);

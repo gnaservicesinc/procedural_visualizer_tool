@@ -22,8 +22,7 @@
 namespace pvt {
 namespace {
 
-constexpr std::size_t kMaximumProjectPeakBytes = std::size_t{1} << 30;
-constexpr std::size_t kMaximumProjectNameBytes = 256U;
+constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
 
 bool checked_multiply(std::size_t left, std::size_t right, std::size_t& result) {
     if (left != 0U && right > std::numeric_limits<std::size_t>::max() / left) {
@@ -797,8 +796,7 @@ bool render_project_with_backend_validated(
         const bool bounded_pair = cpu_validation.ok && gpu_validation.ok
             && checked_add(cpu_validation.estimated_peak_bytes,
                            gpu_validation.estimated_peak_bytes,
-                           concurrent_peak)
-            && concurrent_peak <= kMaximumProjectPeakBytes;
+                           concurrent_peak);
         if (!bounded_pair) {
             // Memory safety outranks concurrency. Still use Metal for supported
             // work, but complete and release one layer before starting the next.
@@ -915,16 +913,16 @@ ValidationResult validate(const ProjectConfig& project) {
         }
         if (!valid_project_name(project.name)) {
             return invalid_result(
-                "Project name must contain 1 to 256 bytes without control characters.");
+                "Project name must be nonempty, valid UTF-8 without control characters, and fit the signed-int text API.");
         }
         if (project.layers.empty()) {
             return invalid_result("A project must contain at least one layer.");
         }
         if (project.layers.size() > kMaximumLayers) {
-            return invalid_result("The project contains more than 64 layers.");
+            return invalid_result("The layer count exceeds the signed-int UI/API limit.");
         }
         if (project.groups.size() > kMaximumLayerGroups) {
-            return invalid_result("The project contains more than 64 layer groups.");
+            return invalid_result("The layer-group count exceeds the signed-int UI/API limit.");
         }
         // Structural RenderData validation must not let a disabled transparent
         // layer dictate final export channels. Enable alpha only in the
@@ -1116,12 +1114,6 @@ ValidationResult validate(const ProjectConfig& project) {
             || !checked_add(worst_layer_peak, project_buffers, peak_bytes)) {
             return invalid_result("The project peak memory estimate overflowed.");
         }
-        if (peak_bytes > kMaximumProjectPeakBytes) {
-            return invalid_result(
-                "Estimated peak project rendering memory exceeds the 1024 MiB safety budget.",
-                peak_bytes);
-        }
-
         ValidationResult result;
         result.ok = true;
         result.message = "Project configuration is valid.";

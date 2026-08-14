@@ -11,26 +11,11 @@
 namespace pvt {
 namespace detail {
 
-// Closed meshes normally need two layers (entry and exit). Eight bounded depth
-// peels also cover several nested/overlapping shells without allocating an
-// unbounded fragment list per pixel.
-constexpr std::size_t kObjSurfaceMaximumLayers = 8U;
-
 // Extra per-pixel working storage owned by the OBJ mapper, excluding the
 // caller-provided source/destination images and immutable cached mesh.
 constexpr std::size_t kObjSurfaceOpaqueBytesPerPixel = sizeof(float);
 constexpr std::size_t kObjSurfaceLayeredBytesPerPixel =
     2U * sizeof(float) + 4U * sizeof(float);
-
-// Conservative steady-state upper bound for the parser's immutable mesh plus
-// projected-position and transformed-normal arrays. The parser's file-content
-// buffer is smaller than the projection allowance and is released before those
-// arrays are allocated. Ninety-six bytes safely rounds up the
-// platform-dependent ProjectedVertex size.
-constexpr std::size_t kObjSurfaceMaximumMeshAndProjectionBytes =
-    ObjLoadLimits{}.maximum_mesh_bytes
-    + ObjLoadLimits{}.maximum_positions * 96U
-    + ObjLoadLimits{}.maximum_normals * sizeof(ObjVec3);
 
 // loop_phase is expressed in radians, matching core.cpp's internal convention.
 // The operation is transactional: destination is unchanged on failure.

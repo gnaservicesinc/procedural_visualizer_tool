@@ -36,6 +36,17 @@ membership changes preserve contiguity, locked groups protect contained edits,
 group visibility also gates audio and export, independent project copies remap
 group identities, and old bundles load without synthetic groups.
 
+The accompanying capacity audit removes product-policy ceilings that were not
+grounded in an implementation boundary. OBJ input no longer stops at 64 MiB,
+one million records, 4,096 face corners, a 256 MiB expanded mesh, or eight
+transparent depth layers. Canvas/frame counts, collection counts, setup and
+bundle metadata, text, source images, audio analysis, attachments, project
+history, undo depth, and worker/GPU admission now follow their concrete
+`int`, `uint32_t`, `int64_t`, `size_t`, filesystem-component, codec, or
+allocation boundary. Checked arithmetic, transactional parsing/writes,
+archive traversal/collision/type rejection, checksums, compression-ratio abuse
+protection, and caller-configured resource budgets remain intact.
+
 The 1.0.1 patch restores the documented sync/free timing boundary. Timeline
 resolution now retains both the effective synchronized project/layer clock and
 the independent linear loop clock, so free waves, effects, and motion-path
@@ -152,10 +163,10 @@ retains normal NEON auto-vectorization opportunities and Metal remains the
 purpose-built parallel backend.
 
 The application is now project-oriented. A named `ProjectConfig` owns global
-canvas/loop and export data plus up to 64 independently configurable render
+canvas/loop and export data plus independently configurable render
 layers. Each layer has a stable UUID and bundle file ID, name, enabled state,
 opacity, blend mode, alpha mode, optional group membership, and full
-`RenderData`. Up to 64 flat groups carry stable identities, names, visibility,
+`RenderData`. Flat groups carry stable identities, names, visibility,
 and authoring locks; their contiguous member runs remain part of the one layer
 paint order. The backward-compatible
 `RenderConfig`/`.pvt` surface remains available for one-render library clients
@@ -248,8 +259,9 @@ tooltips for non-obvious behavior.
 Optional checkable blocks collapse to compact headers while disabled, keeping
 the complete control surface discoverable without forcing every editor open.
 Undo depth, window state,
-and dialog locations use per-user platform settings, while a hard 128 MiB history
-budget bounds full-state snapshots.
+and dialog locations use per-user platform settings. Undo depth can be Unlimited
+up to Qt's signed-int command index; allocation failure clears history safely
+without clearing document edits or dirty state.
 Preview/export cancellation now reaches per-frame effects and OBJ rasterization;
 stale previews are cancelled and document replacement is blocked during export.
 The GUI now also exposes draggable numbered center handles and visible radius
@@ -280,28 +292,29 @@ sequences remain the portable cross-platform workflow, while the macOS GUI also
 offers native QuickTime movie export.
 
 Sequence export now uses independent-frame CPU workers for rendering and
-encoding. Automatic selection is bounded by hardware concurrency, frame count,
-256 workers, and a conservative aggregate memory budget computed from the
-validated per-frame peak. Output installation and progress callbacks remain in
+encoding. Automatic selection is bounded by hardware concurrency and frame
+count; explicit counts fit the signed-int worker/API index. A configurable
+aggregate memory budget derives admission from the checked per-frame estimate.
+Output installation and progress callbacks remain in
 ascending frame order. On the representative Apple M2 Max workload recorded for
 this pass (24 frames, 960x540, block size 1, 64 waves, PNG compression 0), 12
 workers reduced wall time from 44.95 seconds to 5.44 seconds (8.3x), with all 24
 PNGs byte-identical. This is evidence for that workload, not a general speedup
 guarantee.
 
-Native video export uses the same bounded frame-level scheduling principle.
+Native video export uses the same checked frame-level scheduling principle.
 Independent workers render and convert lossless-PNG or BGRA payloads ahead of
 the movie writer; AVFoundation append, presentation timestamps, progress, and
 audio synchronization remain serialized in frame order. Automatic selection is
-bounded by hardware concurrency, frame count, 256 workers, and the conservative
-2 GiB aggregate peak estimate, so video no longer reduces procedural rendering
+bounded by hardware concurrency and frame count, with the configurable default
+2 GiB aggregate admission budget, so video no longer reduces procedural rendering
 to a one-core render/encode loop. On a CPU-only 24-frame 960x540, block-size-1,
 64-wave lossless-PNG movie workload, automatic 12-worker export reduced wall
 time from 50.96 seconds to 5.72 seconds (8.9x) on the same M2 Max host. This is
 one representative measurement rather than a universal scaling guarantee.
 
 The CLI opens ZIPs, directories, and legacy setups; renders composite projects;
-edits the selected layer; manages bounded layers; separates final alpha from
+edits the selected layer; manages representation-bounded layers; separates final alpha from
 modulation; performs normal bundle saves; and reserves `--save-legacy` for an
 explicit one-layer export.
 
@@ -317,7 +330,7 @@ consumers do not inherit minizip requirements.
 |---|---|---|---|
 | 1 | More seamlessly looping effects | Complete | All animated controls use integer cycles over the half-open loop interval. |
 | 2 | Optional synchronization per wave/effect | Complete | Each wave and effect has a `synchronized` toggle; free clocks are independent but still periodic. Synchronized items can inherit the profile or choose a specific audio feature, force the profile feature, or ignore audio. |
-| 3 | Toggle/add/remove/reorder any quantity | Complete | Bounded dynamic wave, swing, and effect collections support zero through their safety limits in the API, CLI, and GUI. |
+| 3 | Toggle/add/remove/reorder any quantity | Complete | Dynamic wave, swing, and effect collections support zero through the signed-int UI/API index capacity; memory availability is the practical lower boundary. |
 | 4 | Direction from horizontal through radial to vertical | Complete | Continuous `0.0` horizontal, `0.5` radial/default, `1.0` vertical control. |
 | 4a-f | Endless zoom, ripple, shake, flag wave, glow, block scale | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses visible straight-alpha-safe HDR bloom; Block Scale animates smooth or stepped pixel grouping at its stack position. |
 | 4g | Particle field | Complete | Deterministic loop-safe warm spark particles provide configurable count, spread, size, trails, direction, intensity, locality, and composable Texture/Mapped-object staging. |
@@ -328,7 +341,7 @@ consumers do not inherit minizip requirements.
 | 9 | Library-only build and useful Qt-facing API | Complete | `libProceduralVisualizerTool`, public header, installable CMake package, example consumer, and build switches that omit every `main`. |
 | 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave/swing/effect center handles and visible local-radius rings, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, background export, consistent dense-panel layout, and meaningful tooltips for non-obvious controls. |
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
-| 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
+| 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus transactional, representation-bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces peel until exhausted. |
 | 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v9, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
 | 14 | Randomize stack values or composition | Complete | Confirmed Settings-menu actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items; they are no longer exposed on the main toolbar. |
 | 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, Space owns preview play/pause outside text editors, and audible global/layer Music-clock tracks are synchronized and mixed. |
@@ -339,20 +352,20 @@ consumers do not inherit minizip requirements.
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
 | 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, field-level recovery/preservation, external-change promotion, semantic diff, Make Current, and revert-as-new preserve recoverability. |
 | 22 | Legacy compatibility without overwrite | Complete | Setup v1-v8 imports remain supported; setup v8 adds hierarchical/nullable audio routing and setup v9 adds explicit per-item feature overrides while preserving every older meaning. Only explicit one-layer `--save-legacy` writes `.pvt`. |
-| 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
+| 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes an Unlimited-or-signed-int step limit, rendering backend, and complete current-project default template. Allocation failure safely clears history without losing edits; UI preferences live outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
 | 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
-| 26 | Better CPU utilization | Complete | Image sequences and native movies use bounded frame-level render/convert workers with ordered output and serialized progress; `--workers 0..256` configures portable sequences and native video auto-selects within the same hardware/memory limits. Representative M2 Max image-sequence measurement: 44.95 s to 5.44 s (8.3x). |
+| 26 | Better CPU utilization | Complete | Image sequences and native movies use checked frame-level render/convert workers with ordered output and serialized progress; `--workers 0..INT_MAX` configures portable sequences and native video auto-selects within hardware and configurable memory admission. Representative M2 Max image-sequence measurement: 44.95 s to 5.44 s (8.3x). |
 | 27 | Texture versus mapped-surface effects | Complete | Each effect runs before surface mapping or after it; mapped-object coordinate effects move/deform the primitive silhouette. Relative order is retained within each stage. |
 | 28 | Draggable/localized effects | Complete | Numbered preview handles edit centers; zero area radius preserves whole-layer behavior and positive radii add feathered local influence. Glow blur and influence radii remain separate. |
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
-| 30 | Per-layer starting palettes | Complete | 1-256 embedded sRGB source colors, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
+| 30 | Per-layer starting palettes | Complete | One or more embedded sRGB source colors through signed-int UI/API indexing, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
 | 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization. |
 | 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling intentionally remains CPU-only. |
 | 33 | Layer starting image | Complete | Embedded PNG layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, CPU rendering, hybrid fallback, cancellation, and seam/render regression coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
-| 34 | Closed reusable motion paths | Complete | Up to 32 named project-level paths contain 3-128 stable-ID cubic nodes with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, hybrid fallback, bounded arc-length sampling, and seam/round-trip tests cover the feature. |
+| 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, hybrid fallback, checked arc-length sampling, and seam/round-trip tests cover the feature. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, an authoritative per-layer Swing block, project audio defaults, and a visible layer override live in one GUI tab and in the CLI/API. |
-| 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and 8,192-sample multiband/onset/spectral/chroma analysis drive the base clock and independently routable wave/effect/color response. First project import enables the shared profile without creating layer overrides, Energy supplies a visibly dynamic default hue route, and later user choices remain intact. No fixed whole-song BPM clock is used. |
+| 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and a dense multiband/onset/spectral/chroma track through signed-int container/API capacity drive the base clock and independently routable wave/effect/color response. First project import enables the shared profile without creating layer overrides, Energy supplies a visibly dynamic default hue route, and later user choices remain intact. No fixed whole-song BPM clock is used. |
 | 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; bounded parallel frame render/conversion feeds one ordered writer while hardware policy, alpha, synchronized audio, Data-only exclusion, progress, cancellation, and collision safety remain explicit. No FFmpeg executable or library is used. |
 | 38 | Portable embedded attachments | Complete | Music, OBJ, image, and generic files retain exact filenames/extensions beneath collision-safe digest directories, accept valid direct replacements as first-class edits, keep managed copies, and retain hostile/oversize rejection plus v2 compatibility. |
 | 39 | User-defined new-project defaults | Complete in Qt GUI | Settings can transactionally capture the complete current project or reactivate the built-in template; every new document regenerates project/layer identities and starts unsaved. |
@@ -428,8 +441,9 @@ consumers do not inherit minizip requirements.
   music-swing policy values remain readable for setup compatibility but do not
   silently suppress the authored block.
 - Sequence and native-video workers operate on independent frames, not layers.
-  The count is capped by frames, hardware/explicit request, 256, and a default
-  2 GiB aggregate estimate. Image encoding and video conversion may overlap,
+  The count is capped by frames and the signed-int worker/API index; automatic
+  selection also uses hardware concurrency. A configurable default 2 GiB
+  aggregate admission budget remains a host resource policy. Image encoding and video conversion may overlap,
   but file installation or AVFoundation append, timestamps, and progress remain
   ordered; sequence collision preflight still happens before frame zero.
 - Effects are grouped into two explicit stages: every Texture effect runs before
@@ -453,18 +467,21 @@ consumers do not inherit minizip requirements.
   files; deletion deliberately leaves gaps. Session Solo is never persisted.
 - IDs are stable, nonzero, and unique after insertion; factory objects start at
   ID zero and must receive `allocate_id(config)`.
-- Collection counts, values, decoded strings, file sizes, image dimensions, and
-  an estimated 1 GiB peak working set are bounded before large allocations;
-  custom OBJ estimates conservatively include the maximum cached mesh and its
-  projected position/normal arrays.
+- Capacity limits are tied to actual representations and APIs: Qt-facing
+  indexes/text fit signed `int`, OBJ corner indexes reserve `UINT32_MAX` as a
+  sentinel, clocks persist signed 64-bit microseconds, filesystem components
+  use a portable 255-byte boundary, and storage uses checked `size_t`
+  arithmetic plus successful allocation. Semantic parameter domains, codec
+  formats, caller-selected worker budgets, and hostile-archive protections are
+  documented separately rather than disguised as capacity limits.
 - Existing output frames are protected unless overwrite is explicit, including
   an all-frame preflight and atomic no-clobber installation.
 - Transparent effect edges and curved 3D-surface exteriors can generate alpha;
   validation rejects RGB export only when the final composite can retain
   transparency. An opaque lower stack may make a translucent upper layer safe
   for RGB, although adding a second layer defaults final output to RGBA.
-- Transparent closed surfaces composite distinct front and rear samples. OBJ
-  rasterization never culls by winding and peels at most eight distinct depths.
+- Transparent closed surfaces composite every distinct depth until no deeper
+  surface remains. OBJ rasterization never culls by winding.
 - The core library has no Qt dependency.
 - Each numbered bundle snapshot owns global output plus every layer. Version
   directories are immutable; `current` is regular checksummed text, and root
@@ -491,9 +508,9 @@ consumers do not inherit minizip requirements.
 - Music rendering trusts only cached analysis tied to a valid embedded source
   digest. Relink verifies identity; reanalysis is the explicit content-change
   path. The clock uses event times, never one global BPM estimate.
-- GUI undo snapshots have a separate 128 MiB hard budget. Oversized or trimmed
-  history never clears the document's dirty state, and no-op normalized edits
-  do not create commands.
+- GUI undo snapshots grow to the configured signed-int step limit or Unlimited.
+  Allocation failure clears history safely without clearing edits or dirty
+  state, and no-op normalized edits do not create commands.
 
 ## Validation record
 

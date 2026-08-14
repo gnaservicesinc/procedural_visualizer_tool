@@ -58,14 +58,19 @@ struct ObjMesh {
 };
 
 struct ObjLoadLimits {
-    std::size_t maximum_file_bytes = 64U * 1024U * 1024U;
-    std::size_t maximum_line_bytes = 1024U * 1024U;
-    std::size_t maximum_positions = 1'000'000U;
-    std::size_t maximum_texcoords = 1'000'000U;
-    std::size_t maximum_normals = 1'000'000U;
-    std::size_t maximum_triangles = 1'000'000U;
-    std::size_t maximum_polygon_corners = 4096U;
-    std::size_t maximum_mesh_bytes = 256U * 1024U * 1024U;
+    // ObjCorner uses UINT32_MAX as its missing-index sentinel, so an OBJ may
+    // contain every representable non-sentinel index. Other storage is bounded
+    // only by size_t/vector allocation. Tests may still provide smaller limits
+    // to exercise transactional rejection paths.
+    std::size_t maximum_file_bytes = (std::numeric_limits<std::size_t>::max)();
+    std::size_t maximum_line_bytes = (std::numeric_limits<std::size_t>::max)();
+    std::size_t maximum_positions = ObjCorner::missing;
+    std::size_t maximum_texcoords = ObjCorner::missing;
+    std::size_t maximum_normals = ObjCorner::missing;
+    std::size_t maximum_triangles = (std::numeric_limits<std::size_t>::max)();
+    std::size_t maximum_polygon_corners =
+        (std::numeric_limits<std::uint32_t>::max)();
+    std::size_t maximum_mesh_bytes = (std::numeric_limits<std::size_t>::max)();
 };
 
 // Parses v, vt, vn and f records. Faces may use v, v/vt, v//vn or v/vt/vn

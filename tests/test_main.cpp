@@ -273,13 +273,14 @@ void test_image_access_and_transactional_render() {
 }
 
 void test_cancellable_single_layer_render() {
+    constexpr std::size_t cancellation_wave_count = 512U;
     pvt::RenderConfig config = pvt::default_config();
     config.width = 1024;
     config.height = 1024;
     config.block_size = 1;
-    config.waves.reserve(pvt::kMaximumWaves);
+    config.waves.reserve(cancellation_wave_count);
     for (std::size_t index = config.waves.size();
-        index < pvt::kMaximumWaves; ++index) {
+        index < cancellation_wave_count; ++index) {
         pvt::WaveConfig wave = pvt::default_wave(index);
         wave.id = static_cast<std::uint64_t>(1000U + index);
         config.waves.push_back(std::move(wave));
@@ -1519,8 +1520,24 @@ void test_palettes_transforms_and_spatial_stages() {
 void test_validation_limits() {
     auto config = pvt::default_config();
     CHECK(pvt::validate(config).ok);
-    config.waves.resize(pvt::kMaximumWaves + 1U);
-    CHECK(!pvt::validate(config).ok);
+    CHECK(pvt::kMaximumWaves
+          == static_cast<std::size_t>((std::numeric_limits<int>::max)()));
+    for (std::size_t index = config.waves.size(); index < 257U; ++index) {
+        pvt::WaveConfig wave = pvt::default_wave(index);
+        wave.id = static_cast<std::uint64_t>(1000U + index);
+        config.waves.push_back(std::move(wave));
+    }
+    CHECK(pvt::validate(config).ok); // The former 256-wave policy cap is gone.
+    while (config.palette.colors.size() < 257U) {
+        config.palette.colors.push_back(config.palette.colors.back());
+    }
+    CHECK(pvt::validate(config).ok); // The former 256-color policy cap is gone.
+    config.clock.time_interval_microseconds =
+        (std::numeric_limits<std::int64_t>::max)();
+    config.clock.beat_offset_microseconds =
+        (std::numeric_limits<std::int64_t>::min)();
+    config.output.filename_digits = 200;
+    CHECK(pvt::validate(config).ok);
     config = pvt::default_config();
     config.output.bit_depth = 12;
     CHECK(!pvt::validate(config).ok);
@@ -1560,10 +1577,10 @@ void test_validation_limits() {
         });
     particles.enabled = true;
     CHECK(pvt::validate(config).ok);
-    particles.frequency = 1000.0;
+    particles.frequency = 1001.0;
     particles.secondary = 1.0;
     particles.radius_pixels = 16384.0;
-    CHECK(!pvt::validate(config).ok); // Bounded stamp-work guard.
+    CHECK(pvt::validate(config).ok); // Former count/stamp-work caps are gone.
     particles.radius_pixels = 2.0;
     CHECK(pvt::validate(config).ok);
 
@@ -1578,7 +1595,9 @@ void test_validation_limits() {
     config.width = 16384;
     config.height = 16384;
     config.block_size = 1;
-    CHECK(!pvt::validate(config).ok); // Float pipeline memory-budget guard.
+    const auto large_frame_validation = pvt::validate(config);
+    CHECK(large_frame_validation.ok);
+    CHECK(large_frame_validation.estimated_peak_bytes > std::size_t{1} << 30U);
 
     config = pvt::default_config();
     config.width = 5000;
@@ -1596,7 +1615,10 @@ void test_validation_limits() {
     CHECK(neutral_plane_result.estimated_peak_bytes
           == two_buffer_result.estimated_peak_bytes);
     config.surface.phase_degrees = 45.0;
-    CHECK(!pvt::validate(config).ok); // A rotated plane requires a third buffer.
+    const auto rotated_plane_result = pvt::validate(config);
+    CHECK(rotated_plane_result.ok);
+    CHECK(rotated_plane_result.estimated_peak_bytes
+          > neutral_plane_result.estimated_peak_bytes);
     config.surface.enabled = false;
     config.surface.phase_degrees = 0.0;
     config.effects[1].enabled = true;
@@ -1606,21 +1628,30 @@ void test_validation_limits() {
     CHECK(neutral_effect_result.estimated_peak_bytes
           == two_buffer_result.estimated_peak_bytes);
     config.effects[1].intensity = 1.0;
-    CHECK(!pvt::validate(config).ok); // An active effect requires a third buffer.
+    const auto active_effect_result = pvt::validate(config);
+    CHECK(active_effect_result.ok);
+    CHECK(active_effect_result.estimated_peak_bytes
+          > neutral_effect_result.estimated_peak_bytes);
     config.effects[1].intensity = 0.0;
     config.motion.enabled = true;
     config.motion.path = pvt::LayerMotionPath::Orbit;
-    CHECK(!pvt::validate(config).ok); // Active motion uses the same third scratch buffer.
+    const auto active_motion_result = pvt::validate(config);
+    CHECK(active_motion_result.ok);
+    CHECK(active_motion_result.estimated_peak_bytes
+          > neutral_effect_result.estimated_peak_bytes);
 
     config = pvt::default_config();
     make_small(config);
+    const auto no_obj_memory_result = pvt::validate(config);
+    CHECK(no_obj_memory_result.ok);
     config.surface.enabled = true;
     config.surface.mapping = pvt::SurfaceMapping::CustomObj;
     config.surface.obj_path = "mesh.obj";
     config.alpha.enabled = true;
     const auto obj_memory_result = pvt::validate(config);
     CHECK(obj_memory_result.ok);
-    CHECK(obj_memory_result.estimated_peak_bytes > 350U * 1024U * 1024U);
+    CHECK(obj_memory_result.estimated_peak_bytes
+          > no_obj_memory_result.estimated_peak_bytes);
 
     config = pvt::default_config();
     config.waves[0].direction = std::numeric_limits<double>::quiet_NaN();
@@ -2287,13 +2318,14 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
 }
 
 void test_maximum_music_analysis_setup(const fs::path& directory) {
+    constexpr std::size_t dense_sample_count = 16384U;
     pvt::RenderConfig original = pvt::default_config();
     make_small(original);
     const pvt::MusicFeatureSample sample{
         0.125F, 0.25F, 0.375F, 0.5F, 0.625F, 0.75F,
     };
     original.clock.music.feature_samples.assign(
-        pvt::kMaximumMusicFeatureSamples, sample);
+        dense_sample_count, sample);
 
     const fs::path first = directory / "maximum-analysis.pvt";
     const fs::path second = directory / "maximum-analysis-roundtrip.pvt";
@@ -2306,7 +2338,7 @@ void test_maximum_music_analysis_setup(const fs::path& directory) {
     pvt::RenderConfig loaded;
     CHECK(pvt::load_setup(first.string(), loaded, &error));
     CHECK(loaded.clock.music.feature_samples.size()
-          == pvt::kMaximumMusicFeatureSamples);
+          == dense_sample_count);
     if (!loaded.clock.music.feature_samples.empty()) {
         CHECK(loaded.clock.music.feature_samples.front().energy == sample.energy);
         CHECK(loaded.clock.music.feature_samples.back().beat == sample.beat);
@@ -2710,9 +2742,10 @@ void test_sequence_preflight(const fs::path& directory) {
     heavy.total_frames = 2;
     heavy.output.output_directory = (directory / "in-frame-cancel").string();
     heavy.output.filename_prefix = "heavy_";
-    heavy.waves.reserve(pvt::kMaximumWaves);
+    constexpr std::size_t cancellation_wave_count = 512U;
+    heavy.waves.reserve(cancellation_wave_count);
     for (std::size_t index = heavy.waves.size();
-         index < pvt::kMaximumWaves; ++index) {
+         index < cancellation_wave_count; ++index) {
         auto wave = pvt::default_wave(index);
         wave.id = static_cast<std::uint64_t>(2000U + index);
         heavy.waves.push_back(std::move(wave));

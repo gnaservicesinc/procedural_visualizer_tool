@@ -114,7 +114,8 @@ credentials.
 - A semantic UTF-8 project name used in the window title. Display-safe characters
   such as `:` are allowed; the first Save/Save As derives a portable sanitized
   root and `<project-name>.zip` filename without changing the displayed name.
-- Up to 64 full render layers. Layers have stable UUID/file identities and can
+- Full render layers up to the signed-int index capacity used by the GUI and
+  public APIs. Layers have stable UUID/file identities and can
   be named, enabled, duplicated, removed, selected, and reordered. Paint order
   is bottom-to-top; the GUI presents the topmost layer first.
 - Flat layer groups act as contiguous folders in the single authoritative paint
@@ -133,7 +134,8 @@ credentials.
   layer over the accumulated lower stack, while **Alpha Under** places it under
   that stack after applying the layer opacity. Destination-out erasers retain
   their explicit lower-stack masking behavior in either alpha mode.
-- Any number of waves from zero through the validated safety limit, with add,
+- Any number of waves from zero through the signed-int UI/API index capacity,
+  with add,
   duplicate, remove, enable, and reorder controls.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
   cycles per loop, propagation direction, and per-wave audio-feature override
@@ -169,7 +171,7 @@ credentials.
   range/mix/quantization steps.
 - Per-layer closed motion presets: orbit, figure eight, bounce, and Lissajous,
   with center, horizontal/vertical travel, integer loop cycles, phase, rotation,
-  and optional scale pulsing. Projects can also own up to 32 reusable closed
+  and optional scale pulsing. Projects can also own reusable closed
   cubic paths. The GUI edits stable nodes, explicit in/out handles, Corner,
   Auto Smooth, Smooth, and Symmetric policies, and creates four-node cubic
   ellipse approximations. Independent bindings drive the active layer, wave
@@ -209,7 +211,8 @@ credentials.
   clock even when the synchronized clock uses Hold or another pulse mapping.
   Endless Zoom uses intensity 0–1 as source mix and values above 1 as additional
   zoom depth, keeping positive audio modulation visible at its default full mix.
-- An optional starting palette per layer with 1-256 authored sRGB colors, custom
+- An optional starting palette per layer with one or more authored sRGB colors
+  up to the signed-int UI/API index capacity, custom
   add/edit/remove controls, and six presets: Ember, Deep Ocean, Vaporwave,
   Forest Biolume, Arcade, and Moonlight. The palette chooses exact procedural
   source colors in linear light without changing alpha; lighting and effects
@@ -218,8 +221,8 @@ credentials.
 - An optional embedded PNG starting image per layer, with Stretch, Contain,
   Cover, and Tile fitting. It replaces procedural source generation and the
   starting palette; effects, surface mapping, transforms, motion, quantization,
-  compositing, and export still run afterward. Files use the bounded
-  content-addressed attachment store, and a bounded shared decoded-image cache
+  compositing, and export still run afterward. Files use the validated
+  content-addressed attachment store, and an evicting shared decoded-image cache
   avoids repeated work across frames and layers.
 - Per-layer horizontal/vertical flips and directional mirror symmetry
   (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
@@ -281,10 +284,10 @@ they persist across projects and relaunches and are never placed inside a
 portable project. The General page can also capture the complete current
 project as the template for future **New Project** commands or restore the
 built-in template. New documents receive fresh project/layer identities, so
-using a saved template never aliases histories or assets. A separate hard 128
-MiB snapshot budget prevents a
-large, high-layer document from turning a generous step limit into unbounded
-memory growth; if history must be trimmed, the document remains correctly dirty.
+using a saved template never aliases histories or assets. The undo step setting
+uses Qt's signed-int command capacity and supports Unlimited. Undo snapshots
+grow with available memory; if allocation fails, history is cleared safely while
+the document remains correctly dirty.
 Saved-version history is separate from session undo.
 
 ## Synchronization and seamless loops
@@ -304,7 +307,7 @@ The Clock block can instead define calculated pulse/keyframe positions:
 - **Frame:** one pulse every validated `N >= 1` frames.
 - **Time:** one pulse every `N` milliseconds of animation time, derived from the
   frame index and FPS rather than wall-clock/rendering speed.
-- **Meter:** a tempo plus tempo-note unit and a bounded meter expression. Simple
+- **Meter:** a tempo plus tempo-note unit and a validated meter expression. Simple
   (`7/8`), additive (`3+2+3/8`), mixed (`5/4 | 6/4`), and non-power-of-two
   denominators (`4/3`) are accepted. Meter alone cannot determine elapsed pulse
   time, which is why BPM and its note denominator remain separate controls.
@@ -348,8 +351,8 @@ Intermediate values blend between radial and the selected axis.
 Import is asynchronous, cancellable, and transactional. The analyzer decodes
 the full source, derives sample-accurate duration, tracks time-varying beat and
 tempo observations, reconciles them with an offline multiband onset/tempogram
-pass, and stores up to 8,192 dense feature samples. It does not reduce a song to
-one fixed BPM. The source SHA-256, decoded format, channel/sample metadata,
+pass, and stores the dense feature track up to signed-int container/API capacity.
+It does not reduce a song to one fixed BPM. The source SHA-256, decoded format, channel/sample metadata,
 beats, local tempo points, and normalized spectral/pitch features are cached in
 the project; rendering never decodes or analyzes the song again.
 
@@ -416,8 +419,9 @@ acceleration with
 `FrameRenderOptions` or `SequenceRenderOptions::frame`.
 
 Metal compiles the embedded shader source once per process, caches its command
-queue and compute pipelines, and admits at most two frames by default (hard
-limit eight) before allocating their three shared float-RGBA working buffers.
+queue and compute pipelines, and admits at most two frames by default before
+allocating their three shared float-RGBA working buffers. An explicit admission
+bound may use the full signed-int API range.
 The device's recommended working-set size and the existing aggregate sequence
 memory budget provide additional bounds. Cancellation prevents queued work from
 being submitted and keeps the destination transactional. A command buffer that
@@ -451,10 +455,11 @@ can choose the upper bound explicitly:
 ./build/pvt-render --render --backend gpu
 ```
 
-The requested value is capped by the frame count, the reported hardware
-concurrency when automatic, a hard 256-worker limit, and a conservative
-aggregate memory budget derived from the validated per-frame peak estimate. A
-request is therefore an upper bound, not permission to exhaust RAM.
+The requested value is capped by the frame count and the signed-int worker/API
+capacity. Automatic selection also follows reported hardware concurrency. The
+configurable aggregate memory budget derives admission from the checked
+per-frame estimate; it is a user/host resource policy, not an input rejection
+ceiling. A request is therefore an upper bound, not permission to exhaust RAM.
 
 On one representative Apple M2 Max workload (12 CPU cores, 24 frames at
 960x540, block size 1, 64 waves, PNG compression 0), `--workers 1` took 44.95
@@ -490,8 +495,8 @@ stack guarantees an opaque result. Procedural modulation is neutral at its defau
 Built-in closed primitives and custom meshes are two-sided. With partial alpha,
 the renderer samples the rear/exit surface and composites it behind the front;
 it does not treat a translucent front as an opaque nearest-hit mask. Custom OBJ
-rendering depth-peels up to eight distinct layers per pixel, stops early when no
-deeper surface remains, and uses a faster nearest-surface path for fully opaque
+rendering depth-peels until no deeper surface remains (with no fixed
+eight-surface cutoff) and uses a faster nearest-surface path for fully opaque
 input. Triangle winding never causes backface culling.
 
 PNG export converts linear RGB to sRGB immediately before dithering and integer
@@ -745,7 +750,7 @@ relative paths in the user's home folder, and never treats `.` as filesystem roo
 
 ## Custom OBJ surfaces
 
-The bounded OBJ loader accepts ASCII/UTF-8 `v`, `vt`, `vn`, and `f` records,
+The OBJ loader accepts ASCII/UTF-8 `v`, `vt`, `vn`, and `f` records,
 including positive or negative indices and the standard `v`, `v/vt`, `v//vn`,
 and `v/vt/vn` face-corner forms. Simple polygon faces are validated and
 triangulated while preserving winding and per-corner attributes. Object/group,
@@ -756,8 +761,11 @@ Meshes are uniformly normalized from their referenced bounds and rendered with
 perspective-correct texture/normal interpolation. A triangle uses its authored
 texture coordinates only when all three corners provide them; otherwise it uses
 dominant-axis box projection. Missing normals fall back to the geometric face
-normal. The loader limits file, line, collection, polygon, triangle, and expanded
-mesh sizes; malformed loads are transactional. The last successfully loaded
+normal. Default capacity follows actual representation limits: indices use every
+non-sentinel `uint32_t` value, Qt-facing text/counts fit signed `int`, and file,
+line, triangle, and expanded-mesh storage is limited by checked `size_t`
+arithmetic and successful allocation. Callers may inject smaller explicit
+budgets. Malformed or allocation-failed loads are transactional. The last successfully loaded
 mesh is cached across preview/export frames and reloaded when its path, size, or
 modification time changes.
 
@@ -883,7 +891,7 @@ embedded starting-image decode/fitting/cache and CLI rendering, transforms,
 closed presets plus reusable cubic-path geometry/bindings/loop closure,
 particles, direction modes, alpha range and
 straight-alpha/glow composition,
-primitive mappings, rear-surface alpha/color compositing, bounded OBJ
+primitive mappings, rear-surface alpha/color compositing, representation-bounded OBJ
 parsing/caching and
 two-sided perspective rendering, animated smooth/stepped block grouping and
 effect ordering, default glow visibility, memory and value limits, setup round
@@ -962,7 +970,7 @@ local performance path is dependable.
 ## Current boundary
 
 Plane, cylinder, sphere, and cube mappings have analytic CPU and Metal paths;
-custom OBJ mapping uses a bounded cached CPU parser and rasterizer. OBJ materials
+custom OBJ mapping uses a checked, cached CPU parser and rasterizer. OBJ materials
 and textures are intentionally not loaded because the procedural frame supplies
 the surface image. Cooperative cancellation is checked within CPU rendering,
 Metal admission, effects, surface mapping, quantization, layer compositing, OBJ

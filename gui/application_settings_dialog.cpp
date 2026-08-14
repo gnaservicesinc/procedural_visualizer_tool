@@ -12,11 +12,12 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <limits>
 
 namespace {
 
-constexpr int kMinimumUndoLimit = 10;
-constexpr int kMaximumUndoLimit = 5000;
+constexpr int kMinimumUndoLimit = 0;
+constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
 
 QLabel* explanatory_label(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
@@ -56,13 +57,15 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     undo_limit_->setRange(kMinimumUndoLimit, kMaximumUndoLimit);
     undo_limit_->setSingleStep(10);
     undo_limit_->setSuffix(tr(" steps"));
+    undo_limit_->setSpecialValueText(tr("Unlimited"));
     undo_limit_->setValue(std::clamp(undoLimit, kMinimumUndoLimit,
                                      kMaximumUndoLimit));
     history_form->addRow(tr("Maximum undo steps"), undo_limit_);
     history_form->addRow(
         explanatory_label(
             tr("Changing this limit clears the current session's undo and redo "
-               "history. A separate 128 MiB safety limit always remains active."),
+               "history. The maximum follows Qt's signed-int command index; "
+               "available memory is the practical limit."),
             history_group));
     general_layout->addWidget(history_group);
 

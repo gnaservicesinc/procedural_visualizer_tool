@@ -55,11 +55,11 @@ namespace {
 namespace fs = std::filesystem;
 using Records = std::map<std::string, std::string>;
 
-constexpr std::size_t kMaximumMetadataBytes = 4U * 1024U * 1024U;
-constexpr std::size_t kMaximumMetadataRecords = 32768U;
-constexpr std::size_t kMaximumVersions = 4096U;
-constexpr std::size_t kMaximumLineageAliases = 8192U;
-constexpr std::size_t kMaximumProjectNameBytes = 256U;
+constexpr std::size_t kMaximumMetadataBytes = kMaximumUiItems;
+constexpr std::size_t kMaximumMetadataRecords = kMaximumUiItems;
+constexpr std::size_t kMaximumVersions = kMaximumUiItems;
+constexpr std::size_t kMaximumLineageAliases = kMaximumUiItems;
+constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
 constexpr std::uint32_t kProjectVersionFormatVersion = 5U;
 
@@ -124,7 +124,7 @@ void clear_error(std::string* error) {
 }
 
 bool valid_key(std::string_view key) {
-    if (key.empty() || key.size() > 128U) {
+    if (key.empty() || key.size() > kMaximumUiItems) {
         return false;
     }
     for (const char character : key) {
@@ -282,7 +282,7 @@ bool parse_text(const std::string& bytes,
                 Records& records,
                 std::string* error) {
     if (bytes.empty() || bytes.size() > kMaximumMetadataBytes) {
-        return fail(error, "Metadata is empty or exceeds the 4 MiB limit.");
+        return fail(error, "Metadata is empty or exceeds the signed-int format limit.");
     }
     const std::string header = std::string(expected_kind) + "\t"
                                + std::to_string(expected_version);
@@ -638,7 +638,7 @@ bool valid_semantic_group_name(const std::string& name) {
 }
 
 bool valid_attachment_reference_id(std::string_view value) {
-    if (value.empty() || value.size() > 256U) return false;
+    if (value.empty() || value.size() > kMaximumUiItems) return false;
     return std::all_of(value.begin(), value.end(), [](char character) {
         return (character >= 'a' && character <= 'z')
                || (character >= 'A' && character <= 'Z')
@@ -714,7 +714,8 @@ bool read_attachment_source(const std::string& path,
                             std::string& bytes,
                             std::string& digest,
                             std::string* error) {
-    if (path.empty() || path.size() > 4096U || path.find('\0') != std::string::npos
+    if (path.empty() || path.size() > kMaximumUiItems
+        || path.find('\0') != std::string::npos
         || !detail::valid_utf8(path)) {
         return fail(error, "Attachment source path is invalid or overlong.");
     }
@@ -729,7 +730,7 @@ bool read_attachment_source(const std::string& path,
     }
     const std::uintmax_t size = fs::file_size(native, filesystem_error);
     if (filesystem_error || size > kMaximumProjectAttachmentBytes) {
-        return fail(error, "Attachment exceeds the 512 MiB per-file limit.");
+        return fail(error, "Attachment exceeds the signed-int bundle-entry limit.");
     }
     basename = detail::path_to_utf8(native.filename());
     if (!valid_attachment_basename(basename)) {
@@ -2177,7 +2178,7 @@ bool validate_root_paths(const detail::BundleFileSet& files,
                                        + entry.first + "'.");
             }
             if (entry.second.size() > kMaximumProjectAttachmentBytes) {
-                return fail(error, "Bundle asset exceeds the 512 MiB limit.");
+                return fail(error, "Bundle asset exceeds the signed-int entry limit.");
             }
             if (legacy_path) {
                 std::string actual;
@@ -2262,7 +2263,7 @@ bool collect_version_infos(const detail::BundleFileSet& files,
         numbers.insert(indexed_version.first);
     }
     if (numbers.size() > kMaximumVersions) {
-        return fail(error, "Bundle exceeds the 4096-version history limit.");
+        return fail(error, "Bundle exceeds the signed-int version-history limit.");
     }
     std::vector<BundleVersionInfo> candidate;
     candidate.reserve(numbers.size());
@@ -2912,8 +2913,6 @@ bool make_independent_project_copy(const ProjectConfig& project,
         ProjectDocument candidate = default_project_document();
         candidate.project = project;
         std::unordered_set<std::string> reserved_uuids;
-        reserved_uuids.reserve((project.layers.size() + project.groups.size())
-                               * 2U + 2U);
         reserved_uuids.insert(project.uuid);
         for (const LayerGroup& group : project.groups) {
             reserved_uuids.insert(group.uuid);
@@ -3822,7 +3821,8 @@ bool save_with_reason(ProjectDocument& document,
         const std::set<std::uint64_t> directory_versions =
             numeric_version_directories(files);
         if (directory_versions.size() >= kMaximumVersions) {
-            return fail(error, "Bundle has reached the 4096-version history limit.");
+            return fail(error,
+                        "Bundle history has reached the signed-int metadata/API index limit.");
         }
         const std::uint64_t number = directory_versions.empty()
                                          ? 0U : (*directory_versions.rbegin()

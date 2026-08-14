@@ -48,7 +48,8 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr std::uint32_t kSequenceDitherSeed = 0x50565431U; // "PVT1"
-constexpr std::size_t kMaximumOutputPathBytes = 64U * 1024U;
+constexpr std::size_t kMaximumOutputPathBytes =
+    static_cast<std::size_t>((std::numeric_limits<int>::max)());
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -917,7 +918,7 @@ bool prepare_image_output(const std::string& path,
     if (path.empty() || path.size() > kMaximumOutputPathBytes
         || path.find('\0') != std::string::npos) {
         return fail(error,
-                    "The output image path is empty, contains a NUL byte, or exceeds 64 KiB.");
+                    "The output image path is empty, contains a NUL byte, or exceeds the signed-int text API limit.");
     }
 
     const fs::path destination = detail::path_from_utf8(path);
@@ -1044,8 +1045,11 @@ bool build_frame_path(const RenderConfig& config,
     if (!valid_prefix(config.output.filename_prefix)) {
         return fail(error, "The filename prefix cannot be empty or contain characters forbidden in portable filenames.");
     }
-    if (config.output.filename_digits < 1 || config.output.filename_digits > 12) {
-        return fail(error, "Filename zero-padding must be between 1 and 12 digits.");
+    if (config.output.filename_digits < 1
+        || static_cast<std::size_t>(config.output.filename_digits)
+               > kMaximumOutputFilenameBytes) {
+        return fail(error,
+                    "Filename zero-padding exceeds the portable 255-byte filename-component limit.");
     }
     if (frame_index < 0 || frame_index >= config.total_frames) {
         return fail(error, "The requested frame index is outside the sequence.");
@@ -1063,6 +1067,10 @@ bool build_frame_path(const RenderConfig& config,
                       '0');
     }
     const std::string filename = config.output.filename_prefix + digits + extension;
+    if (filename.size() > kMaximumOutputFilenameBytes) {
+        return fail(error,
+                    "The output filename exceeds the portable 255-byte filename-component limit.");
+    }
     *result = detail::path_from_utf8(config.output.output_directory)
               / detail::path_from_utf8(filename);
     return true;
