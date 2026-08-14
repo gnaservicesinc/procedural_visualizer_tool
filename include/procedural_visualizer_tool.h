@@ -217,7 +217,8 @@ enum class MusicFeature : std::uint8_t {
 
 // A synchronized wave/effect can inherit its effective profile's category and
 // feature, select a feature explicitly (which also opts that item in), force
-// the profile feature on, or ignore audio. Enabled/Disabled retain the format-8
+// that item on with the profile source, or ignore audio. The effective profile's
+// master switch remains authoritative. Enabled/Disabled retain the format-8
 // force/ignore semantics for source and project compatibility. Missing and
 // explicit null persistence values map to Default.
 enum class AudioResponseMode : std::uint8_t {

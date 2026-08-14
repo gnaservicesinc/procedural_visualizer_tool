@@ -349,7 +349,7 @@ void test_defaults_and_dynamic_collections() {
               pvt::AudioResponseMode::Beat)) == "Beat");
     CHECK(std::string(pvt::audio_response_mode_name(
               pvt::AudioResponseMode::Enabled))
-          == "Profile feature (force on)");
+          == "Profile source (force this item on)");
     CHECK(pvt::default_wave().id == 0U);
     CHECK(pvt::default_swing().id == 0U);
     CHECK(pvt::default_effect(pvt::EffectType::Ripple).id == 0U);

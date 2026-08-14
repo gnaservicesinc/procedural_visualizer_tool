@@ -1101,7 +1101,6 @@ bool write_zip(const fs::path& destination,
                         "Could not close the validated source ZIP after entry reuse.");
         }
         mz_zip_reader_delete(&source.handle);
-        source_open = false;
     }
     if (!flush_path(temporary)) {
         std::error_code ignored;

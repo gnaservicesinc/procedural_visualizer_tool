@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -8,11 +8,20 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.0.0-RC3 and has one source of truth in
+The public product version is now 1.0.0 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The final audit repairs the Block Scale editor invariant in both GUI and CLI:
+raising its minimum now raises an incompatible maximum, while lowering the
+minimum restores the full valid maximum range. Synchronization and audio-source
+labels now describe the controls' actual clock and profile-master semantics.
+The tag workflow distinguishes stable versions from prereleases, so final tags
+publish a current stable GitHub release instead of being mislabeled as release
+candidates. Archive parsing and source-lifetime code also received defensive
+cleanup identified by static analysis.
 
 RC3 makes the synchronized wave/effect Audio response control a real source
 override: Default inherits the effective profile, direct Beat/Energy and other
@@ -318,7 +327,7 @@ consumers do not inherit minizip requirements.
 | 44 | Destination-out eraser blends | Complete | Alpha erase, soft linear-light tone erase, and brightness-threshold erase affect only the accumulated lower stack; serialization, CLI, GUI descriptions, alpha validation, and composite tests cover them. |
 | 45 | Projected source/UV editing | Complete | Texture-effect and localized-Swing handles move and render inside an explicit labelled unwrapped source/UV inset for non-plane surfaces; mapped-object controls remain in final screen space. |
 | 46 | Encoder cancellation and GUI install | Complete | PNG/EXR writers abort between scanlines and discard their temporary file. `cmake --install` installs the Qt application when enabled; `PVT_DEPLOY_QT_RUNTIME` optionally stages Qt dependencies, while system-Qt installs remain the Linux default. |
-| 47 | Hierarchical audio-response routing | Complete | A project-wide profile feeds inheriting layers; an optional layer profile overrides it; synchronized waves/effects can inherit, force response, or ignore audio. Missing/null fields are neutral, old projects preserve historical output, every CPU/Metal preparation path shares the same semantics, and GUI/CLI/persistence/undo tests cover the hierarchy. |
+| 47 | Hierarchical audio-response routing | Complete | A project-wide profile feeds inheriting layers; an optional layer profile overrides it; synchronized waves/effects can inherit, opt in with an explicit source, force the item on with the profile source, or ignore audio. The profile master remains authoritative. Missing/null fields are neutral, old projects preserve historical output, every CPU/Metal preparation path shares the same semantics, and GUI/CLI/persistence/undo tests cover the hierarchy. |
 
 ## Important implementation map
 
@@ -448,6 +457,17 @@ consumers do not inherit minizip requirements.
   do not create commands.
 
 ## Validation record
+
+The 2026-08-14 final 1.0.0 audit passed the Qt-enabled Release suite 21/21,
+the C++20 compatibility suite 20/20, and the AddressSanitizer plus
+UndefinedBehaviorSanitizer suite 20/20. A clean project-source static-analysis
+build reported 0 bugs after defensive archive parser cleanup; diagnostics from
+the vendored miniaudio amalgamation remain third-party findings. The
+self-contained macOS distribution verifier passed over 27 Mach-O files, its
+embedded `pvt-render` reported `1.0.0` and passed self-test, deep strict
+code-sign verification passed, and the staged app passed native Cocoa smoke.
+Release-workflow stable/prerelease classification, YAML parsing, and
+`git diff --check` also passed.
 
 The 2026-08-13 RC3 correction passed the focused AddressSanitizer plus
 UndefinedBehaviorSanitizer suite 4/4 and the Qt-enabled Release suite in its

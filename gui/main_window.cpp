@@ -325,11 +325,22 @@ void populate_audio_response_combo(QComboBox* combo) {
         pvt::AudioResponseMode::ChromaStrength,
         QObject::tr("Respond to tonal confidence and opt this item in."));
     combo->insertSeparator(combo->count());
-    add(QObject::tr("Profile feature (force response)"),
+    add(QObject::tr("Profile source (force this item on)"),
         pvt::AudioResponseMode::Enabled,
-        QObject::tr("Use the effective profile's source but respond even when its category switch is off."));
+        QObject::tr("Use the effective profile's source and opt this item in even when its category switch is off. The profile master switch must still be enabled."));
     add(QObject::tr("Ignore audio"), pvt::AudioResponseMode::Disabled,
         QObject::tr("Keep this item's authored value independent of audio response."));
+}
+
+void synchronize_block_scale_maximum_editor(QDoubleSpinBox* editor,
+                                             double minimum,
+                                             double& authored_maximum) {
+    const QSignalBlocker blocker(editor);
+    editor->setMinimum(minimum);
+    if (authored_maximum < minimum) {
+        authored_maximum = minimum;
+    }
+    editor->setValue(authored_maximum);
 }
 
 template <typename Enum>
@@ -1380,7 +1391,7 @@ QWidget* MainWindow::createWavePage() {
     wave_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
     wave_name_->setValidator(new Utf8TextValidator(TextRule::Name, wave_name_));
     wave_enabled_ = new QCheckBox(tr("Enabled"));
-    wave_sync_ = new QCheckBox(tr("Synchronized (optional)"));
+    wave_sync_ = new QCheckBox(tr("Use synchronized clock"));
     wave_audio_response_ = new QComboBox;
     populate_audio_response_combo(wave_audio_response_);
     wave_x_ = real_editor(-100.0, 200.0, 3, 1.0);
@@ -1405,7 +1416,7 @@ QWidget* MainWindow::createWavePage() {
     wave_enabled_->setToolTip(tr("Bypasses this wave without deleting or resetting its authored settings."));
     wave_sync_->setToolTip(tr("Uses the layer's swung synchronized clock. Clear it for an independent seamless clock."));
     wave_audio_response_->setToolTip(
-        tr("For synchronized waves, Default inherits both the effective profile's Waves switch and Wave source. Choosing Beat, Energy, or another feature opts this wave in and overrides that source. The final two choices force the profile source on or ignore audio. Missing/null project data is Default."));
+        tr("For synchronized waves, Default inherits both the effective profile's Waves switch and Wave source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this wave in and overrides that source. The final two choices force this wave on with the profile source or ignore audio. Missing/null project data is Default."));
     wave_x_->setToolTip(tr("Horizontal wave source position. Values outside 0–100% place the source beyond the canvas."));
     wave_y_->setToolTip(tr("Vertical wave source position. Values outside 0–100% place the source beyond the canvas."));
     wave_amplitude_->setToolTip(tr("Peak contribution of this wave before optional audio modulation."));
@@ -2062,7 +2073,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
     effect_name_->setValidator(new Utf8TextValidator(TextRule::Name, effect_name_));
     effect_enabled_ = new QCheckBox(tr("Enabled"));
-    effect_sync_ = new QCheckBox(tr("Synchronized (optional)"));
+    effect_sync_ = new QCheckBox(tr("Use synchronized clock"));
     effect_audio_response_ = new QComboBox;
     populate_audio_response_combo(effect_audio_response_);
     effect_type_ = new QComboBox;
@@ -2123,7 +2134,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_sync_->setToolTip(
         tr("Uses the active synchronized/swung clock. Clear it for an independent seamless effect clock."));
     effect_audio_response_->setToolTip(
-        tr("For synchronized effects, Default inherits both the effective profile's Effects switch and Effect source. Choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force the profile source on or ignore audio. Missing/null project data is Default."));
+        tr("For synchronized effects, Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Missing/null project data is Default."));
     effect_type_->setToolTip(
         tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
     effect_space_->setToolTip(
@@ -6951,11 +6962,9 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.intensity = effect_intensity_->value();
     } else if (changed_editor == effect_magnitude_) {
         effect.magnitude = effect_magnitude_->value();
-        if (effect.type == pvt::EffectType::BlockScale
-            && effect.frequency < effect.magnitude) {
-            effect.frequency = effect.magnitude;
-            const QSignalBlocker blocker(effect_frequency_);
-            effect_frequency_->setValue(effect.frequency);
+        if (effect.type == pvt::EffectType::BlockScale) {
+            synchronize_block_scale_maximum_editor(
+                effect_frequency_, effect.magnitude, effect.frequency);
         }
     } else if (changed_editor == effect_frequency_) {
         effect.frequency = effect_frequency_->value();
@@ -8677,6 +8686,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || audio_response_group_ == nullptr
         || audio_response_effective_ == nullptr
         || audio_copy_project_ == nullptr
+        || wave_sync_ == nullptr
+        || wave_sync_->text() != tr("Use synchronized clock")
+        || effect_sync_ == nullptr
+        || effect_sync_->text() != tr("Use synchronized clock")
         || wave_audio_response_ == nullptr
         || effect_audio_response_ == nullptr
         || wave_audio_response_->count() < 13
@@ -8691,6 +8704,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
                static_cast<int>(pvt::AudioResponseMode::Enabled)) < 0
         || wave_audio_response_->findData(
                static_cast<int>(pvt::AudioResponseMode::Disabled)) < 0
+        || wave_audio_response_->itemText(
+               wave_audio_response_->findData(
+                   static_cast<int>(pvt::AudioResponseMode::Enabled)))
+               != tr("Profile source (force this item on)")
         || effect_audio_response_->findData(
                static_cast<int>(pvt::AudioResponseMode::Beat)) < 0
         || wave_audio_response_->itemData(
@@ -8762,12 +8779,23 @@ bool MainWindow::runSmokeChecks(QString* error) {
         effect_ranges_valid = effect_ranges_valid
                               && effect_radius_->minimum() == 0.0
                               && effect_threshold_->maximum() == 64.0;
+        double block_scale_maximum = 1.5;
+        synchronize_block_scale_maximum_editor(
+            effect_frequency_, 2.0, block_scale_maximum);
+        effect_ranges_valid = effect_ranges_valid
+                              && effect_frequency_->minimum() == 2.0
+                              && effect_frequency_->value() == 2.0
+                              && block_scale_maximum == 2.0;
+        synchronize_block_scale_maximum_editor(
+            effect_frequency_, 0.25, block_scale_maximum);
+        effect_ranges_valid = effect_ranges_valid
+                              && effect_frequency_->minimum() == 0.25;
         effect_type_->setCurrentIndex(previous_type);
         updateEffectEditorVisibility();
     }
     if (!effect_ranges_valid) {
         if (error != nullptr) {
-            *error = tr("Effect editor ranges do not match Particle Field and Glow validation.");
+            *error = tr("Effect editor ranges do not match Particle Field, Glow, or Block Scale validation.");
         }
         return false;
     }

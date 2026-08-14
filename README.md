@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.0.0-RC3**. The version is read from `VERSION` by every
+Current product version: **1.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -145,9 +145,10 @@ credentials.
   glow, animated block scaling, and a deterministic spark/trail particle field.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
   A synchronized effect can inherit its effective audio category and source,
-  override that source with any analyzed feature, force the profile feature on
-  even when the category default is off, or ignore audio without changing its
-  authored intensity.
+  override that source with any analyzed feature, force that effect on with the
+  profile source even when the category default is off, or ignore audio without
+  changing its authored intensity. The effective profile master switch remains
+  authoritative.
   Each effect explicitly runs either in
   **Texture** space before surface wrapping or on the **Mapped object** after
   wrapping and the layer mirror/flip; the latter moves or deforms the rendered

@@ -386,7 +386,7 @@ audio_response_choices() {
          "Pitch color (tonality-weighted)"},
         {pvt::AudioResponseMode::ChromaStrength, "Tonal strength"},
         {pvt::AudioResponseMode::Enabled,
-         "Profile feature (force response)"},
+         "Profile source (force this item on)"},
         {pvt::AudioResponseMode::Disabled, "Ignore audio"},
     };
 }
@@ -541,7 +541,7 @@ bool configure_wave(RenderConfig& config, std::size_t index) {
               << "waves use a linear but still seamless per-loop clock.\n";
     if (!prompt_text("Name", wave.name, kMaximumNameBytes)
         || !prompt_bool("Enabled", wave.enabled)
-        || !prompt_bool("Synchronized (optional)", wave.synchronized)) {
+        || !prompt_bool("Use synchronized clock", wave.synchronized)) {
         return false;
     }
     if (wave.synchronized
@@ -669,7 +669,7 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
     std::cout << "\n-- " << pvt::effect_type_name(effect.type) << " effect --\n";
     if (!prompt_text("Name", effect.name, kMaximumNameBytes)
         || !prompt_bool("Enabled", effect.enabled)
-        || !prompt_bool("Synchronized (optional)", effect.synchronized)) {
+        || !prompt_bool("Use synchronized clock", effect.synchronized)) {
         return false;
     }
     if (effect.synchronized
@@ -731,9 +731,15 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
         case EffectType::BlockScale: {
             if (!prompt_real("Mix", effect.intensity, 0.0, 1.0)
                 || !prompt_real("Minimum block-size multiplier",
-                                effect.magnitude, 0.001, 10.0)
-                || !prompt_real("Maximum block-size multiplier",
-                                effect.frequency, 0.001, 1000.0)) {
+                                effect.magnitude, 0.001, 10.0)) {
+                return false;
+            }
+            if (effect.frequency < effect.magnitude) {
+                effect.frequency = effect.magnitude;
+                g_prompt_changed = true;
+            }
+            if (!prompt_real("Maximum block-size multiplier",
+                             effect.frequency, effect.magnitude, 1000.0)) {
                 return false;
             }
             int steps = static_cast<int>(std::llround(effect.secondary));

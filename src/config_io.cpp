@@ -3088,7 +3088,8 @@ const char* music_feature_name(MusicFeature value) {
 const char* audio_response_mode_name(AudioResponseMode value) {
     switch (value) {
         case AudioResponseMode::Default: return "Default";
-        case AudioResponseMode::Enabled: return "Profile feature (force on)";
+        case AudioResponseMode::Enabled:
+            return "Profile source (force this item on)";
         case AudioResponseMode::Disabled: return "Ignore audio";
         case AudioResponseMode::Energy: return "Energy";
         case AudioResponseMode::Bass: return "Bass";

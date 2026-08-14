@@ -411,8 +411,14 @@ jobs:
           sha256sum procedural-visualizer-tool-* > SHA256SUMS.txt
           cd ..
           product_version=${GITHUB_REF_NAME#v}
+          release_target=${product_version%%-*}
+          if [[ "$product_version" == *-* ]]; then
+            release_summary="is a release candidate for $release_target."
+          else
+            release_summary="is the current stable release."
+          fi
           cat > release-notes.md <<EOF
-          Procedural Visualizer Tool $product_version is a release candidate for 1.0.0.
+          Procedural Visualizer Tool $product_version $release_summary
 
           Highlights include resilient project recovery with lossless unknown-field preservation, embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, expanded music-responsive editing and export, and versioned project bundles.
 
@@ -423,14 +429,20 @@ jobs:
           Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows currently use the dependable CPU renderer and PNG/EXR sequence export while portable GPU and native movie backends are developed. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
           EOF
 
-      - name: Publish GitHub pre-release
+      - name: Publish GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          product_version=${GITHUB_REF_NAME#v}
+          if [[ "$product_version" == *-* ]]; then
+            release_state=(--prerelease)
+          else
+            release_state=(--latest)
+          fi
           gh release create "$GITHUB_REF_NAME" \
             release-assets/* \
             --title "Procedural Visualizer Tool ${GITHUB_REF_NAME#v}" \
             --notes-file release-notes.md \
-            --prerelease \
+            "${release_state[@]}" \
             --verify-tag

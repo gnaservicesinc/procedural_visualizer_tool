@@ -2035,8 +2035,11 @@ bool parse_root(const detail::BundleFileSet& files,
                 bool& externally_modified,
                 std::string* error) {
     const std::string* metadata = nullptr;
-    if (!find_file(files, "metadata.txt", metadata, error)
-        || !parse_root_metadata(*metadata, root, error)) return false;
+    if (!find_file(files, "metadata.txt", metadata, error)) return false;
+    if (metadata == nullptr) {
+        return fail(error, "Bundle metadata lookup returned no data.");
+    }
+    if (!parse_root_metadata(*metadata, root, error)) return false;
     std::string actual;
     if (!detail::sha256_hex(*metadata, actual, error)) return false;
     externally_modified = true;
