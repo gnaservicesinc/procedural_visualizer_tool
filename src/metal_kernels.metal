@@ -46,6 +46,16 @@ struct GpuSurface {
     float4 values; // phase, curvature, lighting, unused
 };
 
+struct GpuSourceImage {
+    uint4 source; // width, height, StartingImageFit, unused
+    uint4 destination; // width, height, unused...
+};
+
+struct GpuMotion {
+    float4 source_target; // source center x/y, destination center x/y
+    float4 rotation_scale; // cosine, sine, scale, unused
+};
+
 float clamp_unit(float value) {
     return clamp(value, 0.0f, 1.0f);
 }
@@ -368,6 +378,102 @@ float4 sample_bilinear(const device float4* image, float x, float y,
     }
     result.a = clamp_unit(result.a);
     return result;
+}
+
+float4 sample_starting_image(const device float4* image, float x, float y,
+                             uint width, uint height, bool tile,
+                             bool transparent_outside) {
+    if (!isfinite(x) || !isfinite(y) || width == 0u || height == 0u) {
+        return float4(0.0f);
+    }
+    if (tile) {
+        x = fmod(x, float(width));
+        y = fmod(y, float(height));
+        if (x < 0.0f) x += float(width);
+        if (y < 0.0f) y += float(height);
+    } else if (x < 0.0f || y < 0.0f || x > float(width - 1u)
+               || y > float(height - 1u)) {
+        if (transparent_outside) return float4(0.0f);
+        x = clamp(x, 0.0f, float(width - 1u));
+        y = clamp(y, 0.0f, float(height - 1u));
+    }
+    const uint x0 = uint(clamp(int(floor(x)), 0, int(width) - 1));
+    const uint y0 = uint(clamp(int(floor(y)), 0, int(height) - 1));
+    const uint x1 = tile ? (x0 + 1u) % width : min(x0 + 1u, width - 1u);
+    const uint y1 = tile ? (y0 + 1u) % height : min(y0 + 1u, height - 1u);
+    const float tx = x - floor(x);
+    const float ty = y - floor(y);
+    const float4 top = mix(image[y0 * width + x0],
+                           image[y0 * width + x1], tx);
+    const float4 bottom = mix(image[y1 * width + x0],
+                              image[y1 * width + x1], tx);
+    return mix(top, bottom, ty);
+}
+
+kernel void source_image_render(
+    constant GpuSourceImage& source [[buffer(0)]],
+    const device float4* image [[buffer(1)]],
+    device float4* output [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint source_width = source.source.x;
+    const uint source_height = source.source.y;
+    const uint fit = source.source.z;
+    const uint destination_width = source.destination.x;
+    const uint destination_height = source.destination.y;
+    if (gid.x >= destination_width || gid.y >= destination_height) return;
+
+    const float sx = float(destination_width) / float(source_width);
+    const float sy = float(destination_height) / float(source_height);
+    float source_x = 0.0f;
+    float source_y = 0.0f;
+    const bool tile = fit == 3u;
+    const bool transparent_outside = fit == 1u;
+    if (fit == 0u) {
+        source_x = (float(gid.x) + 0.5f) / sx - 0.5f;
+        source_y = (float(gid.y) + 0.5f) / sy - 0.5f;
+    } else if (tile) {
+        source_x = float(gid.x);
+        source_y = float(gid.y);
+    } else {
+        const float fit_scale = fit == 1u ? min(sx, sy) : max(sx, sy);
+        source_x = (float(gid.x) - 0.5f * float(destination_width))
+                       / fit_scale
+                   + 0.5f * float(source_width);
+        source_y = (float(gid.y) - 0.5f * float(destination_height))
+                       / fit_scale
+                   + 0.5f * float(source_height);
+    }
+    output[gid.y * destination_width + gid.x] = sample_starting_image(
+        image, source_x, source_y, source_width, source_height, tile,
+        transparent_outside);
+}
+
+kernel void layer_motion(constant FrameConstants& frame [[buffer(0)]],
+                         constant GpuMotion& motion [[buffer(1)]],
+                         const device float4* input [[buffer(2)]],
+                         device float4* output [[buffer(3)]],
+                         uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    if (gid.x >= width || gid.y >= height) return;
+    const float relative_x = float(gid.x) - motion.source_target.z;
+    const float relative_y = float(gid.y) - motion.source_target.w;
+    const float rotated_x = motion.rotation_scale.x * relative_x
+                            - motion.rotation_scale.y * relative_y;
+    const float rotated_y = motion.rotation_scale.y * relative_x
+                            + motion.rotation_scale.x * relative_y;
+    const float source_x = motion.source_target.x
+                           + rotated_x / motion.rotation_scale.z;
+    const float source_y = motion.source_target.y
+                           + rotated_y / motion.rotation_scale.z;
+    if (!isfinite(source_x) || !isfinite(source_y)
+        || source_x <= -1.0f || source_y <= -1.0f
+        || source_x >= float(width) || source_y >= float(height)) {
+        output[gid.y * width + gid.x] = float4(0.0f);
+        return;
+    }
+    output[gid.y * width + gid.x] = sample_bilinear(
+        input, source_x, source_y, width, height, 0u);
 }
 
 float4 sample_bilinear_wrapped_x(const device float4* image, float x, float y,

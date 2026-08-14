@@ -223,7 +223,17 @@ float sample_channel(const Image& image, double x, double y,
 bool validate_starting_image_source(const std::string& path,
                                     std::string* error) {
     std::shared_ptr<const Image> decoded;
-    const bool ok = load_cached(path, decoded, nullptr, error);
+    const bool ok = load_starting_image_source(
+        path, decoded, nullptr, error);
+    if (ok && error != nullptr) error->clear();
+    return ok;
+}
+
+bool load_starting_image_source(const std::string& path,
+                                std::shared_ptr<const Image>& image,
+                                const std::atomic_bool* cancel,
+                                std::string* error) {
+    const bool ok = load_cached(path, image, cancel, error);
     if (ok && error != nullptr) error->clear();
     return ok;
 }
@@ -233,7 +243,10 @@ bool render_starting_image(const StartingImageConfig& source,
                            Image& destination, const std::atomic_bool* cancel,
                            std::string* error) {
     std::shared_ptr<const Image> decoded;
-    if (!load_cached(source.path, decoded, cancel, error)) return false;
+    if (!load_starting_image_source(
+            source.path, decoded, cancel, error)) {
+        return false;
+    }
     Image result;
     result.width = destination_width;
     result.height = destination_height;

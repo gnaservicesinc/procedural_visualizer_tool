@@ -8,11 +8,18 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.1.1 and has one source of truth in
+The public product version is now 1.1.2 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.1.2 patch keeps embedded starting-image layers on Metal: the bounded PNG
+decoder supplies a linear-float source buffer, while Stretch, Contain, Cover,
+and Tile fitting run in a dedicated GPU stage. Built-in layer placement,
+rotation, and scale now run on Metal too, so image-driven animated layers do not
+fall straight back to the CPU or fail strict GPU mode. CPU/Metal parity covers
+every image fit and every compact motion path, including their combined path.
 
 The 1.1.1 patch makes the starting-image source flow reachable: **Choose…** and
 **Clear** remain available while the source is disabled, and a separate **Use
@@ -365,9 +372,9 @@ consumers do not inherit minizip requirements.
 | 28 | Draggable/localized effects | Complete | Numbered preview handles edit centers; zero area radius preserves whole-layer behavior and positive radii add feathered local influence. Glow blur and influence radii remain separate. |
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
 | 30 | Per-layer starting palettes | Complete | One or more embedded sRGB source colors through signed-int UI/API indexing, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
-| 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization. |
-| 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling intentionally remains CPU-only. |
-| 33 | Layer starting image | Complete | Embedded PNG layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, CPU rendering, hybrid fallback, cancellation, and seam/render regression coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
+| 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization on both CPU and Metal. |
+| 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, starting-image and built-in motion stages, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling, reusable cubic paths, and particles intentionally remain CPU-only. |
+| 33 | Layer starting image | Complete | Embedded PNG layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, CPU and Metal Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, cancellation, and seam/render/parity coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
 | 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, hybrid fallback, checked arc-length sampling, and seam/round-trip tests cover the feature. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, an authoritative per-layer Swing block, project audio defaults, and a visible layer override live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and a dense multiband/onset/spectral/chroma track through signed-int container/API capacity drive the base clock and independently routable wave/effect/color response. First project import enables the shared profile without creating layer overrides, Energy supplies a visibly dynamic default hue route, and later user choices remain intact. No fixed whole-song BPM clock is used. |
@@ -397,8 +404,9 @@ consumers do not inherit minizip requirements.
 - `src/frame_renderer.cpp` / `src/metal_backend.cpp` / `src/metal_kernels.metal`:
   backend-neutral dispatch, CPU fallback, cached metal-cpp resources and compute
   pipelines, bounded admission, transactional cancellation, and GPU kernels for
-  base generation, ordered effects, analytic surfaces, transforms, and
-  quantization. Non-Apple/disabled builds use `src/metal_backend_stub.cpp`.
+  base generation, starting images, ordered effects, analytic surfaces,
+  transforms, built-in layer motion, and quantization. Non-Apple/disabled
+  builds use `src/metal_backend_stub.cpp`.
 - `src/composite.cpp`: project/layer validation, UUIDs, active-layer clock
   timeline mapping, linear-light blend modes, bounded ordered compositing,
   hybrid CPU/Metal layer pairing, and project frame rendering.
@@ -518,6 +526,18 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-14 1.1.2 patch passed the Qt-enabled Release, C++20, and
+AddressSanitizer plus UndefinedBehaviorSanitizer suites at 21/21 each; leak
+detection alone was disabled because this macOS beta does not support it. A
+focused Clang 22 static-analysis build reported 0 bugs. Strict GPU rendering of
+the supplied 10-layer Potato Fire project completed 243 consecutive 1024 x 1024
+frames before the bounded probe was cancelled, while its CPU use fell from the
+reported roughly eleven cores to roughly one core. The self-contained macOS
+distribution verifier passed over 27 Mach-O files; embedded `pvt-render`
+reported `1.1.2` and passed self-test, deep strict code-sign verification and
+Cocoa smoke passed, and the workflow-shaped ZIP passed integrity and layout
+inspection.
 
 The 2026-08-14 1.1.1 patch passed the complete Qt-enabled Release suite 21/21,
 including the new starting-image chooser reachability regression and native

@@ -1,6 +1,7 @@
 #include "frame_renderer_internal.h"
 
 #include "metal_kernels_source.h"
+#include "source_image.h"
 
 #define METALCPP_SYMBOL_VISIBILITY_HIDDEN
 #define NS_PRIVATE_IMPLEMENTATION
@@ -83,6 +84,16 @@ struct alignas(16) GpuSurface {
     Float4 values;
 };
 
+struct alignas(16) GpuSourceImage {
+    UInt4 source;
+    UInt4 destination;
+};
+
+struct alignas(16) GpuMotion {
+    Float4 source_target;
+    Float4 rotation_scale;
+};
+
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
@@ -91,6 +102,8 @@ static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 64U);
 static_assert(sizeof(GpuSurface) == 32U);
+static_assert(sizeof(GpuSourceImage) == 32U);
+static_assert(sizeof(GpuMotion) == 32U);
 
 bool cancelled(const std::atomic_bool* cancel) {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
@@ -131,6 +144,7 @@ std::string ns_error_text(const NS::Error* error) {
 
 enum class Pipeline : std::size_t {
     Base = 0,
+    SourceImage,
     Coordinate,
     Surface,
     BlockScale,
@@ -139,12 +153,14 @@ enum class Pipeline : std::size_t {
     GlowVertical,
     GlowCombine,
     Transform,
+    Motion,
     Quantize,
     Count
 };
 
 constexpr const char* kPipelineNames[] = {
     "base_render",
+    "source_image_render",
     "coordinate_effect",
     "surface_mapping",
     "block_scale",
@@ -153,6 +169,7 @@ constexpr const char* kPipelineNames[] = {
     "glow_blur_vertical",
     "glow_combine",
     "transform_image",
+    "layer_motion",
     "quantize_image"};
 static_assert(sizeof(kPipelineNames) / sizeof(*kPipelineNames)
               == static_cast<std::size_t>(Pipeline::Count));
@@ -494,6 +511,89 @@ GpuSurface make_surface(const RenderConfig& config,
     return result;
 }
 
+GpuSourceImage make_source_image(const StartingImageConfig& source,
+                                 const Image& image,
+                                 const RenderConfig& config) {
+    GpuSourceImage result;
+    result.source = {
+        static_cast<std::uint32_t>(image.width),
+        static_cast<std::uint32_t>(image.height),
+        static_cast<std::uint32_t>(source.fit), 0U};
+    result.destination = {
+        static_cast<std::uint32_t>(config.width),
+        static_cast<std::uint32_t>(config.height), 0U, 0U};
+    return result;
+}
+
+double triangle_motion(double phase) {
+    constexpr double kPi = 3.141592653589793238462643383279502884;
+    return (2.0 / kPi) * std::asin(std::sin(phase));
+}
+
+GpuMotion make_motion(const RenderConfig& config,
+                      const PreparedFrame& prepared) {
+    constexpr double kPi = 3.141592653589793238462643383279502884;
+    const LayerMotionConfig& motion = config.motion;
+    const double path_time = prepared.loop_phase
+                             + motion.phase_degrees * kPi / 180.0;
+    double path_x = 0.0;
+    double path_y = 0.0;
+    switch (motion.path) {
+        case LayerMotionPath::None:
+            break;
+        case LayerMotionPath::Orbit: {
+            const double orbit = static_cast<double>(motion.cycles_x)
+                                 * path_time;
+            path_x = std::cos(orbit);
+            path_y = std::sin(orbit);
+            break;
+        }
+        case LayerMotionPath::FigureEight:
+            path_x = std::sin(static_cast<double>(motion.cycles_x)
+                              * path_time);
+            path_y = 0.5 * std::sin(static_cast<double>(motion.cycles_y)
+                                    * path_time);
+            break;
+        case LayerMotionPath::Bounce:
+            path_x = triangle_motion(static_cast<double>(motion.cycles_x)
+                                     * path_time);
+            path_y = triangle_motion(static_cast<double>(motion.cycles_y)
+                                         * path_time
+                                     + 0.5 * kPi);
+            break;
+        case LayerMotionPath::Lissajous:
+            path_x = std::sin(static_cast<double>(motion.cycles_x)
+                                  * path_time
+                              + 0.5 * kPi);
+            path_y = std::sin(static_cast<double>(motion.cycles_y)
+                              * path_time);
+            break;
+    }
+    const double width = static_cast<double>(config.width);
+    const double height = static_cast<double>(config.height);
+    const double target_x = motion.center_x * (width - 1.0)
+                            + path_x * motion.travel_x * width;
+    const double target_y = motion.center_y * (height - 1.0)
+                            + path_y * motion.travel_y * height;
+    const double rotation = static_cast<double>(motion.rotations_per_loop)
+                                * prepared.loop_phase
+                            + motion.rotation_offset_degrees * kPi / 180.0;
+    const double scale = std::max(
+        0.05, 1.0 + motion.scale_pulse
+                        * std::sin(static_cast<double>(motion.cycles_y)
+                                   * path_time));
+    GpuMotion result;
+    result.source_target = {
+        static_cast<float>(0.5 * (width - 1.0)),
+        static_cast<float>(0.5 * (height - 1.0)),
+        static_cast<float>(target_x), static_cast<float>(target_y)};
+    result.rotation_scale = {
+        static_cast<float>(std::cos(-rotation)),
+        static_cast<float>(std::sin(-rotation)),
+        static_cast<float>(scale), 0.0F};
+    return result;
+}
+
 bool surface_has_work(const SurfaceConfig& surface) {
     if (!surface.enabled) return false;
     if (surface.mapping != SurfaceMapping::Plane) {
@@ -506,6 +606,15 @@ bool surface_has_work(const SurfaceConfig& surface) {
 bool transform_has_work(const LayerTransformConfig& transform) {
     return transform.flip_horizontal || transform.flip_vertical
            || transform.mirror != MirrorMode::None;
+}
+
+bool motion_has_work(const LayerMotionConfig& motion) {
+    if (!motion.enabled) return false;
+    return motion.path != LayerMotionPath::None
+           || std::fabs(motion.center_x - 0.5) > 1.0e-12
+           || std::fabs(motion.center_y - 0.5) > 1.0e-12
+           || motion.rotations_per_loop != 0
+           || motion.scale_pulse > 1.0e-12;
 }
 
 } // namespace
@@ -524,12 +633,6 @@ bool metal_backend_available(std::string* device_name,
 
 bool metal_backend_supports(const RenderConfig& config,
                             std::string* reason) {
-    if (config.starting_image.enabled) {
-        if (reason != nullptr) {
-            *reason = "Starting-image layers currently decode and sample on the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
-        }
-        return false;
-    }
     const bool bound_path = config.motion.custom_path.enabled
         || std::any_of(config.waves.begin(), config.waves.end(),
                        [](const WaveConfig& wave) {
@@ -549,17 +652,6 @@ bool metal_backend_supports(const RenderConfig& config,
         && config.surface.mapping == SurfaceMapping::CustomObj) {
         if (reason != nullptr) {
             *reason = "The strict GPU backend does not rasterize custom OBJ surfaces; use CPU + GPU for automatic CPU fallback.";
-        }
-        return false;
-    }
-    if (config.motion.enabled
-        && (config.motion.path != LayerMotionPath::None
-            || config.motion.rotations_per_loop != 0
-            || config.motion.scale_pulse > 0.0
-            || std::fabs(config.motion.center_x - 0.5) > 1.0e-12
-            || std::fabs(config.motion.center_y - 0.5) > 1.0e-12)) {
-        if (reason != nullptr) {
-            *reason = "Animated layer motion currently uses the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
         }
         return false;
     }
@@ -592,6 +684,26 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     MetalContext& context = metal_context();
     if (!context.ready()) return fail(error, context.status());
 
+    std::shared_ptr<const Image> starting_image;
+    std::size_t starting_image_bytes = 0U;
+    if (config.starting_image.enabled) {
+        if (!load_starting_image_source(
+                config.starting_image.path, starting_image, cancel, error)) {
+            return false;
+        }
+        if (!starting_image || starting_image->width <= 0
+            || starting_image->height <= 0
+            || starting_image->pixels.empty()) {
+            return fail(error,
+                        "The decoded starting image is empty or invalid.");
+        }
+        if (starting_image->pixels.size()
+            > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
+            return fail(error, "The Metal starting-image buffer overflowed.");
+        }
+        starting_image_bytes = starting_image->pixels.size() * sizeof(float);
+    }
+
     const std::size_t pixel_count = static_cast<std::size_t>(config.width)
                                     * static_cast<std::size_t>(config.height);
     if (pixel_count > std::numeric_limits<std::size_t>::max()
@@ -602,7 +714,14 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     if (frame_bytes > std::numeric_limits<std::size_t>::max() / 3U) {
         return fail(error, "Metal working buffer size overflowed.");
     }
-    const std::size_t working_bytes = frame_bytes * 3U;
+    const std::size_t frame_working_bytes = frame_bytes * 3U;
+    if (starting_image_bytes
+        > std::numeric_limits<std::size_t>::max() - frame_working_bytes) {
+        return fail(error,
+                    "The Metal working buffers and starting image overflowed.");
+    }
+    const std::size_t working_bytes = frame_working_bytes
+                                      + starting_image_bytes;
     // Reserve no more than three quarters of the device's advisory working set
     // across all callers. Input arrays are tiny and the remaining quarter also
     // leaves the driver and the rest of the application breathing room.
@@ -616,7 +735,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                                          : static_cast<std::size_t>(recommended_budget);
     if (memory_budget != 0U && working_bytes > memory_budget) {
         return fail(error,
-                    "This Metal frame's three working buffers would exceed the bounded GPU working-set budget.");
+                    "This Metal frame's working buffers and source image would exceed the bounded GPU working-set budget.");
     }
     AdmissionPermit permit(options.maximum_gpu_frames_in_flight,
                            working_bytes, memory_budget, cancel);
@@ -634,10 +753,16 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     auto wave_buffer = make_input_buffer(context.device(), waves);
     auto swing_buffer = make_input_buffer(context.device(), swings);
     auto palette_buffer = make_input_buffer(context.device(), palette);
+    MetalPtr<MTL::Buffer> starting_image_buffer;
+    if (starting_image) {
+        starting_image_buffer = make_input_buffer(
+            context.device(), starting_image->pixels);
+    }
     auto first = make_frame_buffer(context.device(), frame_bytes);
     auto second = make_frame_buffer(context.device(), frame_bytes);
     auto auxiliary = make_frame_buffer(context.device(), frame_bytes);
     if (!wave_buffer || !swing_buffer || !palette_buffer
+        || (starting_image && !starting_image_buffer)
         || !first || !second || !auxiliary) {
         return fail(error,
                     "Metal could not allocate its bounded shared frame buffers.");
@@ -663,14 +788,26 @@ bool render_prepared_frame_metal(const RenderConfig& config,
              + static_cast<std::uint64_t>(config.block_size) - 1U)
             / static_cast<std::uint64_t>(config.block_size)), 1U);
 
-    encode_grid(command_buffer, context.pipeline(Pipeline::Base), block_grid,
-                [&](MTL::ComputeCommandEncoder* encoder) {
-                    encoder->setBytes(&constants, sizeof(constants), 0U);
-                    encoder->setBuffer(wave_buffer.get(), 0U, 1U);
-                    encoder->setBuffer(swing_buffer.get(), 0U, 2U);
-                    encoder->setBuffer(palette_buffer.get(), 0U, 3U);
-                    encoder->setBuffer(current, 0U, 4U);
-                });
+    if (starting_image) {
+        const GpuSourceImage source = make_source_image(
+            config.starting_image, *starting_image, config);
+        encode_grid(command_buffer,
+                    context.pipeline(Pipeline::SourceImage), pixel_grid,
+                    [&](MTL::ComputeCommandEncoder* encoder) {
+                        encoder->setBytes(&source, sizeof(source), 0U);
+                        encoder->setBuffer(starting_image_buffer.get(), 0U, 1U);
+                        encoder->setBuffer(current, 0U, 2U);
+                    });
+    } else {
+        encode_grid(command_buffer, context.pipeline(Pipeline::Base), block_grid,
+                    [&](MTL::ComputeCommandEncoder* encoder) {
+                        encoder->setBytes(&constants, sizeof(constants), 0U);
+                        encoder->setBuffer(wave_buffer.get(), 0U, 1U);
+                        encoder->setBuffer(swing_buffer.get(), 0U, 2U);
+                        encoder->setBuffer(palette_buffer.get(), 0U, 3U);
+                        encoder->setBuffer(current, 0U, 4U);
+                    });
+    }
 
     const auto encode_effect_stage = [&](EffectSpace stage) {
         for (const PreparedEffect& prepared_effect : prepared.effects) {
@@ -755,6 +892,18 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                         encoder->setBytes(&constants, sizeof(constants), 0U);
                         encoder->setBuffer(current, 0U, 1U);
                         encoder->setBuffer(scratch, 0U, 2U);
+                    });
+        std::swap(current, scratch);
+    }
+    if (motion_has_work(config.motion)) {
+        const GpuMotion motion = make_motion(config, prepared);
+        encode_grid(command_buffer, context.pipeline(Pipeline::Motion),
+                    pixel_grid,
+                    [&](MTL::ComputeCommandEncoder* encoder) {
+                        encoder->setBytes(&constants, sizeof(constants), 0U);
+                        encoder->setBytes(&motion, sizeof(motion), 1U);
+                        encoder->setBuffer(current, 0U, 2U);
+                        encoder->setBuffer(scratch, 0U, 3U);
                     });
         std::swap(current, scratch);
     }

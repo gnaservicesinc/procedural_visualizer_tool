@@ -421,7 +421,9 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This patch keeps the starting-image Choose and Clear controls available while the source is disabled, with a separate checkbox controlling whether the embedded PNG is used. Automated Cocoa smoke now guards against this circular prerequisite.
+          This patch keeps embedded PNG layers on Metal. Stretch, Contain, Cover, and Tile fitting now run in a dedicated GPU source stage, and built-in layer placement, rotation, and scale run on Metal as well. Strict GPU mode therefore supports starting-image animation instead of rejecting it, while the CPU reference path and bounded decoded-image cache remain intact. CPU/Metal regression tests cover every image fit and compact motion path, including the combined path used by real projects.
+
+          Starting-image Choose and Clear controls remain available while the source is disabled, with a separate checkbox controlling whether the embedded PNG is used. Automated Cocoa smoke guards against this circular prerequisite.
 
           This release adds full-resolution, full-quality export of the current timeline frame; per-layer Alpha Over and Alpha Under compositing; and flat layer groups with visibility, preview solo, lock/unlock, rename, membership, safe removal, and whole-folder reordering. Project-version manifest format 5 preserves these settings while formats 1 through 4 continue to load as ungrouped Alpha Over layers.
 

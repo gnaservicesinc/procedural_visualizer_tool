@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.1.1**. The version is read from `VERSION` by every
+Current product version: **1.1.2**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -411,8 +411,10 @@ The CLI and GUI default to **CPU + GPU**. A multi-layer frame pairs one CPU lane
 with one Metal lane when both layers are supported, while single layers and any
 remaining supported layer use Metal. CPU rendering remains the reference and is
 used automatically when Metal is unavailable, a Metal operation fails, or a
-custom OBJ surface requires the bounded CPU rasterizer. **GPU (Strict)** never
-hides such a fallback: every contributing layer must use Metal, while final
+custom OBJ surface, reusable cubic path, or particle field requires the bounded
+CPU renderer. Starting-image fitting and built-in layer placement, rotation,
+and scale run on Metal. **GPU (Strict)** never hides a fallback: every
+contributing layer must use Metal, while final
 linear-light project compositing remains on the CPU. The installed library's
 legacy overloads retain CPU as their compatibility default; callers opt into
 acceleration with
@@ -420,8 +422,10 @@ acceleration with
 
 Metal compiles the embedded shader source once per process, caches its command
 queue and compute pipelines, and admits at most two frames by default before
-allocating their three shared float-RGBA working buffers. An explicit admission
-bound may use the full signed-int API range.
+allocating their three shared float-RGBA working buffers. Starting PNGs retain
+the bounded decoded cache and are uploaded as an additional read-only source
+buffer for GPU fitting. An explicit admission bound may use the full signed-int
+API range.
 The device's recommended working-set size and the existing aggregate sequence
 memory budget provide additional bounds. Cancellation prevents queued work from
 being submitted and keeps the destination transactional. A command buffer that

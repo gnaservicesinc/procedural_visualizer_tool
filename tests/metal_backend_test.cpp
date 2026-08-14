@@ -142,6 +142,80 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
                 "base/palette/alpha/transform/quantization");
 
+    // Starting PNGs are decoded once on the host, then fitted and processed
+    // by Metal. Every fit mode must retain the reference renderer's linear
+    // RGBA sampling, including contain transparency and tiled edges.
+    pvt::RenderConfig source_image = parity_config();
+    source_image.width = 73;
+    source_image.height = 51;
+    source_image.block_size = 1;
+    source_image.starting_image.enabled = true;
+    source_image.starting_image.path =
+        PVT_TEST_SOURCE_DIR "/icon/icon.png";
+    source_image.waves.clear();
+    source_image.swings.clear();
+    source_image.effects.clear();
+    source_image.displacement_enabled = false;
+    source_image.lighting_enabled = false;
+    source_image.spiral_enabled = false;
+    source_image.wall_reflection_enabled = false;
+    source_image.transform = {};
+    source_image.quantization.enabled = false;
+    for (const pvt::StartingImageFit fit : {
+             pvt::StartingImageFit::Stretch,
+             pvt::StartingImageFit::Contain,
+             pvt::StartingImageFit::Cover,
+             pvt::StartingImageFit::Tile}) {
+        source_image.starting_image.fit = fit;
+        CHECK(pvt::render_frame_at_phase(source_image, 0.31, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("starting image ")
+                                  + pvt::starting_image_fit_name(fit);
+        check_close(cpu, gpu, 0.003, 0.00008, 0.003, 0.00008,
+                    label.c_str());
+    }
+
+    // Built-in placement, rotation, and scale are a downstream image stage.
+    // Exercise them with a starting source so strict GPU rendering covers the
+    // same combination used by artist projects instead of only procedural art.
+    source_image.starting_image.fit = pvt::StartingImageFit::Cover;
+    source_image.motion.enabled = true;
+    source_image.motion.center_x = 0.37;
+    source_image.motion.center_y = 0.61;
+    source_image.motion.travel_x = 0.22;
+    source_image.motion.travel_y = 0.17;
+    source_image.motion.cycles_x = 3;
+    source_image.motion.cycles_y = 5;
+    source_image.motion.phase_degrees = 19.0;
+    source_image.motion.rotations_per_loop = 2;
+    source_image.motion.rotation_offset_degrees = 11.0;
+    source_image.motion.scale_pulse = 0.35;
+    for (const pvt::LayerMotionPath path : {
+             pvt::LayerMotionPath::None,
+             pvt::LayerMotionPath::Orbit,
+             pvt::LayerMotionPath::FigureEight,
+             pvt::LayerMotionPath::Bounce,
+             pvt::LayerMotionPath::Lissajous}) {
+        source_image.motion.path = path;
+        CHECK(pvt::render_frame_at_phase(source_image, 0.31, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("starting image and motion ")
+                                  + pvt::layer_motion_path_name(path);
+        check_close(cpu, gpu, 0.035, 0.0015, 0.02, 0.0008,
+                    label.c_str());
+    }
+
+    pvt::Image source_sentinel = cpu;
+    source_image.starting_image.path =
+        PVT_TEST_SOURCE_DIR "/icon/missing-starting-image.png";
+    CHECK(!pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
+                                      source_sentinel, nullptr, &error));
+    CHECK(source_sentinel.pixels == cpu.pixels);
+
     // A held shared clock must not leak into free wave timing on either
     // backend. This exercises the independent phase carried in Metal's frame
     // constants rather than only testing direct-phase renders.
