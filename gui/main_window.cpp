@@ -2276,8 +2276,11 @@ QWidget* MainWindow::createLayerSettingsPage() {
     layout->addWidget(rhythm_group);
 
     starting_image_group_ = new QGroupBox(tr("Starting image source"));
-    starting_image_group_->setCheckable(true);
     auto* source_form = new QFormLayout(starting_image_group_);
+    starting_image_enabled_ = new QCheckBox(tr("Use embedded PNG as layer source"));
+    starting_image_enabled_->setObjectName(
+        QStringLiteral("startingImageEnabled"));
+    source_form->addRow(starting_image_enabled_);
     auto* source_row = new QWidget;
     auto* source_row_layout = new QHBoxLayout(source_row);
     source_row_layout->setContentsMargins(0, 0, 0, 0);
@@ -4308,8 +4311,8 @@ void MainWindow::connectEditors() {
             [this] { applyGlobalEditor(motion_group_); });
     connect(motion_paths_edit_, &QPushButton::clicked, this,
             &MainWindow::showMotionPathEditor);
-    connect(starting_image_group_, &QGroupBox::toggled, this,
-            [this] { applyGlobalEditor(starting_image_group_); });
+    connect(starting_image_enabled_, &QCheckBox::toggled, this,
+            [this] { applyGlobalEditor(starting_image_enabled_); });
     for (auto* editor : {surface_mapping_, quantization_mode_, bit_depth_, dither_method_,
                          transform_mirror_, motion_path_, starting_image_fit_}) {
         connect(editor, &QComboBox::currentIndexChanged, this,
@@ -5383,8 +5386,8 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
     document_->project = project_;
     document_->dirty = true;
     {
-        const QSignalBlocker group_blocker(starting_image_group_);
-        starting_image_group_->setChecked(config_.starting_image.enabled);
+        const QSignalBlocker enabled_blocker(starting_image_enabled_);
+        starting_image_enabled_->setChecked(config_.starting_image.enabled);
         starting_image_path_->setText(
             QString::fromStdString(config_.starting_image.basename));
     }
@@ -6976,7 +6979,7 @@ void MainWindow::loadGlobalEditors() {
     wall_mix_->setValue(config_.wall_mix);
     hue_cycles_->setValue(config_.hue_cycles);
     saturation_->setValue(config_.saturation);
-    starting_image_group_->setChecked(config_.starting_image.enabled);
+    starting_image_enabled_->setChecked(config_.starting_image.enabled);
     starting_image_path_->setText(
         QString::fromStdString(config_.starting_image.basename));
     select_enum(starting_image_fit_, config_.starting_image.fit);
@@ -7685,15 +7688,15 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.hue_cycles = hue_cycles_->value();
     } else if (changed_editor == saturation_) {
         config_.saturation = saturation_->value();
-    } else if (changed_editor == starting_image_group_) {
-        if (starting_image_group_->isChecked()
+    } else if (changed_editor == starting_image_enabled_) {
+        if (starting_image_enabled_->isChecked()
             && config_.starting_image.path.empty()) {
-            const QSignalBlocker blocker(starting_image_group_);
-            starting_image_group_->setChecked(false);
+            const QSignalBlocker blocker(starting_image_enabled_);
+            starting_image_enabled_->setChecked(false);
             status_->setText(tr("Choose a PNG before enabling the starting image."));
             return;
         }
-        config_.starting_image.enabled = starting_image_group_->isChecked();
+        config_.starting_image.enabled = starting_image_enabled_->isChecked();
         if (config_.starting_image.enabled) config_.output.write_alpha = true;
     } else if (changed_editor == starting_image_fit_) {
         config_.starting_image.fit = static_cast<pvt::StartingImageFit>(
@@ -9331,6 +9334,20 @@ bool MainWindow::runSmokeChecks(QString* error) {
             *error = tr("A relative dot output directory resolved to filesystem root.");
         }
         return false;
+    }
+    {
+        const QSignalBlocker enabled_blocker(starting_image_enabled_);
+        const bool was_checked = starting_image_enabled_->isChecked();
+        starting_image_enabled_->setChecked(false);
+        const bool source_can_be_chosen = !starting_image_group_->isCheckable()
+                                          && starting_image_browse_->isEnabled();
+        starting_image_enabled_->setChecked(was_checked);
+        if (!source_can_be_chosen) {
+            if (error != nullptr) {
+                *error = tr("The starting-image chooser became unreachable while its source was disabled.");
+            }
+            return false;
+        }
     }
 
     const auto original = config_;

@@ -8,11 +8,16 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.1.0 and has one source of truth in
+The public product version is now 1.1.1 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.1.1 patch makes the starting-image source flow reachable: **Choose…** and
+**Clear** remain available while the source is disabled, and a separate **Use
+embedded PNG as layer source** checkbox controls rendering after import. Cocoa
+GUI smoke now verifies that disabling the source cannot disable its chooser.
 
 The 1.1.0 feature pass adds a full-quality **Export Current Frame** command. It
 captures the current timeline position, renders at the authored canvas size
@@ -513,6 +518,12 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-14 1.1.1 patch passed the complete Qt-enabled Release suite 21/21,
+including the new starting-image chooser reachability regression and native
+Cocoa GUI smoke. The host's macOS 27 beta SDK emitted `@rpath/libc++.1.dylib`;
+normalizing that beta-only load command to the system libc++ allowed the fresh
+build to execute. GitHub's native package matrix remains the release gate.
 
 The 2026-08-14 1.1.0 feature pass passed the Qt-enabled Release suite
 21/21, the C++20 compatibility suite 20/20, and the AddressSanitizer plus

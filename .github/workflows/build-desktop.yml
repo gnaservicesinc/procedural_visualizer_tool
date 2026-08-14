@@ -421,6 +421,8 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          This patch keeps the starting-image Choose and Clear controls available while the source is disabled, with a separate checkbox controlling whether the embedded PNG is used. Automated Cocoa smoke now guards against this circular prerequisite.
+
           This release adds full-resolution, full-quality export of the current timeline frame; per-layer Alpha Over and Alpha Under compositing; and flat layer groups with visibility, preview solo, lock/unlock, rename, membership, safe removal, and whole-folder reordering. Project-version manifest format 5 preserves these settings while formats 1 through 4 continue to load as ungrouped Alpha Over layers.
 
           A capacity audit also removes arbitrary OBJ and authoring ceilings. OBJ files, records, polygons, meshes, and transparent depth layers now stop only at their concrete index, address-space, allocation, or caller-supplied budget boundary. Canvas/frame and collection counts, project history, metadata/text, attachments, source images, music-analysis tracks, undo history, and worker admission likewise use real representation or platform limits. Checked arithmetic, transactional parsing and writes, portable filename components, codec domains, and hostile-archive protections remain enforced.

@@ -556,6 +556,7 @@ private:
     QDoubleSpinBox* surface_lighting_ = nullptr;
     QPushButton* surface_obj_browse_ = nullptr;
     QGroupBox* starting_image_group_ = nullptr;
+    QCheckBox* starting_image_enabled_ = nullptr;
     QLineEdit* starting_image_path_ = nullptr;
     QComboBox* starting_image_fit_ = nullptr;
     QPushButton* starting_image_browse_ = nullptr;
