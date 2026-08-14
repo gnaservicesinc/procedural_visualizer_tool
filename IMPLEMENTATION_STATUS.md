@@ -531,8 +531,8 @@ The 2026-08-14 1.1.2 patch passed the Qt-enabled Release, C++20, and
 AddressSanitizer plus UndefinedBehaviorSanitizer suites at 21/21 each; leak
 detection alone was disabled because this macOS beta does not support it. A
 focused Clang 22 static-analysis build reported 0 bugs. Strict GPU rendering of
-the supplied 10-layer Potato Fire project completed 243 consecutive 1024 x 1024
-frames before the bounded probe was cancelled, while its CPU use fell from the
+the supplied 10-layer Potato Fire project completed 242 consecutive 1024 x 1024
+frames before the bounded probe cancelled the next frame, while its CPU use fell from the
 reported roughly eleven cores to roughly one core. The self-contained macOS
 distribution verifier passed over 27 Mach-O files; embedded `pvt-render`
 reported `1.1.2` and passed self-test, deep strict code-sign verification and
