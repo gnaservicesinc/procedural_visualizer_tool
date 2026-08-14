@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.0.0-RC2**. The version is read from `VERSION` by every
+Current product version: **1.0.0-RC3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -126,8 +126,10 @@ credentials.
 - Any number of waves from zero through the validated safety limit, with add,
   duplicate, remove, enable, and reorder controls.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
-  cycles per loop, propagation direction, and **Default / Respond / Ignore**
-  audio routing for synchronized waves.
+  cycles per loop, propagation direction, and per-wave audio-feature override
+  for synchronized waves. **Default** inherits the effective profile; Beat,
+  Onset, Energy, Bass, Midrange, Treble, spectral, and tonal sources can be
+  selected directly.
 - A project-wide base clock with Default, frame-interval, elapsed-time, musical
   meter, and analyzed-music modes. Pulse interpolation can hold, move linearly,
   or ease with smoothstep; direction, phase, beat offset, and exact/fit-to-
@@ -142,9 +144,10 @@ credentials.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
   glow, animated block scaling, and a deterministic spark/trail particle field.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
-  A synchronized effect can inherit its effective audio category, explicitly
-  respond even when that category default is off, or ignore audio without
-  changing its authored intensity.
+  A synchronized effect can inherit its effective audio category and source,
+  override that source with any analyzed feature, force the profile feature on
+  even when the category default is off, or ignore audio without changing its
+  authored intensity.
   Each effect explicitly runs either in
   **Texture** space before surface wrapping or on the **Mapped object** after
   wrapping and the layer mirror/flip; the latter moves or deforms the rendered
@@ -242,6 +245,9 @@ main toolbar. File dialogs remember their last usable folder and otherwise
 begin in the home folder. Dense editors use consistent spacing, frameless
 scrolling, scrollable document tabs, and field-specific tooltips that explain
 units, stage order, inheritance, destructive boundaries, and non-obvious ranges.
+The Project & Layers panel can be floated or docked by dragging/double-clicking
+its title bar; **View > Restore Project & Layers Panel** always shows it and
+redocks it on the right. Off-screen floating geometry is repaired on launch.
 Checkable optional blocks collapse to compact headers when off, keeping the
 Synchronization workspace readable without hiding available controls.
 
@@ -269,9 +275,11 @@ The default clock preserves the original behavior: the renderer samples `N`
 frames over the half-open interval `[0, 1)` and omits the duplicated endpoint.
 Synchronized waves/effects use the shared phase after swing modulation;
 unsynchronized items keep their own periodic cycle count and phase. Within a
-synchronized item, **Default** follows the effective project/layer category,
-**Respond** opts in, and **Ignore** opts out. The profile master and its
-Synchronized-only policy remain authoritative safety gates.
+synchronized item, **Default** follows both the effective project/layer
+category and source. Selecting Beat, Energy, or another feature opts the item
+in and overrides the source. Advanced choices can force the profile source on
+or ignore audio. The profile master and its Synchronized-only policy remain
+authoritative safety gates.
 
 The Clock block can instead define calculated pulse/keyframe positions:
 
@@ -608,15 +616,17 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-7 remain importable;
-current explicit legacy output is setup format 8. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-8 remain importable;
+current explicit legacy output is setup format 9. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
 motion, and particle settings. Format 7 adds starting images and reusable cubic
 motion paths. Format 8 adds project-wide audio-response defaults, explicit
 layer inheritance, and nullable per-wave/per-effect routing. Versions 1-7 keep
-their historical layer-authoritative behavior on import. Older files receive neutral compatibility
+their historical layer-authoritative behavior on import. Format 9 adds explicit
+per-wave/per-effect feature-source overrides while retaining format 8's force/
+ignore meanings. Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.

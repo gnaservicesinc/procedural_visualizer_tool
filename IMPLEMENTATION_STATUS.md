@@ -8,11 +8,19 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.0.0-RC2 and has one source of truth in
+The public product version is now 1.0.0-RC3 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+RC3 makes the synchronized wave/effect Audio response control a real source
+override: Default inherits the effective profile, direct Beat/Energy and other
+feature choices opt the item in, and the prior format-8 force/ignore meanings
+remain available and migrate exactly. Setup format 9 and layer format 7 carry
+the richer selector. The floating Project & Layers panel can now be redocked by
+double-clicking its title or recovered unconditionally through View; invalid or
+off-screen saved dock geometry is repaired on launch.
 
 The RC1 persistence pass fixes the split-render-output v1 migration boundary
 that incorrectly required `paths.count` in pre-path bundles. Setup/layer/output
@@ -185,9 +193,11 @@ duplicate/reorder controls, session Solo, version list/diff/current/revert tools
 and application-wide undo/redo. Synchronization owns the global Clock plus the
 selected layer's optional local Clock and master Swing, plus visible project-wide
 Audio Response defaults and an optional active-layer override. Synchronized
-waves and effects expose tri-state Default/Respond/Ignore routing, an effective
-profile summary makes inheritance explicit, and a one-click copy action creates
-a layer override from the project profile. Dense panels now use consistent
+waves and effects can inherit the effective profile or override it with Beat,
+Onset, Energy, spectral, tonal, and other analyzed sources; advanced force and
+ignore choices preserve format-8 behavior. An effective profile summary makes
+inheritance explicit, and a one-click copy action creates a layer override from
+the project profile. Dense panels now use consistent
 spacing, frameless scrolling, scrollable document tabs, and explanatory
 tooltips for non-obvious behavior.
 Optional checkable blocks collapse to compact headers while disabled, keeping
@@ -261,7 +271,7 @@ consumers do not inherit minizip requirements.
 | # | Request | Status | Result |
 |---|---|---|---|
 | 1 | More seamlessly looping effects | Complete | All animated controls use integer cycles over the half-open loop interval. |
-| 2 | Optional synchronization per wave/effect | Complete | Each wave and effect has a `synchronized` toggle; free clocks are independent but still periodic. Synchronized items additionally expose Default/Respond/Ignore audio routing. |
+| 2 | Optional synchronization per wave/effect | Complete | Each wave and effect has a `synchronized` toggle; free clocks are independent but still periodic. Synchronized items can inherit the profile or choose a specific audio feature, force the profile feature, or ignore audio. |
 | 3 | Toggle/add/remove/reorder any quantity | Complete | Bounded dynamic wave, swing, and effect collections support zero through their safety limits in the API, CLI, and GUI. |
 | 4 | Direction from horizontal through radial to vertical | Complete | Continuous `0.0` horizontal, `0.5` radial/default, `1.0` vertical control. |
 | 4a-f | Endless zoom, ripple, shake, flag wave, glow, block scale | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses visible straight-alpha-safe HDR bloom; Block Scale animates smooth or stepped pixel grouping at its stack position. |
@@ -274,7 +284,7 @@ consumers do not inherit minizip requirements.
 | 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave/swing/effect center handles and visible local-radius rings, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, background export, consistent dense-panel layout, and meaningful tooltips for non-obvious controls. |
 | 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
 | 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces composite entry/exit samples. |
-| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v8, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
+| 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v9, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
 | 14 | Randomize stack values or composition | Complete | Confirmed Settings-menu actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items; they are no longer exposed on the main toolbar. |
 | 15 | Stable paths, dialogs, and playback | Complete | Relative paths are anchored to a stable launch directory, first file dialogs use home then remember their last location, completed previews advance during Play even under timer/render overlap, Space owns preview play/pause outside text editors, and audible global/layer Music-clock tracks are synchronized and mixed. |
 | 16 | Named projects and default filenames | Complete | Semantic name appears in the title and a portable sanitizer supplies the initial `.zip`. Saved-project rename choices either preserve that path or create a current-state-only independent project with fresh identities, then open it or stay in the original. |
@@ -283,7 +293,7 @@ consumers do not inherit minizip requirements.
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
 | 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, field-level recovery/preservation, external-change promotion, semantic diff, Make Current, and revert-as-new preserve recoverability. |
-| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v7 imports remain supported; setup v8 adds hierarchical and nullable audio routing while preserving the exact layer-authoritative behavior of v1-v7. Only explicit one-layer `--save-legacy` writes `.pvt`. |
+| 22 | Legacy compatibility without overwrite | Complete | Setup v1-v8 imports remain supported; setup v8 adds hierarchical/nullable audio routing and setup v9 adds explicit per-item feature overrides while preserving every older meaning. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes the step limit, rendering backend, and complete current-project default template, while the hard 128 MiB history budget and all UI preferences live in per-user storage outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
 | 25 | Saved-project rename workflow | Complete in Qt GUI | Keep the existing filename, Save As/open an independent version-0 copy, save that copy and stay with the old name restored, or Cancel. Copy creation is no-clobber and the open-document swap is transactional. CLI name edits remain ordinary semantic renames. |
@@ -331,7 +341,7 @@ consumers do not inherit minizip requirements.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
   compression, dithering, collision preflight, ordered atomic installation,
   serialized progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v8 codec and split
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v9 codec and split
   per-layer/global bundle records with transactional legacy file I/O.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
   metadata, semantic history operations, readable/direct-editable attachment storage,
@@ -439,20 +449,18 @@ consumers do not inherit minizip requirements.
 
 ## Validation record
 
-The 2026-08-13 RC2 audio-routing pass passed the focused Qt-enabled Release
-suite 7/7 and the focused AddressSanitizer plus UndefinedBehaviorSanitizer suite
-5/5. Coverage includes project/layer inheritance, per-wave and per-effect
-Default/Respond/Ignore routing, missing/null and v1-v7 migration, split bundle
-codecs, scripted CLI override/inherit switches, Undo, first-music-import policy,
-and GUI construction/tooltips. Offscreen and native Cocoa GUI smoke tests passed;
-the native Synchronization capture also verified the collapsed pro-tool layout.
-The restricted host suite passed 20/21; its only failure was the ProRes path
-reporting `Cannot Encode` while macOS encoder services were sandboxed. The same
-native-video test passed 1/1 with normal VideoToolbox access, so all 21 tests
-have a passing result in their required environment. Focused core, bundle,
-Metal-parity, CLI, and GUI coverage remained clean. The self-contained RC2
-distribution verifier passed over 27 Mach-O files, its embedded `pvt-render`
-reported `1.0.0-RC2` and passed self-test, deep strict code-sign verification
+The 2026-08-13 RC3 correction passed the focused AddressSanitizer plus
+UndefinedBehaviorSanitizer suite 4/4 and the Qt-enabled Release suite in its
+required environments. Coverage renders explicit per-wave/per-effect feature
+overrides through both CPU and prepared Metal data, round-trips setup v9/layer
+v7 records, preserves setup v8/layer v6 force/ignore values, and restores a
+floating or hidden Project & Layers panel. Offscreen and native Cocoa GUI smoke
+tests passed. The restricted host suite passed 20/21; its only failure was the
+ProRes path reporting `Cannot Encode` while macOS encoder services were
+sandboxed. The same native-video test passed 1/1 with normal VideoToolbox
+access, so all 21 tests have a passing result in their required environment.
+The self-contained RC3 distribution verifier passed over 27 Mach-O files, its
+embedded `pvt-render` reported `1.0.0-RC3`, deep strict code-sign verification
 passed, and the final staged app passed native Cocoa smoke. `git diff --check`
 passed.
 

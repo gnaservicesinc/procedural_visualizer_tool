@@ -51,6 +51,7 @@
 #include <QRandomGenerator>
 #include <QScrollArea>
 #include <QSaveFile>
+#include <QScreen>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -287,6 +288,48 @@ QSpinBox* integer_editor(int minimum, int maximum) {
 template <typename Enum>
 void add_enum_item(QComboBox* combo, const QString& label, Enum value) {
     combo->addItem(label, static_cast<int>(value));
+}
+
+void populate_audio_response_combo(QComboBox* combo) {
+    const auto add = [combo](const QString& label,
+                             pvt::AudioResponseMode value,
+                             const QString& tooltip) {
+        add_enum_item(combo, label, value);
+        combo->setItemData(combo->count() - 1, tooltip, Qt::ToolTipRole);
+    };
+    add(QObject::tr("Default (use effective profile)"),
+        pvt::AudioResponseMode::Default,
+        QObject::tr("Inherit both the category switch and source from the effective project/layer profile."));
+    add(QObject::tr("Beat"), pvt::AudioResponseMode::Beat,
+        QObject::tr("Respond to the analyzed beat pulse and opt this item in."));
+    add(QObject::tr("Onset"), pvt::AudioResponseMode::Onset,
+        QObject::tr("Respond to detected note and transient attacks and opt this item in."));
+    add(QObject::tr("Energy"), pvt::AudioResponseMode::Energy,
+        QObject::tr("Respond to overall signal energy and opt this item in."));
+    add(QObject::tr("Bass"), pvt::AudioResponseMode::Bass,
+        QObject::tr("Respond to low-frequency energy and opt this item in."));
+    add(QObject::tr("Midrange"), pvt::AudioResponseMode::Midrange,
+        QObject::tr("Respond to midrange energy and opt this item in."));
+    add(QObject::tr("Treble"), pvt::AudioResponseMode::Treble,
+        QObject::tr("Respond to high-frequency energy and opt this item in."));
+    add(QObject::tr("Spectral brightness"),
+        pvt::AudioResponseMode::SpectralCentroid,
+        QObject::tr("Respond to the normalized spectral centroid and opt this item in."));
+    add(QObject::tr("Spectral noisiness"),
+        pvt::AudioResponseMode::SpectralFlatness,
+        QObject::tr("Respond to spectral flatness and opt this item in."));
+    add(QObject::tr("Pitch color (tonality-weighted)"),
+        pvt::AudioResponseMode::ChromaHue,
+        QObject::tr("Respond to pitch-class hue weighted by tonal confidence and opt this item in."));
+    add(QObject::tr("Tonal strength"),
+        pvt::AudioResponseMode::ChromaStrength,
+        QObject::tr("Respond to tonal confidence and opt this item in."));
+    combo->insertSeparator(combo->count());
+    add(QObject::tr("Profile feature (force response)"),
+        pvt::AudioResponseMode::Enabled,
+        QObject::tr("Use the effective profile's source but respond even when its category switch is off."));
+    add(QObject::tr("Ignore audio"), pvt::AudioResponseMode::Disabled,
+        QObject::tr("Keep this item's authored value independent of audio response."));
 }
 
 template <typename Enum>
@@ -1339,12 +1382,7 @@ QWidget* MainWindow::createWavePage() {
     wave_enabled_ = new QCheckBox(tr("Enabled"));
     wave_sync_ = new QCheckBox(tr("Synchronized (optional)"));
     wave_audio_response_ = new QComboBox;
-    add_enum_item(wave_audio_response_, tr("Default (inherit routing)"),
-                  pvt::AudioResponseMode::Default);
-    add_enum_item(wave_audio_response_, tr("Respond"),
-                  pvt::AudioResponseMode::Enabled);
-    add_enum_item(wave_audio_response_, tr("Ignore"),
-                  pvt::AudioResponseMode::Disabled);
+    populate_audio_response_combo(wave_audio_response_);
     wave_x_ = real_editor(-100.0, 200.0, 3, 1.0);
     wave_y_ = real_editor(-100.0, 200.0, 3, 1.0);
     wave_amplitude_ = real_editor(0.0, 10.0);
@@ -1367,7 +1405,7 @@ QWidget* MainWindow::createWavePage() {
     wave_enabled_->setToolTip(tr("Bypasses this wave without deleting or resetting its authored settings."));
     wave_sync_->setToolTip(tr("Uses the layer's swung synchronized clock. Clear it for an independent seamless clock."));
     wave_audio_response_->setToolTip(
-        tr("For synchronized waves: inherit the effective routing, opt this wave in, or opt it out. Missing/null project data is Default."));
+        tr("For synchronized waves, Default inherits both the effective profile's Waves switch and Wave source. Choosing Beat, Energy, or another feature opts this wave in and overrides that source. The final two choices force the profile source on or ignore audio. Missing/null project data is Default."));
     wave_x_->setToolTip(tr("Horizontal wave source position. Values outside 0–100% place the source beyond the canvas."));
     wave_y_->setToolTip(tr("Vertical wave source position. Values outside 0–100% place the source beyond the canvas."));
     wave_amplitude_->setToolTip(tr("Peak contribution of this wave before optional audio modulation."));
@@ -1779,7 +1817,7 @@ QWidget* MainWindow::createSynchronizationPage() {
         QDoubleSpinBox* effect_amount, QCheckBox* color_enabled,
         QComboBox* color_source, QDoubleSpinBox* color_amount) {
         synchronized_only->setToolTip(
-            tr("When enabled, free-running waves/effects ignore audio. Synchronized items can still use their individual Default, Respond, or Ignore choice."));
+            tr("When enabled, free-running waves/effects ignore audio. A synchronized item's Audio response can inherit the profile, select a specific feature, force the profile feature on, or ignore audio."));
         waves_enabled->setToolTip(
             tr("Default routing for wave amplitude. A synchronized wave can override this with its Audio response selector."));
         wave_source->setToolTip(
@@ -2026,12 +2064,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_enabled_ = new QCheckBox(tr("Enabled"));
     effect_sync_ = new QCheckBox(tr("Synchronized (optional)"));
     effect_audio_response_ = new QComboBox;
-    add_enum_item(effect_audio_response_, tr("Default (inherit routing)"),
-                  pvt::AudioResponseMode::Default);
-    add_enum_item(effect_audio_response_, tr("Respond"),
-                  pvt::AudioResponseMode::Enabled);
-    add_enum_item(effect_audio_response_, tr("Ignore"),
-                  pvt::AudioResponseMode::Disabled);
+    populate_audio_response_combo(effect_audio_response_);
     effect_type_ = new QComboBox;
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
@@ -2090,7 +2123,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_sync_->setToolTip(
         tr("Uses the active synchronized/swung clock. Clear it for an independent seamless effect clock."));
     effect_audio_response_->setToolTip(
-        tr("For synchronized effects: inherit the effective category default, force this effect to respond, or make it ignore audio. Missing/null data is Default."));
+        tr("For synchronized effects, Default inherits both the effective profile's Effects switch and Effect source. Choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force the profile source on or ignore audio. Missing/null project data is Default."));
     effect_type_->setToolTip(
         tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
     effect_space_->setToolTip(
@@ -2787,6 +2820,8 @@ void MainWindow::createLayerDock() {
     layers_dock_->setObjectName(QStringLiteral("projectLayersDock"));
     layers_dock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     layers_dock_->setMinimumWidth(250);
+    layers_dock_->setToolTip(
+        tr("Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked."));
 
     auto* contents = new QWidget;
     auto* layout = new QVBoxLayout(contents);
@@ -2867,6 +2902,14 @@ void MainWindow::createLayerDock() {
 
     layers_dock_->setWidget(contents);
     addDockWidget(Qt::RightDockWidgetArea, layers_dock_);
+
+    connect(layers_dock_, &QDockWidget::topLevelChanged, this,
+            [this](bool floating) {
+                if (floating && status_ != nullptr) {
+                    status_->setText(
+                        tr("Project & Layers is floating. Double-click its title bar to dock it, or use View > Restore Project & Layers Panel."));
+                }
+            });
 
     connect(layer_list_, &QListWidget::currentRowChanged, this, [this](int row) {
         if (populating_ || row < 0) {
@@ -2974,6 +3017,21 @@ void MainWindow::createLayerDock() {
     connect(remove, &QPushButton::clicked, this, &MainWindow::removeLayer);
     connect(up, &QPushButton::clicked, this, [this] { moveActiveLayer(1); });
     connect(down, &QPushButton::clicked, this, [this] { moveActiveLayer(-1); });
+}
+
+void MainWindow::restoreLayersDock(bool makeVisible) {
+    if (layers_dock_ == nullptr) return;
+    layers_dock_->setFloating(false);
+    addDockWidget(Qt::RightDockWidgetArea, layers_dock_);
+    if (makeVisible) {
+        layers_dock_->show();
+        layers_dock_->raise();
+        if (status_ != nullptr) {
+            status_->setText(tr("Project & Layers restored to the right side."));
+        }
+    } else {
+        layers_dock_->hide();
+    }
 }
 
 QWidget* MainWindow::createTimeline() {
@@ -3102,6 +3160,7 @@ void MainWindow::createToolbar() {
     auto* edit_menu = menuBar()->addMenu(tr("&Edit"));
     edit_menu->setObjectName(QStringLiteral("editMenu"));
     auto* view_menu = menuBar()->addMenu(tr("&View"));
+    view_menu->setObjectName(QStringLiteral("viewMenu"));
     auto* settings_menu = menuBar()->addMenu(tr("&Settings"));
     settings_menu->setObjectName(QStringLiteral("settingsMenu"));
     auto* help_menu = menuBar()->addMenu(tr("&Help"));
@@ -3160,7 +3219,20 @@ void MainWindow::createToolbar() {
     toolbar->addAction(settings_action_);
     connect(settings_action_, &QAction::triggered,
             this, &MainWindow::showApplicationSettings);
-    view_menu->addAction(layers_dock_->toggleViewAction());
+    QAction* const layers_visibility = layers_dock_->toggleViewAction();
+    layers_visibility->setText(tr("Project & Layers Panel"));
+    layers_visibility->setStatusTip(
+        tr("Show or hide the project and layer controls."));
+    view_menu->addAction(layers_visibility);
+    restore_layers_dock_action_ = new QAction(
+        tr("Restore Project & Layers Panel"), this);
+    restore_layers_dock_action_->setObjectName(
+        QStringLiteral("restoreProjectLayersDockAction"));
+    restore_layers_dock_action_->setStatusTip(
+        tr("Show the Project & Layers panel and dock it on the right side."));
+    view_menu->addAction(restore_layers_dock_action_);
+    connect(restore_layers_dock_action_, &QAction::triggered, this,
+            [this] { restoreLayersDock(true); });
     about_action_ = new QAction(tr("About PVT…"), this);
     about_action_->setObjectName(QStringLiteral("aboutPvtAction"));
     help_menu->addAction(about_action_);
@@ -5021,7 +5093,25 @@ void MainWindow::restoreUserSettings() {
         last_dialog_directory_ = saved_directory;
     }
     restoreGeometry(settings.value(QStringLiteral("ui/mainWindow/geometry")).toByteArray());
-    restoreState(settings.value(QStringLiteral("ui/mainWindow/state")).toByteArray());
+    const QByteArray state =
+        settings.value(QStringLiteral("ui/mainWindow/state")).toByteArray();
+    const bool state_restored = state.isEmpty() || restoreState(state);
+    if (!state_restored) {
+        restoreLayersDock(true);
+    } else if (layers_dock_ != nullptr && layers_dock_->isFloating()) {
+        const QRect dock_geometry = layers_dock_->frameGeometry();
+        const QList<QScreen*> screens = QGuiApplication::screens();
+        const bool on_screen = std::any_of(
+            screens.begin(), screens.end(),
+            [&dock_geometry](const QScreen* screen) {
+                return screen != nullptr
+                       && screen->availableGeometry().intersects(dock_geometry);
+            });
+        if (!on_screen) {
+            const bool was_hidden = layers_dock_->isHidden();
+            restoreLayersDock(!was_hidden);
+        }
+    }
 }
 
 void MainWindow::saveUserSettings() {
@@ -8268,13 +8358,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const auto* settings_menu =
         findChild<QMenu*>(QStringLiteral("settingsMenu"));
     const auto* edit_menu = findChild<QMenu*>(QStringLiteral("editMenu"));
+    const auto* view_menu = findChild<QMenu*>(QStringLiteral("viewMenu"));
     const auto* project_toolbar =
         findChild<QToolBar*>(QStringLiteral("projectToolbar"));
     if (settings_action_ == nullptr || settings_menu == nullptr
-        || edit_menu == nullptr || project_toolbar == nullptr
+        || edit_menu == nullptr || view_menu == nullptr
+        || project_toolbar == nullptr
         || !settings_menu->actions().contains(settings_action_)
         || !project_toolbar->actions().contains(settings_action_)
         || randomize_values_action_ == nullptr || randomize_mix_action_ == nullptr
+        || layers_dock_ == nullptr || restore_layers_dock_action_ == nullptr
+        || !view_menu->actions().contains(restore_layers_dock_action_)
         || export_action_ == nullptr || video_export_action_ == nullptr
         || cancel_export_action_ == nullptr || export_progress_ == nullptr
         || !settings_menu->actions().contains(randomize_values_action_)
@@ -8283,6 +8377,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || project_toolbar->actions().contains(randomize_mix_action_)) {
         if (error != nullptr) {
             *error = tr("Application Settings or guarded randomization actions are exposed in the wrong place.");
+        }
+        return false;
+    }
+
+    layers_dock_->setFloating(true);
+    layers_dock_->hide();
+    restore_layers_dock_action_->trigger();
+    if (layers_dock_->isFloating() || layers_dock_->isHidden()
+        || dockWidgetArea(layers_dock_) != Qt::RightDockWidgetArea) {
+        if (error != nullptr) {
+            *error = tr("The Project & Layers panel could not be restored from a floating or hidden state.");
         }
         return false;
     }
@@ -8574,8 +8679,24 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || audio_copy_project_ == nullptr
         || wave_audio_response_ == nullptr
         || effect_audio_response_ == nullptr
-        || wave_audio_response_->count() != 3
-        || effect_audio_response_->count() != 3
+        || wave_audio_response_->count() < 13
+        || effect_audio_response_->count() != wave_audio_response_->count()
+        || wave_audio_response_->findData(
+               static_cast<int>(pvt::AudioResponseMode::Default)) < 0
+        || wave_audio_response_->findData(
+               static_cast<int>(pvt::AudioResponseMode::Beat)) < 0
+        || wave_audio_response_->findData(
+               static_cast<int>(pvt::AudioResponseMode::Energy)) < 0
+        || wave_audio_response_->findData(
+               static_cast<int>(pvt::AudioResponseMode::Enabled)) < 0
+        || wave_audio_response_->findData(
+               static_cast<int>(pvt::AudioResponseMode::Disabled)) < 0
+        || effect_audio_response_->findData(
+               static_cast<int>(pvt::AudioResponseMode::Beat)) < 0
+        || wave_audio_response_->itemData(
+               wave_audio_response_->findData(
+                   static_cast<int>(pvt::AudioResponseMode::Beat)),
+               Qt::ToolTipRole).toString().isEmpty()
         || wave_audio_response_->toolTip().isEmpty()
         || effect_audio_response_->toolTip().isEmpty()
         || project_audio_response_group_->toolTip().isEmpty()

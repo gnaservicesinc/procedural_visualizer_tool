@@ -109,6 +109,7 @@ private:
     QWidget* createVersionsPage();
     QWidget* createTimeline();
     void createLayerDock();
+    void restoreLayersDock(bool makeVisible = true);
     void createToolbar();
     void connectEditors();
 
@@ -355,6 +356,7 @@ private:
     QAction* redo_action_ = nullptr;
     QAction* settings_action_ = nullptr;
     QAction* about_action_ = nullptr;
+    QAction* restore_layers_dock_action_ = nullptr;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;

@@ -152,7 +152,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 2U ? 4U
                     : layer_version == 3U ? 5U
                     : layer_version == 4U ? 6U
-                    : layer_version == 5U ? 7U : 8U;
+                    : layer_version == 5U ? 7U
+                    : layer_version == 6U ? 8U : 9U;
     return true;
 }
 

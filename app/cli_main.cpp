@@ -369,6 +369,28 @@ std::vector<std::pair<pvt::MusicFeature, std::string>> music_feature_choices() {
     return choices;
 }
 
+std::vector<std::pair<pvt::AudioResponseMode, std::string>>
+audio_response_choices() {
+    return {
+        {pvt::AudioResponseMode::Default,
+         "Default (use effective profile)"},
+        {pvt::AudioResponseMode::Beat, "Beat"},
+        {pvt::AudioResponseMode::Onset, "Onset"},
+        {pvt::AudioResponseMode::Energy, "Energy"},
+        {pvt::AudioResponseMode::Bass, "Bass"},
+        {pvt::AudioResponseMode::Midrange, "Midrange"},
+        {pvt::AudioResponseMode::Treble, "Treble"},
+        {pvt::AudioResponseMode::SpectralCentroid, "Spectral brightness"},
+        {pvt::AudioResponseMode::SpectralFlatness, "Spectral noisiness"},
+        {pvt::AudioResponseMode::ChromaHue,
+         "Pitch color (tonality-weighted)"},
+        {pvt::AudioResponseMode::ChromaStrength, "Tonal strength"},
+        {pvt::AudioResponseMode::Enabled,
+         "Profile feature (force response)"},
+        {pvt::AudioResponseMode::Disabled, "Ignore audio"},
+    };
+}
+
 bool palettes_equal(const pvt::PaletteConfig& left,
                     const pvt::PaletteConfig& right) {
     if (left.enabled != right.enabled || left.name != right.name
@@ -524,11 +546,8 @@ bool configure_wave(RenderConfig& config, std::size_t index) {
     }
     if (wave.synchronized
         && !prompt_enum(
-            "Audio response (Default inherits the effective profile)",
-            wave.audio_response,
-            {{pvt::AudioResponseMode::Default, "Default / inherit"},
-             {pvt::AudioResponseMode::Enabled, "Respond"},
-             {pvt::AudioResponseMode::Disabled, "Ignore"}})) {
+            "Audio response source (Default inherits the effective profile)",
+            wave.audio_response, audio_response_choices())) {
         return false;
     }
     return prompt_real("Horizontal source location (%)", wave.x_percent, -100.0, 200.0)
@@ -655,11 +674,8 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
     }
     if (effect.synchronized
         && !prompt_enum(
-            "Audio response (Default inherits the effective profile)",
-            effect.audio_response,
-            {{pvt::AudioResponseMode::Default, "Default / inherit"},
-             {pvt::AudioResponseMode::Enabled, "Respond"},
-             {pvt::AudioResponseMode::Disabled, "Ignore"}})) {
+            "Audio response source (Default inherits the effective profile)",
+            effect.audio_response, audio_response_choices())) {
         return false;
     }
     if (!prompt_enum("Effect space (texture is before surface mapping)",

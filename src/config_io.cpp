@@ -61,7 +61,8 @@ namespace {
 // analysis, a master swing switch, per-layer audio response, and portable
 // custom-OBJ attachment identity. Versions 6 and 7 add local clocks/motion and
 // starting-image/reusable-path data. Version 8 adds project/layer audio-response
-// inheritance and nullable per-wave/per-effect response routing. Older
+// inheritance and nullable per-wave/per-effect force/ignore routing. Version 9
+// extends those same selectors with explicit audio-feature overrides. Older
 // versions remain accepted with neutral defaults for every field introduced
 // later.
 
@@ -75,8 +76,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = 4096U;
 constexpr std::size_t kMaximumMusicFormatBytes = 64U;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 8U,
-              "config_io.cpp implements setup format version 8");
+static_assert(kSetupFormatVersion == 9U,
+              "config_io.cpp implements setup format version 9");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -792,8 +793,27 @@ constexpr std::array<std::pair<std::string_view, MusicFeature>, 10U>
         {"chroma_strength", MusicFeature::ChromaStrength},
     }};
 
-constexpr std::array<std::pair<std::string_view, AudioResponseMode>, 3U>
+constexpr std::array<std::pair<std::string_view, AudioResponseMode>, 13U>
     kAudioResponseModes{{
+        {"default", AudioResponseMode::Default},
+        {"enabled", AudioResponseMode::Enabled},
+        {"disabled", AudioResponseMode::Disabled},
+        {"energy", AudioResponseMode::Energy},
+        {"bass", AudioResponseMode::Bass},
+        {"midrange", AudioResponseMode::Midrange},
+        {"treble", AudioResponseMode::Treble},
+        {"onset", AudioResponseMode::Onset},
+        {"beat", AudioResponseMode::Beat},
+        {"spectral_centroid", AudioResponseMode::SpectralCentroid},
+        {"spectral_flatness", AudioResponseMode::SpectralFlatness},
+        {"chroma_hue", AudioResponseMode::ChromaHue},
+        {"chroma_strength", AudioResponseMode::ChromaStrength},
+    }};
+
+// Format 8 only defined these tokens. Decode against this exact table so a
+// hand-edited v8 document cannot silently claim format-9 source semantics.
+constexpr std::array<std::pair<std::string_view, AudioResponseMode>, 3U>
+    kAudioResponseModesV8{{
         {"default", AudioResponseMode::Default},
         {"enabled", AudioResponseMode::Enabled},
         {"disabled", AudioResponseMode::Disabled},
@@ -1894,11 +1914,16 @@ bool deserialize_setup(Records& records,
             || !consume_string(records, indexed_key("waves", index, "name"), wave.name, error)
             || !consume_bool(records, indexed_key("waves", index, "enabled"), wave.enabled, error)
             || !consume_bool(records, indexed_key("waves", index, "synchronized"), wave.synchronized, error)
-            || (setup_version >= 8U
+            || (setup_version >= 9U
                 && !consume_optional_enum(
                     records, indexed_key("waves", index, "audio_response"),
                     wave.audio_response, AudioResponseMode::Default,
                     kAudioResponseModes, error))
+            || (setup_version == 8U
+                && !consume_optional_enum(
+                    records, indexed_key("waves", index, "audio_response"),
+                    wave.audio_response, AudioResponseMode::Default,
+                    kAudioResponseModesV8, error))
             || !consume_double(records, indexed_key("waves", index, "x_percent"), wave.x_percent, error)
             || !consume_double(records, indexed_key("waves", index, "y_percent"), wave.y_percent, error)
             || !consume_double(records, indexed_key("waves", index, "amplitude"), wave.amplitude, error)
@@ -1965,11 +1990,16 @@ bool deserialize_setup(Records& records,
         }
         if (!consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
             || !consume_bool(records, indexed_key("effects", index, "synchronized"), effect.synchronized, error)
-            || (setup_version >= 8U
+            || (setup_version >= 9U
                 && !consume_optional_enum(
                     records, indexed_key("effects", index, "audio_response"),
                     effect.audio_response, AudioResponseMode::Default,
                     kAudioResponseModes, error))
+            || (setup_version == 8U
+                && !consume_optional_enum(
+                    records, indexed_key("effects", index, "audio_response"),
+                    effect.audio_response, AudioResponseMode::Default,
+                    kAudioResponseModesV8, error))
             || !consume_integer(records, indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop, error)
             || !consume_double(records, indexed_key("effects", index, "phase_degrees"), effect.phase_degrees, error)
             || !consume_enum(records, indexed_key("effects", index, "edge_mode"), effect.edge_mode, kEdgeModes, error)
@@ -3058,8 +3088,19 @@ const char* music_feature_name(MusicFeature value) {
 const char* audio_response_mode_name(AudioResponseMode value) {
     switch (value) {
         case AudioResponseMode::Default: return "Default";
-        case AudioResponseMode::Enabled: return "Respond";
-        case AudioResponseMode::Disabled: return "Ignore";
+        case AudioResponseMode::Enabled: return "Profile feature (force on)";
+        case AudioResponseMode::Disabled: return "Ignore audio";
+        case AudioResponseMode::Energy: return "Energy";
+        case AudioResponseMode::Bass: return "Bass";
+        case AudioResponseMode::Midrange: return "Midrange";
+        case AudioResponseMode::Treble: return "Treble";
+        case AudioResponseMode::Onset: return "Onset";
+        case AudioResponseMode::Beat: return "Beat";
+        case AudioResponseMode::SpectralCentroid: return "Spectral brightness";
+        case AudioResponseMode::SpectralFlatness: return "Spectral noisiness";
+        case AudioResponseMode::ChromaHue:
+            return "Pitch color (tonality-weighted)";
+        case AudioResponseMode::ChromaStrength: return "Tonal strength";
     }
     return "Unknown";
 }

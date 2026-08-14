@@ -22,7 +22,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 8;
+constexpr std::uint32_t kSetupFormatVersion = 9;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
@@ -215,14 +215,25 @@ enum class MusicFeature : std::uint8_t {
     ChromaStrength
 };
 
-// Per-item audio routing is intentionally tri-state. Default inherits the
-// active layer/project category setting, Enabled opts a synchronized item in,
-// and Disabled opts it out. Missing and explicit null persistence values map
-// to Default so older projects and hand-authored integrations remain neutral.
+// A synchronized wave/effect can inherit its effective profile's category and
+// feature, select a feature explicitly (which also opts that item in), force
+// the profile feature on, or ignore audio. Enabled/Disabled retain the format-8
+// force/ignore semantics for source and project compatibility. Missing and
+// explicit null persistence values map to Default.
 enum class AudioResponseMode : std::uint8_t {
     Default = 0,
     Enabled,
-    Disabled
+    Disabled,
+    Energy,
+    Bass,
+    Midrange,
+    Treble,
+    Onset,
+    Beat,
+    SpectralCentroid,
+    SpectralFlatness,
+    ChromaHue,
+    ChromaStrength
 };
 
 // Retained for setup/source compatibility with early format-5 drafts. The

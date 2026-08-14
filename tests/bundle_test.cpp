@@ -273,8 +273,8 @@ void test_layer_codec_backward_compatibility() {
     original.audio_reactive.color_enabled = true;
     original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
     original.audio_reactive.color_amount_degrees = 38.0;
-    original.waves.front().audio_response = pvt::AudioResponseMode::Enabled;
-    original.effects.front().audio_response = pvt::AudioResponseMode::Disabled;
+    original.waves.front().audio_response = pvt::AudioResponseMode::Beat;
+    original.effects.front().audio_response = pvt::AudioResponseMode::Energy;
     original.waves.front().path.enabled = true;
     original.waves.front().path.path_id = 91U;
     original.waves.front().path.cycles_per_loop = 2;
@@ -293,7 +293,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t6\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t7\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -329,15 +329,44 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.audio_reactive.color_source
           == pvt::MusicFeature::Midrange);
     CHECK(current_round_trip.waves.front().audio_response
-          == pvt::AudioResponseMode::Enabled);
+          == pvt::AudioResponseMode::Beat);
     CHECK(current_round_trip.effects.front().audio_response
-          == pvt::AudioResponseMode::Disabled);
+          == pvt::AudioResponseMode::Energy);
     CHECK(current_round_trip.waves.front().path.enabled);
     CHECK(current_round_trip.waves.front().path.path_id == 91U);
 
+    // Layer v6/setup v8 used three-state force/ignore routing. Those values
+    // retain their exact meaning in the richer current selector.
+    std::string version_six = current_layer;
+    version_six.replace(0U, std::string("PVT_LAYER\t7").size(),
+                        "PVT_LAYER\t6");
+    const auto replace_record_value = [](std::string& setup,
+                                         const std::string& key,
+                                         const std::string& value) {
+        const std::string prefix = key + "\t";
+        const std::size_t position = setup.find(prefix);
+        CHECK(position != std::string::npos);
+        if (position == std::string::npos) return;
+        const std::size_t newline = setup.find('\n', position);
+        CHECK(newline != std::string::npos);
+        if (newline != std::string::npos) {
+            setup.replace(position + prefix.size(),
+                          newline - position - prefix.size(), value);
+        }
+    };
+    replace_record_value(version_six, "waves.0.audio_response", "enabled");
+    replace_record_value(version_six, "effects.0.audio_response", "disabled");
+    pvt::RenderData loaded_version_six;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_six, loaded_version_six, &error, &motion_paths));
+    CHECK(loaded_version_six.waves.front().audio_response
+          == pvt::AudioResponseMode::Enabled);
+    CHECK(loaded_version_six.effects.front().audio_response
+          == pvt::AudioResponseMode::Disabled);
+
     // Layer v5 predates inheritable routing. Its layer profile remains
     // authoritative, while per-item selectors receive the neutral Default.
-    std::istringstream version_six_input(current_layer);
+    std::istringstream version_six_input(version_six);
     std::ostringstream version_five_output;
     std::string line;
     CHECK(static_cast<bool>(std::getline(version_six_input, line)));
@@ -812,9 +841,9 @@ void test_directory_versions_and_names(const fs::path& directory) {
     initial_render.audio_reactive.wave_source = pvt::MusicFeature::Treble;
     initial_render.audio_reactive.wave_amount = 0.57;
     initial_render.waves.front().audio_response =
-        pvt::AudioResponseMode::Enabled;
+        pvt::AudioResponseMode::Beat;
     initial_render.effects.front().audio_response =
-        pvt::AudioResponseMode::Disabled;
+        pvt::AudioResponseMode::Energy;
     document.project.canvas.motion_paths.push_back(
         pvt::default_ellipse_path(91U, 100U, "Bundle ellipse"));
     initial_render.waves.front().path.enabled = true;
@@ -875,9 +904,9 @@ void test_directory_versions_and_names(const fs::path& directory) {
           == pvt::MusicFeature::Treble);
     CHECK(loaded_render.audio_reactive.wave_amount == 0.57);
     CHECK(loaded_render.waves.front().audio_response
-          == pvt::AudioResponseMode::Enabled);
+          == pvt::AudioResponseMode::Beat);
     CHECK(loaded_render.effects.front().audio_response
-          == pvt::AudioResponseMode::Disabled);
+          == pvt::AudioResponseMode::Energy);
     CHECK(loaded_render.waves.front().path.enabled);
     CHECK(loaded_render.waves.front().path.path_id == 91U);
     CHECK(loaded_render.waves.front().path.follow_tangent);

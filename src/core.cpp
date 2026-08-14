@@ -356,6 +356,16 @@ bool valid_enum(AudioResponseMode value) {
         case AudioResponseMode::Default:
         case AudioResponseMode::Enabled:
         case AudioResponseMode::Disabled:
+        case AudioResponseMode::Energy:
+        case AudioResponseMode::Bass:
+        case AudioResponseMode::Midrange:
+        case AudioResponseMode::Treble:
+        case AudioResponseMode::Onset:
+        case AudioResponseMode::Beat:
+        case AudioResponseMode::SpectralCentroid:
+        case AudioResponseMode::SpectralFlatness:
+        case AudioResponseMode::ChromaHue:
+        case AudioResponseMode::ChromaStrength:
             return true;
     }
     return false;
@@ -858,24 +868,81 @@ const AudioReactiveConfig& effective_audio_reactive(
                ? config.audio_reactive : config.audio_reactive_defaults;
 }
 
-bool item_audio_response_enabled(const AudioReactiveConfig& audio,
-                                 bool synchronized,
-                                 AudioResponseMode item_mode,
-                                 bool category_default) {
+struct ResolvedAudioResponse {
+    bool enabled = false;
+    MusicFeature source = MusicFeature::Energy;
+};
+
+ResolvedAudioResponse resolve_item_audio_response(
+    const AudioReactiveConfig& audio,
+    bool synchronized,
+    AudioResponseMode item_mode,
+    bool category_default,
+    MusicFeature category_source) {
+    ResolvedAudioResponse resolved;
+    resolved.source = category_source;
     if (!audio.enabled
         || (audio.synchronized_only && !synchronized)) {
-        return false;
+        return resolved;
     }
     // The per-item selector is deliberately available only to synchronized
-    // items. Free-running items continue to follow the block's explicit
-    // synchronized-only/category routing policy.
-    if (!synchronized) return category_default;
-    switch (item_mode) {
-        case AudioResponseMode::Default: return category_default;
-        case AudioResponseMode::Enabled: return true;
-        case AudioResponseMode::Disabled: return false;
+    // items. Free-running items continue to follow the profile's explicit
+    // synchronized-only/category routing policy and source.
+    if (!synchronized) {
+        resolved.enabled = category_default;
+        return resolved;
     }
-    return false;
+    switch (item_mode) {
+        case AudioResponseMode::Default:
+            resolved.enabled = category_default;
+            break;
+        case AudioResponseMode::Enabled:
+            resolved.enabled = true;
+            break;
+        case AudioResponseMode::Disabled:
+            break;
+        case AudioResponseMode::Energy:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::Energy;
+            break;
+        case AudioResponseMode::Bass:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::Bass;
+            break;
+        case AudioResponseMode::Midrange:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::Midrange;
+            break;
+        case AudioResponseMode::Treble:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::Treble;
+            break;
+        case AudioResponseMode::Onset:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::Onset;
+            break;
+        case AudioResponseMode::Beat:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::Beat;
+            break;
+        case AudioResponseMode::SpectralCentroid:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::SpectralCentroid;
+            break;
+        case AudioResponseMode::SpectralFlatness:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::SpectralFlatness;
+            break;
+        case AudioResponseMode::ChromaHue:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::ChromaHue;
+            break;
+        case AudioResponseMode::ChromaStrength:
+            resolved.enabled = true;
+            resolved.source = MusicFeature::ChromaStrength;
+            break;
+    }
+    return resolved;
 }
 
 bool valid_audio_reactive(const AudioReactiveConfig& audio) {
@@ -1164,13 +1231,14 @@ double wave_height(const RenderConfig& config, double x, double y,
         const double clock = wave.synchronized ? motion_phase : loop_phase;
         const double phase = static_cast<double>(wave.cycles_per_loop) * clock;
         double amplitude = wave.amplitude;
-        if (item_audio_response_enabled(
-                audio, wave.synchronized, wave.audio_response,
-                audio.waves_enabled)) {
+        const ResolvedAudioResponse response = resolve_item_audio_response(
+            audio, wave.synchronized, wave.audio_response,
+            audio.waves_enabled, audio.wave_source);
+        if (response.enabled) {
             amplitude *= std::max(
                 0.0, 1.0 + audio.wave_amount
                                * music_feature_value(music,
-                                                     audio.wave_source));
+                                                     response.source));
         }
         height += amplitude
                   * std::sin(kTau * wave.spatial_frequency
@@ -2228,10 +2296,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                           && effect.edge_mode == EdgeMode::Alpha);
         if (active_glow || active_particles) {
             double maximum_intensity = effect.intensity;
-            if (item_audio_response_enabled(
+            if (resolve_item_audio_response(
                     effective_audio, effect.synchronized,
                     effect.audio_response,
-                    effective_audio.effects_enabled)) {
+                    effective_audio.effects_enabled,
+                    effective_audio.effect_source).enabled) {
                 maximum_intensity *= std::max(
                     0.0, 1.0 + std::max(0.0,
                                        effective_audio.effect_amount));
@@ -3958,15 +4027,16 @@ bool render_frame_at_timeline_sample_cancellable(
                     continue;
                 }
                 EffectConfig effect = authored_effect;
-                if (item_audio_response_enabled(
-                        audio, effect.synchronized,
-                        effect.audio_response,
-                        audio.effects_enabled)) {
+                const ResolvedAudioResponse response =
+                    resolve_item_audio_response(
+                        audio, effect.synchronized, effect.audio_response,
+                        audio.effects_enabled, audio.effect_source);
+                if (response.enabled) {
                     effect.intensity *= std::max(
                         0.0, 1.0 + audio.effect_amount
                                        * music_feature_value(
                                            timeline.music,
-                                           audio.effect_source));
+                                           response.source));
                 }
                 if (!effect_has_render_work(effect)) continue;
                 const double phase = effect_phase(
@@ -4078,25 +4148,20 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              swing.contribution});
     }
 
-    // A synchronized wave can explicitly opt in even when the category
-    // default is off, so prepare the source whenever the effective profile is
-    // active. item_audio_response_enabled() still decides whether an
-    // individual wave consumes it.
-    const double wave_response =
-        audio.enabled
-            ? music_feature_value(timeline.music, audio.wave_source)
-            : 0.0;
     candidate.waves.reserve(config.waves.size());
     for (const WaveConfig& wave : config.waves) {
         if (!wave.enabled) {
             continue;
         }
         double amplitude = wave.amplitude;
-        if (item_audio_response_enabled(
-                audio, wave.synchronized, wave.audio_response,
-                audio.waves_enabled)) {
+        const ResolvedAudioResponse response = resolve_item_audio_response(
+            audio, wave.synchronized, wave.audio_response,
+            audio.waves_enabled, audio.wave_source);
+        if (response.enabled) {
             amplitude *= std::max(
-                0.0, 1.0 + audio.wave_amount * wave_response);
+                0.0, 1.0 + audio.wave_amount
+                               * music_feature_value(timeline.music,
+                                                     response.source));
         }
         candidate.waves.push_back(
             {wave.x_percent * 0.01 * static_cast<double>(config.width),
@@ -4123,13 +4188,14 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
     candidate.effects.reserve(config.effects.size());
     for (const EffectConfig& authored : config.effects) {
         EffectConfig effect = authored;
-        if (item_audio_response_enabled(
-                audio, effect.synchronized, effect.audio_response,
-                audio.effects_enabled)) {
+        const ResolvedAudioResponse response = resolve_item_audio_response(
+            audio, effect.synchronized, effect.audio_response,
+            audio.effects_enabled, audio.effect_source);
+        if (response.enabled) {
             effect.intensity *= std::max(
                 0.0, 1.0 + audio.effect_amount
                                * music_feature_value(
-                                     timeline.music, audio.effect_source));
+                                     timeline.music, response.source));
         }
         if (!effect_has_render_work(effect)) {
             continue;
