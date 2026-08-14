@@ -369,6 +369,28 @@ std::vector<std::pair<pvt::MusicFeature, std::string>> music_feature_choices() {
     return choices;
 }
 
+std::vector<std::pair<pvt::AudioResponseMode, std::string>>
+audio_response_choices() {
+    return {
+        {pvt::AudioResponseMode::Default,
+         "Default (use effective profile)"},
+        {pvt::AudioResponseMode::Beat, "Beat"},
+        {pvt::AudioResponseMode::Onset, "Onset"},
+        {pvt::AudioResponseMode::Energy, "Energy"},
+        {pvt::AudioResponseMode::Bass, "Bass"},
+        {pvt::AudioResponseMode::Midrange, "Midrange"},
+        {pvt::AudioResponseMode::Treble, "Treble"},
+        {pvt::AudioResponseMode::SpectralCentroid, "Spectral brightness"},
+        {pvt::AudioResponseMode::SpectralFlatness, "Spectral noisiness"},
+        {pvt::AudioResponseMode::ChromaHue,
+         "Pitch color (tonality-weighted)"},
+        {pvt::AudioResponseMode::ChromaStrength, "Tonal strength"},
+        {pvt::AudioResponseMode::Enabled,
+         "Profile feature (force response)"},
+        {pvt::AudioResponseMode::Disabled, "Ignore audio"},
+    };
+}
+
 bool palettes_equal(const pvt::PaletteConfig& left,
                     const pvt::PaletteConfig& right) {
     if (left.enabled != right.enabled || left.name != right.name
@@ -517,10 +539,18 @@ bool configure_wave(RenderConfig& config, std::size_t index) {
     std::cout << "\n-- Wave " << (index + 1) << " --\n"
               << "Synchronized waves use the shared swung master clock. Unsynchronized\n"
               << "waves use a linear but still seamless per-loop clock.\n";
-    return prompt_text("Name", wave.name, kMaximumNameBytes)
-           && prompt_bool("Enabled", wave.enabled)
-           && prompt_bool("Synchronized (optional)", wave.synchronized)
-           && prompt_real("Horizontal source location (%)", wave.x_percent, -100.0, 200.0)
+    if (!prompt_text("Name", wave.name, kMaximumNameBytes)
+        || !prompt_bool("Enabled", wave.enabled)
+        || !prompt_bool("Synchronized (optional)", wave.synchronized)) {
+        return false;
+    }
+    if (wave.synchronized
+        && !prompt_enum(
+            "Audio response source (Default inherits the effective profile)",
+            wave.audio_response, audio_response_choices())) {
+        return false;
+    }
+    return prompt_real("Horizontal source location (%)", wave.x_percent, -100.0, 200.0)
            && prompt_real("Vertical source location (%)", wave.y_percent, -100.0, 200.0)
            && prompt_real("Amplitude", wave.amplitude, 0.0, 10.0)
            && prompt_real("Spatial frequency", wave.spatial_frequency, 0.0, 1000.0)
@@ -555,7 +585,13 @@ void configure_waves(RenderConfig& config) {
             const auto& wave = config.waves[i];
             std::cout << "  " << (i + 1) << ") " << (wave.enabled ? "on  " : "off ")
                       << (wave.synchronized ? "sync " : "free ") << wave.name
-                      << " | amp " << wave.amplitude << " | dir " << wave.direction << '\n';
+                      << " | amp " << wave.amplitude << " | dir " << wave.direction;
+            if (wave.synchronized) {
+                std::cout << " | audio "
+                          << pvt::audio_response_mode_name(
+                                 wave.audio_response);
+            }
+            std::cout << '\n';
         }
         std::cout << "Enter a number to edit, a to add, d N to delete, m FROM TO to move,"
                      " or b to go back.\n";
@@ -633,11 +669,19 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
     std::cout << "\n-- " << pvt::effect_type_name(effect.type) << " effect --\n";
     if (!prompt_text("Name", effect.name, kMaximumNameBytes)
         || !prompt_bool("Enabled", effect.enabled)
-        || !prompt_bool("Synchronized (optional)", effect.synchronized)
-        || !prompt_enum("Effect space (texture is before surface mapping)",
-                        effect.space,
-                        {{pvt::EffectSpace::Texture, "Texture/artwork"},
-                         {pvt::EffectSpace::Surface, "Mapped object/silhouette"}})
+        || !prompt_bool("Synchronized (optional)", effect.synchronized)) {
+        return false;
+    }
+    if (effect.synchronized
+        && !prompt_enum(
+            "Audio response source (Default inherits the effective profile)",
+            effect.audio_response, audio_response_choices())) {
+        return false;
+    }
+    if (!prompt_enum("Effect space (texture is before surface mapping)",
+                     effect.space,
+                     {{pvt::EffectSpace::Texture, "Texture/artwork"},
+                      {pvt::EffectSpace::Surface, "Mapped object/silhouette"}})
         || !prompt_int("Cycles per loop", effect.cycles_per_loop, -1000, 1000)
         || !prompt_real("Starting phase (degrees)", effect.phase_degrees, -36000.0, 36000.0)) {
         return false;
@@ -730,6 +774,11 @@ void configure_effects(RenderConfig& config) {
                       << (effect.synchronized ? "sync " : "free ") << effect.name
                       << " [" << pvt::effect_type_name(effect.type) << ", "
                       << pvt::effect_space_name(effect.space) << ']';
+            if (effect.synchronized) {
+                std::cout << " | audio "
+                          << pvt::audio_response_mode_name(
+                                 effect.audio_response);
+            }
             if (effect.type != EffectType::BlockScale) {
                 std::cout << " | area " << effect.area_radius;
             }
@@ -927,6 +976,37 @@ bool analyze_music_interactive(pvt::ClockConfig& clock,
     return true;
 }
 
+bool configure_audio_response_profile(
+    const std::string& title,
+    pvt::AudioReactiveConfig& response) {
+    std::cout << "\n-- " << title << " --\n";
+    if (!prompt_bool("Audio response enabled", response.enabled)) {
+        return false;
+    }
+    return !response.enabled
+           || (prompt_bool("Limit response to synchronized waves/effects",
+                           response.synchronized_only)
+               && prompt_bool("Drive wave values by default",
+                              response.waves_enabled)
+               && prompt_enum("Wave feature", response.wave_source,
+                              music_feature_choices())
+               && prompt_real("Wave response amount", response.wave_amount,
+                              -1.0, 10.0)
+               && prompt_bool("Drive effect values by default",
+                              response.effects_enabled)
+               && prompt_enum("Effect feature", response.effect_source,
+                              music_feature_choices())
+               && prompt_real("Effect response amount",
+                              response.effect_amount, -1.0, 10.0)
+               && prompt_bool("Shift hue from a music feature",
+                              response.color_enabled)
+               && prompt_enum("Hue feature", response.color_source,
+                              music_feature_choices())
+               && prompt_real("Maximum hue shift (degrees)",
+                              response.color_amount_degrees,
+                              -3600.0, 3600.0));
+}
+
 void configure_active_layer_clock(RenderConfig& config,
                                   ProjectDocument& document,
                                   const std::string& layer_uuid) {
@@ -985,6 +1065,7 @@ void configure_active_layer_clock(RenderConfig& config,
                             {{pvt::ClockFit::Exact, "Exact tempo"},
                              {pvt::ClockFit::FitSequence, "Fit whole measures"}})) return;
     } else if (clock.mode == pvt::ClockMode::Music) {
+        const bool first_layer_music = clock.music.source_sha256.empty();
         if (!analyze_music_interactive(
                 clock, config.audio_reactive, document,
                 pvt::layer_music_attachment_id(layer_uuid))
@@ -1000,6 +1081,9 @@ void configure_active_layer_clock(RenderConfig& config,
                          -86400000.0, 86400000.0)) return;
         clock.beat_offset_microseconds =
             static_cast<std::int64_t>(std::llround(offset_ms * 1000.0));
+        if (first_layer_music && !clock.music.source_sha256.empty()) {
+            config.audio_reactive_override_enabled = true;
+        }
     }
 }
 
@@ -1150,7 +1234,8 @@ void configure_synchronization(RenderConfig& config,
             return;
         }
     } else if (config.clock.mode == pvt::ClockMode::Music) {
-        if (!analyze_music_interactive(config.clock, config.audio_reactive,
+        if (!analyze_music_interactive(config.clock,
+                                       config.audio_reactive_defaults,
                                        document, pvt::kMusicSourceAttachmentId)
             || !prompt_enum("Beat interpretation", config.clock.music_tempo,
                             {{pvt::MusicTempoMode::Half, "Half-time"},
@@ -1175,30 +1260,20 @@ void configure_synchronization(RenderConfig& config,
             g_prompt_changed = true;
         }
 
-        auto& response = config.audio_reactive;
-        if (!prompt_bool("Let music features alter this layer", response.enabled)) {
-            return;
-        }
-        if (response.enabled
-            && (!prompt_bool("Limit response to synchronized waves/effects",
-                             response.synchronized_only)
-                || !prompt_bool("Drive wave values", response.waves_enabled)
-                || !prompt_enum("Wave feature", response.wave_source,
-                                music_feature_choices())
-                || !prompt_real("Wave response amount", response.wave_amount,
-                                -1.0, 4.0)
-                || !prompt_bool("Drive effect values", response.effects_enabled)
-                || !prompt_enum("Effect feature", response.effect_source,
-                                music_feature_choices())
-                || !prompt_real("Effect response amount", response.effect_amount,
-                                -1.0, 4.0)
-                || !prompt_bool("Shift hue from a music feature", response.color_enabled)
-                || !prompt_enum("Hue feature", response.color_source,
-                                music_feature_choices())
-                || !prompt_real("Maximum hue shift (degrees)",
-                                response.color_amount_degrees, -3600.0, 3600.0))) {
-            return;
-        }
+    }
+
+    if (!configure_audio_response_profile(
+            "Audio response — project-wide defaults",
+            config.audio_reactive_defaults)
+        || !prompt_bool("Override project audio response for this layer",
+                        config.audio_reactive_override_enabled)) {
+        return;
+    }
+    if (config.audio_reactive_override_enabled
+        && !configure_audio_response_profile(
+            "Audio response — active-layer override",
+            config.audio_reactive)) {
+        return;
     }
 
     std::string count_error;
@@ -1423,6 +1498,8 @@ void commit_active_render(CliState& state, const RenderConfig& config, bool chan
     project.canvas.total_frames = config.total_frames;
     project.canvas.fps = config.fps;
     project.canvas.clock = config.clock;
+    project.canvas.audio_reactive_defaults =
+        config.audio_reactive_defaults;
     project.canvas.motion_paths = config.motion_paths;
     project.canvas.output_compatibility = config.output_compatibility;
     project.output = config.output;
@@ -2067,7 +2144,9 @@ void print_help(const char* program) {
         << "  --meter TEXT --bpm N --tempo-note N --clock-phase N\n"
         << "  --reverse-clock --forward-clock\n"
         << "  --music FILE --music-tempo half|detected|double\n"
-        << "  --beat-offset-ms N --audio-reactive --no-audio-reactive\n"
+        << "  --beat-offset-ms N\n"
+        << "  --project-audio-reactive --no-project-audio-reactive\n"
+        << "  --audio-reactive --no-audio-reactive --inherit-audio-reactive\n"
         << "  --swings --no-swings             Active-layer authored swing block\n"
         << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
         << "  --workers 0.." << pvt::kMaximumSequenceWorkers
@@ -2092,8 +2171,8 @@ void print_help(const char* program) {
         << "--save-legacy escape hatch is rejected for multi-layer projects.\n"
         << "PNG compression defaults to 5 (0 is off, 9 is maximum).\n"
         << "--music stores analysis plus an integrity-checked bundled source asset. "
-           "A first import enables Audio Response for the active layer; a later "
-           "--no-audio-reactive explicitly overrides that default.\n"
+           "A first import enables project Audio Response; active-layer switches "
+           "create an override, while --inherit-audio-reactive removes it.\n"
         << "Float EXR output ignores PNG compression and dithering. "
            "Unspecified values keep their defaults.\n";
 }
@@ -2436,15 +2515,35 @@ int main(int argc, char** argv) {
             continue;
         }
         if (option == "--audio-reactive") {
-            mark_changed(state.document.project.layers.at(state.active_layer)
-                             .render.audio_reactive.enabled,
-                         true);
+            auto& render = state.document.project.layers.at(state.active_layer)
+                               .render;
+            mark_changed(render.audio_reactive_override_enabled, true);
+            mark_changed(render.audio_reactive.enabled, true);
             continue;
         }
         if (option == "--no-audio-reactive") {
+            auto& render = state.document.project.layers.at(state.active_layer)
+                               .render;
+            mark_changed(render.audio_reactive_override_enabled, true);
+            mark_changed(render.audio_reactive.enabled, false);
+            continue;
+        }
+        if (option == "--inherit-audio-reactive") {
             mark_changed(state.document.project.layers.at(state.active_layer)
-                             .render.audio_reactive.enabled,
+                             .render.audio_reactive_override_enabled,
                          false);
+            continue;
+        }
+        if (option == "--project-audio-reactive") {
+            mark_changed(
+                state.document.project.canvas.audio_reactive_defaults.enabled,
+                true);
+            continue;
+        }
+        if (option == "--no-project-audio-reactive") {
+            mark_changed(
+                state.document.project.canvas.audio_reactive_defaults.enabled,
+                false);
             continue;
         }
         if (option == "--no-starting-image") {
@@ -2638,8 +2737,7 @@ int main(int argc, char** argv) {
             clock.mode = pvt::ClockMode::Music;
             clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
             if (first_music_source) {
-                candidate.project.layers.at(state.active_layer)
-                    .render.audio_reactive.enabled = true;
+                candidate.project.canvas.audio_reactive_defaults.enabled = true;
             }
             candidate.dirty = true;
             state.document = std::move(candidate);

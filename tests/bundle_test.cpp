@@ -263,6 +263,7 @@ void test_layer_codec_backward_compatibility() {
     original.transform.flip_vertical = true;
     original.transform.mirror = pvt::MirrorMode::RightToLeft;
     original.swings_enabled = false;
+    original.audio_reactive_override_enabled = false;
     original.audio_reactive.enabled = true;
     original.audio_reactive.synchronized_only = false;
     original.audio_reactive.wave_source = pvt::MusicFeature::Bass;
@@ -272,6 +273,8 @@ void test_layer_codec_backward_compatibility() {
     original.audio_reactive.color_enabled = true;
     original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
     original.audio_reactive.color_amount_degrees = 38.0;
+    original.waves.front().audio_response = pvt::AudioResponseMode::Beat;
+    original.effects.front().audio_response = pvt::AudioResponseMode::Energy;
     original.waves.front().path.enabled = true;
     original.waves.front().path.path_id = 91U;
     original.waves.front().path.cycles_per_loop = 2;
@@ -279,15 +282,21 @@ void test_layer_codec_backward_compatibility() {
     original.motion.custom_path.path_id = 91U;
     const std::vector<pvt::CubicMotionPath> motion_paths{
         pvt::default_ellipse_path(91U, 100U, "Layer ellipse")};
+    const auto has_suffix = [](const std::string& value,
+                               const std::string& suffix) {
+        return value.size() >= suffix.size()
+               && value.compare(value.size() - suffix.size(), suffix.size(),
+                                suffix) == 0;
+    };
 
-    std::string version_three;
+    std::string current_layer;
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
-        original, version_three, &error, &motion_paths));
-    CHECK(version_three.rfind("PVT_LAYER\t5\n", 0U) == 0U);
+        original, current_layer, &error, &motion_paths));
+    CHECK(current_layer.rfind("PVT_LAYER\t7\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
-        version_three, current_round_trip, &error, &motion_paths));
+        current_layer, current_round_trip, &error, &motion_paths));
     CHECK(current_round_trip.swings.front().radius == 0.27);
     CHECK(current_round_trip.effects.front().space
           == pvt::EffectSpace::Surface);
@@ -310,6 +319,7 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.transform.mirror
           == pvt::MirrorMode::RightToLeft);
     CHECK(!current_round_trip.swings_enabled);
+    CHECK(!current_round_trip.audio_reactive_override_enabled);
     CHECK(current_round_trip.audio_reactive.enabled);
     CHECK(!current_round_trip.audio_reactive.synchronized_only);
     CHECK(current_round_trip.audio_reactive.wave_source
@@ -318,14 +328,71 @@ void test_layer_codec_backward_compatibility() {
           == pvt::MusicFeature::Onset);
     CHECK(current_round_trip.audio_reactive.color_source
           == pvt::MusicFeature::Midrange);
+    CHECK(current_round_trip.waves.front().audio_response
+          == pvt::AudioResponseMode::Beat);
+    CHECK(current_round_trip.effects.front().audio_response
+          == pvt::AudioResponseMode::Energy);
     CHECK(current_round_trip.waves.front().path.enabled);
     CHECK(current_round_trip.waves.front().path.path_id == 91U);
 
+    // Layer v6/setup v8 used three-state force/ignore routing. Those values
+    // retain their exact meaning in the richer current selector.
+    std::string version_six = current_layer;
+    version_six.replace(0U, std::string("PVT_LAYER\t7").size(),
+                        "PVT_LAYER\t6");
+    const auto replace_record_value = [](std::string& setup,
+                                         const std::string& key,
+                                         const std::string& value) {
+        const std::string prefix = key + "\t";
+        const std::size_t position = setup.find(prefix);
+        CHECK(position != std::string::npos);
+        if (position == std::string::npos) return;
+        const std::size_t newline = setup.find('\n', position);
+        CHECK(newline != std::string::npos);
+        if (newline != std::string::npos) {
+            setup.replace(position + prefix.size(),
+                          newline - position - prefix.size(), value);
+        }
+    };
+    replace_record_value(version_six, "waves.0.audio_response", "enabled");
+    replace_record_value(version_six, "effects.0.audio_response", "disabled");
+    pvt::RenderData loaded_version_six;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_six, loaded_version_six, &error, &motion_paths));
+    CHECK(loaded_version_six.waves.front().audio_response
+          == pvt::AudioResponseMode::Enabled);
+    CHECK(loaded_version_six.effects.front().audio_response
+          == pvt::AudioResponseMode::Disabled);
+
+    // Layer v5 predates inheritable routing. Its layer profile remains
+    // authoritative, while per-item selectors receive the neutral Default.
+    std::istringstream version_six_input(version_six);
+    std::ostringstream version_five_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(version_six_input, line)));
+    CHECK(line == "PVT_LAYER\t6");
+    version_five_output << "PVT_LAYER\t5\n";
+    while (std::getline(version_six_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v6_only = key == "audio_reactive.override_enabled"
+                             || has_suffix(key, ".audio_response");
+        if (!v6_only) version_five_output << line << '\n';
+    }
+    const std::string version_five = version_five_output.str();
+    pvt::RenderData loaded_version_five;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_five, loaded_version_five, &error, &motion_paths));
+    CHECK(loaded_version_five.audio_reactive_override_enabled);
+    CHECK(loaded_version_five.waves.front().audio_response
+          == pvt::AudioResponseMode::Default);
+    CHECK(loaded_version_five.effects.front().audio_response
+          == pvt::AudioResponseMode::Default);
+
     // PVT_LAYER v2 carried the PVT_SETUP v4 render subset. Strip every v3/v4
     // synchronization and animation record while preserving v2 spatial data.
-    std::istringstream current_input(version_three);
+    std::istringstream current_input(version_five);
     std::ostringstream version_two_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(current_input, line)));
     CHECK(line == "PVT_LAYER\t5");
     version_two_output << "PVT_LAYER\t2\n";
@@ -363,12 +430,6 @@ void test_layer_codec_backward_compatibility() {
     CHECK(static_cast<bool>(std::getline(input, line)));
     CHECK(line == "PVT_LAYER\t2");
     legacy << "PVT_LAYER\t1\n";
-    const auto has_suffix = [](const std::string& value,
-                               const std::string& suffix) {
-        return value.size() >= suffix.size()
-               && value.compare(value.size() - suffix.size(), suffix.size(),
-                                suffix) == 0;
-    };
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');
         const std::string key = line.substr(0U, tab);
@@ -404,7 +465,7 @@ void test_layer_codec_backward_compatibility() {
     pvt::RenderData recovered = original;
     recovered.phrase_warp = 0.123456;
     const std::string malformed_layer =
-        version_three + "timing.clock.mode\tdefault\n";
+        current_layer + "timing.clock.mode\tdefault\n";
     CHECK(pvt::detail::deserialize_layer_config(
         malformed_layer, recovered, &error));
     CHECK(recovered.phrase_warp == original.phrase_warp);
@@ -459,6 +520,13 @@ void test_render_output_codec_backward_compatibility() {
         {0.2F, 0.3F, 0.4F, 0.5F, 0.6F, 0.7F},
         {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
     };
+    canvas.audio_reactive_defaults.enabled = true;
+    canvas.audio_reactive_defaults.synchronized_only = false;
+    canvas.audio_reactive_defaults.wave_source = pvt::MusicFeature::Bass;
+    canvas.audio_reactive_defaults.wave_amount = 0.26;
+    canvas.audio_reactive_defaults.effect_source = pvt::MusicFeature::Onset;
+    canvas.audio_reactive_defaults.effect_amount = 0.37;
+    canvas.audio_reactive_defaults.color_enabled = false;
     canvas.motion_paths.push_back(
         pvt::default_ellipse_path(91U, 100U, "Codec ellipse"));
     output.filename_prefix = "music-sync_";
@@ -467,7 +535,7 @@ void test_render_output_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t4\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t5\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -480,6 +548,12 @@ void test_render_output_codec_backward_compatibility() {
           == pvt::MusicSwingPolicy::SuppressGlobal);
     CHECK(round_trip.clock.music.source_sha256 == std::string(64U, 'b'));
     CHECK(round_trip.clock.music.beat_times_seconds.size() == 4U);
+    CHECK(round_trip.audio_reactive_defaults.enabled);
+    CHECK(!round_trip.audio_reactive_defaults.synchronized_only);
+    CHECK(round_trip.audio_reactive_defaults.wave_source
+          == pvt::MusicFeature::Bass);
+    CHECK(round_trip.audio_reactive_defaults.effect_amount == 0.37);
+    CHECK(!round_trip.audio_reactive_defaults.color_enabled);
     CHECK(round_trip.motion_paths.size() == 1U);
     CHECK(round_trip.motion_paths.front().nodes.size() == 4U);
     CHECK(round_trip_output.filename_prefix == "music-sync_");
@@ -491,7 +565,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t1\n", 0U) == 0U);
     CHECK(pvt::detail::serialize_split_render_output_config(
         canvas, output, split_output, &error));
-    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t2\n", 0U) == 0U);
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t3\n", 0U) == 0U);
     CHECK(split_output.find("timing.music.") == std::string::npos);
     CHECK(split_output.size() < version_two.size());
     pvt::CanvasLoopConfig combined_canvas;
@@ -528,7 +602,8 @@ void test_render_output_codec_backward_compatibility() {
     legacy_split << "PVT_RENDER_OUTPUT_SPLIT\t1\n";
     while (std::getline(split_input, split_line)) {
         const std::string key = split_line.substr(0U, split_line.find('\t'));
-        if (key.rfind("paths.", 0U) != 0U) {
+        if (key.rfind("paths.", 0U) != 0U
+            && key.rfind("audio_response_defaults.", 0U) != 0U) {
             legacy_split << split_line << '\n';
         }
     }
@@ -538,6 +613,7 @@ void test_render_output_codec_backward_compatibility() {
         legacy_split.str(), analysis, legacy_split_canvas,
         legacy_split_output, &error));
     CHECK(legacy_split_canvas.motion_paths.empty());
+    CHECK(!legacy_split_canvas.audio_reactive_defaults.enabled);
     CHECK(legacy_split_canvas.clock.mode == pvt::ClockMode::Music);
     CHECK(legacy_split_output.filename_prefix == "music-sync_");
     pvt::MusicAnalysis analysis_round_trip;
@@ -569,14 +645,16 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t4");
+    CHECK(line == "PVT_RENDER_OUTPUT\t5");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');
         const std::string key = line.substr(0U, tab);
         const bool v2_only = key.rfind("timing.clock.", 0U) == 0U
                              || key.rfind("timing.music.", 0U) == 0U
-                             || key.rfind("paths.", 0U) == 0U;
+                             || key.rfind("paths.", 0U) == 0U
+                             || key.rfind("audio_response_defaults.", 0U)
+                                    == 0U;
         if (!v2_only) legacy << line << '\n';
     }
 
@@ -588,6 +666,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(loaded_legacy.clock.mode == pvt::ClockMode::Default);
     CHECK(loaded_legacy.clock.music.source_sha256.empty());
     CHECK(loaded_legacy.clock.music.beat_times_seconds.empty());
+    CHECK(!loaded_legacy.audio_reactive_defaults.enabled);
     CHECK(loaded_legacy_output.filename_prefix == "music-sync_");
 
     loaded_legacy.width = 777;
@@ -754,8 +833,17 @@ void test_directory_versions_and_names(const fs::path& directory) {
     initial_render.transform.flip_horizontal = true;
     initial_render.transform.mirror = pvt::MirrorMode::TopToBottom;
     initial_render.swings_enabled = false;
+    document.project.canvas.audio_reactive_defaults.enabled = true;
+    document.project.canvas.audio_reactive_defaults.wave_source =
+        pvt::MusicFeature::Onset;
+    document.project.canvas.audio_reactive_defaults.wave_amount = 0.41;
+    initial_render.audio_reactive_override_enabled = false;
     initial_render.audio_reactive.wave_source = pvt::MusicFeature::Treble;
     initial_render.audio_reactive.wave_amount = 0.57;
+    initial_render.waves.front().audio_response =
+        pvt::AudioResponseMode::Beat;
+    initial_render.effects.front().audio_response =
+        pvt::AudioResponseMode::Energy;
     document.project.canvas.motion_paths.push_back(
         pvt::default_ellipse_path(91U, 100U, "Bundle ellipse"));
     initial_render.waves.front().path.enabled = true;
@@ -794,6 +882,10 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(loaded.project.canvas.motion_paths.size() == 1U);
     CHECK(loaded.project.canvas.motion_paths.front().name == "Bundle ellipse");
     CHECK(loaded.project.canvas.motion_paths.front().nodes.size() == 4U);
+    CHECK(loaded.project.canvas.audio_reactive_defaults.enabled);
+    CHECK(loaded.project.canvas.audio_reactive_defaults.wave_source
+          == pvt::MusicFeature::Onset);
+    CHECK(loaded.project.canvas.audio_reactive_defaults.wave_amount == 0.41);
     const auto& loaded_render = loaded.project.layers.front().render;
     CHECK(loaded_render.swings.front().center_x == 0.31);
     CHECK(loaded_render.swings.front().center_y == 0.69);
@@ -807,9 +899,14 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(loaded_render.transform.flip_horizontal);
     CHECK(loaded_render.transform.mirror == pvt::MirrorMode::TopToBottom);
     CHECK(!loaded_render.swings_enabled);
+    CHECK(!loaded_render.audio_reactive_override_enabled);
     CHECK(loaded_render.audio_reactive.wave_source
           == pvt::MusicFeature::Treble);
     CHECK(loaded_render.audio_reactive.wave_amount == 0.57);
+    CHECK(loaded_render.waves.front().audio_response
+          == pvt::AudioResponseMode::Beat);
+    CHECK(loaded_render.effects.front().audio_response
+          == pvt::AudioResponseMode::Energy);
     CHECK(loaded_render.waves.front().path.enabled);
     CHECK(loaded_render.waves.front().path.path_id == 91U);
     CHECK(loaded_render.waves.front().path.follow_tangent);

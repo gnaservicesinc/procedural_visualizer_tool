@@ -49,6 +49,39 @@ if(NOT EXISTS "${test_root}/original.pvt")
 endif()
 file(SHA256 "${test_root}/original.pvt" legacy_digest_before)
 
+run_cli("scripted hierarchical audio routing"
+    --project-audio-reactive --audio-reactive
+    --save-legacy routing.pvt)
+file(READ "${test_root}/routing.pvt" routing_setup)
+string(ASCII 9 field_separator)
+string(FIND "${routing_setup}"
+    "audio_response_defaults.enabled${field_separator}1"
+    project_audio_position)
+string(FIND "${routing_setup}"
+    "audio_reactive.override_enabled${field_separator}1"
+    layer_override_position)
+string(FIND "${routing_setup}"
+    "audio_reactive.enabled${field_separator}1"
+    layer_audio_position)
+if(project_audio_position LESS 0
+    OR layer_override_position LESS 0
+    OR layer_audio_position LESS 0)
+    message(FATAL_ERROR
+        "Scripted audio switches did not persist project and layer routing")
+endif()
+
+run_cli("scripted audio inheritance"
+    --audio-reactive --inherit-audio-reactive
+    --save-legacy inherited-routing.pvt)
+file(READ "${test_root}/inherited-routing.pvt" inherited_routing_setup)
+string(FIND "${inherited_routing_setup}"
+    "audio_reactive.override_enabled${field_separator}0"
+    inherited_override_position)
+if(inherited_override_position LESS 0)
+    message(FATAL_ERROR
+        "Scripted inherit switch did not disable the active-layer override")
+endif()
+
 run_cli("legacy import to bundle" --load original.pvt --save-default)
 if(NOT EXISTS "${test_root}/original.zip")
     message(FATAL_ERROR "Legacy import did not default to a separate original.zip")

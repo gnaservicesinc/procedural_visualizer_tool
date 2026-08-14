@@ -50,15 +50,21 @@ namespace {
 // records use zero-based indexes (`waves.N.*`, `swings.N.*`, `effects.N.*`).
 // Strings use RFC 3986-style percent encoding over their exact bytes: only
 // ALPHA / DIGIT / "-._~" remain literal. There are no comments, aliases, or
-// optional records within a given version. This keeps parsing unambiguous,
-// safely rejectable, and friendly to source control while still allowing
-// arbitrary string bytes. Version 2 adds PNG compression and custom-OBJ path
+// optional records before version 8. The small set of v8 inheritance fields
+// explicitly accepts missing/null values; every other field remains required
+// for its version. This keeps parsing unambiguous, safely rejectable, and
+// friendly to source control while still allowing arbitrary string bytes.
+// Version 2 adds PNG compression and custom-OBJ path
 // fields. Version 3 separates final output alpha from procedural layer alpha.
 // Version 4 adds spatial swings/effects, effect stage selection, palettes, and
 // layer transforms. Version 5 adds project clocks, bounded cached music
 // analysis, a master swing switch, per-layer audio response, and portable
-// custom-OBJ attachment identity. Older versions remain accepted with neutral
-// defaults for every field introduced later.
+// custom-OBJ attachment identity. Versions 6 and 7 add local clocks/motion and
+// starting-image/reusable-path data. Version 8 adds project/layer audio-response
+// inheritance and nullable per-wave/per-effect force/ignore routing. Version 9
+// extends those same selectors with explicit audio-feature overrides. Older
+// versions remain accepted with neutral defaults for every field introduced
+// later.
 
 constexpr std::size_t kMaximumLineBytes = 256U * 1024U;
 constexpr std::size_t kMaximumKeyBytes = 128U;
@@ -70,8 +76,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = 4096U;
 constexpr std::size_t kMaximumMusicFormatBytes = 64U;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 7U,
-              "config_io.cpp implements setup format version 7");
+static_assert(kSetupFormatVersion == 9U,
+              "config_io.cpp implements setup format version 9");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -141,6 +147,19 @@ bool setup_v7_record(std::string_view key) {
            || ((starts_with(key, "waves.")
                 || starts_with(key, "effects."))
                && key.find(".path.") != std::string_view::npos);
+}
+
+bool setup_v8_record(std::string_view key) {
+    const auto suffix = [key](std::string_view value) {
+        return key.size() >= value.size()
+               && key.compare(key.size() - value.size(), value.size(), value)
+                      == 0;
+    };
+    return starts_with(key, "audio_response_defaults.")
+           || key == "audio_reactive.override_enabled"
+           || ((starts_with(key, "waves.")
+                || starts_with(key, "effects."))
+               && suffix(".audio_response"));
 }
 
 void clear_error(std::string* error) {
@@ -572,6 +591,59 @@ bool consume_enum(Records& records,
     return fail(error, record_error("Unknown enum token in setup key", key));
 }
 
+template <typename Enum, std::size_t Count>
+bool consume_optional_enum(
+    Records& records,
+    const std::string& key,
+    Enum& destination,
+    Enum default_value,
+    const std::array<std::pair<std::string_view, Enum>, Count>& values,
+    std::string* error) {
+    const auto found = records.find(key);
+    if (found == records.end()) {
+        destination = default_value;
+        return true;
+    }
+    const std::string value = std::move(found->second);
+    records.erase(found);
+    if (value == "null") {
+        destination = default_value;
+        return true;
+    }
+    for (const auto& entry : values) {
+        if (value == entry.first) {
+            destination = entry.second;
+            return true;
+        }
+    }
+    return fail(error, record_error("Unknown enum token in setup key", key));
+}
+
+bool consume_optional_bool(Records& records,
+                           const std::string& key,
+                           bool& destination,
+                           bool default_value,
+                           std::string* error) {
+    const auto found = records.find(key);
+    if (found == records.end()) {
+        destination = default_value;
+        return true;
+    }
+    const std::string value = std::move(found->second);
+    records.erase(found);
+    if (value == "null") {
+        destination = default_value;
+        return true;
+    }
+    if (!parse_bool_exact(value, destination)) {
+        return fail(error,
+                    record_error(
+                        "Invalid nullable boolean (expected 0, 1, or null) in setup key",
+                        key));
+    }
+    return true;
+}
+
 bool consume_count(Records& records,
                    const std::string& key,
                    std::size_t maximum,
@@ -719,6 +791,32 @@ constexpr std::array<std::pair<std::string_view, MusicFeature>, 10U>
         {"spectral_flatness", MusicFeature::SpectralFlatness},
         {"chroma_hue", MusicFeature::ChromaHue},
         {"chroma_strength", MusicFeature::ChromaStrength},
+    }};
+
+constexpr std::array<std::pair<std::string_view, AudioResponseMode>, 13U>
+    kAudioResponseModes{{
+        {"default", AudioResponseMode::Default},
+        {"enabled", AudioResponseMode::Enabled},
+        {"disabled", AudioResponseMode::Disabled},
+        {"energy", AudioResponseMode::Energy},
+        {"bass", AudioResponseMode::Bass},
+        {"midrange", AudioResponseMode::Midrange},
+        {"treble", AudioResponseMode::Treble},
+        {"onset", AudioResponseMode::Onset},
+        {"beat", AudioResponseMode::Beat},
+        {"spectral_centroid", AudioResponseMode::SpectralCentroid},
+        {"spectral_flatness", AudioResponseMode::SpectralFlatness},
+        {"chroma_hue", AudioResponseMode::ChromaHue},
+        {"chroma_strength", AudioResponseMode::ChromaStrength},
+    }};
+
+// Format 8 only defined these tokens. Decode against this exact table so a
+// hand-edited v8 document cannot silently claim format-9 source semantics.
+constexpr std::array<std::pair<std::string_view, AudioResponseMode>, 3U>
+    kAudioResponseModesV8{{
+        {"default", AudioResponseMode::Default},
+        {"enabled", AudioResponseMode::Enabled},
+        {"disabled", AudioResponseMode::Disabled},
     }};
 
 constexpr std::array<std::pair<std::string_view, MusicSwingPolicy>, 3U>
@@ -951,6 +1049,30 @@ void add_clock_records(SetupBuilder& builder, std::string_view prefix,
     add_music_records(builder, music_prefix, clock.music);
 }
 
+void add_audio_reactive_records(SetupBuilder& builder,
+                                std::string_view prefix,
+                                const AudioReactiveConfig& audio) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    builder.add_bool(key("enabled"), audio.enabled);
+    builder.add_bool(key("synchronized_only"), audio.synchronized_only);
+    builder.add_bool(key("waves_enabled"), audio.waves_enabled);
+    builder.add_enum(key("wave_source"), audio.wave_source, kMusicFeatures);
+    builder.add_double(key("wave_amount"), audio.wave_amount);
+    builder.add_bool(key("effects_enabled"), audio.effects_enabled);
+    builder.add_enum(key("effect_source"), audio.effect_source,
+                     kMusicFeatures);
+    builder.add_double(key("effect_amount"), audio.effect_amount);
+    builder.add_bool(key("color_enabled"), audio.color_enabled);
+    builder.add_enum(key("color_source"), audio.color_source,
+                     kMusicFeatures);
+    builder.add_double(key("color_amount_degrees"),
+                       audio.color_amount_degrees);
+}
+
 bool validate_persistence_bounds(const RenderConfig& config,
                                  std::string* error) {
     const MusicAnalysis& music = config.clock.music;
@@ -1046,6 +1168,8 @@ bool serialize_setup(const RenderConfig& config,
                        config.clock.phase_offset_degrees);
     builder.add_bool("timing.clock.reverse", config.clock.reverse);
     builder.add_bool("timing.clock.data_only", config.clock.data_only);
+    add_audio_reactive_records(builder, "audio_response_defaults.",
+                               config.audio_reactive_defaults);
 
     builder.add_integer("paths.count", config.motion_paths.size());
     for (std::size_t path_index = 0U;
@@ -1147,6 +1271,8 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_string(indexed_key("waves", index, "name"), wave.name);
         builder.add_bool(indexed_key("waves", index, "enabled"), wave.enabled);
         builder.add_bool(indexed_key("waves", index, "synchronized"), wave.synchronized);
+        builder.add_enum(indexed_key("waves", index, "audio_response"),
+                         wave.audio_response, kAudioResponseModes);
         builder.add_double(indexed_key("waves", index, "x_percent"), wave.x_percent);
         builder.add_double(indexed_key("waves", index, "y_percent"), wave.y_percent);
         builder.add_double(indexed_key("waves", index, "amplitude"), wave.amplitude);
@@ -1183,6 +1309,8 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_enum(indexed_key("effects", index, "space"), effect.space, kEffectSpaces);
         builder.add_bool(indexed_key("effects", index, "enabled"), effect.enabled);
         builder.add_bool(indexed_key("effects", index, "synchronized"), effect.synchronized);
+        builder.add_enum(indexed_key("effects", index, "audio_response"),
+                         effect.audio_response, kAudioResponseModes);
         builder.add_integer(indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop);
         builder.add_double(indexed_key("effects", index, "phase_degrees"), effect.phase_degrees);
         builder.add_enum(indexed_key("effects", index, "edge_mode"), effect.edge_mode, kEdgeModes);
@@ -1206,27 +1334,10 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("rhythm.ghost_mix", config.ghost_mix);
     builder.add_double("rhythm.ghost_lag_degrees", config.ghost_lag_degrees);
 
-    builder.add_bool("audio_reactive.enabled", config.audio_reactive.enabled);
-    builder.add_bool("audio_reactive.synchronized_only",
-                     config.audio_reactive.synchronized_only);
-    builder.add_bool("audio_reactive.waves_enabled",
-                     config.audio_reactive.waves_enabled);
-    builder.add_enum("audio_reactive.wave_source",
-                     config.audio_reactive.wave_source, kMusicFeatures);
-    builder.add_double("audio_reactive.wave_amount",
-                       config.audio_reactive.wave_amount);
-    builder.add_bool("audio_reactive.effects_enabled",
-                     config.audio_reactive.effects_enabled);
-    builder.add_enum("audio_reactive.effect_source",
-                     config.audio_reactive.effect_source, kMusicFeatures);
-    builder.add_double("audio_reactive.effect_amount",
-                       config.audio_reactive.effect_amount);
-    builder.add_bool("audio_reactive.color_enabled",
-                     config.audio_reactive.color_enabled);
-    builder.add_enum("audio_reactive.color_source",
-                     config.audio_reactive.color_source, kMusicFeatures);
-    builder.add_double("audio_reactive.color_amount_degrees",
-                       config.audio_reactive.color_amount_degrees);
+    builder.add_bool("audio_reactive.override_enabled",
+                     config.audio_reactive_override_enabled);
+    add_audio_reactive_records(builder, "audio_reactive.",
+                               config.audio_reactive);
 
     builder.add_bool("appearance.displacement_enabled", config.displacement_enabled);
     builder.add_double("appearance.displacement", config.displacement);
@@ -1446,6 +1557,50 @@ bool consume_clock_records(Records& records, std::string_view prefix,
            && consume_music_records(records, music_prefix, clock.music, error);
 }
 
+bool consume_audio_reactive_records(Records& records,
+                                    std::string_view prefix,
+                                    AudioReactiveConfig& audio,
+                                    bool optional_block,
+                                    std::string* error) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    if (optional_block) {
+        const bool present = std::any_of(
+            records.begin(), records.end(), [prefix](const auto& record) {
+                return starts_with(record.first, prefix);
+            });
+        if (!present) return true;
+    }
+    const bool enabled_ok = optional_block
+        ? consume_optional_bool(records, key("enabled"), audio.enabled,
+                                false, error)
+        : consume_bool(records, key("enabled"), audio.enabled, error);
+    return enabled_ok
+           && consume_bool(records, key("synchronized_only"),
+                           audio.synchronized_only, error)
+           && consume_bool(records, key("waves_enabled"),
+                           audio.waves_enabled, error)
+           && consume_enum(records, key("wave_source"), audio.wave_source,
+                           kMusicFeatures, error)
+           && consume_double(records, key("wave_amount"), audio.wave_amount,
+                             error)
+           && consume_bool(records, key("effects_enabled"),
+                           audio.effects_enabled, error)
+           && consume_enum(records, key("effect_source"),
+                           audio.effect_source, kMusicFeatures, error)
+           && consume_double(records, key("effect_amount"),
+                             audio.effect_amount, error)
+           && consume_bool(records, key("color_enabled"),
+                           audio.color_enabled, error)
+           && consume_enum(records, key("color_source"), audio.color_source,
+                           kMusicFeatures, error)
+           && consume_double(records, key("color_amount_degrees"),
+                             audio.color_amount_degrees, error);
+}
+
 bool consume_path_binding_records(Records& records,
                                   std::string_view prefix,
                                   PathBinding& binding,
@@ -1479,6 +1634,13 @@ bool deserialize_setup(Records& records,
         || !consume_integer(records, "canvas.block_size", candidate.block_size, error)
         || !consume_integer(records, "timing.total_frames", candidate.total_frames, error)
         || !consume_double(records, "timing.fps", candidate.fps, error)) {
+        return false;
+    }
+
+    if (setup_version >= 8U
+        && !consume_audio_reactive_records(
+            records, "audio_response_defaults.",
+            candidate.audio_reactive_defaults, true, error)) {
         return false;
     }
 
@@ -1752,6 +1914,16 @@ bool deserialize_setup(Records& records,
             || !consume_string(records, indexed_key("waves", index, "name"), wave.name, error)
             || !consume_bool(records, indexed_key("waves", index, "enabled"), wave.enabled, error)
             || !consume_bool(records, indexed_key("waves", index, "synchronized"), wave.synchronized, error)
+            || (setup_version >= 9U
+                && !consume_optional_enum(
+                    records, indexed_key("waves", index, "audio_response"),
+                    wave.audio_response, AudioResponseMode::Default,
+                    kAudioResponseModes, error))
+            || (setup_version == 8U
+                && !consume_optional_enum(
+                    records, indexed_key("waves", index, "audio_response"),
+                    wave.audio_response, AudioResponseMode::Default,
+                    kAudioResponseModesV8, error))
             || !consume_double(records, indexed_key("waves", index, "x_percent"), wave.x_percent, error)
             || !consume_double(records, indexed_key("waves", index, "y_percent"), wave.y_percent, error)
             || !consume_double(records, indexed_key("waves", index, "amplitude"), wave.amplitude, error)
@@ -1818,6 +1990,16 @@ bool deserialize_setup(Records& records,
         }
         if (!consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
             || !consume_bool(records, indexed_key("effects", index, "synchronized"), effect.synchronized, error)
+            || (setup_version >= 9U
+                && !consume_optional_enum(
+                    records, indexed_key("effects", index, "audio_response"),
+                    effect.audio_response, AudioResponseMode::Default,
+                    kAudioResponseModes, error))
+            || (setup_version == 8U
+                && !consume_optional_enum(
+                    records, indexed_key("effects", index, "audio_response"),
+                    effect.audio_response, AudioResponseMode::Default,
+                    kAudioResponseModesV8, error))
             || !consume_integer(records, indexed_key("effects", index, "cycles_per_loop"), effect.cycles_per_loop, error)
             || !consume_double(records, indexed_key("effects", index, "phase_degrees"), effect.phase_degrees, error)
             || !consume_enum(records, indexed_key("effects", index, "edge_mode"), effect.edge_mode, kEdgeModes, error)
@@ -1846,36 +2028,28 @@ bool deserialize_setup(Records& records,
         }
     }
 
-    if (setup_version >= 5U
-        && (!consume_bool(records, "rhythm.swings_enabled",
+    if (setup_version >= 5U) {
+        if (!consume_bool(records, "rhythm.swings_enabled",
                           candidate.swings_enabled, error)
-            || !consume_bool(records, "audio_reactive.enabled",
-                             candidate.audio_reactive.enabled, error)
-            || !consume_bool(records, "audio_reactive.synchronized_only",
-                             candidate.audio_reactive.synchronized_only, error)
-            || !consume_bool(records, "audio_reactive.waves_enabled",
-                             candidate.audio_reactive.waves_enabled, error)
-            || !consume_enum(records, "audio_reactive.wave_source",
-                             candidate.audio_reactive.wave_source,
-                             kMusicFeatures, error)
-            || !consume_double(records, "audio_reactive.wave_amount",
-                               candidate.audio_reactive.wave_amount, error)
-            || !consume_bool(records, "audio_reactive.effects_enabled",
-                             candidate.audio_reactive.effects_enabled, error)
-            || !consume_enum(records, "audio_reactive.effect_source",
-                             candidate.audio_reactive.effect_source,
-                             kMusicFeatures, error)
-            || !consume_double(records, "audio_reactive.effect_amount",
-                               candidate.audio_reactive.effect_amount, error)
-            || !consume_bool(records, "audio_reactive.color_enabled",
-                             candidate.audio_reactive.color_enabled, error)
-            || !consume_enum(records, "audio_reactive.color_source",
-                             candidate.audio_reactive.color_source,
-                             kMusicFeatures, error)
-            || !consume_double(records, "audio_reactive.color_amount_degrees",
-                               candidate.audio_reactive.color_amount_degrees,
-                               error))) {
-        return false;
+            || !consume_audio_reactive_records(
+                records, "audio_reactive.", candidate.audio_reactive,
+                false, error)) {
+            return false;
+        }
+        if (setup_version >= 8U) {
+            // Missing/null is the authored Default state: inherit the project
+            // block. Serializers still emit the canonical explicit boolean.
+            candidate.audio_reactive_override_enabled = false;
+            if (!consume_optional_bool(
+                    records, "audio_reactive.override_enabled",
+                    candidate.audio_reactive_override_enabled, false, error)) {
+                return false;
+            }
+        } else {
+            // Before v8 every layer block was authoritative. Preserve those
+            // visuals exactly when importing old setups and bundles.
+            candidate.audio_reactive_override_enabled = true;
+        }
     }
 
     if (!consume_double(records, "rhythm.phrase_warp", candidate.phrase_warp, error)
@@ -2168,7 +2342,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 4U && setup_v4_record(key))
              || (setup_version < 5U && setup_v5_record(key))
              || (setup_version < 6U && setup_v6_record(key))
-             || (setup_version < 7U && setup_v7_record(key)));
+             || (setup_version < 7U && setup_v7_record(key))
+             || (setup_version < 8U && setup_v8_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -2275,12 +2450,12 @@ RecoveryAttempt decode_with_record_repair(
 }
 
 std::string recovery_group(std::string_view key) {
-    constexpr std::array<std::string_view, 19U> groups{{
+    constexpr std::array<std::string_view, 20U> groups{{
         "paths.", "timing.music.", "timing.clock.", "canvas.",
         "output.", "waves.", "swings.", "effects.", "layer_clock.",
         "palette.", "surface.", "source_image.", "motion.", "alpha.",
         "quantization.", "transform.", "audio_reactive.", "appearance.",
-        "rhythm.",
+        "rhythm.", "audio_response_defaults.",
     }};
     for (const std::string_view group : groups) {
         if (starts_with(key, group)) return std::string(group);
@@ -2906,6 +3081,26 @@ const char* music_feature_name(MusicFeature value) {
         case MusicFeature::SpectralFlatness: return "Spectral noisiness";
         case MusicFeature::ChromaHue: return "Pitch color (tonality-weighted)";
         case MusicFeature::ChromaStrength: return "Tonal strength";
+    }
+    return "Unknown";
+}
+
+const char* audio_response_mode_name(AudioResponseMode value) {
+    switch (value) {
+        case AudioResponseMode::Default: return "Default";
+        case AudioResponseMode::Enabled: return "Profile feature (force on)";
+        case AudioResponseMode::Disabled: return "Ignore audio";
+        case AudioResponseMode::Energy: return "Energy";
+        case AudioResponseMode::Bass: return "Bass";
+        case AudioResponseMode::Midrange: return "Midrange";
+        case AudioResponseMode::Treble: return "Treble";
+        case AudioResponseMode::Onset: return "Onset";
+        case AudioResponseMode::Beat: return "Beat";
+        case AudioResponseMode::SpectralCentroid: return "Spectral brightness";
+        case AudioResponseMode::SpectralFlatness: return "Spectral noisiness";
+        case AudioResponseMode::ChromaHue:
+            return "Pitch color (tonality-weighted)";
+        case AudioResponseMode::ChromaStrength: return "Tonal strength";
     }
     return "Unknown";
 }
