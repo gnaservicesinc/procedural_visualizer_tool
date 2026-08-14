@@ -442,7 +442,8 @@ struct SwingConfig {
 // given type are ignored. Coordinate-effect `magnitude` is normalized to the
 // shorter image edge; Glow and BlockScale use type-specific fields instead.
 //
-// EndlessZoom: intensity, magnitude, frequency, center, edge mode.
+// EndlessZoom: intensity (0..1 source mix; above 1 deepens the zoom span),
+//              magnitude, frequency, center, edge mode.
 // Ripple:      intensity, magnitude, frequency, secondary (falloff), center,
 //              edge mode.
 // Shake:       intensity, magnitude, frequency, secondary (second-axis ratio),

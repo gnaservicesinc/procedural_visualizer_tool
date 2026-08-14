@@ -54,6 +54,7 @@ struct alignas(16) GpuFrameConstants {
     UInt4 transform_quant;
     UInt4 quant_values;
     Float4 phases;
+    Float4 timelines;
     Float4 center_ghost;
     Float4 pattern0;
     Float4 pattern1;
@@ -85,7 +86,7 @@ struct alignas(16) GpuSurface {
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
-static_assert(sizeof(GpuFrameConstants) == 176U);
+static_assert(sizeof(GpuFrameConstants) == 192U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 64U);
@@ -384,6 +385,8 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<float>(prepared.global_motion_phase),
         static_cast<float>(0.85 + 0.35 * std::sin(prepared.loop_phase)),
         static_cast<float>(std::min(config.width, config.height))};
+    result.timelines = {
+        static_cast<float>(prepared.independent_loop_phase), 0.0F, 0.0F, 0.0F};
     double center_x = 0.5 * static_cast<double>(config.width);
     double center_y = 0.5 * static_cast<double>(config.height);
     if (!prepared.waves.empty()) {

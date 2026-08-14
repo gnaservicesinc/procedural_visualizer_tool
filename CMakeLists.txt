@@ -704,8 +704,13 @@ if(BUILD_TESTING)
     if(PVT_BUILD_QT_GUI)
         add_test(NAME pvt_gui_smoke
             COMMAND ProceduralVisualizerToolGui --smoke-test)
+        if(APPLE)
+            set(PVT_GUI_SMOKE_PLATFORM cocoa)
+        else()
+            set(PVT_GUI_SMOKE_PLATFORM offscreen)
+        endif()
         set_tests_properties(pvt_gui_smoke PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            ENVIRONMENT "QT_QPA_PLATFORM=${PVT_GUI_SMOKE_PLATFORM}")
     endif()
 endif()
 

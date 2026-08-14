@@ -416,7 +416,9 @@ void test_synchronized_clocks_and_music() {
         direct_phase, &error));
     CHECK(default_frame.pixels == direct_phase.pixels);
 
-    // Free waves bypass swing, but still consume the held base clock.
+    // Free waves keep their independent seamless clock even while the shared
+    // synchronized clock is held. Re-enabling synchronization makes the same
+    // frames identical again.
     for (pvt::WaveConfig& wave : config.waves) wave.synchronized = false;
     config.clock.mode = pvt::ClockMode::Frame;
     config.clock.frame_interval = 3;
@@ -429,9 +431,30 @@ void test_synchronized_clocks_and_music() {
     CHECK(pvt::render_frame(config, 1, held_one, &error));
     CHECK(pvt::render_frame(config, 2, held_two, &error));
     CHECK(pvt::render_frame(config, 3, next_pulse, &error));
-    CHECK(held_zero.pixels == held_one.pixels);
-    CHECK(held_zero.pixels == held_two.pixels);
+    CHECK(held_zero.pixels != held_one.pixels);
+    CHECK(held_zero.pixels != held_two.pixels);
     CHECK(held_zero.pixels != next_pulse.pixels);
+    for (pvt::WaveConfig& wave : config.waves) wave.synchronized = true;
+    CHECK(pvt::render_frame(config, 0, held_zero, &error));
+    CHECK(pvt::render_frame(config, 1, held_one, &error));
+    CHECK(held_zero.pixels == held_one.pixels);
+
+    // Endless Zoom follows the same contract: synchronized instances consume
+    // the held clock, while free instances advance on their own loop clock.
+    pvt::RenderConfig zoom_clock = config;
+    zoom_clock.effects.clear();
+    auto zoom = pvt::default_effect(pvt::EffectType::EndlessZoom);
+    zoom.id = pvt::allocate_id(zoom_clock);
+    zoom.enabled = true;
+    zoom.synchronized = true;
+    zoom_clock.effects.push_back(zoom);
+    CHECK(pvt::render_frame(zoom_clock, 0, held_zero, &error));
+    CHECK(pvt::render_frame(zoom_clock, 1, held_one, &error));
+    CHECK(held_zero.pixels == held_one.pixels);
+    zoom_clock.effects.front().synchronized = false;
+    CHECK(pvt::render_frame(zoom_clock, 0, held_zero, &error));
+    CHECK(pvt::render_frame(zoom_clock, 1, held_one, &error));
+    CHECK(held_zero.pixels != held_one.pixels);
 
     pvt::RenderConfig fit_clock = config;
     fit_clock.total_frames = 10;
@@ -660,6 +683,43 @@ void test_synchronized_clocks_and_music() {
         CHECK(pvt::render_frame(music, 5, at_spike, &error));
         CHECK(before_spike.pixels == at_spike.pixels);
         ripple->audio_response = pvt::AudioResponseMode::Default;
+    }
+
+    // Endless Zoom's default intensity is already a full-strength blend, but
+    // positive audio response must still produce a visible change instead of
+    // disappearing into that clamp.
+    pvt::RenderConfig music_zoom = pvt::default_config();
+    make_small(music_zoom);
+    music_zoom.fps = 10.0;
+    music_zoom.clock = ready_music_clock();
+    music_zoom.clock.interpolation = pvt::ClockInterpolation::Hold;
+    music_zoom.clock.music.beat_times_seconds = {0.0, 1.0};
+    music_zoom.clock.music.feature_samples.assign(11U, {});
+    music_zoom.clock.music.feature_samples[5U].energy = 1.0F;
+    music_zoom.audio_reactive.enabled = true;
+    music_zoom.audio_reactive.effects_enabled = false;
+    music_zoom.audio_reactive.effect_source = pvt::MusicFeature::Energy;
+    music_zoom.audio_reactive.effect_amount = 1.0;
+    music_zoom.effects.clear();
+    zoom = pvt::default_effect(pvt::EffectType::EndlessZoom);
+    zoom.id = pvt::allocate_id(music_zoom);
+    zoom.enabled = true;
+    zoom.synchronized = true;
+    zoom.audio_response = pvt::AudioResponseMode::Energy;
+    music_zoom.effects.push_back(zoom);
+    CHECK(pvt::render_frame(music_zoom, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music_zoom, 5, at_spike, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        music_zoom, 4, prepared_before, &error));
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        music_zoom, 5, prepared_at, &error));
+    CHECK(prepared_before.effects.size() == 1U);
+    CHECK(prepared_at.effects.size() == 1U);
+    if (prepared_before.effects.size() == 1U
+        && prepared_at.effects.size() == 1U) {
+        CHECK(prepared_before.effects.front().intensity
+              != prepared_at.effects.front().intensity);
     }
 
     // The master toggle is authoritative in Music mode. Legacy policy values

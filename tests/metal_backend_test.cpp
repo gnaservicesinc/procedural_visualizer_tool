@@ -142,6 +142,22 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
                 "base/palette/alpha/transform/quantization");
 
+    // A held shared clock must not leak into free wave timing on either
+    // backend. This exercises the independent phase carried in Metal's frame
+    // constants rather than only testing direct-phase renders.
+    pvt::RenderConfig free_clock = parity_config();
+    free_clock.clock.mode = pvt::ClockMode::Frame;
+    free_clock.clock.frame_interval = 3;
+    free_clock.clock.interpolation = pvt::ClockInterpolation::Hold;
+    free_clock.quantization.enabled = false;
+    free_clock.transform = {};
+    free_clock.effects.clear();
+    for (auto& wave : free_clock.waves) wave.synchronized = false;
+    CHECK(pvt::render_frame(free_clock, 1, cpu_options, cpu, nullptr, &error));
+    CHECK(pvt::render_frame(free_clock, 1, gpu_options, gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
+                "independent wave clock under shared hold");
+
     const std::vector<pvt::EffectType> effect_types = {
         pvt::EffectType::EndlessZoom,
         pvt::EffectType::Ripple,
@@ -157,7 +173,9 @@ void test_backend_contract() {
         pvt::EffectConfig effect = pvt::default_effect(type);
         effect.id = pvt::allocate_id(single_effect);
         effect.enabled = true;
-        effect.intensity = type == pvt::EffectType::Glow ? 0.8 : 0.65;
+        effect.intensity = type == pvt::EffectType::EndlessZoom
+                               ? 2.0
+                               : (type == pvt::EffectType::Glow ? 0.8 : 0.65);
         effect.area_radius = 0.58;
         if (type == pvt::EffectType::Glow) {
             effect.radius_pixels = 5.0;

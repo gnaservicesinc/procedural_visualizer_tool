@@ -381,6 +381,7 @@ private:
     QCheckBox* wave_enabled_ = nullptr;
     QCheckBox* wave_sync_ = nullptr;
     QComboBox* wave_audio_response_ = nullptr;
+    QFormLayout* wave_form_ = nullptr;
     QDoubleSpinBox* wave_x_ = nullptr;
     QDoubleSpinBox* wave_y_ = nullptr;
     QDoubleSpinBox* wave_amplitude_ = nullptr;

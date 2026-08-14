@@ -8,11 +8,21 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.0.0 and has one source of truth in
+The public product version is now 1.0.1 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.0.1 patch restores the documented sync/free timing boundary. Timeline
+resolution now retains both the effective synchronized project/layer clock and
+the independent linear loop clock, so free waves, effects, and motion-path
+bindings no longer inherit Frame, Time, Meter, or Music Hold behavior. CPU and
+Metal carry the same two clocks. Endless Zoom now turns intensity above 1 into
+additional octave depth after its source mix reaches 100%, making positive
+audio response visible at the default intensity. The GUI and CLI expose Audio
+Response only when the active layer's effective project or local clock is
+Music, and the zoom intensity label documents its two ranges.
 
 The final audit repairs the Block Scale editor invariant in both GUI and CLI:
 raising its minimum now raises an incompatible maximum, while lowering the
@@ -457,6 +467,15 @@ consumers do not inherit minizip requirements.
   do not create commands.
 
 ## Validation record
+
+The 2026-08-14 1.0.1 patch passed the Qt-enabled Release suite 21/21,
+the C++20 compatibility suite 20/20, and the AddressSanitizer plus
+UndefinedBehaviorSanitizer suite 20/20. A clean project-source static-analysis
+build reported 0 bugs. The self-contained macOS distribution verifier passed
+over 27 Mach-O files; its embedded `pvt-render` reported `1.0.1` and passed
+self-test, deep strict code-sign verification passed, and the staged app passed
+native Cocoa smoke. The release workflow YAML and `git diff --check` also
+passed.
 
 The 2026-08-14 final 1.0.0 audit passed the Qt-enabled Release suite 21/21,
 the C++20 compatibility suite 20/20, and the AddressSanitizer plus

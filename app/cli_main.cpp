@@ -33,6 +33,12 @@ constexpr std::size_t kMaximumPrefixBytes = 127;
 // no-change Save validates the project without manufacturing a new version.
 bool g_prompt_changed = false;
 
+bool effective_active_clock_is_music(const RenderConfig& config) {
+    return (config.layer_clock.enabled ? config.layer_clock.clock.mode
+                                       : config.clock.mode)
+           == pvt::ClockMode::Music;
+}
+
 struct CliState {
     ProjectDocument document = pvt::default_project_document();
     std::size_t active_layer = 0;
@@ -544,7 +550,7 @@ bool configure_wave(RenderConfig& config, std::size_t index) {
         || !prompt_bool("Use synchronized clock", wave.synchronized)) {
         return false;
     }
-    if (wave.synchronized
+    if (wave.synchronized && effective_active_clock_is_music(config)
         && !prompt_enum(
             "Audio response source (Default inherits the effective profile)",
             wave.audio_response, audio_response_choices())) {
@@ -586,7 +592,7 @@ void configure_waves(RenderConfig& config) {
             std::cout << "  " << (i + 1) << ") " << (wave.enabled ? "on  " : "off ")
                       << (wave.synchronized ? "sync " : "free ") << wave.name
                       << " | amp " << wave.amplitude << " | dir " << wave.direction;
-            if (wave.synchronized) {
+            if (wave.synchronized && effective_active_clock_is_music(config)) {
                 std::cout << " | audio "
                           << pvt::audio_response_mode_name(
                                  wave.audio_response);
@@ -672,7 +678,7 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
         || !prompt_bool("Use synchronized clock", effect.synchronized)) {
         return false;
     }
-    if (effect.synchronized
+    if (effect.synchronized && effective_active_clock_is_music(config)
         && !prompt_enum(
             "Audio response source (Default inherits the effective profile)",
             effect.audio_response, audio_response_choices())) {
@@ -697,7 +703,8 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
     }
     switch (effect.type) {
         case EffectType::EndlessZoom:
-            return prompt_real("Mix/intensity", effect.intensity, 0.0, 100.0)
+            return prompt_real("Mix / zoom depth (above 1 deepens span)",
+                               effect.intensity, 0.0, 100.0)
                    && prompt_real("Zoom strength", effect.magnitude, 0.0, 10.0)
                    && prompt_real("Zoom octave multiplier", effect.frequency, 0.0, 1000.0)
                    && configure_edge_mode(effect.edge_mode);
@@ -1268,18 +1275,22 @@ void configure_synchronization(RenderConfig& config,
 
     }
 
-    if (!configure_audio_response_profile(
-            "Audio response — project-wide defaults",
-            config.audio_reactive_defaults)
-        || !prompt_bool("Override project audio response for this layer",
-                        config.audio_reactive_override_enabled)) {
-        return;
-    }
-    if (config.audio_reactive_override_enabled
-        && !configure_audio_response_profile(
-            "Audio response — active-layer override",
-            config.audio_reactive)) {
-        return;
+    configure_active_layer_clock(config, document, layer_uuid);
+
+    if (effective_active_clock_is_music(config)) {
+        if (!configure_audio_response_profile(
+                "Audio response — project-wide defaults",
+                config.audio_reactive_defaults)
+            || !prompt_bool("Override project audio response for this layer",
+                            config.audio_reactive_override_enabled)) {
+            return;
+        }
+        if (config.audio_reactive_override_enabled
+            && !configure_audio_response_profile(
+                "Audio response — active-layer override",
+                config.audio_reactive)) {
+            return;
+        }
     }
 
     std::string count_error;
@@ -1291,8 +1302,6 @@ void configure_synchronization(RenderConfig& config,
     } else {
         std::cout << "Clock needs attention: " << count_error << '\n';
     }
-
-    configure_active_layer_clock(config, document, layer_uuid);
 
     std::cout << "\n-- Authored swings for the active layer --\n";
     configure_swings(config);

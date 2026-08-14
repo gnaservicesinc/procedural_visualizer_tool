@@ -17,6 +17,7 @@ struct FrameConstants {
     uint4 transform_quant;   // flip H, flip V, quant enabled, quant mode
     uint4 quant_values;      // quant levels, reserved...
     float4 phases;           // loop, global motion, breath, short side
+    float4 timelines;        // independent loop, reserved...
     float4 center_ghost;     // center x/y, ghost lag radians, ghost mix
     float4 pattern0;         // displacement, wave depth, spiral freq, wall freq
     float4 pattern1;         // wall mix, saturation, audio hue, alpha spatial freq
@@ -170,7 +171,7 @@ float wave_height(constant FrameConstants& frame,
             : mix(radial, dy, 2.0f * direction - 1.0f);
         const float clock = wave.behavior.y != 0
                                 ? motion_phase
-                                : frame.phases.x;
+                                : frame.timelines.x;
         const float phase = float(wave.behavior.x) * clock;
         result += wave.geometry.z
                   * sin(kTau * wave.geometry.w * coordinate
@@ -705,7 +706,9 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
             const float fraction = wrap_unit(effect.primary.x / kTau);
             const float zoom_blend = smooth_unit(fraction);
             const float octaves = clamp(
-                effect.primary.z * max(0.01f, effect.primary.w), 0.0f, 4.0f);
+                effect.primary.z * max(0.01f, effect.primary.w)
+                    * max(1.0f, intensity),
+                0.0f, 4.0f);
             const float ratio = pow(2.0f, octaves);
             const float scale_a = pow(ratio, fraction);
             const float scale_b = ratio > 1.0e-7f ? scale_a / ratio : scale_a;

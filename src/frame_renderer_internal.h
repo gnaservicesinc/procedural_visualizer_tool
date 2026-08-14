@@ -49,6 +49,7 @@ struct PreparedEffect {
 
 struct PreparedFrame {
     double loop_phase = 0.0;
+    double independent_loop_phase = 0.0;
     double global_motion_phase = 0.0;
     double audio_hue_shift_degrees = 0.0;
     std::vector<PreparedSpatialSwing> spatial_swings;

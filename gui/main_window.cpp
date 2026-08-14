@@ -726,6 +726,12 @@ void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
     }
 }
 
+bool effective_active_clock_is_music(const pvt::RenderConfig& config) {
+    return (config.layer_clock.enabled ? config.layer_clock.clock.mode
+                                       : config.clock.mode)
+           == pvt::ClockMode::Music;
+}
+
 QString existing_writable_directory(const QString& path, bool allow_root = false) {
     if (path.isEmpty()) {
         return {};
@@ -1386,7 +1392,7 @@ QWidget* MainWindow::createWavePage() {
     layout->addLayout(buttons);
 
     auto* properties = new QGroupBox(tr("Selected wave"));
-    auto* form = new QFormLayout(properties);
+    wave_form_ = new QFormLayout(properties);
     wave_name_ = new QLineEdit;
     wave_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
     wave_name_->setValidator(new Utf8TextValidator(TextRule::Name, wave_name_));
@@ -1401,17 +1407,17 @@ QWidget* MainWindow::createWavePage() {
     wave_cycles_ = integer_editor(-1000, 1000);
     wave_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     wave_direction_ = real_editor(0.0, 1.0, 4, 0.05);
-    form->addRow(tr("Name"), wave_name_);
-    form->addRow(wave_enabled_);
-    form->addRow(wave_sync_);
-    form->addRow(tr("Audio response"), wave_audio_response_);
-    form->addRow(tr("X position (%)"), wave_x_);
-    form->addRow(tr("Y position (%)"), wave_y_);
-    form->addRow(tr("Amplitude"), wave_amplitude_);
-    form->addRow(tr("Spatial frequency"), wave_frequency_);
-    form->addRow(tr("Cycles per loop"), wave_cycles_);
-    form->addRow(tr("Phase (degrees)"), wave_phase_);
-    form->addRow(tr("Direction (0 horizontal, .5 radial, 1 vertical)"), wave_direction_);
+    wave_form_->addRow(tr("Name"), wave_name_);
+    wave_form_->addRow(wave_enabled_);
+    wave_form_->addRow(wave_sync_);
+    wave_form_->addRow(tr("Audio response"), wave_audio_response_);
+    wave_form_->addRow(tr("X position (%)"), wave_x_);
+    wave_form_->addRow(tr("Y position (%)"), wave_y_);
+    wave_form_->addRow(tr("Amplitude"), wave_amplitude_);
+    wave_form_->addRow(tr("Spatial frequency"), wave_frequency_);
+    wave_form_->addRow(tr("Cycles per loop"), wave_cycles_);
+    wave_form_->addRow(tr("Phase (degrees)"), wave_phase_);
+    wave_form_->addRow(tr("Direction (0 horizontal, .5 radial, 1 vertical)"), wave_direction_);
     wave_name_->setToolTip(tr("A descriptive layer-local name used in lists and semantic version diffs."));
     wave_enabled_->setToolTip(tr("Bypasses this wave without deleting or resetting its authored settings."));
     wave_sync_->setToolTip(tr("Uses the layer's swung synchronized clock. Clear it for an independent seamless clock."));
@@ -5532,10 +5538,18 @@ void MainWindow::updateSynchronizationState() {
         editor->setEnabled(editable);
     }
     swings_group_->setEnabled(editable);
-    project_audio_response_group_->setEnabled(editable);
-    audio_response_group_->setEnabled(editable);
-    audio_response_effective_->setEnabled(editable);
-    audio_copy_project_->setEnabled(editable);
+    const bool music_audio_available = effective_active_clock_is_music(config_);
+    project_audio_response_group_->setVisible(music_audio_available);
+    audio_response_group_->setVisible(music_audio_available);
+    audio_response_effective_->setVisible(music_audio_available);
+    audio_copy_project_->setVisible(music_audio_available);
+    wave_form_->setRowVisible(wave_audio_response_, music_audio_available);
+    effect_form_->setRowVisible(effect_audio_response_, music_audio_available);
+    project_audio_response_group_->setEnabled(editable
+                                              && music_audio_available);
+    audio_response_group_->setEnabled(editable && music_audio_available);
+    audio_response_effective_->setEnabled(editable && music_audio_available);
+    audio_copy_project_->setEnabled(editable && music_audio_available);
     const bool layer_override = config_.audio_reactive_override_enabled;
     const pvt::AudioReactiveConfig& effective_audio =
         layer_override ? config_.audio_reactive
@@ -5550,11 +5564,13 @@ void MainWindow::updateSynchronizationState() {
                                                : tr("disabled")));
     if (const auto wave = selectedWaveIndex()) {
         wave_audio_response_->setEnabled(
-            editable && config_.waves[*wave].synchronized);
+            editable && music_audio_available
+            && config_.waves[*wave].synchronized);
     }
     if (const auto effect = selectedEffectIndex()) {
         effect_audio_response_->setEnabled(
-            editable && config_.effects[*effect].synchronized);
+            editable && music_audio_available
+            && config_.effects[*effect].synchronized);
     }
     clock_form_->setRowVisible(clock_frame_interval_, mode == pvt::ClockMode::Frame);
     clock_form_->setRowVisible(clock_time_interval_ms_, mode == pvt::ClockMode::Time);
@@ -5999,7 +6015,8 @@ void MainWindow::loadSelectedWave() {
         wave_enabled_->setChecked(wave.enabled);
         wave_sync_->setChecked(wave.synchronized);
         select_enum(wave_audio_response_, wave.audio_response);
-        wave_audio_response_->setEnabled(wave.synchronized);
+        wave_audio_response_->setEnabled(
+            wave.synchronized && effective_active_clock_is_music(config_));
         wave_x_->setValue(wave.x_percent);
         wave_y_->setValue(wave.y_percent);
         wave_amplitude_->setValue(wave.amplitude);
@@ -6113,12 +6130,13 @@ void MainWindow::updateEffectEditorVisibility() {
     }
 
     if (is_zoom) {
-        set_form_label(effect_form_, effect_intensity_, tr("Mix / intensity"));
+        set_form_label(effect_form_, effect_intensity_, tr("Mix / zoom depth"));
         set_form_label(effect_form_, effect_magnitude_, tr("Zoom strength"));
         set_form_label(effect_form_, effect_frequency_, tr("Octave multiplier"));
         set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
         set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
-        effect_intensity_->setToolTip(tr("Blend between the source and looping zoom illusion."));
+        effect_intensity_->setToolTip(
+            tr("From 0 to 1, blends between the source and looping zoom. Values above 1 deepen the zoom span, so positive Audio Response remains visible at the default full blend."));
         effect_magnitude_->setToolTip(tr("Base zoom amount before the octave multiplier."));
         effect_frequency_->setToolTip(tr("Multiplies the zoom octave span; the renderer caps the combined span."));
     } else if (is_ripple) {
@@ -6219,7 +6237,8 @@ void MainWindow::loadSelectedEffect() {
         effect_enabled_->setChecked(effect.enabled);
         effect_sync_->setChecked(effect.synchronized);
         select_enum(effect_audio_response_, effect.audio_response);
-        effect_audio_response_->setEnabled(effect.synchronized);
+        effect_audio_response_->setEnabled(
+            effect.synchronized && effective_active_clock_is_music(config_));
         select_enum(effect_type_, effect.type);
         select_enum(effect_space_, effect.space);
         updateEffectEditorVisibility();
@@ -6534,7 +6553,8 @@ void MainWindow::applyWaveEditor(const QObject* changed_editor) {
         wave.enabled = wave_enabled_->isChecked();
     } else if (changed_editor == wave_sync_) {
         wave.synchronized = wave_sync_->isChecked();
-        wave_audio_response_->setEnabled(wave.synchronized);
+        wave_audio_response_->setEnabled(
+            wave.synchronized && effective_active_clock_is_music(config_));
     } else if (changed_editor == wave_audio_response_) {
         wave.audio_response = static_cast<pvt::AudioResponseMode>(
             wave_audio_response_->currentData().toInt());
@@ -6911,7 +6931,8 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.enabled = effect_enabled_->isChecked();
     } else if (changed_editor == effect_sync_) {
         effect.synchronized = effect_sync_->isChecked();
-        effect_audio_response_->setEnabled(effect.synchronized);
+        effect_audio_response_->setEnabled(
+            effect.synchronized && effective_active_clock_is_music(config_));
     } else if (changed_editor == effect_audio_response_) {
         effect.audio_response = static_cast<pvt::AudioResponseMode>(
             effect_audio_response_->currentData().toInt());
@@ -8688,6 +8709,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || audio_copy_project_ == nullptr
         || wave_sync_ == nullptr
         || wave_sync_->text() != tr("Use synchronized clock")
+        || wave_form_ == nullptr
         || effect_sync_ == nullptr
         || effect_sync_->text() != tr("Use synchronized clock")
         || wave_audio_response_ == nullptr
@@ -8809,14 +8831,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
         select_enum(clock_mode_, mode);
         updateSynchronizationState();
     };
+    config_.layer_clock.enabled = false;
     set_clock_mode_for_smoke(pvt::ClockMode::Default);
     if (clock_interpolation_->isEnabled()
         || !clock_frame_interval_->isHidden()
         || !clock_time_interval_ms_->isHidden()
         || !meter_expression_->isHidden()
-        || music_choose_->isEnabled()) {
+        || music_choose_->isEnabled()
+        || !project_audio_response_group_->isHidden()
+        || !audio_response_group_->isHidden()
+        || !audio_response_effective_->isHidden()
+        || !audio_copy_project_->isHidden()
+        || wave_form_->isRowVisible(wave_audio_response_)
+        || effect_form_->isRowVisible(effect_audio_response_)) {
         if (error != nullptr) {
-            *error = tr("Default clock mode did not hide pulse-only controls.");
+            *error = tr("Default clock mode did not hide pulse-only and music-only controls.");
         }
         return false;
     }
@@ -8848,6 +8877,43 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    set_clock_mode_for_smoke(pvt::ClockMode::Music);
+    if (project_audio_response_group_->isHidden()
+        || audio_response_group_->isHidden()
+        || audio_response_effective_->isHidden()
+        || audio_copy_project_->isHidden()
+        || !wave_form_->isRowVisible(wave_audio_response_)
+        || !effect_form_->isRowVisible(effect_audio_response_)) {
+        if (error != nullptr) {
+            *error = tr("Music clock mode did not expose Audio Response controls.");
+        }
+        return false;
+    }
+    config_.layer_clock.enabled = true;
+    config_.layer_clock.clock.mode = pvt::ClockMode::Frame;
+    updateSynchronizationState();
+    if (!project_audio_response_group_->isHidden()
+        || !audio_response_group_->isHidden()
+        || wave_form_->isRowVisible(wave_audio_response_)
+        || effect_form_->isRowVisible(effect_audio_response_)) {
+        if (error != nullptr) {
+            *error = tr("A non-Music active-layer clock did not hide Audio Response controls.");
+        }
+        return false;
+    }
+    config_.clock.mode = pvt::ClockMode::Default;
+    config_.layer_clock.clock.mode = pvt::ClockMode::Music;
+    updateSynchronizationState();
+    if (project_audio_response_group_->isHidden()
+        || audio_response_group_->isHidden()
+        || !wave_form_->isRowVisible(wave_audio_response_)
+        || !effect_form_->isRowVisible(effect_audio_response_)) {
+        if (error != nullptr) {
+            *error = tr("A Music active-layer override did not expose Audio Response controls.");
+        }
+        return false;
+    }
+    config_.layer_clock.enabled = false;
 
     pvt::MusicAnalysis synthetic_music;
     synthetic_music.analyzer_version = "gui-smoke-v1";
@@ -9006,6 +9072,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    // Exercise Audio Response editing under the only effective clock where it
+    // is valid, then restore the smoke document's original clock ownership.
+    const pvt::ClockMode audio_test_project_clock = config_.clock.mode;
+    const pvt::LayerClockConfig audio_test_layer_clock = config_.layer_clock;
+    config_.clock.mode = pvt::ClockMode::Music;
+    config_.layer_clock.enabled = false;
+    syncActiveRender();
+    syncProjectGlobals();
+    updateSynchronizationState();
+
     const bool original_audio_override =
         config_.audio_reactive_override_enabled;
     audio_response_group_->setChecked(!original_audio_override);
@@ -9070,7 +9146,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // Per-item routing is editable only for synchronized items.
+    // Per-item routing is editable only for synchronized items while the
+    // effective active clock is Music.
     if (const auto wave = selectedWaveIndex()) {
         const bool synchronized = config_.waves[*wave].synchronized;
         config_.waves[*wave].synchronized = false;
@@ -9107,6 +9184,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
     }
+    config_.clock.mode = audio_test_project_clock;
+    config_.layer_clock = audio_test_layer_clock;
+    syncActiveRender();
+    syncProjectGlobals();
+    updateSynchronizationState();
 
     const QString path = directory.filePath(QStringLiteral("round-trip.pvt"));
     std::string save_error;

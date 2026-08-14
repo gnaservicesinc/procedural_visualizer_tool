@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.0.0**. The version is read from `VERSION` by every
+Current product version: **1.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -192,7 +192,13 @@ credentials.
   Energy is the visible default hue route; the other sources remain selectable.
   Pitch-class hue is weighted by tonality confidence, so silence or noise does
   not cause arbitrary palette jumps. Missing or explicit `null` inheritance and
-  per-item routing fields resolve to neutral defaults.
+  per-item routing fields resolve to neutral defaults. These controls appear
+  only when the selected layer's effective clock—project-wide or overridden
+  locally—is Music, because other clocks have no analyzed audio envelope.
+  Free waves, effects, and path bindings retain their independent linear loop
+  clock even when the synchronized clock uses Hold or another pulse mapping.
+  Endless Zoom uses intensity 0–1 as source mix and values above 1 as additional
+  zoom depth, keeping positive audio modulation visible at its default full mix.
 - An optional starting palette per layer with 1-256 authored sRGB colors, custom
   add/edit/remove controls, and six presets: Ember, Deep Ocean, Vaporwave,
   Forest Biolume, Arcade, and Moonlight. The palette chooses exact procedural

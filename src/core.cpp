@@ -595,6 +595,7 @@ bool effective_frame_count_impl(int stored_count, double fps,
 
 struct TimelineSample {
     double normalized_phase = 0.0;
+    double independent_phase = 0.0;
     MusicFeatureSample music;
 };
 
@@ -737,6 +738,7 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
     TimelineSample result;
     const double direct_phase = static_cast<double>(frame)
                                 / static_cast<double>(frame_count);
+    result.independent_phase = direct_phase;
     if (config.clock.mode == ClockMode::Default) {
         result.normalized_phase = apply_clock_transform(direct_phase,
                                                         config.clock);
@@ -2594,6 +2596,7 @@ double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
 }
 
 void generate_base_image(const RenderConfig& config, double loop_phase,
+                         double independent_loop_phase,
                          const MotionClockState& motion_clock,
                          const MusicFeatureSample& music, Image& image,
                          const std::atomic_bool* cancel) {
@@ -2644,17 +2647,18 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             const double ghost_phase = motion_phase
                                        - radians(config.ghost_lag_degrees);
             const double height_here = wave_height(config, block_x, block_y,
-                                                   loop_phase, motion_phase,
+                                                   independent_loop_phase,
+                                                   motion_phase,
                                                    music);
             const double height_right = wave_height(config,
                                                      block_x + config.block_size,
                                                      block_y,
-                                                     loop_phase,
+                                                     independent_loop_phase,
                                                      motion_phase_right,
                                                      music);
             const double height_down = wave_height(config, block_x,
                                                     block_y + config.block_size,
-                                                    loop_phase,
+                                                    independent_loop_phase,
                                                     motion_phase_down,
                                                     music);
             const double slope_x = height_right - height_here;
@@ -2805,8 +2809,13 @@ void apply_coordinate_effect(const Image& source, Image& destination,
 
     const double zoom_fraction = wrap_unit(phase / kTau);
     const double zoom_blend = smoothstep(zoom_fraction);
+    // Intensity up to 1 remains the authored source/zoom blend. Values above
+    // 1 (for example from positive music response at the default full blend)
+    // deepen the zoom instead of disappearing into the blend clamp.
     const double zoom_octaves = clamp_value(
-        effect.magnitude * std::max(0.01, effect.frequency), 0.0, 4.0);
+        effect.magnitude * std::max(0.01, effect.frequency)
+            * std::max(1.0, intensity),
+        0.0, 4.0);
     const double zoom_ratio = std::pow(2.0, zoom_octaves);
     const double zoom_scale_a = std::pow(zoom_ratio, zoom_fraction);
     const double zoom_scale_b = zoom_ratio > 1.0e-12
@@ -3996,13 +4005,20 @@ bool render_frame_at_timeline_sample_cancellable(
             set_error(error, "Normalized render phase must be finite.");
             return false;
         }
+        if (!std::isfinite(timeline.independent_phase)) {
+            set_error(error, "Independent render phase must be finite.");
+            return false;
+        }
 
         const double loop_phase =
             kTau * wrap_unit(timeline.normalized_phase);
+        const double independent_loop_phase =
+            kTau * wrap_unit(timeline.independent_phase);
         const MotionClockState motion_clock =
             prepare_motion_clock(config, loop_phase);
         RenderConfig resolved_config = config;
-        resolve_path_bindings(resolved_config, loop_phase, motion_clock);
+        resolve_path_bindings(resolved_config, independent_loop_phase,
+                              motion_clock);
         const RenderConfig& render = resolved_config;
         const AudioReactiveConfig& audio =
             effective_audio_reactive(render);
@@ -4016,7 +4032,8 @@ bool render_frame_at_timeline_sample_cancellable(
                 return false;
             }
         } else {
-            generate_base_image(render, loop_phase, motion_clock,
+            generate_base_image(render, loop_phase, independent_loop_phase,
+                                motion_clock,
                                 timeline.music, current, cancel);
         }
 
@@ -4040,7 +4057,7 @@ bool render_frame_at_timeline_sample_cancellable(
                 }
                 if (!effect_has_render_work(effect)) continue;
                 const double phase = effect_phase(
-                    render, effect, loop_phase, motion_clock);
+                    render, effect, independent_loop_phase, motion_clock);
                 if (effect.type == EffectType::Glow) {
                     apply_glow(current, scratch, auxiliary, effect, phase, cancel);
                 } else if (effect.type == EffectType::BlockScale) {
@@ -4123,7 +4140,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
                                         const TimelineSample& timeline,
                                         PreparedFrame& prepared,
                                         std::string* error) {
-    if (!std::isfinite(timeline.normalized_phase)) {
+    if (!std::isfinite(timeline.normalized_phase)
+        || !std::isfinite(timeline.independent_phase)) {
         set_error(error, "Normalized render phase must be finite.");
         return false;
     }
@@ -4135,6 +4153,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
 
     PreparedFrame candidate;
     candidate.loop_phase = kTau * wrap_unit(timeline.normalized_phase);
+    candidate.independent_loop_phase =
+        kTau * wrap_unit(timeline.independent_phase);
     const MotionClockState motion_clock =
         prepare_motion_clock(config, candidate.loop_phase);
     const AudioReactiveConfig& audio = effective_audio_reactive(config);
@@ -4202,7 +4222,7 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
         }
         candidate.effects.push_back(
             {effect.type, effect.space, effect.edge_mode,
-             effect_phase(config, effect, candidate.loop_phase,
+             effect_phase(config, effect, candidate.independent_loop_phase,
                           motion_clock),
              effect.intensity, effect.magnitude, effect.frequency,
              effect.secondary, effect.center_x, effect.center_y,
@@ -4223,6 +4243,7 @@ bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
                                         std::string* error) {
     TimelineSample timeline;
     timeline.normalized_phase = normalized_phase;
+    timeline.independent_phase = normalized_phase;
     if (config.clock.mode == ClockMode::Music
         && config.clock.music.duration_seconds > 0.0
         && std::isfinite(normalized_phase)) {
@@ -4250,6 +4271,7 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
                                        std::string* error) {
     TimelineSample direct;
     direct.normalized_phase = normalized_phase;
+    direct.independent_phase = normalized_phase;
     if (config.clock.mode == ClockMode::Music
         && config.clock.music.duration_seconds > 0.0
         && std::isfinite(normalized_phase)) {
