@@ -1133,6 +1133,13 @@ void test_zip_unicode_and_legacy(const fs::path& directory) {
     pvt::LayerConfig second = pvt::default_layer(1U);
     second.name = "Glow \xE2\x9C\xA8";
     second.blend_mode = pvt::BlendMode::Add;
+    second.alpha_mode = pvt::AlphaMode::AlphaUnder;
+    pvt::LayerGroup group;
+    group.uuid = pvt::generate_uuid();
+    group.name = "Glow folder";
+    group.locked = true;
+    second.group_uuid = group.uuid;
+    document.project.groups.push_back(group);
     document.project.layers.push_back(std::move(second));
     const fs::path zip = directory / pvt::detail::path_from_utf8(
                                          pvt::portable_project_filename(
@@ -1147,6 +1154,21 @@ void test_zip_unicode_and_legacy(const fs::path& directory) {
     CHECK(loaded.project.layers.size() == 2U);
     CHECK(loaded.project.layers[1].name == "Glow \xE2\x9C\xA8");
     CHECK(loaded.project.layers[1].blend_mode == pvt::BlendMode::Add);
+    CHECK(loaded.project.layers[1].alpha_mode == pvt::AlphaMode::AlphaUnder);
+    CHECK(loaded.project.groups.size() == 1U);
+    CHECK(loaded.project.groups.front().name == "Glow folder");
+    CHECK(loaded.project.groups.front().locked);
+    CHECK(loaded.project.layers[1].group_uuid
+          == loaded.project.groups.front().uuid);
+
+    pvt::ProjectDocument independent;
+    CHECK(pvt::make_independent_project_copy(loaded, independent, &error));
+    CHECK(independent.project.groups.size() == 1U);
+    CHECK(independent.project.groups.front().uuid
+          != loaded.project.groups.front().uuid);
+    CHECK(independent.project.layers[1].group_uuid
+          == independent.project.groups.front().uuid);
+    CHECK(pvt::validate(independent.project).ok);
 
     CHECK(pvt::portable_project_filename("CON.txt").rfind("_CON.txt", 0U) == 0U);
     CHECK(pvt::portable_project_filename("Fire. ") == "Fire.zip");
@@ -1544,7 +1566,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
         future_manifest, as_utf8(future_manifest_bundle), &report, &error));
     std::string future_version_bytes =
         read_bytes(future_manifest_bundle / "0" / "metadata.txt");
-    CHECK(replace_once(future_version_bytes, "PVT_VERSION\t4\n",
+    CHECK(replace_once(future_version_bytes, "PVT_VERSION\t5\n",
                        "PVT_VERSION\t999\n"));
     future_version_bytes.append("future.version.sparkle\tmaximum\n");
     CHECK(write_bytes(future_manifest_bundle / "0" / "metadata.txt",
@@ -1723,7 +1745,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(directory_files.files.count(readable_asset_path(obj_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(image_attachment)) == 1U);
     CHECK(read_bytes(bundle / "0" / "metadata.txt").rfind(
-              "PVT_VERSION\t4\n", 0U) == 0U);
+              "PVT_VERSION\t5\n", 0U) == 0U);
     CHECK(music_analysis_entry_count(directory_files) == 1U);
     CHECK(directory_files.files["0/render_output.txt"].find(
               "timing.music.feature_samples") == std::string::npos);
@@ -1965,7 +1987,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         CHECK(legacy_files.files.emplace(std::move(asset)).second);
     }
     std::string& legacy_manifest = legacy_files.files["0/metadata.txt"];
-    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t4\n",
+    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t5\n",
                        "PVT_VERSION\t2\n"));
     CHECK(erase_record(legacy_manifest, "music_analysis.sha256"));
     CHECK(replace_record_value(legacy_manifest, "render_output.sha256",
@@ -2013,7 +2035,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     }
     std::string& legacy_directory_manifest =
         legacy_directory_files.files["0/metadata.txt"];
-    CHECK(replace_once(legacy_directory_manifest, "PVT_VERSION\t4\n",
+    CHECK(replace_once(legacy_directory_manifest, "PVT_VERSION\t5\n",
                        "PVT_VERSION\t3\n"));
     CHECK(erase_record(legacy_directory_manifest, "music_analysis.sha256"));
     CHECK(replace_record_value(legacy_directory_manifest,

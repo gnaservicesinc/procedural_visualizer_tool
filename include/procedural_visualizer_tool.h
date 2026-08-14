@@ -27,6 +27,7 @@ constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
 constexpr std::size_t kMaximumLayers = 64;
+constexpr std::size_t kMaximumLayerGroups = kMaximumLayers;
 constexpr std::size_t kMaximumPaletteColors = 256;
 constexpr std::size_t kMaximumMotionPaths = 32;
 constexpr std::size_t kMaximumMotionPathNodes = 128;
@@ -141,6 +142,15 @@ enum class BlendMode : std::uint8_t {
     Erase,
     ColorEraseTones,
     ColorEraseBrightness
+};
+
+// Controls the Porter-Duff ordering used after a layer is rendered. AlphaOver
+// preserves the historical behavior: the layer paints over the accumulated
+// lower stack. AlphaUnder places the layer beneath that accumulated stack while
+// retaining the selected artistic blend function and the layer's own opacity.
+enum class AlphaMode : std::uint8_t {
+    AlphaOver = 0,
+    AlphaUnder
 };
 
 // Rendering execution policy is deliberately separate from project/setup
@@ -695,6 +705,20 @@ struct LayerConfig {
     BlendMode blend_mode = BlendMode::Normal;
     double opacity = 1.0;
     RenderData render;
+    // Appended for source compatibility with aggregate initializers from
+    // releases before per-layer alpha ordering and groups were introduced.
+    AlphaMode alpha_mode = AlphaMode::AlphaOver;
+    // Empty means ungrouped. Groups contain a contiguous run of layers so a
+    // folder can be moved atomically without creating a second paint order.
+    std::string group_uuid;
+};
+
+struct LayerGroup {
+    std::string uuid;
+    std::string name = "Group 1";
+    bool enabled = true;
+    // Locking is an authoring guard. It never changes rendered pixels.
+    bool locked = false;
 };
 
 struct ProjectConfig {
@@ -705,6 +729,9 @@ struct ProjectConfig {
     // Paint order is back-to-front: index 0 is the bottom layer and the last
     // enabled entry is composited on top.
     std::vector<LayerConfig> layers;
+    // Groups are flat, non-nested folders. Every group must contain at least
+    // one contiguous layer run; ordering is therefore derived from `layers`.
+    std::vector<LayerGroup> groups;
 };
 
 struct PVT_API Image {
@@ -919,6 +946,7 @@ PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
 PVT_API const char* mirror_mode_name(MirrorMode value);
 PVT_API const char* blend_mode_name(BlendMode value);
+PVT_API const char* alpha_mode_name(AlphaMode value);
 PVT_API const char* render_backend_name(RenderBackend value);
 PVT_API const char* clock_mode_name(ClockMode value);
 PVT_API const char* clock_interpolation_name(ClockInterpolation value);

@@ -1546,6 +1546,12 @@ bool prompt_blend_mode(pvt::BlendMode& mode) {
                          "Color eraser (brightness)"}});
 }
 
+bool prompt_alpha_mode(pvt::AlphaMode& mode) {
+    return prompt_enum("Alpha mode", mode,
+                       {{pvt::AlphaMode::AlphaOver, "Alpha Over"},
+                        {pvt::AlphaMode::AlphaUnder, "Alpha Under"}});
+}
+
 void configure_project_and_layers(CliState& state) {
     for (;;) {
         auto& project = state.document.project;
@@ -1556,9 +1562,20 @@ void configure_project_and_layers(CliState& state) {
         for (std::size_t row = 0; row < count; ++row) {
             const std::size_t index = display_to_internal(row, count);
             const auto& layer = project.layers[index];
+            const auto group = std::find_if(
+                project.groups.begin(), project.groups.end(),
+                [&layer](const pvt::LayerGroup& value) {
+                    return value.uuid == layer.group_uuid;
+                });
             std::cout << (index == state.active_layer ? " *" : "  ") << (row + 1)
                       << ") " << (layer.enabled ? "on  " : "off ") << layer.name
                       << " | " << pvt::blend_mode_name(layer.blend_mode)
+                      << " | " << pvt::alpha_mode_name(layer.alpha_mode)
+                      << (group != project.groups.end()
+                              ? " | group " + group->name
+                                    + (group->enabled ? "" : " (hidden)")
+                                    + (group->locked ? " (locked)" : "")
+                              : "")
                       << " | opacity " << layer.opacity << '\n';
         }
         std::cout << "e N edit/select, a add, c N duplicate, d N delete, "
@@ -1610,10 +1627,20 @@ void configure_project_and_layers(CliState& state) {
             }
             state.active_layer = first_index;
             auto& layer = project.layers[first_index];
+            const auto group = std::find_if(
+                project.groups.begin(), project.groups.end(),
+                [&layer](const pvt::LayerGroup& value) {
+                    return value.uuid == layer.group_uuid;
+                });
+            if (group != project.groups.end() && group->locked) {
+                std::cout << "Unlock this group in the desktop app before editing its layer.\n";
+                continue;
+            }
             g_prompt_changed = false;
             prompt_layer_name(layer.name);
             prompt_bool("Enabled", layer.enabled);
             prompt_blend_mode(layer.blend_mode);
+            prompt_alpha_mode(layer.alpha_mode);
             prompt_real("Opacity", layer.opacity, 0.0, 1.0);
             state.document.dirty = state.document.dirty || g_prompt_changed;
         } else if (action == 'c' || action == 'C') {
@@ -1621,6 +1648,15 @@ void configure_project_and_layers(CliState& state) {
                 std::cout << (count >= pvt::kMaximumLayers
                                   ? "The layer safety limit has been reached.\n"
                                   : "Duplicate accepts one row number.\n");
+                continue;
+            }
+            const auto source_group = std::find_if(
+                project.groups.begin(), project.groups.end(),
+                [&](const pvt::LayerGroup& value) {
+                    return value.uuid == project.layers[first_index].group_uuid;
+                });
+            if (source_group != project.groups.end() && source_group->locked) {
+                std::cout << "Unlock this group in the desktop app before duplicating its layer.\n";
                 continue;
             }
             auto copy = project.layers[first_index];
@@ -1704,6 +1740,17 @@ void configure_project_and_layers(CliState& state) {
                                          : "Delete accepts one row number.\n");
                 continue;
             }
+            const std::string removed_group_uuid =
+                project.layers[first_index].group_uuid;
+            const auto removed_group = std::find_if(
+                project.groups.begin(), project.groups.end(),
+                [&removed_group_uuid](const pvt::LayerGroup& value) {
+                    return value.uuid == removed_group_uuid;
+                });
+            if (removed_group != project.groups.end() && removed_group->locked) {
+                std::cout << "Unlock this group in the desktop app before deleting its layer.\n";
+                continue;
+            }
             ProjectDocument staged_document = state.document;
             bool detached = true;
             for (const std::string& reference_id : {
@@ -1728,6 +1775,20 @@ void configure_project_and_layers(CliState& state) {
                 std::move(staged_document.attachment_cache);
             project.layers.erase(project.layers.begin()
                                  + static_cast<std::ptrdiff_t>(first_index));
+            if (!removed_group_uuid.empty()
+                && std::none_of(
+                    project.layers.begin(), project.layers.end(),
+                    [&removed_group_uuid](const pvt::LayerConfig& value) {
+                        return value.group_uuid == removed_group_uuid;
+                    })) {
+                project.groups.erase(
+                    std::remove_if(
+                        project.groups.begin(), project.groups.end(),
+                        [&removed_group_uuid](const pvt::LayerGroup& value) {
+                            return value.uuid == removed_group_uuid;
+                        }),
+                    project.groups.end());
+            }
             if (state.active_layer == first_index) {
                 state.active_layer = std::min(first_index, project.layers.size() - 1);
             } else if (state.active_layer > first_index) {
@@ -1743,6 +1804,32 @@ void configure_project_and_layers(CliState& state) {
             const std::size_t second_index =
                 display_to_internal(static_cast<std::size_t>(second - 1), count);
             if (first_index != second_index) {
+                if (!project.layers[first_index].group_uuid.empty()
+                    || !project.layers[second_index].group_uuid.empty()) {
+                    std::cout << "Grouped layers move as folders in the desktop app; ungroup them there before an individual CLI move.\n";
+                    continue;
+                }
+                const std::size_t crossing_begin =
+                    std::min(first_index, second_index);
+                const std::size_t crossing_end =
+                    std::max(first_index, second_index);
+                const bool crosses_locked_group = std::any_of(
+                    project.layers.begin()
+                        + static_cast<std::ptrdiff_t>(crossing_begin),
+                    project.layers.begin()
+                        + static_cast<std::ptrdiff_t>(crossing_end + 1U),
+                    [&project](const pvt::LayerConfig& candidate) {
+                        return std::any_of(
+                            project.groups.begin(), project.groups.end(),
+                            [&candidate](const pvt::LayerGroup& group) {
+                                return group.locked
+                                       && candidate.group_uuid == group.uuid;
+                            });
+                    });
+                if (crosses_locked_group) {
+                    std::cout << "Unlock the crossed group in the desktop app before changing its paint-order position.\n";
+                    continue;
+                }
                 const std::string active_uuid = project.layers[state.active_layer].uuid;
                 auto layer = std::move(project.layers[first_index]);
                 project.layers.erase(project.layers.begin()
@@ -1959,7 +2046,8 @@ void print_summary(const CliState& state) {
               << "\n"
               << "Layers: " << project.layers.size() << " | editing " << layer.name
               << " (" << (layer.enabled ? "on" : "off") << ", "
-              << pvt::blend_mode_name(layer.blend_mode) << ", opacity "
+              << pvt::blend_mode_name(layer.blend_mode) << ", "
+              << pvt::alpha_mode_name(layer.alpha_mode) << ", opacity "
               << layer.opacity << ")\n"
               << "Active stack: " << layer.render.waves.size() << " wave(s), "
               << layer.render.swings.size() << " swing(s) "

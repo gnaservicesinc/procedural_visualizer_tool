@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.0.1**. The version is read from `VERSION` by every
+Current product version: **1.1.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -117,12 +117,22 @@ credentials.
 - Up to 64 full render layers. Layers have stable UUID/file identities and can
   be named, enabled, duplicated, removed, selected, and reordered. Paint order
   is bottom-to-top; the GUI presents the topmost layer first.
+- Flat layer groups act as contiguous folders in the single authoritative paint
+  order. A group can contain one or more layers and can be renamed, shown or
+  hidden, soloed for preview, locked or unlocked, moved as one block, or removed
+  without deleting its artwork. Layers move into and out of groups through the
+  selected layer's **Group** control; groups do not nest.
 - Per-layer opacity and Normal (`none`), Soft Light, Grain Merge, Overlay,
   Color Dodge, Linear Burn, Color Burn, Difference, Subtract, Multiply, and Add
   blend modes. Three destination-out modes use the current layer as a mask for
   lower layers only: Erase uses source alpha, Color Eraser (tones) matches
   linear-light color distance, and Color Eraser (brightness) removes darker
   backdrop pixels. Layers above remain untouched.
+- Per-layer **Alpha Mode** chooses Porter-Duff ordering independently from the
+  artistic blend: **Alpha Over** (the default and legacy behavior) paints the
+  layer over the accumulated lower stack, while **Alpha Under** places it under
+  that stack after applying the layer opacity. Destination-out erasers retain
+  their explicit lower-stack masking behavior in either alpha mode.
 - Any number of waves from zero through the validated safety limit, with add,
   duplicate, remove, enable, and reorder controls.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
@@ -234,8 +244,9 @@ credentials.
   reports unavailable or unsupported work. Custom OBJ depth peeling remains on
   the CPU; hybrid mode falls back automatically for it.
 
-The GUI includes a topmost-first Layers dock, project naming, per-layer blend and
-opacity controls, a session-only **Solo** preview, draggable center handles for
+The GUI includes a topmost-first Layers dock, project naming, per-layer blend,
+alpha-order, group, and opacity controls, session-only layer/group **Solo**
+preview, draggable center handles for
 waves, swings, and centered effects with visible radius rings, ordered
 wave/swing/effect editors, palette and transform controls, type-aware effect
 controls, a live checkerboard alpha preview, a continuously updating timeline,
@@ -359,6 +370,13 @@ changes monitoring volume only. **Data only** sources still drive visuals but
 do not enter the mix. If an audio device cannot be opened, visual playback
 continues and reports the silent fallback instead of disabling the preview.
 
+**File > Export Current Frame…** renders the timeline's current frame at the
+project's full canvas dimensions rather than the scaled live-preview size. It
+uses the selected output quality exactly: 8/16-bit PNG or 32-bit FLOAT EXR,
+RGB/RGBA, PNG compression, and integer-output dithering. The confirmed save
+destination is written transactionally through the same encoder path as a
+sequence frame.
+
 On macOS, **Export Video** writes a QuickTime `.mov` directly through
 AVFoundation/VideoToolbox. The choices are lossless 8-bit RGBA PNG frames,
 ProRes 4444 or 4444 XQ for perceptually lossless editing, and deliberately
@@ -457,6 +475,10 @@ Alpha has two deliberately separate controls:
   minimum, maximum, frequency, phase, and loop cycles travel with that layer.
 - **Write final alpha channel** is project-global output data. It selects RGB or
   RGBA without changing the artwork.
+- Each layer's **Alpha Mode** is compositing order. Alpha Over keeps the layer
+  above the accumulated lower stack; Alpha Under puts it below that stack. It
+  does not enable procedural alpha or change whether the final file stores an
+  alpha channel.
 
 Adding a second layer enables final RGBA output automatically, as do features
 that generate geometric/effect transparency. This does not silently enable
@@ -548,9 +570,10 @@ delta chain that can be invalidated by deleting an older version. Exact legacy
 snapshots with embedded analysis are compacted on their next Save without
 discarding history; direct/manual edits are either preserved or promoted through
 the normal external-edit path. Each numbered `.pvt` stores only one layer's
-render data. Version metadata stores the project
-display name, program/time, layer UUIDs, stable file IDs, order, names, enabled
-states, blend modes, opacity, attachment references, and SHA-256 digests. Root
+render data. Version metadata stores the project display name, program/time,
+group UUIDs, names, visibility and lock state, plus layer UUIDs, stable file
+IDs, order, names, enabled states, group membership, blend and alpha modes,
+opacity, attachment references, and SHA-256 digests. Root
 assets use collision-safe content-identity directories, but the asset itself
 always keeps the exact imported filename and extension. A valid direct file
 replacement or unambiguous rename is loaded as a dirty external edit; Save
@@ -640,6 +663,11 @@ so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
 The CLI exposes
 `--save-legacy FILE.pvt` only as a clearly lossy escape hatch and rejects it when
 more than one layer exists.
+
+Project-version manifest format 5 adds layer groups and Alpha Mode. Manifest
+formats 1 through 4 remain readable and load as ungrouped Alpha Over layers,
+preserving their historical rendering. This manifest version is independent of
+the legacy one-layer `.pvt` setup format described above.
 
 Version 4.0.1 corrected the 4.0.0 palette-stage bug without changing its schema:
 an enabled v4 palette selects starting colors instead of rewriting the final
@@ -764,7 +792,7 @@ cmake --build build-library --parallel
 
 The public header is `include/procedural_visualizer_tool.h`. It exposes:
 
-- fully owned legacy render and project/layer configuration values;
+- fully owned legacy render and project/layer/group configuration values;
 - default factories, stable ID allocation, and validation;
 - float RGBA layer/project rendering by frame index or normalized phase;
 - bounded linear-light blend compositing, individual PNG/EXR writing, and
@@ -859,9 +887,10 @@ primitive mappings, rear-surface alpha/color compositing, bounded OBJ
 parsing/caching and
 two-sided perspective rendering, animated smooth/stepped block grouping and
 effect ordering, default glow visibility, memory and value limits, setup round
-trips and transactional failure, project/layer validation, every blend mode
-including destination-out erasers,
-opacity and paint order, ZIP/directory bundle round trips, immutable version
+trips and transactional failure, project/layer/group validation, every blend
+mode including destination-out erasers, Alpha Over/Under ordering, group
+visibility, opacity and paint order, full-resolution current-frame GUI export,
+ZIP/directory bundle round trips, immutable version
 append/no-change validation, semantic diffs, current/revert behavior, legacy
 promotion, checksum/fallback handling, readable attachment names and direct-edit
 promotion, deleted-original recovery, invalid replacement rejection, hostile archive/tree

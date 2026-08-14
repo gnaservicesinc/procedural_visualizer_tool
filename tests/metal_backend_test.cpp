@@ -348,12 +348,18 @@ void test_hybrid_project_parity() {
     pvt::Image cpu;
     pvt::Image hybrid;
     std::string error;
-    CHECK(pvt::render_project_frame(project, 7, cpu_options, cpu, nullptr,
-                                    &error));
-    CHECK(pvt::render_project_frame(project, 7, hybrid_options, hybrid,
-                                    nullptr, &error));
-    check_close(cpu, hybrid, 0.16, 0.014, 0.006, 0.0005,
-                "hybrid layered project");
+    for (const pvt::AlphaMode alpha_mode : {pvt::AlphaMode::AlphaOver,
+                                            pvt::AlphaMode::AlphaUnder}) {
+        project.layers.back().alpha_mode = alpha_mode;
+        CHECK(pvt::render_project_frame(project, 7, cpu_options, cpu, nullptr,
+                                        &error));
+        CHECK(pvt::render_project_frame(project, 7, hybrid_options, hybrid,
+                                        nullptr, &error));
+        check_close(cpu, hybrid, 0.16, 0.014, 0.006, 0.0005,
+                    alpha_mode == pvt::AlphaMode::AlphaOver
+                        ? "hybrid alpha-over layered project"
+                        : "hybrid alpha-under layered project");
+    }
 }
 
 } // namespace

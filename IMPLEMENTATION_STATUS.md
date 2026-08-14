@@ -8,11 +8,33 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.0.1 and has one source of truth in
+The public product version is now 1.1.0 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.1.0 feature pass adds a full-quality **Export Current Frame** command. It
+captures the current timeline position, renders at the authored canvas size
+through the selected CPU/hybrid/Metal backend, and writes the selected 8/16-bit
+PNG or 32-bit FLOAT EXR settings transactionally. The live preview's display
+scaling is never reused for this export.
+
+Each layer now has a persistent Alpha Over/Alpha Under choice. Alpha Over is the
+default and the migration value for older bundles; Alpha Under swaps the
+Porter-Duff source/backdrop order after applying layer opacity while retaining
+the selected artistic blend. Destination-out erasers remain explicit masks of
+the accumulated lower stack. CPU, hybrid, strict-GPU layer scheduling, GUI,
+CLI, undo, validation, semantic diffs, and project-version manifest format 5
+share the same model.
+
+The Project & Layers panel now provides flat, non-nested groups as contiguous
+folder blocks in the existing paint order. Groups contain one or more layers
+and support add, rename, visibility, session-only solo, lock/unlock, whole-block
+movement, and safe removal that ungroups instead of deleting artwork. Layer
+membership changes preserve contiguity, locked groups protect contained edits,
+group visibility also gates audio and export, independent project copies remap
+group identities, and old bundles load without synthetic groups.
 
 The 1.0.1 patch restores the documented sync/free timing boundary. Timeline
 resolution now retains both the effective synchronized project/layer clock and
@@ -132,7 +154,10 @@ purpose-built parallel backend.
 The application is now project-oriented. A named `ProjectConfig` owns global
 canvas/loop and export data plus up to 64 independently configurable render
 layers. Each layer has a stable UUID and bundle file ID, name, enabled state,
-opacity, blend mode, and full `RenderData`. The backward-compatible
+opacity, blend mode, alpha mode, optional group membership, and full
+`RenderData`. Up to 64 flat groups carry stable identities, names, visibility,
+and authoring locks; their contiguous member runs remain part of the one layer
+paint order. The backward-compatible
 `RenderConfig`/`.pvt` surface remains available for one-render library clients
 and legacy import.
 
@@ -207,8 +232,9 @@ replaced music is reanalyzed before acceptance. Legacy version-2 bare-digest
 assets remain readable.
 
 The Qt GUI separates Synchronization, Layer Render, and global Output, adds a
-topmost-first Layers dock, project name/title, blend/opacity/enable/rename/
-duplicate/reorder controls, session Solo, version list/diff/current/revert tools,
+topmost-first Layers dock, project name/title, blend/alpha/opacity/enable/rename/
+duplicate/reorder controls, group folder controls, layer/group session Solo,
+full-resolution current-frame export, version list/diff/current/revert tools,
 and application-wide undo/redo. Synchronization owns the global Clock plus the
 selected layer's optional local Clock and master Swing, plus visible project-wide
 Audio Response defaults and an optional active-layer override. Synchronized
@@ -338,6 +364,9 @@ consumers do not inherit minizip requirements.
 | 45 | Projected source/UV editing | Complete | Texture-effect and localized-Swing handles move and render inside an explicit labelled unwrapped source/UV inset for non-plane surfaces; mapped-object controls remain in final screen space. |
 | 46 | Encoder cancellation and GUI install | Complete | PNG/EXR writers abort between scanlines and discard their temporary file. `cmake --install` installs the Qt application when enabled; `PVT_DEPLOY_QT_RUNTIME` optionally stages Qt dependencies, while system-Qt installs remain the Linux default. |
 | 47 | Hierarchical audio-response routing | Complete | A project-wide profile feeds inheriting layers; an optional layer profile overrides it; synchronized waves/effects can inherit, opt in with an explicit source, force the item on with the profile source, or ignore audio. The profile master remains authoritative. Missing/null fields are neutral, old projects preserve historical output, every CPU/Metal preparation path shares the same semantics, and GUI/CLI/persistence/undo tests cover the hierarchy. |
+| 48 | Export current frame | Complete | The GUI renders the current timeline frame at full canvas resolution through the selected backend and transactionally writes the configured 8/16-bit PNG or 32-bit FLOAT EXR quality, independent of preview scaling. |
+| 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
+| 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
 
 ## Important implementation map
 
@@ -467,6 +496,18 @@ consumers do not inherit minizip requirements.
   do not create commands.
 
 ## Validation record
+
+The 2026-08-14 1.1.0 feature pass passed the Qt-enabled Release suite
+21/21, the C++20 compatibility suite 20/20, and the AddressSanitizer plus
+UndefinedBehaviorSanitizer suite 20/20. Clang static analysis produced no
+project-owned reports; its 24 reports were all confined to the pinned vendored
+`third_party/miniaudio/miniaudio.c` amalgamation. The self-contained macOS
+distribution verifier passed over 27 Mach-O files; its embedded `pvt-render`
+reported `1.1.0` and passed self-test, deep strict code-sign verification
+passed, and the staged app passed native Cocoa smoke. A workflow-shaped local
+ZIP contained only the app, README, and license beneath its package root and
+passed archive-integrity inspection. The release workflow YAML and
+`git diff --check` also passed.
 
 The 2026-08-14 1.0.1 patch passed the Qt-enabled Release suite 21/21,
 the C++20 compatibility suite 20/20, and the AddressSanitizer plus

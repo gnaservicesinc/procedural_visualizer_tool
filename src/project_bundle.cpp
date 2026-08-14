@@ -61,7 +61,7 @@ constexpr std::size_t kMaximumVersions = 4096U;
 constexpr std::size_t kMaximumLineageAliases = 8192U;
 constexpr std::size_t kMaximumProjectNameBytes = 256U;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
-constexpr std::uint32_t kProjectVersionFormatVersion = 4U;
+constexpr std::uint32_t kProjectVersionFormatVersion = 5U;
 
 struct RootMetadata {
     struct PreservedVersion {
@@ -101,6 +101,7 @@ struct VersionManifest {
     std::string render_output_digest;
     std::string music_analysis_digest;
     std::vector<LayerConfig> layers;
+    std::vector<LayerGroup> groups;
     std::vector<std::string> layer_digests;
     std::vector<ProjectAttachment> attachments;
     std::string reverted_from_digest;
@@ -568,6 +569,26 @@ bool parse_blend(const std::string& token, BlendMode& mode) {
     return false;
 }
 
+std::string alpha_mode_token(AlphaMode mode) {
+    switch (mode) {
+        case AlphaMode::AlphaOver: return "over";
+        case AlphaMode::AlphaUnder: return "under";
+    }
+    return {};
+}
+
+bool parse_alpha_mode(const std::string& token, AlphaMode& mode) {
+    if (token == "over") {
+        mode = AlphaMode::AlphaOver;
+        return true;
+    }
+    if (token == "under") {
+        mode = AlphaMode::AlphaUnder;
+        return true;
+    }
+    return false;
+}
+
 std::string indexed(std::string_view collection, std::size_t index,
                     std::string_view field) {
     return std::string(collection) + "." + std::to_string(index) + "."
@@ -599,6 +620,19 @@ bool valid_semantic_project_name(const std::string& name) {
             || codepoint == static_cast<std::uint32_t>('/')
             || codepoint == static_cast<std::uint32_t>('\\')) return false;
         index += length;
+    }
+    return true;
+}
+
+bool valid_semantic_group_name(const std::string& name) {
+    if (name.empty() || name.size() > kMaximumProjectNameBytes
+        || !detail::valid_utf8(name)) return false;
+    for (const char raw : name) {
+        const auto character = static_cast<unsigned char>(raw);
+        if (character == 0U || character == 0x7fU
+            || (character < 0x20U && character != '\t')) {
+            return false;
+        }
     }
     return true;
 }
@@ -1184,6 +1218,14 @@ bool serialize_version_manifest(const VersionManifest& manifest,
     builder.string("project.name", manifest.project_name);
     builder.add("render_output.sha256", manifest.render_output_digest);
     builder.string("music_analysis.sha256", manifest.music_analysis_digest);
+    builder.integer("groups.count", manifest.groups.size());
+    for (std::size_t index = 0U; index < manifest.groups.size(); ++index) {
+        const LayerGroup& group = manifest.groups[index];
+        builder.string(indexed("groups", index, "uuid"), group.uuid);
+        builder.string(indexed("groups", index, "name"), group.name);
+        builder.boolean(indexed("groups", index, "enabled"), group.enabled);
+        builder.boolean(indexed("groups", index, "locked"), group.locked);
+    }
     builder.integer("layers.count", manifest.layers.size());
     for (std::size_t index = 0U; index < manifest.layers.size(); ++index) {
         const LayerConfig& layer = manifest.layers[index];
@@ -1193,6 +1235,10 @@ bool serialize_version_manifest(const VersionManifest& manifest,
         builder.boolean(indexed("layers", index, "enabled"), layer.enabled);
         builder.add(indexed("layers", index, "blend_mode"),
                     blend_token(layer.blend_mode));
+        builder.add(indexed("layers", index, "alpha_mode"),
+                    alpha_mode_token(layer.alpha_mode));
+        builder.string(indexed("layers", index, "group_uuid"),
+                       layer.group_uuid);
         builder.real(indexed("layers", index, "opacity"), layer.opacity);
         builder.add(indexed("layers", index, "sha256"),
                     manifest.layer_digests[index]);
@@ -1253,6 +1299,33 @@ bool parse_version_manifest(const std::string& bytes,
     if (format_version >= 4U
         && !take_string(records, "music_analysis.sha256",
                         candidate.music_analysis_digest, error)) return false;
+    if (format_version >= 5U) {
+        std::size_t group_count = 0U;
+        if (!take_integer(records, "groups.count", group_count, error)
+            || group_count > kMaximumLayerGroups) {
+            return fail(error, "Version metadata has an invalid group count.");
+        }
+        candidate.groups.resize(group_count);
+        std::unordered_set<std::string> group_uuids;
+        for (std::size_t index = 0U; index < group_count; ++index) {
+            LayerGroup& group = candidate.groups[index];
+            if (!take_string(records, indexed("groups", index, "uuid"),
+                             group.uuid, error)
+                || !take_string(records, indexed("groups", index, "name"),
+                                group.name, error)
+                || !take_bool(records, indexed("groups", index, "enabled"),
+                              group.enabled, error)
+                || !take_bool(records, indexed("groups", index, "locked"),
+                              group.locked, error)
+                || !canonical_uuid(group.uuid)
+                || group.name.empty()
+                || !valid_semantic_group_name(group.name)
+                || !group_uuids.insert(group.uuid).second) {
+                return fail(error,
+                            "Version metadata has an invalid layer-group entry.");
+            }
+        }
+    }
     std::size_t count = 0U;
     if (!take_integer(records, "layers.count", count, error)
         || count == 0U || count > kMaximumLayers) {
@@ -1265,6 +1338,7 @@ bool parse_version_manifest(const std::string& bytes,
     for (std::size_t index = 0U; index < count; ++index) {
         LayerConfig& layer = candidate.layers[index];
         std::string blend;
+        std::string alpha_mode;
         if (!take_integer(records, indexed("layers", index, "file_id"),
                           layer.file_id, error)
             || !take_string(records, indexed("layers", index, "uuid"),
@@ -1275,11 +1349,19 @@ bool parse_version_manifest(const std::string& bytes,
                           layer.enabled, error)
             || !take(records, indexed("layers", index, "blend_mode"),
                      blend, error)
+            || (format_version >= 5U
+                && (!take(records, indexed("layers", index, "alpha_mode"),
+                          alpha_mode, error)
+                    || !take_string(records,
+                                    indexed("layers", index, "group_uuid"),
+                                    layer.group_uuid, error)))
             || !take_real(records, indexed("layers", index, "opacity"),
                           layer.opacity, error)
             || !take(records, indexed("layers", index, "sha256"),
                      candidate.layer_digests[index], error)
             || !parse_blend(blend, layer.blend_mode)
+            || (format_version >= 5U
+                && !parse_alpha_mode(alpha_mode, layer.alpha_mode))
             || !canonical_uuid(layer.uuid)
             || !canonical_hash(candidate.layer_digests[index])
             || !file_ids.insert(layer.file_id).second
@@ -1435,6 +1517,14 @@ bool project_content_digest(const ProjectConfig& project,
     std::string output_digest;
     if (!detail::sha256_hex(output_bytes, output_digest, error)) return false;
     builder.add("render_output.sha256", output_digest);
+    builder.integer("groups.count", project.groups.size());
+    for (std::size_t index = 0U; index < project.groups.size(); ++index) {
+        const LayerGroup& group = project.groups[index];
+        builder.string(indexed("groups", index, "uuid"), group.uuid);
+        builder.string(indexed("groups", index, "name"), group.name);
+        builder.boolean(indexed("groups", index, "enabled"), group.enabled);
+        builder.boolean(indexed("groups", index, "locked"), group.locked);
+    }
     builder.integer("layers.count", project.layers.size());
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
@@ -1450,6 +1540,10 @@ bool project_content_digest(const ProjectConfig& project,
         builder.boolean(indexed("layers", index, "enabled"), layer.enabled);
         builder.add(indexed("layers", index, "blend_mode"),
                     blend_token(layer.blend_mode));
+        builder.add(indexed("layers", index, "alpha_mode"),
+                    alpha_mode_token(layer.alpha_mode));
+        builder.string(indexed("layers", index, "group_uuid"),
+                       layer.group_uuid);
         builder.real(indexed("layers", index, "opacity"), layer.opacity);
         builder.add(indexed("layers", index, "render_sha256"), layer_digest);
     }
@@ -1682,6 +1776,7 @@ bool load_snapshot(const detail::BundleFileSet& files,
     }
     external = external || !output_hash_matches;
     candidate.layers = manifest.layers;
+    candidate.groups = manifest.groups;
     std::set<std::string> expected_paths{
         version_path(version, "metadata.txt"),
         version_path(version, "render_output.txt")};
@@ -2401,6 +2496,7 @@ bool build_version(ProjectConfig project,
     manifest.reverted_from_digest = reverted_from_digest;
     manifest.project_name = project.name;
     manifest.layers = project.layers;
+    manifest.groups = project.groups;
     manifest.attachments = std::move(attachments);
 
     std::string output_bytes;
@@ -2816,8 +2912,12 @@ bool make_independent_project_copy(const ProjectConfig& project,
         ProjectDocument candidate = default_project_document();
         candidate.project = project;
         std::unordered_set<std::string> reserved_uuids;
-        reserved_uuids.reserve(project.layers.size() * 2U + 2U);
+        reserved_uuids.reserve((project.layers.size() + project.groups.size())
+                               * 2U + 2U);
         reserved_uuids.insert(project.uuid);
+        for (const LayerGroup& group : project.groups) {
+            reserved_uuids.insert(group.uuid);
+        }
         for (const LayerConfig& layer : project.layers) {
             reserved_uuids.insert(layer.uuid);
         }
@@ -2831,9 +2931,25 @@ bool make_independent_project_copy(const ProjectConfig& project,
             return std::string{};
         };
         candidate.project.uuid = fresh_uuid();
+        std::unordered_map<std::string, std::string> group_remap;
+        group_remap.reserve(candidate.project.groups.size());
+        for (LayerGroup& group : candidate.project.groups) {
+            const std::string old_uuid = group.uuid;
+            group.uuid = fresh_uuid();
+            group_remap.emplace(old_uuid, group.uuid);
+        }
         for (std::size_t index = 0U;
              index < candidate.project.layers.size(); ++index) {
             candidate.project.layers[index].uuid = fresh_uuid();
+            if (!candidate.project.layers[index].group_uuid.empty()) {
+                const auto remapped = group_remap.find(
+                    candidate.project.layers[index].group_uuid);
+                if (remapped == group_remap.end()) {
+                    return fail(error,
+                                "Could not remap an independent layer group identity.");
+                }
+                candidate.project.layers[index].group_uuid = remapped->second;
+            }
             // File IDs are bundle-local stable identities. A detached copy has
             // no history to preserve, so give its sole initial snapshot a
             // compact, deterministic file layout.
@@ -3227,6 +3343,14 @@ bool semantic_fields(const ProjectConfig& project,
         project.canvas.clock.music.source_basename;
     fields["global.timing.music.source_format"] =
         project.canvas.clock.music.source_format;
+    for (std::size_t index = 0U; index < project.groups.size(); ++index) {
+        const LayerGroup& group = project.groups[index];
+        const std::string prefix = "group." + group.uuid + ".";
+        fields["group_order." + std::to_string(index)] = group.uuid;
+        fields[prefix + "name"] = group.name;
+        fields[prefix + "enabled"] = group.enabled ? "1" : "0";
+        fields[prefix + "locked"] = group.locked ? "1" : "0";
+    }
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
         const std::string layer_prefix = "layer." + layer.uuid + ".";
@@ -3235,6 +3359,9 @@ bool semantic_fields(const ProjectConfig& project,
         fields[layer_prefix + "name"] = layer.name;
         fields[layer_prefix + "enabled"] = layer.enabled ? "1" : "0";
         fields[layer_prefix + "blend_mode"] = blend_token(layer.blend_mode);
+        fields[layer_prefix + "alpha_mode"] =
+            alpha_mode_token(layer.alpha_mode);
+        fields[layer_prefix + "group_uuid"] = layer.group_uuid;
         std::ostringstream opacity;
         opacity.imbue(std::locale::classic());
         opacity << std::setprecision(std::numeric_limits<double>::max_digits10)

@@ -420,7 +420,9 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This patch restores independent wave/effect/path clocks under synchronized Hold modes, makes Endless Zoom respond visibly to positive music modulation at its default full mix, and shows Audio Response only for the selected layer's effective Music clock. It also includes resilient project recovery with lossless unknown-field preservation, embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, expanded music-responsive editing and export, and versioned project bundles.
+          This release adds full-resolution, full-quality export of the current timeline frame; per-layer Alpha Over and Alpha Under compositing; and flat layer groups with visibility, preview solo, lock/unlock, rename, membership, safe removal, and whole-folder reordering. Project-version manifest format 5 preserves these settings while formats 1 through 4 continue to load as ungrouped Alpha Over layers.
+
+          It also includes resilient project recovery with lossless unknown-field preservation, embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, adaptive music-responsive editing and export, native macOS movie output, and versioned project bundles.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 

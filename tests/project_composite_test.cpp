@@ -111,6 +111,8 @@ void test_uuid_factories_and_adapters() {
     CHECK(first.layers[0U].uuid != second.layers[0U].uuid);
     CHECK(first.layers[0U].file_id == 0U);
     CHECK(pvt::validate(first).ok);
+    CHECK(std::string(pvt::alpha_mode_name(pvt::AlphaMode::AlphaOver))
+          == "Alpha Over");
 
     pvt::LayerConfig layer = pvt::default_layer(2U);
     CHECK(layer.file_id == 2U);
@@ -491,6 +493,29 @@ void test_project_rendering_order_equivalence_and_seam() {
                                               nullptr, &error));
     CHECK(project_image.pixels == expected.pixels);
 
+    // Alpha Under swaps the Porter-Duff operands after applying this layer's
+    // opacity. Cover Normal, the requested Difference example, and directional
+    // Subtract so both coverage order and blend-function argument order matter.
+    project.layers[1U].alpha_mode = pvt::AlphaMode::AlphaUnder;
+    project.layers[1U].opacity = 0.65;
+    for (const pvt::BlendMode mode : {pvt::BlendMode::Normal,
+                                      pvt::BlendMode::Difference,
+                                      pvt::BlendMode::Subtract}) {
+        project.layers[1U].blend_mode = mode;
+        expected = top_image;
+        for (std::size_t offset = 3U; offset < expected.pixels.size();
+             offset += 4U) {
+            expected.pixels[offset] *= 0.65F;
+        }
+        CHECK(pvt::composite_over(bottom_image, expected, mode, 1.0,
+                                  &error));
+        CHECK(pvt::render_project_frame_at_phase(
+            project, 0.375, project_image, nullptr, &error));
+        CHECK(project_image.pixels == expected.pixels);
+    }
+    project.layers[1U].alpha_mode = pvt::AlphaMode::AlphaOver;
+    project.layers[1U].opacity = 1.0;
+
     const pvt::Image ordered = project_image;
     std::swap(project.layers[0U], project.layers[1U]);
     CHECK(pvt::render_project_frame_at_phase(project, 0.375, project_image,
@@ -546,6 +571,70 @@ void test_project_rendering_order_equivalence_and_seam() {
     CHECK(pvt::render_project_frame(project, 0, project_image, nullptr, &error));
     CHECK(std::all_of(project_image.pixels.begin(), project_image.pixels.end(),
                       [](float value) { return value == 0.0F; }));
+}
+
+void test_layer_groups() {
+    std::string error;
+    pvt::ProjectConfig project = pvt::default_project();
+    make_small(project);
+    pvt::LayerConfig middle = pvt::default_layer(1U);
+    middle.render.hue_cycles = 2;
+    pvt::LayerConfig top = pvt::default_layer(2U);
+    top.render.hue_cycles = -3;
+    project.layers.push_back(middle);
+    project.layers.push_back(top);
+
+    pvt::LayerGroup group;
+    group.uuid = pvt::generate_uuid();
+    group.name = "Accents";
+    project.groups.push_back(group);
+    project.layers[1U].group_uuid = group.uuid;
+    project.layers[2U].group_uuid = group.uuid;
+    project.output.write_alpha = true;
+    CHECK(pvt::validate(project).ok);
+
+    pvt::Image grouped;
+    pvt::Image ungrouped;
+    CHECK(pvt::render_project_frame(project, 2, grouped, nullptr, &error));
+    pvt::ProjectConfig without_group = project;
+    without_group.groups.clear();
+    for (auto& layer : without_group.layers) layer.group_uuid.clear();
+    CHECK(pvt::render_project_frame(without_group, 2, ungrouped, nullptr,
+                                    &error));
+    CHECK(grouped.pixels == ungrouped.pixels);
+
+    project.groups.front().locked = true;
+    pvt::Image locked;
+    CHECK(pvt::render_project_frame(project, 2, locked, nullptr, &error));
+    CHECK(locked.pixels == grouped.pixels);
+
+    project.groups.front().enabled = false;
+    pvt::Image hidden_group;
+    pvt::ProjectConfig base_only = without_group;
+    base_only.layers.resize(1U);
+    CHECK(pvt::render_project_frame(project, 2, hidden_group, nullptr, &error));
+    CHECK(pvt::render_project_frame(base_only, 2, ungrouped, nullptr, &error));
+    CHECK(hidden_group.pixels == ungrouped.pixels);
+
+    pvt::ProjectConfig invalid = project;
+    invalid.groups.clear();
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = project;
+    invalid.layers[0U].group_uuid = invalid.groups.front().uuid;
+    invalid.layers[1U].group_uuid.clear();
+    CHECK(!pvt::validate(invalid).ok); // Split group block.
+    invalid = project;
+    invalid.layers[1U].group_uuid.clear();
+    invalid.layers[2U].group_uuid.clear();
+    CHECK(!pvt::validate(invalid).ok); // Empty group.
+    invalid = project;
+    invalid.layers[1U].alpha_mode = static_cast<pvt::AlphaMode>(255);
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = project;
+    invalid.groups.front().uuid = invalid.layers.front().uuid;
+    invalid.layers[1U].group_uuid = invalid.groups.front().uuid;
+    invalid.layers[2U].group_uuid = invalid.groups.front().uuid;
+    CHECK(!pvt::validate(invalid).ok);
 }
 
 void test_project_cancellation_during_layer_render() {
@@ -749,6 +838,7 @@ int main() {
     test_straight_alpha_and_transactionality();
     test_project_validation();
     test_project_rendering_order_equivalence_and_seam();
+    test_layer_groups();
     test_project_cancellation_during_layer_render();
     test_project_sequence();
     test_active_layer_clock_mappings();

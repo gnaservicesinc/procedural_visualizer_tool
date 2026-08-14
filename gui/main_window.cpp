@@ -584,9 +584,17 @@ std::size_t estimated_project_bytes(const pvt::ProjectConfig& project) {
     bytes = saturating_add(bytes, estimated_output_bytes(project.output));
     bytes = saturating_add(bytes,
                            project.layers.capacity() * sizeof(pvt::LayerConfig));
+    bytes = saturating_add(bytes,
+                           project.groups.capacity() * sizeof(pvt::LayerGroup));
+    for (const auto& group : project.groups) {
+        bytes = saturating_add(bytes, estimated_string_bytes(group.uuid));
+        bytes = saturating_add(bytes, estimated_string_bytes(group.name));
+    }
     for (const auto& layer : project.layers) {
         bytes = saturating_add(bytes, estimated_string_bytes(layer.uuid));
         bytes = saturating_add(bytes, estimated_string_bytes(layer.name));
+        bytes = saturating_add(bytes,
+                               estimated_string_bytes(layer.group_uuid));
         bytes = saturating_add(bytes, estimated_render_data_bytes(layer.render));
     }
     return bytes;
@@ -638,6 +646,7 @@ bool project_config_equal(const pvt::ProjectConfig& left,
                           const pvt::ProjectConfig& right) {
     if (left.uuid != right.uuid || left.name != right.name
         || left.layers.size() != right.layers.size()
+        || left.groups.size() != right.groups.size()
         || !output_data_equal(left.canvas, left.output,
                               right.canvas, right.output)) {
         return false;
@@ -647,10 +656,19 @@ bool project_config_equal(const pvt::ProjectConfig& left,
         const auto& b = right.layers[index];
         if (a.uuid != b.uuid || a.file_id != b.file_id || a.name != b.name
             || a.enabled != b.enabled || a.blend_mode != b.blend_mode
-            || a.opacity != b.opacity
+            || a.alpha_mode != b.alpha_mode
+            || a.group_uuid != b.group_uuid || a.opacity != b.opacity
             || !render_data_equal(a.render, b.render,
                                   &left.canvas.motion_paths,
                                   &right.canvas.motion_paths)) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U; index < left.groups.size(); ++index) {
+        const auto& a = left.groups[index];
+        const auto& b = right.groups[index];
+        if (a.uuid != b.uuid || a.name != b.name
+            || a.enabled != b.enabled || a.locked != b.locked) {
             return false;
         }
     }
@@ -819,6 +837,18 @@ bool random_chance(QRandomGenerator& random, double probability) {
     return random.generateDouble() < probability;
 }
 
+bool layer_visible_in_project(const pvt::ProjectConfig& project,
+                              const pvt::LayerConfig& layer) {
+    if (!layer.enabled) return false;
+    if (layer.group_uuid.empty()) return true;
+    const auto group = std::find_if(
+        project.groups.begin(), project.groups.end(),
+        [&layer](const pvt::LayerGroup& value) {
+            return value.uuid == layer.group_uuid;
+        });
+    return group == project.groups.end() || group->enabled;
+}
+
 std::vector<pvt::audio::PlaybackTrack> audible_project_tracks(
     const pvt::ProjectConfig& project, const pvt::ProjectDocument& document,
     double project_position_seconds) {
@@ -904,7 +934,7 @@ std::vector<pvt::audio::PlaybackTrack> audible_project_tracks(
     }
     for (const pvt::LayerConfig& layer : project.layers) {
         const auto& local = layer.render.layer_clock;
-        if (!layer.enabled || !local.enabled
+        if (!layer_visible_in_project(project, layer) || !local.enabled
             || local.clock.mode != pvt::ClockMode::Music
             || local.clock.data_only) {
             continue;
@@ -2784,6 +2814,8 @@ void MainWindow::makeSelectedVersionCurrent() {
     project_ = document_->project;
     active_layer_uuid_ = project_.layers.back().uuid;
     solo_layer_uuid_.reset();
+    solo_group_uuid_.reset();
+    selected_group_uuid_.reset();
     baseline_dirty_ = document_->dirty;
     current_project_path_ = QString::fromStdString(document_->source_path);
     updateCompatibilityWarning();
@@ -2819,6 +2851,8 @@ void MainWindow::revertSelectedVersion() {
     project_ = document_->project;
     active_layer_uuid_ = project_.layers.back().uuid;
     solo_layer_uuid_.reset();
+    solo_group_uuid_.reset();
+    selected_group_uuid_.reset();
     baseline_dirty_ = false;
     current_project_path_ = QString::fromStdString(document_->source_path);
     updateCompatibilityWarning();
@@ -2861,8 +2895,8 @@ void MainWindow::createLayerDock() {
     layout->addWidget(compatibility_warning_label_);
 
     auto* explanation = new QLabel(
-        tr("Top rows paint over the layers below them. Blend and opacity apply to the "
-           "selected layer; Solo is a preview-only aid."));
+        tr("Top rows paint over the layers below them. Groups are contiguous folders "
+           "that move, hide, lock, and solo their layers together. Solo is preview-only."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
@@ -2879,6 +2913,12 @@ void MainWindow::createLayerDock() {
     buttons->addWidget(duplicate);
     buttons->addWidget(remove);
     layout->addLayout(buttons);
+    auto* group_buttons = new QHBoxLayout;
+    auto* add_group = new QPushButton(tr("Add group"));
+    auto* remove_group = new QPushButton(tr("Remove group"));
+    group_buttons->addWidget(add_group);
+    group_buttons->addWidget(remove_group);
+    layout->addLayout(group_buttons);
     auto* order_buttons = new QHBoxLayout;
     auto* up = new QPushButton(tr("Move up"));
     auto* down = new QPushButton(tr("Move down"));
@@ -2908,14 +2948,40 @@ void MainWindow::createLayerDock() {
         }
         add_enum_item(layer_blend_, label, mode);
     }
+    layer_alpha_mode_ = new QComboBox;
+    add_enum_item(layer_alpha_mode_, tr("Alpha Over"),
+                  pvt::AlphaMode::AlphaOver);
+    add_enum_item(layer_alpha_mode_, tr("Alpha Under"),
+                  pvt::AlphaMode::AlphaUnder);
+    layer_alpha_mode_->setToolTip(
+        tr("Alpha Over paints this layer over the accumulated lower stack. "
+           "Alpha Under places it beneath that stack after applying the selected blend."));
+    layer_group_ = new QComboBox;
     layer_opacity_ = real_editor(0.0, 100.0, 1, 5.0);
     layer_opacity_->setSuffix(tr("%"));
     selected_form->addRow(tr("Name"), layer_name_);
     selected_form->addRow(layer_enabled_);
     selected_form->addRow(layer_solo_);
     selected_form->addRow(tr("Blend"), layer_blend_);
+    selected_form->addRow(tr("Alpha Mode"), layer_alpha_mode_);
+    selected_form->addRow(tr("Group"), layer_group_);
     selected_form->addRow(tr("Opacity"), layer_opacity_);
     layout->addWidget(selected);
+
+    selected_group_box_ = new QGroupBox(tr("Selected group"));
+    auto* group_form = new QFormLayout(selected_group_box_);
+    group_name_ = new QLineEdit;
+    group_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
+    group_name_->setValidator(new Utf8TextValidator(TextRule::Name, group_name_));
+    group_enabled_ = new QCheckBox(tr("Visible in preview and export"));
+    group_solo_ = new QCheckBox(tr("Solo group in preview"));
+    group_locked_ = new QCheckBox(tr("Lock group and contained layers"));
+    group_form->addRow(tr("Name"), group_name_);
+    group_form->addRow(group_enabled_);
+    group_form->addRow(group_solo_);
+    group_form->addRow(group_locked_);
+    selected_group_box_->setEnabled(false);
+    layout->addWidget(selected_group_box_);
 
     layers_dock_->setWidget(contents);
     addDockWidget(Qt::RightDockWidgetArea, layers_dock_);
@@ -2933,7 +2999,13 @@ void MainWindow::createLayerDock() {
             return;
         }
         if (auto* item = layer_list_->item(row)) {
-            selectLayer(item->data(Qt::UserRole).toString().toStdString());
+            const std::string uuid =
+                item->data(Qt::UserRole).toString().toStdString();
+            if (item->data(Qt::UserRole + 1).toBool()) {
+                selectGroup(uuid);
+            } else {
+                selectLayer(uuid);
+            }
         }
     });
     connect(project_name_, &QLineEdit::editingFinished,
@@ -2950,7 +3022,9 @@ void MainWindow::createLayerDock() {
         if (populating_) return;
         auto* layer = activeLayer();
         const QString edited = layer_name_->text().trimmed();
-        if (layer == nullptr || edited.isEmpty() || !valid_text(edited, TextRule::Name)) {
+        const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+        if (layer == nullptr || (group != nullptr && group->locked)
+            || edited.isEmpty() || !valid_text(edited, TextRule::Name)) {
             loadLayerEditors();
             return;
         }
@@ -2968,7 +3042,9 @@ void MainWindow::createLayerDock() {
     connect(layer_enabled_, &QCheckBox::toggled, this, [this](bool checked) {
         if (populating_) return;
         auto* layer = activeLayer();
-        if (layer == nullptr || layer->enabled == checked) return;
+        const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+        if (layer == nullptr || (group != nullptr && group->locked)
+            || layer->enabled == checked) return;
         const std::string uuid = layer->uuid;
         const bool before = layer->enabled;
         const auto before_output = project_.output;
@@ -2987,6 +3063,7 @@ void MainWindow::createLayerDock() {
     connect(layer_solo_, &QCheckBox::toggled, this, [this](bool checked) {
         if (populating_) return;
         solo_layer_uuid_ = checked ? std::optional<std::string>(active_layer_uuid_) : std::nullopt;
+        if (checked) solo_group_uuid_.reset();
         ++document_revision_;
         refreshLayerList();
         schedulePreview();
@@ -2995,7 +3072,8 @@ void MainWindow::createLayerDock() {
     connect(layer_blend_, &QComboBox::currentIndexChanged, this, [this] {
         if (populating_) return;
         auto* layer = activeLayer();
-        if (layer == nullptr) return;
+        const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+        if (layer == nullptr || (group != nullptr && group->locked)) return;
         const auto after = static_cast<pvt::BlendMode>(layer_blend_->currentData().toInt());
         const auto before = layer->blend_mode;
         if (before == after) return;
@@ -3008,10 +3086,33 @@ void MainWindow::createLayerDock() {
         refreshLayerList();
         schedulePreview();
     });
+    connect(layer_alpha_mode_, &QComboBox::currentIndexChanged, this, [this] {
+        if (populating_) return;
+        auto* layer = activeLayer();
+        const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+        if (layer == nullptr || (group != nullptr && group->locked)) return;
+        const auto after = static_cast<pvt::AlphaMode>(
+            layer_alpha_mode_->currentData().toInt());
+        const auto before = layer->alpha_mode;
+        if (before == after) return;
+        const std::string uuid = layer->uuid;
+        layer->alpha_mode = after;
+        recordUndo(tr("Change layer alpha mode"),
+                   [this, uuid, before] { if (auto* value = findLayer(uuid)) value->alpha_mode = before; refreshLayerList(); noteDocumentChange(); schedulePreview(); },
+                   [this, uuid, after] { if (auto* value = findLayer(uuid)) value->alpha_mode = after; refreshLayerList(); noteDocumentChange(); schedulePreview(); });
+        noteDocumentChange();
+        refreshLayerList();
+        schedulePreview();
+    });
+    connect(layer_group_, &QComboBox::currentIndexChanged, this, [this] {
+        if (populating_) return;
+        setActiveLayerGroup(layer_group_->currentData().toString().toStdString());
+    });
     connect(layer_opacity_, &QDoubleSpinBox::valueChanged, this, [this](double percent) {
         if (populating_) return;
         auto* layer = activeLayer();
-        if (layer == nullptr) return;
+        const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+        if (layer == nullptr || (group != nullptr && group->locked)) return;
         const double after = percent * 0.01;
         const double before = layer->opacity;
         if (before == after) return;
@@ -3032,8 +3133,72 @@ void MainWindow::createLayerDock() {
     connect(add, &QPushButton::clicked, this, &MainWindow::addLayer);
     connect(duplicate, &QPushButton::clicked, this, &MainWindow::duplicateLayer);
     connect(remove, &QPushButton::clicked, this, &MainWindow::removeLayer);
-    connect(up, &QPushButton::clicked, this, [this] { moveActiveLayer(1); });
-    connect(down, &QPushButton::clicked, this, [this] { moveActiveLayer(-1); });
+    connect(add_group, &QPushButton::clicked, this, &MainWindow::addGroup);
+    connect(remove_group, &QPushButton::clicked,
+            this, &MainWindow::removeSelectedGroup);
+    connect(up, &QPushButton::clicked, this, [this] {
+        if (selected_group_uuid_) moveSelectedGroup(1);
+        else moveActiveLayer(1);
+    });
+    connect(down, &QPushButton::clicked, this, [this] {
+        if (selected_group_uuid_) moveSelectedGroup(-1);
+        else moveActiveLayer(-1);
+    });
+
+    connect(group_name_, &QLineEdit::editingFinished, this, [this] {
+        if (populating_ || !selected_group_uuid_) return;
+        auto* group = findGroup(*selected_group_uuid_);
+        const QString edited = group_name_->text().trimmed();
+        if (group == nullptr || edited.isEmpty()
+            || !valid_text(edited, TextRule::Name)) {
+            loadLayerEditors();
+            return;
+        }
+        const std::string after = edited.toStdString();
+        if (after == group->name) return;
+        auto before = captureProjectState();
+        const std::string before_active = active_layer_uuid_;
+        group->name = after;
+        refreshLayerList();
+        recordProjectStateChange(tr("Rename group"), std::move(before),
+                                 before_active);
+    });
+    connect(group_enabled_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (populating_ || !selected_group_uuid_) return;
+        auto* group = findGroup(*selected_group_uuid_);
+        if (group == nullptr || group->enabled == checked) return;
+        auto before = captureProjectState();
+        const std::string before_active = active_layer_uuid_;
+        group->enabled = checked;
+        ensureAlphaForTransparency();
+        syncProjectGlobals();
+        refreshLayerList();
+        recordProjectStateChange(checked ? tr("Show group") : tr("Hide group"),
+                                 std::move(before), before_active);
+        schedulePreview();
+        if (playback_timer_->isActive()) startProjectAudioPlayback();
+    });
+    connect(group_locked_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (populating_ || !selected_group_uuid_) return;
+        auto* group = findGroup(*selected_group_uuid_);
+        if (group == nullptr || group->locked == checked) return;
+        auto before = captureProjectState();
+        const std::string before_active = active_layer_uuid_;
+        group->locked = checked;
+        refreshLayerList();
+        recordProjectStateChange(checked ? tr("Lock group") : tr("Unlock group"),
+                                 std::move(before), before_active);
+    });
+    connect(group_solo_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (populating_) return;
+        solo_group_uuid_ = checked && selected_group_uuid_
+                               ? selected_group_uuid_ : std::nullopt;
+        if (checked) solo_layer_uuid_.reset();
+        ++document_revision_;
+        refreshLayerList();
+        schedulePreview();
+        if (playback_timer_->isActive()) startProjectAudioPlayback();
+    });
 }
 
 void MainWindow::restoreLayersDock(bool makeVisible) {
@@ -3148,8 +3313,9 @@ void MainWindow::startProjectAudioPlayback() {
              && !config_.clock.data_only)
             || std::any_of(monitoring_project.layers.begin(),
                            monitoring_project.layers.end(),
-                           [](const pvt::LayerConfig& layer) {
-                               return layer.enabled
+                           [&monitoring_project](const pvt::LayerConfig& layer) {
+                               return layer_visible_in_project(
+                                          monitoring_project, layer)
                                       && layer.render.layer_clock.enabled
                                       && layer.render.layer_clock.clock.mode
                                              == pvt::ClockMode::Music
@@ -3212,11 +3378,14 @@ void MainWindow::createToolbar() {
     settings_menu->addSeparator();
     settings_menu->addAction(randomize_values_action_);
     settings_menu->addAction(randomize_mix_action_);
+    current_frame_export_action_ =
+        toolbar->addAction(tr("Export Current Frame…"));
     export_action_ = toolbar->addAction(tr("Export Frames"));
     video_export_action_ = toolbar->addAction(tr("Export Video…"));
     cancel_export_action_ = toolbar->addAction(tr("Cancel export"));
     cancel_export_action_->setEnabled(false);
     file_menu->addSeparator();
+    file_menu->addAction(current_frame_export_action_);
     file_menu->addAction(export_action_);
     file_menu->addAction(video_export_action_);
 
@@ -3316,6 +3485,40 @@ void MainWindow::createToolbar() {
         cancel_export_action_->setEnabled(true);
         if (!startExport()) {
             export_action_->setEnabled(true);
+            cancel_export_action_->setEnabled(false);
+        }
+    });
+    connect(current_frame_export_action_, &QAction::triggered, this, [this] {
+        if (export_watcher_->isRunning()) return;
+        QString editor_error;
+        if (!outputEditorsValid(&editor_error)) {
+            QMessageBox::warning(this, tr("Invalid output text"), editor_error);
+            return;
+        }
+        const auto validation = pvt::validate(project_);
+        if (!validation.ok) {
+            QMessageBox::warning(this, tr("Invalid setup"),
+                                 QString::fromStdString(validation.message));
+            return;
+        }
+        const bool exr = project_.output.bit_depth == 32;
+        const QString extension = exr ? QStringLiteral(".exr")
+                                      : QStringLiteral(".png");
+        const QString filename =
+            QString::fromStdString(project_.name)
+                + tr(" - frame %1").arg(timeline_->value() + 1)
+                + extension;
+        QString path = QFileDialog::getSaveFileName(
+            this, tr("Export current full-resolution frame"),
+            QDir(usableDialogDirectory()).filePath(filename),
+            exr ? tr("OpenEXR image (*.exr)") : tr("PNG image (*.png)"));
+        if (path.isEmpty()) return;
+        if (!path.endsWith(extension, Qt::CaseInsensitive)) path += extension;
+        rememberDialogLocation(path);
+        current_frame_export_action_->setEnabled(false);
+        cancel_export_action_->setEnabled(true);
+        if (!startCurrentFrameExport(path)) {
+            current_frame_export_action_->setEnabled(true);
             cancel_export_action_->setEnabled(false);
         }
     });
@@ -4297,6 +4500,27 @@ const pvt::LayerConfig* MainWindow::findLayer(const std::string& uuid) const {
     return found == project_.layers.end() ? nullptr : &*found;
 }
 
+pvt::LayerGroup* MainWindow::findGroup(const std::string& uuid) {
+    const auto found = std::find_if(project_.groups.begin(), project_.groups.end(),
+                                    [&uuid](const auto& group) {
+                                        return group.uuid == uuid;
+                                    });
+    return found == project_.groups.end() ? nullptr : &*found;
+}
+
+const pvt::LayerGroup* MainWindow::findGroup(const std::string& uuid) const {
+    const auto found = std::find_if(project_.groups.begin(), project_.groups.end(),
+                                    [&uuid](const auto& group) {
+                                        return group.uuid == uuid;
+                                    });
+    return found == project_.groups.end() ? nullptr : &*found;
+}
+
+const pvt::LayerGroup* MainWindow::groupForLayer(
+    const pvt::LayerConfig& layer) const {
+    return layer.group_uuid.empty() ? nullptr : findGroup(layer.group_uuid);
+}
+
 pvt::LayerConfig* MainWindow::activeLayer() {
     return findLayer(active_layer_uuid_);
 }
@@ -4343,8 +4567,13 @@ void MainWindow::syncProjectGlobals() {
 }
 
 void MainWindow::selectLayer(const std::string& uuid) {
-    if (uuid == active_layer_uuid_ || findLayer(uuid) == nullptr) {
+    if (findLayer(uuid) == nullptr) {
         loadLayerEditors();
+        return;
+    }
+    selected_group_uuid_.reset();
+    if (uuid == active_layer_uuid_) {
+        refreshLayerList();
         return;
     }
     active_layer_uuid_ = uuid;
@@ -4352,6 +4581,12 @@ void MainWindow::selectLayer(const std::string& uuid) {
     refreshAll();
     refreshLayerList();
     schedulePreview();
+}
+
+void MainWindow::selectGroup(const std::string& uuid) {
+    if (findGroup(uuid) == nullptr) return;
+    selected_group_uuid_ = uuid;
+    refreshLayerList();
 }
 
 void MainWindow::refreshLayerList() {
@@ -4363,16 +4598,48 @@ void MainWindow::refreshLayerList() {
     project_name_->setText(QString::fromStdString(project_.name));
     layer_list_->clear();
     int selected_row = -1;
+    int row = 0;
+    std::unordered_set<std::string> emitted_groups;
     for (std::size_t display = 0; display < project_.layers.size(); ++display) {
         const std::size_t index = project_.layers.size() - 1U - display;
         const auto& layer = project_.layers[index];
-        QString detail = QString::fromStdString(layer.name) + QStringLiteral("  [")
+        const pvt::LayerGroup* group = groupForLayer(layer);
+        if (group != nullptr && emitted_groups.insert(group->uuid).second) {
+            QString group_detail = QStringLiteral("▾ ")
+                + QString::fromStdString(group->name)
+                + QStringLiteral("  [")
+                + (group->enabled ? tr("on") : tr("off"));
+            if (group->locked) group_detail += tr(", locked");
+            group_detail += QStringLiteral("]");
+            if (solo_group_uuid_ && *solo_group_uuid_ == group->uuid) {
+                group_detail.append(tr("  [SOLO]"));
+            }
+            auto* group_item = new QListWidgetItem(group_detail, layer_list_);
+            QFont group_font = group_item->font();
+            group_font.setBold(true);
+            group_item->setFont(group_font);
+            group_item->setData(Qt::UserRole,
+                                QString::fromStdString(group->uuid));
+            group_item->setData(Qt::UserRole + 1, true);
+            group_item->setToolTip(
+                tr("Layer group. Visibility, lock, solo, and movement apply to every contained layer."));
+            if (selected_group_uuid_ && *selected_group_uuid_ == group->uuid) {
+                selected_row = row;
+            }
+            ++row;
+        }
+        QString detail = (group != nullptr ? QStringLiteral("    ↳ ") : QString{})
+                         + QString::fromStdString(layer.name)
+                         + QStringLiteral("  [")
                          + (layer.enabled ? tr("on") : tr("off"))
                          + QStringLiteral(", ")
                          + (index == 0U
                                 ? tr("base")
                                 : QString::fromUtf8(
                                       pvt::blend_mode_name(layer.blend_mode)))
+                         + QStringLiteral(", ")
+                         + QString::fromUtf8(pvt::alpha_mode_name(
+                               layer.alpha_mode))
                          + QStringLiteral(", ")
                          + QString::number(layer.opacity * 100.0, 'f', 0)
                          + QStringLiteral("%]");
@@ -4381,12 +4648,14 @@ void MainWindow::refreshLayerList() {
         }
         auto* item = new QListWidgetItem(detail, layer_list_);
         item->setData(Qt::UserRole, QString::fromStdString(layer.uuid));
+        item->setData(Qt::UserRole + 1, false);
         item->setToolTip(index == 0U
                              ? tr("Bottom/base layer. Its blend mode has no lower layer to affect.")
                              : tr("This layer is composited over every enabled layer below it. Eraser modes remove lower-layer coverage without affecting layers above."));
-        if (layer.uuid == active_layer_uuid_) {
-            selected_row = static_cast<int>(display);
+        if (!selected_group_uuid_ && layer.uuid == active_layer_uuid_) {
+            selected_row = row;
         }
+        ++row;
     }
     layer_list_->setCurrentRow(selected_row);
     populating_ = was_populating;
@@ -4401,24 +4670,67 @@ void MainWindow::loadLayerEditors() {
     const bool was_populating = populating_;
     populating_ = true;
     const auto* layer = activeLayer();
-    const bool available = layer != nullptr;
+    const auto* owning_group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+    const bool locked = owning_group != nullptr && owning_group->locked;
+    const bool available = layer != nullptr && !selected_group_uuid_;
+    const bool layer_actions_available = available && !locked
+                                         && !music_analysis_active_;
     for (auto* widget : std::initializer_list<QWidget*>{
-             layer_name_, layer_enabled_, layer_solo_, layer_blend_, layer_opacity_}) {
-        widget->setEnabled(available);
+             layer_name_, layer_enabled_, layer_blend_, layer_alpha_mode_,
+             layer_group_, layer_opacity_}) {
+        widget->setEnabled(available && !locked);
+    }
+    layer_solo_->setEnabled(available);
+    if (randomize_values_action_ != nullptr) {
+        randomize_values_action_->setEnabled(layer_actions_available);
+    }
+    if (randomize_mix_action_ != nullptr) {
+        randomize_mix_action_->setEnabled(layer_actions_available);
+    }
+    layer_group_->clear();
+    layer_group_->addItem(tr("Ungrouped"), QString{});
+    for (const auto& group : project_.groups) {
+        layer_group_->addItem(QString::fromStdString(group.name),
+                              QString::fromStdString(group.uuid));
     }
     if (layer != nullptr) {
         layer_name_->setText(QString::fromStdString(layer->name));
         layer_enabled_->setChecked(layer->enabled);
         layer_solo_->setChecked(solo_layer_uuid_ && *solo_layer_uuid_ == layer->uuid);
         select_enum(layer_blend_, layer->blend_mode);
+        select_enum(layer_alpha_mode_, layer->alpha_mode);
+        const int group_index = layer_group_->findData(
+            QString::fromStdString(layer->group_uuid));
+        layer_group_->setCurrentIndex(std::max(0, group_index));
         layer_opacity_->setValue(layer->opacity * 100.0);
         const auto index = static_cast<std::size_t>(
             std::distance(static_cast<const pvt::LayerConfig*>(project_.layers.data()),
                           layer));
         layer_blend_->setEnabled(index != 0U);
+        if (locked || !available) layer_blend_->setEnabled(false);
         layer_blend_->setToolTip(index == 0U
                                      ? tr("The bottom layer has nothing beneath it to blend with.")
                                      : tr("Blend applies this layer over the enabled layers below. Eraser modes are destination-out masks and never paint over later layers above."));
+    }
+    const pvt::LayerGroup* selected_group = selected_group_uuid_
+        ? findGroup(*selected_group_uuid_) : nullptr;
+    selected_group_box_->setEnabled(selected_group != nullptr);
+    if (selected_group != nullptr) {
+        group_name_->setText(QString::fromStdString(selected_group->name));
+        group_enabled_->setChecked(selected_group->enabled);
+        group_solo_->setChecked(solo_group_uuid_
+                                && *solo_group_uuid_ == selected_group->uuid);
+        group_locked_->setChecked(selected_group->locked);
+    } else {
+        group_name_->clear();
+        group_enabled_->setChecked(false);
+        group_solo_->setChecked(false);
+        group_locked_->setChecked(false);
+    }
+    if (tabs_ != nullptr) {
+        for (int index = 0; index < std::min(4, tabs_->count()); ++index) {
+            tabs_->setTabEnabled(index, available && !locked);
+        }
     }
     populating_ = was_populating;
 }
@@ -4436,6 +4748,7 @@ void MainWindow::addLayer() {
     layer.file_id = pvt::allocate_layer_file_id(project_);
     layer.name = tr("Layer %1").arg(project_.layers.size() + 1U).toStdString();
     active_layer_uuid_ = layer.uuid;
+    selected_group_uuid_.reset();
     project_.layers.push_back(std::move(layer));
     project_.output.write_alpha = true;
     loadActiveConfiguration();
@@ -4446,8 +4759,14 @@ void MainWindow::addLayer() {
 }
 
 void MainWindow::duplicateLayer() {
+    if (selected_group_uuid_) return;
     const auto* source = activeLayer();
     if (source == nullptr || project_.layers.size() >= pvt::kMaximumLayers) {
+        return;
+    }
+    const auto* source_group = groupForLayer(*source);
+    if (source_group != nullptr && source_group->locked) {
+        status_->setText(tr("Unlock the group before duplicating one of its layers."));
         return;
     }
     auto before = captureProjectState();
@@ -4570,6 +4889,7 @@ void MainWindow::duplicateLayer() {
         document_ = std::move(staged_document);
     }
     active_layer_uuid_ = layer.uuid;
+    selected_group_uuid_.reset();
     project_.layers.insert(project_.layers.begin()
                                + static_cast<std::ptrdiff_t>(source_index + 1U),
                            std::move(layer));
@@ -4583,6 +4903,7 @@ void MainWindow::duplicateLayer() {
 }
 
 void MainWindow::removeLayer() {
+    if (selected_group_uuid_) return;
     if (project_.layers.size() <= 1U) {
         QMessageBox::information(this, tr("Keep one layer"),
                                  tr("A project must always contain at least one layer."));
@@ -4590,8 +4911,14 @@ void MainWindow::removeLayer() {
     }
     auto* layer = activeLayer();
     if (layer == nullptr) return;
+    const auto* owning_group = groupForLayer(*layer);
+    if (owning_group != nullptr && owning_group->locked) {
+        status_->setText(tr("Unlock the group before removing one of its layers."));
+        return;
+    }
     auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
+    const std::string removed_group_uuid = layer->group_uuid;
     const auto index = static_cast<std::size_t>(
         std::distance(project_.layers.data(), layer));
     if (document_ != nullptr) {
@@ -4626,6 +4953,24 @@ void MainWindow::removeLayer() {
         document_ = std::move(staged_document);
     }
     project_.layers.erase(project_.layers.begin() + static_cast<std::ptrdiff_t>(index));
+    if (!removed_group_uuid.empty()
+        && std::none_of(project_.layers.begin(), project_.layers.end(),
+                        [&removed_group_uuid](const pvt::LayerConfig& value) {
+                            return value.group_uuid == removed_group_uuid;
+                        })) {
+        project_.groups.erase(
+            std::remove_if(project_.groups.begin(), project_.groups.end(),
+                           [&removed_group_uuid](const pvt::LayerGroup& value) {
+                               return value.uuid == removed_group_uuid;
+                           }),
+            project_.groups.end());
+        if (solo_group_uuid_ && *solo_group_uuid_ == removed_group_uuid) {
+            solo_group_uuid_.reset();
+        }
+        if (selected_group_uuid_ && *selected_group_uuid_ == removed_group_uuid) {
+            selected_group_uuid_.reset();
+        }
+    }
     const std::size_t replacement = std::min(index, project_.layers.size() - 1U);
     active_layer_uuid_ = project_.layers[replacement].uuid;
     if (solo_layer_uuid_ && *solo_layer_uuid_ == before_active) {
@@ -4640,18 +4985,247 @@ void MainWindow::removeLayer() {
 }
 
 void MainWindow::moveActiveLayer(int direction) {
+    if (selected_group_uuid_) return;
     auto* layer = activeLayer();
     if (layer == nullptr || direction == 0) return;
+    const pvt::LayerGroup* group = groupForLayer(*layer);
+    if (group != nullptr && group->locked) {
+        status_->setText(tr("Unlock the group before moving one of its layers."));
+        return;
+    }
     const auto index = static_cast<std::ptrdiff_t>(
         std::distance(project_.layers.data(), layer));
     const auto target = index + direction;
     if (target < 0 || target >= static_cast<std::ptrdiff_t>(project_.layers.size())) return;
+    const std::string target_group =
+        project_.layers[static_cast<std::size_t>(target)].group_uuid;
+    if (group != nullptr && target_group != group->uuid) {
+        status_->setText(
+            tr("Move the group to keep its folder contiguous, or change this layer's Group field first."));
+        return;
+    }
     auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
-    std::swap(project_.layers[static_cast<std::size_t>(index)],
-              project_.layers[static_cast<std::size_t>(target)]);
+    if (group == nullptr && !target_group.empty()) {
+        const pvt::LayerGroup* target_definition = findGroup(target_group);
+        if (target_definition != nullptr && target_definition->locked) {
+            status_->setText(tr("Unlock the adjacent group before moving across it."));
+            return;
+        }
+        std::size_t group_begin = static_cast<std::size_t>(target);
+        std::size_t group_end = group_begin;
+        while (group_begin > 0U
+               && project_.layers[group_begin - 1U].group_uuid
+                      == target_group) --group_begin;
+        while (group_end + 1U < project_.layers.size()
+               && project_.layers[group_end + 1U].group_uuid
+                      == target_group) ++group_end;
+        if (direction > 0) {
+            std::rotate(project_.layers.begin() + index,
+                        project_.layers.begin() + index + 1,
+                        project_.layers.begin()
+                            + static_cast<std::ptrdiff_t>(group_end + 1U));
+        } else {
+            std::rotate(project_.layers.begin()
+                            + static_cast<std::ptrdiff_t>(group_begin),
+                        project_.layers.begin() + index,
+                        project_.layers.begin() + index + 1);
+        }
+    } else {
+        std::swap(project_.layers[static_cast<std::size_t>(index)],
+                  project_.layers[static_cast<std::size_t>(target)]);
+    }
     refreshLayerList();
     recordProjectStateChange(direction > 0 ? tr("Move layer up") : tr("Move layer down"),
+                             std::move(before), before_active);
+    schedulePreview();
+}
+
+void MainWindow::addGroup() {
+    auto* layer = activeLayer();
+    if (layer == nullptr || selected_group_uuid_) return;
+    if (!layer->group_uuid.empty()) {
+        status_->setText(
+            tr("This layer is already grouped. Choose Ungrouped first or select another layer."));
+        return;
+    }
+    if (project_.groups.size() >= pvt::kMaximumLayerGroups) {
+        QMessageBox::warning(this, tr("Group limit"),
+                             tr("The safety limit is %1 groups.")
+                                 .arg(pvt::kMaximumLayerGroups));
+        return;
+    }
+    auto before = captureProjectState();
+    const std::string before_active = active_layer_uuid_;
+    pvt::LayerGroup group;
+    group.uuid = pvt::generate_uuid();
+    group.name = tr("Group %1").arg(project_.groups.size() + 1U).toStdString();
+    layer->group_uuid = group.uuid;
+    project_.groups.push_back(group);
+    selected_group_uuid_ = group.uuid;
+    refreshLayerList();
+    recordProjectStateChange(tr("Add group"), std::move(before), before_active);
+}
+
+void MainWindow::removeSelectedGroup() {
+    if (!selected_group_uuid_) return;
+    auto* group = findGroup(*selected_group_uuid_);
+    if (group == nullptr) return;
+    if (group->locked) {
+        status_->setText(tr("Unlock the group before removing it."));
+        return;
+    }
+    auto before = captureProjectState();
+    const std::string before_active = active_layer_uuid_;
+    const std::string uuid = group->uuid;
+    for (auto& layer : project_.layers) {
+        if (layer.group_uuid == uuid) layer.group_uuid.clear();
+    }
+    project_.groups.erase(
+        std::remove_if(project_.groups.begin(), project_.groups.end(),
+                       [&uuid](const pvt::LayerGroup& value) {
+                           return value.uuid == uuid;
+                       }),
+        project_.groups.end());
+    if (solo_group_uuid_ && *solo_group_uuid_ == uuid) {
+        solo_group_uuid_.reset();
+    }
+    selected_group_uuid_.reset();
+    refreshLayerList();
+    recordProjectStateChange(tr("Remove group and keep layers"),
+                             std::move(before), before_active);
+    schedulePreview();
+}
+
+void MainWindow::moveSelectedGroup(int direction) {
+    if (!selected_group_uuid_ || direction == 0) return;
+    const auto* group = findGroup(*selected_group_uuid_);
+    if (group == nullptr) return;
+    if (group->locked) {
+        status_->setText(tr("Unlock the group before moving it."));
+        return;
+    }
+    std::size_t begin = project_.layers.size();
+    std::size_t end = 0U;
+    for (std::size_t index = 0U; index < project_.layers.size(); ++index) {
+        if (project_.layers[index].group_uuid == group->uuid) {
+            begin = std::min(begin, index);
+            end = std::max(end, index);
+        }
+    }
+    if (begin == project_.layers.size()) return;
+    auto before = captureProjectState();
+    const std::string before_active = active_layer_uuid_;
+    if (direction > 0) {
+        if (end + 1U >= project_.layers.size()) return;
+        std::size_t adjacent_end = end + 1U;
+        const std::string adjacent_group =
+            project_.layers[adjacent_end].group_uuid;
+        if (!adjacent_group.empty()) {
+            const auto* adjacent = findGroup(adjacent_group);
+            if (adjacent != nullptr && adjacent->locked) {
+                status_->setText(tr("Unlock the adjacent group before moving across it."));
+                return;
+            }
+            while (adjacent_end + 1U < project_.layers.size()
+                   && project_.layers[adjacent_end + 1U].group_uuid
+                          == adjacent_group) ++adjacent_end;
+        }
+        std::rotate(project_.layers.begin()
+                        + static_cast<std::ptrdiff_t>(begin),
+                    project_.layers.begin()
+                        + static_cast<std::ptrdiff_t>(end + 1U),
+                    project_.layers.begin()
+                        + static_cast<std::ptrdiff_t>(adjacent_end + 1U));
+    } else {
+        if (begin == 0U) return;
+        std::size_t adjacent_begin = begin - 1U;
+        const std::string adjacent_group =
+            project_.layers[adjacent_begin].group_uuid;
+        if (!adjacent_group.empty()) {
+            const auto* adjacent = findGroup(adjacent_group);
+            if (adjacent != nullptr && adjacent->locked) {
+                status_->setText(tr("Unlock the adjacent group before moving across it."));
+                return;
+            }
+            while (adjacent_begin > 0U
+                   && project_.layers[adjacent_begin - 1U].group_uuid
+                          == adjacent_group) --adjacent_begin;
+        }
+        std::rotate(project_.layers.begin()
+                        + static_cast<std::ptrdiff_t>(adjacent_begin),
+                    project_.layers.begin()
+                        + static_cast<std::ptrdiff_t>(begin),
+                    project_.layers.begin()
+                        + static_cast<std::ptrdiff_t>(end + 1U));
+    }
+    refreshLayerList();
+    recordProjectStateChange(direction > 0 ? tr("Move group up")
+                                           : tr("Move group down"),
+                             std::move(before), before_active);
+    schedulePreview();
+}
+
+void MainWindow::setActiveLayerGroup(const std::string& group_uuid) {
+    auto* layer = activeLayer();
+    if (layer == nullptr || layer->group_uuid == group_uuid) return;
+    const auto* source_group = groupForLayer(*layer);
+    const auto* target_group = group_uuid.empty() ? nullptr
+                                                   : findGroup(group_uuid);
+    if ((!group_uuid.empty() && target_group == nullptr)
+        || (source_group != nullptr && source_group->locked)
+        || (target_group != nullptr && target_group->locked)) {
+        loadLayerEditors();
+        status_->setText(tr("Unlock both source and destination groups before moving a layer."));
+        return;
+    }
+    auto before = captureProjectState();
+    const std::string before_active = active_layer_uuid_;
+    const std::string source_uuid = layer->group_uuid;
+    const std::size_t original_index = static_cast<std::size_t>(
+        std::distance(project_.layers.data(), layer));
+    pvt::LayerConfig moved = std::move(*layer);
+    project_.layers.erase(project_.layers.begin()
+                          + static_cast<std::ptrdiff_t>(original_index));
+    moved.group_uuid = group_uuid;
+
+    const bool source_still_used = !source_uuid.empty()
+        && std::any_of(project_.layers.begin(), project_.layers.end(),
+                       [&source_uuid](const pvt::LayerConfig& value) {
+                           return value.group_uuid == source_uuid;
+                       });
+    if (!source_uuid.empty() && !source_still_used) {
+        project_.groups.erase(
+            std::remove_if(project_.groups.begin(), project_.groups.end(),
+                           [&source_uuid](const pvt::LayerGroup& value) {
+                               return value.uuid == source_uuid;
+                           }),
+            project_.groups.end());
+        if (solo_group_uuid_ && *solo_group_uuid_ == source_uuid) {
+            solo_group_uuid_.reset();
+        }
+    }
+
+    std::size_t insertion = std::min(original_index, project_.layers.size());
+    if (!group_uuid.empty()) {
+        for (std::size_t index = 0U; index < project_.layers.size(); ++index) {
+            if (project_.layers[index].group_uuid == group_uuid) {
+                insertion = index + 1U;
+            }
+        }
+    } else if (source_still_used) {
+        for (std::size_t index = 0U; index < project_.layers.size(); ++index) {
+            if (project_.layers[index].group_uuid == source_uuid) {
+                insertion = index + 1U;
+            }
+        }
+    }
+    project_.layers.insert(project_.layers.begin()
+                               + static_cast<std::ptrdiff_t>(insertion),
+                           std::move(moved));
+    refreshLayerList();
+    recordProjectStateChange(group_uuid.empty() ? tr("Ungroup layer")
+                                                 : tr("Move layer into group"),
                              std::move(before), before_active);
     schedulePreview();
 }
@@ -4917,6 +5491,12 @@ void MainWindow::restoreProjectState(const ProjectDocumentState& state,
                              ? active_uuid : project_.layers.back().uuid;
     if (solo_layer_uuid_ && findLayer(*solo_layer_uuid_) == nullptr) {
         solo_layer_uuid_.reset();
+    }
+    if (solo_group_uuid_ && findGroup(*solo_group_uuid_) == nullptr) {
+        solo_group_uuid_.reset();
+    }
+    if (selected_group_uuid_ && findGroup(*selected_group_uuid_) == nullptr) {
+        selected_group_uuid_.reset();
     }
     loadActiveConfiguration();
     refreshLayerList();
@@ -5391,6 +5971,8 @@ void MainWindow::replaceWithNewProject() {
     document_->dirty = false;
     active_layer_uuid_ = project_.layers.front().uuid;
     solo_layer_uuid_.reset();
+    solo_group_uuid_.reset();
+    selected_group_uuid_.reset();
     current_project_path_.clear();
     imported_legacy_path_.clear();
     baseline_dirty_ = false;
@@ -5726,9 +6308,18 @@ void MainWindow::updateSynchronizationState() {
 void MainWindow::updateMusicTransactionGuards() {
     const bool editable = !music_analysis_active_;
     for (QAction* action : {new_action_, open_action_, open_folder_action_,
-                            save_action_, save_as_action_,
-                            randomize_values_action_, randomize_mix_action_}) {
+                            save_action_, save_as_action_}) {
         if (action != nullptr) action->setEnabled(editable);
+    }
+    const auto* active_layer = activeLayer();
+    const auto* owning_group = active_layer != nullptr
+                                   ? groupForLayer(*active_layer) : nullptr;
+    const bool layer_editable = editable && active_layer != nullptr
+                                && !selected_group_uuid_
+                                && (owning_group == nullptr
+                                    || !owning_group->locked);
+    for (QAction* action : {randomize_values_action_, randomize_mix_action_}) {
+        if (action != nullptr) action->setEnabled(layer_editable);
     }
     if (undo_action_ != nullptr) {
         undo_action_->setEnabled(editable && undo_stack_ != nullptr
@@ -5744,9 +6335,13 @@ void MainWindow::updateMusicTransactionGuards() {
     if (starting_image_group_ != nullptr) starting_image_group_->setEnabled(editable);
     if (tabs_ != nullptr) {
         for (int index = 0; index < tabs_->count(); ++index) {
-            if (tabs_->widget(index) != synchronization_page_) {
-                tabs_->setTabEnabled(index, editable);
-            }
+            const bool is_layer_page = index < 4;
+            const bool analysis_cancel_page =
+                music_analysis_active_
+                && tabs_->widget(index) == synchronization_page_;
+            tabs_->setTabEnabled(
+                index, analysis_cancel_page
+                           || (is_layer_page ? layer_editable : editable));
         }
     }
     updateSynchronizationState();
@@ -5839,6 +6434,11 @@ void MainWindow::updateExportAvailability() {
     if (export_action_ != nullptr && !export_active_) {
         export_action_->setEnabled(!music_analysis_active_);
         export_action_->setToolTip(QString{});
+    }
+    if (current_frame_export_action_ != nullptr && !export_active_) {
+        current_frame_export_action_->setEnabled(!music_analysis_active_);
+        current_frame_export_action_->setToolTip(
+            tr("Render the timeline's current frame at the full canvas resolution using the selected PNG/EXR quality settings."));
     }
     if (video_export_action_ != nullptr && !export_active_) {
         static const pvt::video::Capabilities video =
@@ -7260,7 +7860,8 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
 void MainWindow::ensureAlphaForTransparency() {
     bool guaranteed_opaque = false;
     for (const auto& layer : project_.layers) {
-        if (!layer.enabled || layer.opacity <= 0.0) continue;
+        if (!layer_visible_in_project(project_, layer)
+            || layer.opacity <= 0.0) continue;
         const pvt::RenderConfig materialized = layer.uuid == active_layer_uuid_
             ? config_
             : pvt::apply_global_config(project_.canvas, project_.output, layer.render);
@@ -7378,6 +7979,13 @@ void MainWindow::moveSelectedEffect(int direction) {
 }
 
 void MainWindow::randomizeExistingStackSettings() {
+    const auto* layer = activeLayer();
+    const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+    if (selected_group_uuid_ || layer == nullptr
+        || (group != nullptr && group->locked)) {
+        status_->setText(tr("Select an unlocked layer before randomizing it."));
+        return;
+    }
     auto before = captureActiveState();
     auto& random = *QRandomGenerator::global();
     for (auto& wave : config_.waves) {
@@ -7404,6 +8012,13 @@ void MainWindow::randomizeExistingStackSettings() {
 }
 
 void MainWindow::randomizeStackComposition() {
+    const auto* layer = activeLayer();
+    const auto* group = layer != nullptr ? groupForLayer(*layer) : nullptr;
+    if (selected_group_uuid_ || layer == nullptr
+        || (group != nullptr && group->locked)) {
+        status_->setText(tr("Select an unlocked layer before randomizing it."));
+        return;
+    }
     auto before = captureActiveState();
     auto& random = *QRandomGenerator::global();
     config_.waves.clear();
@@ -7999,9 +8614,23 @@ void MainWindow::startPreview() {
 
 pvt::ProjectConfig MainWindow::previewProjectSnapshot() const {
     auto project = project_;
-    if (solo_layer_uuid_) {
+    if (solo_group_uuid_) {
+        for (auto& group : project.groups) {
+            if (group.uuid == *solo_group_uuid_) group.enabled = true;
+        }
+        for (auto& layer : project.layers) {
+            layer.enabled = layer.enabled
+                            && layer.group_uuid == *solo_group_uuid_;
+        }
+        project.output.write_alpha = true;
+    } else if (solo_layer_uuid_) {
         for (auto& layer : project.layers) {
             layer.enabled = layer.uuid == *solo_layer_uuid_;
+        }
+        if (const auto* soloed = findLayer(*solo_layer_uuid_)) {
+            for (auto& group : project.groups) {
+                if (group.uuid == soloed->group_uuid) group.enabled = true;
+            }
         }
         // Solo is a preview-only projection of the document. A transparent
         // soloed layer may normally sit over an opaque RGB base, so allow the
@@ -8086,6 +8715,79 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
     return result;
 }
 
+bool MainWindow::startCurrentFrameExport(const QString& path) {
+    cancel_export_.store(false);
+    status_->setText(tr("Rendering current frame at full resolution…"));
+    export_progress_->setRange(0, 0);
+    export_progress_->show();
+    try {
+        auto project = project_;
+        project.output.overwrite_existing = true; // The save dialog confirmed it.
+        const int frame = timeline_->value();
+        const pvt::FrameRenderOptions render_options = frameRenderOptions();
+        const std::string output_path = path.toUtf8().toStdString();
+        export_active_ = true;
+        if (export_action_ != nullptr) export_action_->setEnabled(false);
+        if (video_export_action_ != nullptr) video_export_action_->setEnabled(false);
+        if (current_frame_export_action_ != nullptr) {
+            current_frame_export_action_->setEnabled(false);
+        }
+        export_watcher_->setFuture(QtConcurrent::run(
+            [this, project = std::move(project), frame, render_options,
+             output_path]() mutable {
+                ExportResult result;
+                std::string error;
+                try {
+                    pvt::Image image;
+                    result.ok = pvt::render_project_frame(
+                        project, frame, render_options, image,
+                        &cancel_export_, &error);
+                    if (result.ok && !cancel_export_.load()) {
+                        pvt::RenderConfig writer = pvt::default_config();
+                        writer.width = project.canvas.width;
+                        writer.height = project.canvas.height;
+                        writer.block_size = project.canvas.block_size;
+                        writer.total_frames = project.canvas.total_frames;
+                        writer.fps = project.canvas.fps;
+                        writer.output = project.output;
+                        result.ok = pvt::write_image(
+                            output_path, image, writer,
+                            static_cast<std::uint32_t>(frame), &error);
+                    }
+                } catch (const std::exception& exception) {
+                    error = std::string("Current-frame export failed: ")
+                            + exception.what();
+                    result.ok = false;
+                } catch (...) {
+                    error = "Current-frame export failed because of an unexpected error.";
+                    result.ok = false;
+                }
+                result.cancelled = !result.ok && cancel_export_.load();
+                result.error = QString::fromStdString(error);
+                if (result.ok) {
+                    result.success_message =
+                        tr("The current full-resolution frame was exported to:\n%1")
+                            .arg(QString::fromUtf8(output_path.c_str()));
+                }
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        finishExportUiState();
+        status_->setText(tr("Current-frame export could not start"));
+        QMessageBox::critical(this, tr("Export could not start"),
+                              QString::fromUtf8(exception.what()));
+        return false;
+    } catch (...) {
+        finishExportUiState();
+        status_->setText(tr("Current-frame export could not start"));
+        QMessageBox::critical(
+            this, tr("Export could not start"),
+            tr("The background current-frame export task could not be created."));
+        return false;
+    }
+    return true;
+}
+
 bool MainWindow::startExport() {
     cancel_export_.store(false);
     status_->setText(tr("Exporting image sequence…"));
@@ -8101,6 +8803,9 @@ bool MainWindow::startExport() {
                 .toStdString();
         export_active_ = true;
         if (video_export_action_ != nullptr) video_export_action_->setEnabled(false);
+        if (current_frame_export_action_ != nullptr) {
+            current_frame_export_action_->setEnabled(false);
+        }
         export_watcher_->setFuture(QtConcurrent::run(
             [this, project = std::move(project), render_options]() mutable {
                 ExportResult result;
@@ -8230,6 +8935,9 @@ bool MainWindow::startVideoExport() {
     cancel_export_.store(false);
     export_active_ = true;
     export_action_->setEnabled(false);
+    if (current_frame_export_action_ != nullptr) {
+        current_frame_export_action_->setEnabled(false);
+    }
     video_export_action_->setEnabled(false);
     cancel_export_action_->setEnabled(true);
     export_progress_->setRange(0, 1000);
@@ -8366,6 +9074,8 @@ bool MainWindow::loadProjectPath(const QString& path, QString* error) {
     project_ = document_->project;
     active_layer_uuid_ = project_.layers.front().uuid;
     solo_layer_uuid_.reset();
+    solo_group_uuid_.reset();
+    selected_group_uuid_.reset();
     current_project_path_ = QString::fromStdString(document_->source_path);
     imported_legacy_path_ = QString::fromStdString(document_->imported_from_path);
     baseline_dirty_ = document_->dirty || document_->legacy_import;
@@ -8399,8 +9109,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || randomize_values_action_ == nullptr || randomize_mix_action_ == nullptr
         || layers_dock_ == nullptr || restore_layers_dock_action_ == nullptr
         || !view_menu->actions().contains(restore_layers_dock_action_)
-        || export_action_ == nullptr || video_export_action_ == nullptr
+        || export_action_ == nullptr || current_frame_export_action_ == nullptr
+        || video_export_action_ == nullptr
         || cancel_export_action_ == nullptr || export_progress_ == nullptr
+        || !project_toolbar->actions().contains(current_frame_export_action_)
         || !settings_menu->actions().contains(randomize_values_action_)
         || !settings_menu->actions().contains(randomize_mix_action_)
         || project_toolbar->actions().contains(randomize_values_action_)
@@ -8427,6 +9139,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     // commands disabled after the success dialog was dismissed.
     export_active_ = true;
     export_action_->setEnabled(false);
+    current_frame_export_action_->setEnabled(false);
     video_export_action_->setEnabled(false);
     cancel_export_action_->setEnabled(true);
     export_progress_->show();
@@ -8434,6 +9147,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const bool expected_video_enabled =
         !music_analysis_active_ && pvt::video::capabilities().available;
     if (export_active_ || !export_action_->isEnabled()
+        || !current_frame_export_action_->isEnabled()
         || video_export_action_->isEnabled() != expected_video_enabled
         || cancel_export_action_->isEnabled() || !export_progress_->isHidden()) {
         if (error != nullptr) {
@@ -8649,6 +9363,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
             : std::nullopt;
     const std::string original_active_uuid = active_layer_uuid_;
     const auto original_solo_uuid = solo_layer_uuid_;
+    const auto original_solo_group_uuid = solo_group_uuid_;
+    const auto original_selected_group_uuid = selected_group_uuid_;
     const bool original_baseline_dirty = baseline_dirty_;
     const bool original_undo_dirty = undo_stack_ != nullptr && !undo_stack_->isClean();
     const bool original_dither_preference = integer_dither_preference_;
@@ -8658,6 +9374,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const QString original_status = status_ != nullptr ? status_->text() : QString();
     ScopeExit restore_state([this, original_project, original_document,
                              original_active_uuid, original_solo_uuid,
+                             original_solo_group_uuid,
+                             original_selected_group_uuid,
                              original_baseline_dirty, original_undo_dirty,
                              original_dither_preference, original_project_path,
                              original_legacy_path, original_dialog_directory,
@@ -8671,6 +9389,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
                         : nullptr;
         active_layer_uuid_ = original_active_uuid;
         solo_layer_uuid_ = original_solo_uuid;
+        solo_group_uuid_ = original_solo_group_uuid;
+        selected_group_uuid_ = original_selected_group_uuid;
         baseline_dirty_ = original_baseline_dirty || original_undo_dirty;
         integer_dither_preference_ = original_dither_preference;
         current_project_path_ = original_project_path;
@@ -9641,6 +10361,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
     document_->project = project_;
     active_layer_uuid_ = project_.layers.front().uuid;
     solo_layer_uuid_.reset();
+    solo_group_uuid_.reset();
+    selected_group_uuid_.reset();
     current_project_path_.clear();
     imported_legacy_path_.clear();
     baseline_dirty_ = false;
@@ -9886,6 +10608,120 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || config_.width != 333 || !layer_blend_->isEnabled()
         || findLayer(top_uuid)->blend_mode != pvt::BlendMode::Add) {
         if (error != nullptr) *error = tr("The top layer did not reload its Render data.");
+        return false;
+    }
+
+    const int alpha_under = layer_alpha_mode_->findData(
+        static_cast<int>(pvt::AlphaMode::AlphaUnder));
+    if (alpha_under < 0) {
+        if (error != nullptr) *error = tr("The Alpha Under layer mode is missing.");
+        return false;
+    }
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    layer_alpha_mode_->setCurrentIndex(alpha_under);
+    if (findLayer(top_uuid)->alpha_mode != pvt::AlphaMode::AlphaUnder
+        || undo_stack_->count() != 1) {
+        if (error != nullptr) {
+            *error = tr("Changing Alpha Mode did not update the selected layer as one undoable edit.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (findLayer(top_uuid)->alpha_mode != pvt::AlphaMode::AlphaOver) {
+        if (error != nullptr) *error = tr("Alpha Mode did not undo to Alpha Over.");
+        return false;
+    }
+    undo_stack_->redo();
+
+    addGroup();
+    if (project_.groups.size() != 1U || !selected_group_uuid_
+        || project_.layers.back().group_uuid != project_.groups.front().uuid
+        || layer_list_->count() != 3 || !selected_group_box_->isEnabled()) {
+        if (error != nullptr) {
+            *error = tr("Adding a group did not create a selected folder around the active layer.");
+        }
+        return false;
+    }
+    const std::string group_uuid = project_.groups.front().uuid;
+    group_solo_->setChecked(true);
+    const pvt::ProjectConfig group_solo_snapshot = previewProjectSnapshot();
+    if (!solo_group_uuid_ || *solo_group_uuid_ != group_uuid
+        || std::count_if(group_solo_snapshot.layers.begin(),
+                         group_solo_snapshot.layers.end(),
+                         [](const pvt::LayerConfig& layer) {
+                             return layer.enabled;
+                         }) != 1) {
+        if (error != nullptr) *error = tr("Group Solo did not isolate the folder in preview.");
+        return false;
+    }
+    group_solo_->setChecked(false);
+    group_locked_->setChecked(true);
+    selectLayer(top_uuid);
+    if (!project_.groups.front().locked || layer_alpha_mode_->isEnabled()
+        || tabs_->isTabEnabled(0) || randomize_values_action_->isEnabled()
+        || randomize_mix_action_->isEnabled()) {
+        if (error != nullptr) *error = tr("Locking a group did not protect its contained layer editors.");
+        return false;
+    }
+    selectGroup(group_uuid);
+    group_locked_->setChecked(false);
+    addLayer();
+    const std::string temporary_uuid = active_layer_uuid_;
+    selectGroup(group_uuid);
+    moveSelectedGroup(1);
+    if (project_.layers.back().group_uuid != group_uuid) {
+        if (error != nullptr) *error = tr("A layer group did not move as one folder block.");
+        return false;
+    }
+    moveSelectedGroup(-1);
+    selectLayer(temporary_uuid);
+    removeLayer();
+    selectGroup(group_uuid);
+    removeSelectedGroup();
+    if (!project_.groups.empty()
+        || std::any_of(project_.layers.begin(), project_.layers.end(),
+                       [](const pvt::LayerConfig& layer) {
+                           return !layer.group_uuid.empty();
+                       })) {
+        if (error != nullptr) *error = tr("Removing a group did not preserve and ungroup its layers.");
+        return false;
+    }
+    selectLayer(top_uuid);
+
+    const QString current_frame_path =
+        QDir(directory.path()).filePath(QStringLiteral("current-frame.png"));
+    QTimer dismiss_export_dialog;
+    dismiss_export_dialog.setInterval(5);
+    connect(&dismiss_export_dialog, &QTimer::timeout, this, [] {
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            if (auto* message = qobject_cast<QMessageBox*>(widget)) {
+                if (auto* button = message->button(QMessageBox::Ok)) {
+                    button->click();
+                    return;
+                }
+            }
+        }
+    });
+    dismiss_export_dialog.start();
+    if (!startCurrentFrameExport(current_frame_path)) {
+        dismiss_export_dialog.stop();
+        if (error != nullptr) *error = tr("Current-frame export could not start during smoke testing.");
+        return false;
+    }
+    while (export_watcher_->isRunning()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        QThread::msleep(1);
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+    dismiss_export_dialog.stop();
+    const QImage current_frame_image(current_frame_path);
+    if (export_active_ || current_frame_image.isNull()
+        || current_frame_image.width() != project_.canvas.width
+        || current_frame_image.height() != project_.canvas.height) {
+        if (error != nullptr) {
+            *error = tr("Export Current Frame did not write the full canvas dimensions or restore export state.");
+        }
         return false;
     }
 
@@ -10633,6 +11469,8 @@ bool MainWindow::saveIndependentRenamedCopy(
     config_ = std::move(opened_config);
     active_layer_uuid_ = std::move(opened_active_layer_uuid);
     solo_layer_uuid_ = std::move(opened_solo_layer_uuid);
+    solo_group_uuid_.reset();
+    selected_group_uuid_.reset();
     current_project_path_.swap(opened_path);
     QString empty_import_path;
     imported_legacy_path_.swap(empty_import_path);

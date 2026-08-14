@@ -153,7 +153,11 @@ private:
     const pvt::LayerConfig* activeLayer() const;
     pvt::LayerConfig* findLayer(const std::string& uuid);
     const pvt::LayerConfig* findLayer(const std::string& uuid) const;
+    pvt::LayerGroup* findGroup(const std::string& uuid);
+    const pvt::LayerGroup* findGroup(const std::string& uuid) const;
+    const pvt::LayerGroup* groupForLayer(const pvt::LayerConfig& layer) const;
     void selectLayer(const std::string& uuid);
+    void selectGroup(const std::string& uuid);
     void loadActiveConfiguration();
     void syncActiveRender();
     void syncProjectGlobals();
@@ -163,6 +167,10 @@ private:
     void duplicateLayer();
     void removeLayer();
     void moveActiveLayer(int direction);
+    void addGroup();
+    void removeSelectedGroup();
+    void moveSelectedGroup(int direction);
+    void setActiveLayerGroup(const std::string& groupUuid);
     bool setSurfaceObjSource(const QString& sourcePath);
     bool setStartingImageSource(const QString& sourcePath);
     void updateWindowTitle();
@@ -243,6 +251,7 @@ private:
     QString usableDialogDirectory(const QString& preferred = {}) const;
     void rememberDialogLocation(const QString& selectedPath);
     bool startExport();
+    bool startCurrentFrameExport(const QString& path);
     bool startVideoExport();
     bool startMusicAnalysis(const QString& sourcePath,
                             MusicAnalysisAction action,
@@ -283,7 +292,9 @@ private:
     // draggable-wave overlay independent from project-global storage.
     pvt::RenderConfig config_;
     std::string active_layer_uuid_;
+    std::optional<std::string> selected_group_uuid_;
     std::optional<std::string> solo_layer_uuid_;
+    std::optional<std::string> solo_group_uuid_;
     bool populating_ = false;
     bool restoring_undo_ = false;
     bool baseline_dirty_ = false;
@@ -343,6 +354,7 @@ private:
     QFutureWatcher<MusicAnalysisResult>* music_analysis_watcher_ = nullptr;
     QUndoStack* undo_stack_ = nullptr;
     QAction* export_action_ = nullptr;
+    QAction* current_frame_export_action_ = nullptr;
     QAction* video_export_action_ = nullptr;
     QAction* cancel_export_action_ = nullptr;
     QAction* new_action_ = nullptr;
@@ -366,7 +378,14 @@ private:
     QCheckBox* layer_enabled_ = nullptr;
     QCheckBox* layer_solo_ = nullptr;
     QComboBox* layer_blend_ = nullptr;
+    QComboBox* layer_alpha_mode_ = nullptr;
+    QComboBox* layer_group_ = nullptr;
     QDoubleSpinBox* layer_opacity_ = nullptr;
+    QGroupBox* selected_group_box_ = nullptr;
+    QLineEdit* group_name_ = nullptr;
+    QCheckBox* group_enabled_ = nullptr;
+    QCheckBox* group_solo_ = nullptr;
+    QCheckBox* group_locked_ = nullptr;
 
     QListWidget* version_list_ = nullptr;
     QComboBox* version_before_ = nullptr;

@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -182,6 +183,31 @@ bool valid_blend_mode(BlendMode mode) {
             return true;
     }
     return false;
+}
+
+bool valid_alpha_mode(AlphaMode mode) {
+    switch (mode) {
+        case AlphaMode::AlphaOver:
+        case AlphaMode::AlphaUnder:
+            return true;
+    }
+    return false;
+}
+
+const LayerGroup* find_group(const ProjectConfig& project,
+                             std::string_view uuid) {
+    if (uuid.empty()) return nullptr;
+    const auto found = std::find_if(
+        project.groups.begin(), project.groups.end(),
+        [uuid](const LayerGroup& group) { return group.uuid == uuid; });
+    return found == project.groups.end() ? nullptr : &*found;
+}
+
+bool layer_effectively_enabled(const ProjectConfig& project,
+                               const LayerConfig& layer) {
+    if (!layer.enabled) return false;
+    const LayerGroup* group = find_group(project, layer.group_uuid);
+    return group == nullptr || group->enabled;
 }
 
 bool cancelled(const std::atomic_bool* cancel) {
@@ -405,6 +431,38 @@ bool composite_pixels(const Image& source, Image& destination,
     return !cancelled(cancel);
 }
 
+bool composite_layer_pixels(Image& layer_image, Image& accumulator,
+                            BlendMode mode, AlphaMode alpha_mode,
+                            double opacity,
+                            const std::atomic_bool* cancel) {
+    // Erasers are explicitly destination-out operations on the accumulated
+    // lower stack. Their meaning is independent of paint ordering, so retain
+    // that contract even when the layer's ordinary alpha mode is Under.
+    if (alpha_mode == AlphaMode::AlphaOver
+        || mode == BlendMode::Erase
+        || mode == BlendMode::ColorEraseTones
+        || mode == BlendMode::ColorEraseBrightness) {
+        return composite_pixels(layer_image, accumulator, mode, opacity,
+                                cancel);
+    }
+
+    // Apply the selected layer's opacity before swapping the Porter-Duff
+    // operands. The accumulated lower stack then paints over this layer using
+    // the same artistic blend function, producing true destination-over for
+    // Normal and deterministic under-order behavior for every other mode.
+    for (std::size_t offset = 3U; offset < layer_image.pixels.size();
+         offset += 4U) {
+        if ((offset & 4095U) == 3U && cancelled(cancel)) return false;
+        layer_image.pixels[offset] = static_cast<float>(
+            static_cast<double>(layer_image.pixels[offset]) * opacity);
+    }
+    if (!composite_pixels(accumulator, layer_image, mode, 1.0, cancel)) {
+        return false;
+    }
+    accumulator = std::move(layer_image);
+    return true;
+}
+
 struct LayerTimelineSelection {
     int frame = 0;
     bool use_project_clock = false;
@@ -528,7 +586,8 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
 
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
-        if (!layer.enabled || layer.opacity <= 0.0) {
+        if (!layer_effectively_enabled(project, layer)
+            || layer.opacity <= 0.0) {
             continue;
         }
         if (cancelled(cancel)) {
@@ -561,8 +620,9 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
         }
         // Both images and the layer settings were validated before allocation;
         // per-pixel compositing cannot fail or allocate.
-        if (!composite_pixels(layer_image, accumulator, layer.blend_mode,
-                              layer.opacity, cancel)) {
+        if (!composite_layer_pixels(layer_image, accumulator,
+                                    layer.blend_mode, layer.alpha_mode,
+                                    layer.opacity, cancel)) {
             return fail(error, "Project rendering was cancelled while compositing layer "
                                    + std::to_string(index + 1U) + ".");
         }
@@ -607,7 +667,8 @@ bool render_project_with_backend_validated(
     std::vector<std::size_t> contributing;
     contributing.reserve(project.layers.size());
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
-        if (project.layers[index].enabled && project.layers[index].opacity > 0.0) {
+        if (layer_effectively_enabled(project, project.layers[index])
+            && project.layers[index].opacity > 0.0) {
             contributing.push_back(index);
         }
     }
@@ -633,14 +694,15 @@ bool render_project_with_backend_validated(
             : render_frame(render, timeline.frame, selected,
                            image, cancel, &layer_error);
     };
-    const auto composite_one = [&](std::size_t index, const Image& image) {
+    const auto composite_one = [&](std::size_t index, Image& image) {
         if (cancelled(cancel)) {
             return fail(error,
                         "Project rendering was cancelled between layers.");
         }
         const LayerConfig& layer = project.layers[index];
-        if (!composite_pixels(image, accumulator, layer.blend_mode,
-                              layer.opacity, cancel)) {
+        if (!composite_layer_pixels(image, accumulator,
+                                    layer.blend_mode, layer.alpha_mode,
+                                    layer.opacity, cancel)) {
             return fail(error,
                         "Project rendering was cancelled while compositing layer "
                             + std::to_string(index + 1U) + ".");
@@ -777,10 +839,10 @@ bool render_project_with_backend_validated(
                 return contextual_failure(gpu_index, gpu_error);
             }
         }
-        const Image& first_image = first_index == cpu_index
-                                       ? cpu_image : gpu_image;
-        const Image& second_image = second_index == cpu_index
-                                        ? cpu_image : gpu_image;
+        Image& first_image = first_index == cpu_index
+                                 ? cpu_image : gpu_image;
+        Image& second_image = second_index == cpu_index
+                                  ? cpu_image : gpu_image;
         if (!composite_one(first_index, first_image)
             || !composite_one(second_index, second_image)) {
             return false;
@@ -861,6 +923,9 @@ ValidationResult validate(const ProjectConfig& project) {
         if (project.layers.size() > kMaximumLayers) {
             return invalid_result("The project contains more than 64 layers.");
         }
+        if (project.groups.size() > kMaximumLayerGroups) {
+            return invalid_result("The project contains more than 64 layer groups.");
+        }
         // Structural RenderData validation must not let a disabled transparent
         // layer dictate final export channels. Enable alpha only in the
         // temporary validation adapter, then enforce the enabled stack below.
@@ -879,7 +944,28 @@ ValidationResult validate(const ProjectConfig& project) {
 
         std::unordered_set<std::string> uuids;
         std::unordered_set<std::uint64_t> file_ids;
-        uuids.reserve(project.layers.size());
+        uuids.reserve(project.layers.size() + project.groups.size() + 1U);
+        uuids.insert(project.uuid);
+        std::unordered_map<std::string, std::size_t> group_members;
+        group_members.reserve(project.groups.size());
+        for (std::size_t index = 0U; index < project.groups.size(); ++index) {
+            const LayerGroup& group = project.groups[index];
+            if (!valid_uuid(group.uuid)) {
+                return invalid_result(
+                    "Layer group " + std::to_string(index + 1U)
+                    + " UUID must be a canonical lower-case RFC 4122 version-4 UUID.");
+            }
+            if (!uuids.insert(group.uuid).second) {
+                return invalid_result(
+                    "Project, layer, and group UUIDs must all be unique.");
+            }
+            if (group.name.empty() || !valid_layer_name(group.name)) {
+                return invalid_result("Layer group "
+                                      + std::to_string(index + 1U)
+                                      + " has an invalid name.");
+            }
+            group_members.emplace(group.uuid, 0U);
+        }
         file_ids.reserve(project.layers.size());
         std::size_t worst_layer_peak = 0U;
         bool has_contributing_layer = false;
@@ -897,6 +983,8 @@ ValidationResult validate(const ProjectConfig& project) {
                     && project.canvas.clock.music.duration_seconds > 0.0
                 ? project.canvas.clock.music.duration_seconds
                 : static_cast<double>(master_frame_count) / project.canvas.fps;
+        std::unordered_set<std::string> closed_groups;
+        std::string open_group;
         for (std::size_t index = 0U; index < project.layers.size(); ++index) {
             const LayerConfig& layer = project.layers[index];
             if (!valid_uuid(layer.uuid)) {
@@ -905,7 +993,8 @@ ValidationResult validate(const ProjectConfig& project) {
                     + " UUID must be a canonical lower-case RFC 4122 version-4 UUID.");
             }
             if (!uuids.insert(layer.uuid).second) {
-                return invalid_result("Every layer UUID must be unique within a project.");
+                return invalid_result(
+                    "Project, layer, and group UUIDs must all be unique.");
             }
             if (!file_ids.insert(layer.file_id).second) {
                 return invalid_result(
@@ -918,6 +1007,29 @@ ValidationResult validate(const ProjectConfig& project) {
             if (!valid_blend_mode(layer.blend_mode)) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " has an invalid blend mode.");
+            }
+            if (!valid_alpha_mode(layer.alpha_mode)) {
+                return invalid_result("Layer " + std::to_string(index + 1U)
+                                      + " has an invalid alpha mode.");
+            }
+            if (layer.group_uuid != open_group) {
+                if (!open_group.empty()) closed_groups.insert(open_group);
+                if (!layer.group_uuid.empty()
+                    && closed_groups.find(layer.group_uuid)
+                           != closed_groups.end()) {
+                    return invalid_result(
+                        "Every layer group must occupy one contiguous paint-order block.");
+                }
+                open_group = layer.group_uuid;
+            }
+            if (!layer.group_uuid.empty()) {
+                const auto group = group_members.find(layer.group_uuid);
+                if (group == group_members.end()) {
+                    return invalid_result(
+                        "Layer " + std::to_string(index + 1U)
+                        + " references a missing layer group.");
+                }
+                ++group->second;
             }
             if (!std::isfinite(layer.opacity) || layer.opacity < 0.0
                 || layer.opacity > 1.0) {
@@ -947,7 +1059,8 @@ ValidationResult validate(const ProjectConfig& project) {
                       "Choose Smart loop fit, Straight fit, or Original-speed loop "
                       "to keep the project seam smooth.");
             }
-            if (layer.enabled && layer.opacity > 0.0) {
+            if (layer_effectively_enabled(project, layer)
+                && layer.opacity > 0.0) {
                 const bool erases_lower_layers =
                     layer.blend_mode == BlendMode::Erase
                     || layer.blend_mode == BlendMode::ColorEraseTones
@@ -974,6 +1087,13 @@ ValidationResult validate(const ProjectConfig& project) {
                 }
                 worst_layer_peak =
                     std::max(worst_layer_peak, layer_validation.estimated_peak_bytes);
+            }
+        }
+
+        for (const auto& group : group_members) {
+            if (group.second == 0U) {
+                return invalid_result(
+                    "Every layer group must contain at least one layer.");
             }
         }
 
@@ -1210,6 +1330,14 @@ const char* blend_mode_name(BlendMode value) {
         case BlendMode::ColorEraseBrightness: return "Color eraser (brightness)";
     }
     return "Unknown blend mode";
+}
+
+const char* alpha_mode_name(AlphaMode value) {
+    switch (value) {
+        case AlphaMode::AlphaOver: return "Alpha Over";
+        case AlphaMode::AlphaUnder: return "Alpha Under";
+    }
+    return "Unknown alpha mode";
 }
 
 } // namespace pvt
