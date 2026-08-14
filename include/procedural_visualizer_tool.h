@@ -22,7 +22,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 7;
+constexpr std::uint32_t kSetupFormatVersion = 8;
 constexpr std::size_t kMaximumWaves = 256;
 constexpr std::size_t kMaximumEffects = 256;
 constexpr std::size_t kMaximumSwings = 64;
@@ -215,6 +215,16 @@ enum class MusicFeature : std::uint8_t {
     ChromaStrength
 };
 
+// Per-item audio routing is intentionally tri-state. Default inherits the
+// active layer/project category setting, Enabled opts a synchronized item in,
+// and Disabled opts it out. Missing and explicit null persistence values map
+// to Default so older projects and hand-authored integrations remain neutral.
+enum class AudioResponseMode : std::uint8_t {
+    Default = 0,
+    Enabled,
+    Disabled
+};
+
 // Retained for setup/source compatibility with early format-5 drafts. The
 // layer's swings_enabled master is now authoritative in every clock mode.
 enum class MusicSwingPolicy : std::uint8_t {
@@ -392,6 +402,9 @@ struct WaveConfig {
     // 1.0 is vertical propagation. Intermediate values blend continuously.
     double direction = 0.5;
     PathBinding path;
+    // Appended to preserve source compatibility for existing aggregate
+    // initializers; omitted values inherit the effective routing profile.
+    AudioResponseMode audio_response = AudioResponseMode::Default;
 };
 
 struct SwingConfig {
@@ -462,6 +475,9 @@ struct EffectConfig {
     // around center_x/center_y, measured against the shorter canvas edge.
     double area_radius = 0.0;
     PathBinding path;
+    // Appended to preserve source compatibility for existing aggregate
+    // initializers; omitted values inherit the effective routing profile.
+    AudioResponseMode audio_response = AudioResponseMode::Default;
 };
 
 // Palette component values are authored in display/sRGB space. When enabled,
@@ -588,6 +604,10 @@ struct CanvasLoopConfig {
     ClockConfig clock;
     std::vector<CubicMotionPath> motion_paths;
     ConfigCompatibility output_compatibility;
+    // Layers that do not author an override inherit this project-wide routing
+    // block. It is appended for aggregate-initializer compatibility and is
+    // disabled by default until music response is intentionally enabled.
+    AudioReactiveConfig audio_reactive_defaults;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live
@@ -626,6 +646,10 @@ struct RenderData {
     LayerTransformConfig transform;
     LayerMotionConfig motion;
     ConfigCompatibility source_compatibility;
+    // Direct RenderConfig users retain the historical explicit-layer behavior.
+    // This is appended for aggregate-initializer compatibility; default_layer()
+    // changes it to false so project layers inherit the project-wide defaults.
+    bool audio_reactive_override_enabled = true;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -641,6 +665,9 @@ struct RenderConfig : RenderData {
 
     ExportConfig output;
     ConfigCompatibility output_compatibility;
+    // Appended so aggregate initializers written against earlier releases keep
+    // their field ordering and receive the neutral project-wide default.
+    AudioReactiveConfig audio_reactive_defaults;
 };
 
 struct LayerConfig {
@@ -887,6 +914,7 @@ PVT_API const char* music_tempo_mode_name(MusicTempoMode value);
 PVT_API const char* layer_clock_scale_name(LayerClockScale value);
 PVT_API const char* layer_motion_path_name(LayerMotionPath value);
 PVT_API const char* music_feature_name(MusicFeature value);
+PVT_API const char* audio_response_mode_name(AudioResponseMode value);
 PVT_API const char* music_swing_policy_name(MusicSwingPolicy value);
 
 } // namespace pvt

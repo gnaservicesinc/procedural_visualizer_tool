@@ -81,7 +81,8 @@ bool is_render_key(std::string_view key) {
 
 bool is_output_key(std::string_view key) {
     return starts_with(key, "canvas.") || starts_with(key, "timing.")
-           || starts_with(key, "output.") || starts_with(key, "paths.");
+           || starts_with(key, "output.") || starts_with(key, "paths.")
+           || starts_with(key, "audio_response_defaults.");
 }
 
 bool is_setup_v5_key(std::string_view key) {
@@ -135,6 +136,14 @@ bool is_setup_v7_key(std::string_view key) {
                && key.find(".path.") != std::string_view::npos);
 }
 
+bool is_setup_v8_key(std::string_view key) {
+    return starts_with(key, "audio_response_defaults.")
+           || key == "audio_reactive.override_enabled"
+           || ((starts_with(key, "waves.")
+                || starts_with(key, "effects."))
+               && has_suffix(key, ".audio_response"));
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -142,7 +151,8 @@ bool supported_layer_version(const std::string& serialized,
     setup_version = layer_version == 1U ? 3U
                     : layer_version == 2U ? 4U
                     : layer_version == 3U ? 5U
-                    : layer_version == 4U ? 6U : 7U;
+                    : layer_version == 4U ? 6U
+                    : layer_version == 5U ? 7U : 8U;
     return true;
 }
 
@@ -154,7 +164,8 @@ bool supported_render_output_version(const std::string& serialized,
     }
     setup_version = output_version == 1U ? 4U
                     : output_version == 2U ? 5U
-                    : output_version == 3U ? 6U : 7U;
+                    : output_version == 3U ? 6U
+                    : output_version == 4U ? 7U : 8U;
     return true;
 }
 
@@ -368,6 +379,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 7U && is_setup_v7_key(key)) {
+            continue;
+        }
+        if (setup_version < 8U && is_setup_v8_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
@@ -664,6 +678,8 @@ bool deserialize_render_output_config(const std::string& serialized,
         candidate_canvas.total_frames = loaded.total_frames;
         candidate_canvas.fps = loaded.fps;
         candidate_canvas.clock = std::move(loaded.clock);
+        candidate_canvas.audio_reactive_defaults =
+            loaded.audio_reactive_defaults;
         candidate_canvas.motion_paths = std::move(loaded.motion_paths);
         candidate_canvas.output_compatibility =
             std::move(loaded.output_compatibility);
@@ -924,10 +940,12 @@ bool deserialize_split_render_output_config(
         combined.reserve(serialized.size() + canonical_analysis_bytes.size());
         combined.append("PVT_RENDER_OUTPUT\t");
         // Split v1 predates reusable motion paths and corresponds to regular
-        // render/output v3 (setup v6). Treating it as today's v4 was the
-        // regression that made historical saves demand paths.count.
+        // render/output v3 (setup v6). Treating it as today's current schema
+        // was the regression that made historical saves demand paths.count.
         combined.append(std::to_string(
-            split_version == 1U ? 3U : kRenderOutputConfigFormatVersion));
+            split_version == 1U ? 3U
+            : split_version == 2U ? 4U
+                                  : kRenderOutputConfigFormatVersion));
         combined.push_back('\n');
         for (const std::string_view line : usable_split_records) {
             combined.append(line);

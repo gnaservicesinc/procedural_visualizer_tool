@@ -130,6 +130,62 @@ void test_uuid_factories_and_adapters() {
           == pvt::allocate_id(materialized));
 }
 
+void test_project_audio_response_inheritance() {
+    pvt::ProjectConfig project = pvt::default_project();
+    make_small(project);
+    CHECK(!project.canvas.audio_reactive_defaults.enabled);
+    CHECK(!project.layers.front().render.audio_reactive_override_enabled);
+
+    project.canvas.fps = 10.0;
+    project.canvas.total_frames = 10;
+    project.canvas.clock = ready_music_clock(1.0);
+    project.canvas.clock.interpolation = pvt::ClockInterpolation::Hold;
+    project.canvas.clock.music.feature_samples.assign(11U, {});
+    project.canvas.clock.music.feature_samples[5U].energy = 1.0F;
+
+    auto& render = project.layers.front().render;
+    render.waves.clear();
+    render.swings.clear();
+    render.effects.clear();
+    render.swings_enabled = false;
+    render.displacement_enabled = false;
+    render.lighting_enabled = false;
+    render.spiral_enabled = false;
+    render.wall_reflection_enabled = false;
+    render.ghost_mix = 0.0;
+    render.hue_cycles = 0;
+
+    auto& defaults = project.canvas.audio_reactive_defaults;
+    defaults.enabled = true;
+    defaults.waves_enabled = false;
+    defaults.effects_enabled = false;
+    defaults.color_enabled = true;
+    defaults.color_source = pvt::MusicFeature::Energy;
+    defaults.color_amount_degrees = 180.0;
+
+    std::string error;
+    pvt::Image before_spike;
+    pvt::Image at_spike;
+    CHECK(pvt::render_project_frame(project, 4, before_spike, nullptr, &error));
+    CHECK(pvt::render_project_frame(project, 5, at_spike, nullptr, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+
+    // An explicit layer override is authoritative without mutating the shared
+    // project profile. Turning the override back off restores inheritance.
+    render.audio_reactive_override_enabled = true;
+    render.audio_reactive = defaults;
+    render.audio_reactive.enabled = false;
+    CHECK(pvt::render_project_frame(project, 4, before_spike, nullptr, &error));
+    CHECK(pvt::render_project_frame(project, 5, at_spike, nullptr, &error));
+    CHECK(before_spike.pixels == at_spike.pixels);
+    CHECK(project.canvas.audio_reactive_defaults.enabled);
+
+    render.audio_reactive_override_enabled = false;
+    CHECK(pvt::render_project_frame(project, 4, before_spike, nullptr, &error));
+    CHECK(pvt::render_project_frame(project, 5, at_spike, nullptr, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+}
+
 void test_blend_modes() {
     expect_opaque_blend(pvt::BlendMode::Normal, 0.75);
     expect_opaque_blend(pvt::BlendMode::SoftLight, 0.375);
@@ -688,6 +744,7 @@ void test_active_layer_clock_mappings() {
 
 int main() {
     test_uuid_factories_and_adapters();
+    test_project_audio_response_inheritance();
     test_blend_modes();
     test_straight_alpha_and_transactionality();
     test_project_validation();

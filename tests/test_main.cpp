@@ -338,6 +338,14 @@ void test_defaults_and_dynamic_collections() {
     CHECK(config.waves.size() == 3);
     CHECK(config.effects.size() >= 7);
     CHECK(config.output.png_compression_level == 5);
+    CHECK(config.audio_reactive_override_enabled);
+    CHECK(!config.audio_reactive_defaults.enabled);
+    CHECK(config.waves.front().audio_response
+          == pvt::AudioResponseMode::Default);
+    CHECK(config.effects.front().audio_response
+          == pvt::AudioResponseMode::Default);
+    CHECK(std::string(pvt::audio_response_mode_name(
+              pvt::AudioResponseMode::Enabled)) == "Respond");
     CHECK(pvt::default_wave().id == 0U);
     CHECK(pvt::default_swing().id == 0U);
     CHECK(pvt::default_effect(pvt::EffectType::Ripple).id == 0U);
@@ -544,6 +552,28 @@ void test_synchronized_clocks_and_music() {
     CHECK(pvt::render_frame(music, 5, at_spike, &error));
     CHECK(before_spike.pixels != at_spike.pixels);
 
+    // Synchronized items can override their effective category default in
+    // either direction. This is authored routing only; the wave values remain
+    // unchanged.
+    music.audio_reactive.waves_enabled = false;
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels == at_spike.pixels);
+    music.waves.front().audio_response = pvt::AudioResponseMode::Enabled;
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels != at_spike.pixels);
+    music.audio_reactive.waves_enabled = true;
+    for (auto& wave : music.waves) {
+        wave.audio_response = pvt::AudioResponseMode::Disabled;
+    }
+    CHECK(pvt::render_frame(music, 4, before_spike, &error));
+    CHECK(pvt::render_frame(music, 5, at_spike, &error));
+    CHECK(before_spike.pixels == at_spike.pixels);
+    for (auto& wave : music.waves) {
+        wave.audio_response = pvt::AudioResponseMode::Default;
+    }
+
     music.audio_reactive.waves_enabled = false;
     music.audio_reactive.effects_enabled = true;
     music.audio_reactive.effect_source = pvt::MusicFeature::Energy;
@@ -557,6 +587,19 @@ void test_synchronized_clocks_and_music() {
     CHECK(pvt::render_frame(music, 4, before_spike, &error));
     CHECK(pvt::render_frame(music, 5, at_spike, &error));
     CHECK(before_spike.pixels != at_spike.pixels);
+    if (ripple != music.effects.end()) {
+        music.audio_reactive.effects_enabled = false;
+        ripple->audio_response = pvt::AudioResponseMode::Enabled;
+        CHECK(pvt::render_frame(music, 4, before_spike, &error));
+        CHECK(pvt::render_frame(music, 5, at_spike, &error));
+        CHECK(before_spike.pixels != at_spike.pixels);
+        music.audio_reactive.effects_enabled = true;
+        ripple->audio_response = pvt::AudioResponseMode::Disabled;
+        CHECK(pvt::render_frame(music, 4, before_spike, &error));
+        CHECK(pvt::render_frame(music, 5, at_spike, &error));
+        CHECK(before_spike.pixels == at_spike.pixels);
+        ripple->audio_response = pvt::AudioResponseMode::Default;
+    }
 
     // The master toggle is authoritative in Music mode. Legacy policy values
     // remain loadable but no longer suppress authored swings behind the GUI's
@@ -1560,6 +1603,16 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
     };
     original.swings_enabled = false;
+    original.audio_reactive_override_enabled = false;
+    original.audio_reactive_defaults.enabled = true;
+    original.audio_reactive_defaults.synchronized_only = true;
+    original.audio_reactive_defaults.wave_source = pvt::MusicFeature::Treble;
+    original.audio_reactive_defaults.wave_amount = 0.29;
+    original.audio_reactive_defaults.effect_source = pvt::MusicFeature::Beat;
+    original.audio_reactive_defaults.effect_amount = 0.31;
+    original.audio_reactive_defaults.color_enabled = false;
+    original.audio_reactive_defaults.color_source = pvt::MusicFeature::ChromaHue;
+    original.audio_reactive_defaults.color_amount_degrees = -33.0;
     original.audio_reactive.enabled = true;
     original.audio_reactive.synchronized_only = false;
     original.audio_reactive.wave_source = pvt::MusicFeature::Bass;
@@ -1569,6 +1622,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.audio_reactive.color_enabled = true;
     original.audio_reactive.color_source = pvt::MusicFeature::Midrange;
     original.audio_reactive.color_amount_degrees = 42.0;
+    original.waves.front().audio_response = pvt::AudioResponseMode::Enabled;
+    original.effects.front().audio_response = pvt::AudioResponseMode::Disabled;
     original.layer_clock.enabled = true;
     original.layer_clock.scale = pvt::LayerClockScale::OriginalSpeedLoop;
     original.layer_clock.clock.mode = pvt::ClockMode::Time;
@@ -1601,13 +1656,19 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(setup_attributes != INVALID_FILE_ATTRIBUTES);
     CHECK((setup_attributes & FILE_ATTRIBUTE_HIDDEN) != 0U);
 #else
-    // Preserve the full explicit mode, including bits that a later content
-    // write could otherwise clear on POSIX.
+    // Preserve the full mode the hosting filesystem actually accepts. Some
+    // sandboxed/network filesystems report chmod success while clearing
+    // set-ID bits, so capture the installed mode instead of assuming 04750 is
+    // representable there.
     CHECK(::chmod(first.string().c_str(), 04750) == 0);
+    struct stat expected_setup_status {};
+    CHECK(::stat(first.string().c_str(), &expected_setup_status) == 0);
+    const mode_t expected_setup_mode = expected_setup_status.st_mode & 07777;
+    CHECK((expected_setup_mode & 0777) == 0750);
     CHECK(pvt::save_setup(original, first.string(), &error));
     struct stat setup_status {};
     CHECK(::stat(first.string().c_str(), &setup_status) == 0);
-    CHECK((setup_status.st_mode & 07777) == 04750);
+    CHECK((setup_status.st_mode & 07777) == expected_setup_mode);
 
     const fs::path setup_symlink_target = directory / "setup-symlink-target";
     const fs::path setup_symlink = directory / "setup-symlink.pvt";
@@ -1662,9 +1723,19 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.clock.music.tempo_points.size() == 2U);
     CHECK(loaded.clock.music.feature_samples.size() == 2U);
     CHECK(!loaded.swings_enabled);
+    CHECK(!loaded.audio_reactive_override_enabled);
+    CHECK(loaded.audio_reactive_defaults.enabled);
+    CHECK(loaded.audio_reactive_defaults.wave_source
+          == pvt::MusicFeature::Treble);
+    CHECK(loaded.audio_reactive_defaults.effect_amount == 0.31);
+    CHECK(!loaded.audio_reactive_defaults.color_enabled);
     CHECK(loaded.audio_reactive.enabled);
     CHECK(loaded.audio_reactive.wave_source == pvt::MusicFeature::Bass);
     CHECK(loaded.audio_reactive.color_amount_degrees == 42.0);
+    CHECK(loaded.waves.front().audio_response
+          == pvt::AudioResponseMode::Enabled);
+    CHECK(loaded.effects.front().audio_response
+          == pvt::AudioResponseMode::Disabled);
     CHECK(loaded.layer_clock.enabled);
     CHECK(loaded.layer_clock.scale == pvt::LayerClockScale::OriginalSpeedLoop);
     CHECK(loaded.layer_clock.clock.mode == pvt::ClockMode::Time);
@@ -1722,7 +1793,58 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_seven_bytes = read_bytes(first);
+    const auto version_eight_bytes = read_bytes(first);
+    CHECK(std::string(version_eight_bytes.begin(), version_eight_bytes.end())
+              .rfind("PVT_SETUP\t8\n", 0U) == 0U);
+
+    // Nullable/missing v8 routing fields are neutral authored defaults, not
+    // parse errors or accidental opt-ins.
+    std::string nullable_routing(version_eight_bytes.begin(),
+                                 version_eight_bytes.end());
+    const auto replace_record_with_null = [](std::string& setup,
+                                             const std::string& key) {
+        const std::string prefix = key + "\t";
+        const std::size_t position = setup.find(prefix);
+        CHECK(position != std::string::npos);
+        if (position == std::string::npos) return;
+        const std::size_t newline = setup.find('\n', position);
+        CHECK(newline != std::string::npos);
+        if (newline != std::string::npos) {
+            setup.replace(position + prefix.size(),
+                          newline - position - prefix.size(), "null");
+        }
+    };
+    replace_record_with_null(nullable_routing,
+                             "audio_response_defaults.enabled");
+    replace_record_with_null(nullable_routing,
+                             "audio_reactive.override_enabled");
+    replace_record_with_null(nullable_routing, "waves.0.audio_response");
+    replace_record_with_null(nullable_routing, "effects.0.audio_response");
+    pvt::RenderConfig loaded_nullable;
+    CHECK(pvt::detail::deserialize_setup_config(
+        nullable_routing, loaded_nullable, &error));
+    CHECK(!loaded_nullable.audio_reactive_defaults.enabled);
+    CHECK(!loaded_nullable.audio_reactive_override_enabled);
+    CHECK(loaded_nullable.waves.front().audio_response
+          == pvt::AudioResponseMode::Default);
+    CHECK(loaded_nullable.effects.front().audio_response
+          == pvt::AudioResponseMode::Default);
+
+    std::string missing_routing(version_eight_bytes.begin(),
+                                version_eight_bytes.end());
+    erase_records_with_prefix(missing_routing,
+                              "audio_response_defaults.");
+    erase_record(missing_routing, "audio_reactive.override_enabled");
+    erase_records_with_fragment(missing_routing, ".audio_response");
+    pvt::RenderConfig loaded_missing;
+    CHECK(pvt::detail::deserialize_setup_config(
+        missing_routing, loaded_missing, &error));
+    CHECK(!loaded_missing.audio_reactive_defaults.enabled);
+    CHECK(!loaded_missing.audio_reactive_override_enabled);
+    CHECK(loaded_missing.waves.front().audio_response
+          == pvt::AudioResponseMode::Default);
+    CHECK(loaded_missing.effects.front().audio_response
+          == pvt::AudioResponseMode::Default);
 
     // Semantic recovery must not depend on alphabetical group ordering. A
     // custom motion binding is invalid until its reusable path is admitted,
@@ -1761,7 +1883,21 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
                    && record.rejected;
         }));
 
-    std::string version_six(version_seven_bytes.begin(), version_seven_bytes.end());
+    std::string version_seven = missing_routing;
+    CHECK(version_seven.rfind("PVT_SETUP\t8\n", 0U) == 0U);
+    version_seven.replace(0U, std::string("PVT_SETUP\t8").size(),
+                          "PVT_SETUP\t7");
+    pvt::RenderConfig loaded_version_seven;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_seven, loaded_version_seven, &error));
+    CHECK(loaded_version_seven.audio_reactive_override_enabled);
+    CHECK(!loaded_version_seven.audio_reactive_defaults.enabled);
+    CHECK(loaded_version_seven.waves.front().audio_response
+          == pvt::AudioResponseMode::Default);
+    CHECK(loaded_version_seven.effects.front().audio_response
+          == pvt::AudioResponseMode::Default);
+
+    std::string version_six = version_seven;
     CHECK(version_six.rfind("PVT_SETUP\t7\n", 0U) == 0U);
     version_six.replace(0U, std::string("PVT_SETUP\t7").size(),
                         "PVT_SETUP\t6");
@@ -1938,8 +2074,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(pvt::save_setup(loaded, float_round_trip.string(), &error));
     CHECK(read_bytes(float_setup) == read_bytes(float_round_trip));
 
-    std::string oversized_analysis(version_seven_bytes.begin(),
-                                   version_seven_bytes.end());
+    std::string oversized_analysis(version_eight_bytes.begin(),
+                                   version_eight_bytes.end());
     const std::string feature_count = "timing.music.feature_samples.count\t2\n";
     const std::size_t feature_count_at = oversized_analysis.find(feature_count);
     CHECK(feature_count_at != std::string::npos);

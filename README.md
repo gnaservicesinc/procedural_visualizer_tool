@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.0.0-RC1**. The version is read from `VERSION` by every
+Current product version: **1.0.0-RC2**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -126,7 +126,8 @@ credentials.
 - Any number of waves from zero through the validated safety limit, with add,
   duplicate, remove, enable, and reorder controls.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
-  cycles per loop, and propagation direction.
+  cycles per loop, propagation direction, and **Default / Respond / Ignore**
+  audio routing for synchronized waves.
 - A project-wide base clock with Default, frame-interval, elapsed-time, musical
   meter, and analyzed-music modes. Pulse interpolation can hold, move linearly,
   or ease with smoothstep; direction, phase, beat offset, and exact/fit-to-
@@ -141,6 +142,9 @@ credentials.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
   glow, animated block scaling, and a deterministic spark/trail particle field.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
+  A synchronized effect can inherit its effective audio category, explicitly
+  respond even when that category default is off, or ignore audio without
+  changing its authored intensity.
   Each effect explicitly runs either in
   **Texture** space before surface wrapping or on the **Mapped object** after
   wrapping and the layer mirror/flip; the latter moves or deforms the rendered
@@ -178,9 +182,13 @@ credentials.
 - Optional audio response routes independent normalized Beat, Onset, Energy,
   Bass, Midrange, Treble, Spectral Centroid, Spectral Flatness, Chroma Hue, or
   Chroma Strength data into wave amplitude, effect intensity, and color hue.
+  The project owns a complete default profile. Each layer inherits it until an
+  active-layer override is enabled, and **Copy project settings into override**
+  provides a non-destructive starting point for layer-specific art direction.
   Energy is the visible default hue route; the other sources remain selectable.
   Pitch-class hue is weighted by tonality confidence, so silence or noise does
-  not cause arbitrary palette jumps.
+  not cause arbitrary palette jumps. Missing or explicit `null` inheritance and
+  per-item routing fields resolve to neutral defaults.
 - An optional starting palette per layer with 1-256 authored sRGB colors, custom
   add/edit/remove controls, and six presets: Ember, Deep Ocean, Vaporwave,
   Forest Biolume, Arcade, and Moonlight. The palette chooses exact procedural
@@ -223,13 +231,19 @@ wave/swing/effect editors, palette and transform controls, type-aware effect
 controls, a live checkerboard alpha preview, a continuously updating timeline,
 and background composite export with cooperative cancellation. The
 **Synchronization** tab owns both the global Clock and the selected layer's
-optional active-layer Clock, Swing, and Audio Response blocks. The Output tab is
+optional active-layer Clock, Swing, project-wide Audio Response defaults, and
+active-layer override. A persistent effective-routing summary makes inheritance
+visible instead of implicit. The Output tab is
 global while the Layer Render tab always edits the selected layer. **Randomize
 values** keeps the current layer's stack structure and types while varying its
 settings; **Randomize mix** creates a new bounded mix. Both live in the Settings
 menu and require confirmation, keeping destructive experiments away from the
 main toolbar. File dialogs remember their last usable folder and otherwise
-begin in the home folder.
+begin in the home folder. Dense editors use consistent spacing, frameless
+scrolling, scrollable document tabs, and field-specific tooltips that explain
+units, stage order, inheritance, destructive boundaries, and non-obvious ranges.
+Checkable optional blocks collapse to compact headers when off, keeping the
+Synchronization workspace readable without hiding available controls.
 
 Every GUI field edit and structural move participates in session undo/redo.
 **Settings > Application Settings…** (also available from the main toolbar)
@@ -254,7 +268,10 @@ Saved-version history is separate from session undo.
 The default clock preserves the original behavior: the renderer samples `N`
 frames over the half-open interval `[0, 1)` and omits the duplicated endpoint.
 Synchronized waves/effects use the shared phase after swing modulation;
-unsynchronized items keep their own periodic cycle count and phase.
+unsynchronized items keep their own periodic cycle count and phase. Within a
+synchronized item, **Default** follows the effective project/layer category,
+**Respond** opts in, and **Ignore** opts out. The profile master and its
+Synchronized-only policy remain authoritative safety gates.
 
 The Clock block can instead define calculated pulse/keyframe positions:
 
@@ -310,10 +327,11 @@ one fixed BPM. The source SHA-256, decoded format, channel/sample metadata,
 beats, local tempo points, and normalized spectral/pitch features are cached in
 the project; rendering never decodes or analyzes the song again.
 
-Choosing music selects the Music clock and enables Audio Response for the active
-layer on first import. The layer checkbox remains authoritative afterward: if
-the user turns Audio Response off, switching clock modes or replacing the source
-does not force it back on. Swings remain governed by their own active-layer
+Choosing the first project music source selects the Music clock and enables the
+project-wide Audio Response profile once, so every inheriting layer responds
+without silently creating layer overrides. The project profile and any explicit
+layer override remain authoritative afterward: switching clock modes or
+replacing the source does not force either back on. Swings remain governed by their own active-layer
 checkbox and can be mixed with audio response. A relink must match the cached
 digest; reanalyze is the explicit way to accept changed audio.
 
@@ -591,12 +609,14 @@ exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
 Legacy deterministic line-oriented `.pvt` setup versions 1-7 remain importable;
-current explicit legacy output is setup format 7. Format 4 added effect stage,
+current explicit legacy output is setup format 8. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
 motion, and particle settings. Format 7 adds starting images and reusable cubic
-motion paths. Older files receive neutral compatibility
+motion paths. Format 8 adds project-wide audio-response defaults, explicit
+layer inheritance, and nullable per-wave/per-effect routing. Versions 1-7 keep
+their historical layer-authoritative behavior on import. Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
@@ -606,8 +626,9 @@ more than one layer exists.
 
 Version 4.0.1 corrected the 4.0.0 palette-stage bug without changing its schema:
 an enabled v4 palette selects starting colors instead of rewriting the final
-effected image. Versions 5 through 7 add the synchronization/music/asset,
-local clock/motion/particle, starting-image, and reusable-path data above.
+effected image. Versions 5 through 8 add the synchronization/music/asset,
+local clock/motion/particle, starting-image, reusable-path, and hierarchical
+audio-routing data above.
 
 ## Scripted rendering
 
@@ -649,9 +670,12 @@ To analyze a song, let it drive selected controls, and save a portable project:
   --fps 30 --save "Live Tempo.zip"
 ```
 
-The first `--music` import selects the Music clock and enables active-layer audio
-response. Replacements preserve its current state; put `--no-audio-reactive`
-later on the command line to override the first-import default explicitly.
+The first `--music` import selects the Music clock and enables project-wide audio
+response. Replacements preserve its current state. Use
+`--project-audio-reactive` / `--no-project-audio-reactive` for the shared
+profile, `--audio-reactive` / `--no-audio-reactive` for an explicit active-layer
+override, and `--inherit-audio-reactive` to return that layer to the project
+profile.
 
 Clock overrides also include `--clock default|frame|time|meter|music`,
 `--pulse-frames`, `--pulse-ms`, `--meter`, `--bpm`, `--tempo-note`,
@@ -837,7 +861,8 @@ near-seam parity, strict-backend errors, hybrid fallback, bounded admission,
 transactional cancellation, and the public library API. It also exercises CLI
 help, option rejection, and the
 multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's
-offscreen platform, exercises project/layer/bundle/synchronization state, verifies
+offscreen platform, exercises project/layer/bundle/synchronization and inherited
+audio-routing state, verifies
 that Play installs advancing completed preview frames, opens and inspects About
 PVT and the reusable-path editor, and checks adaptive UI layout behavior.
 

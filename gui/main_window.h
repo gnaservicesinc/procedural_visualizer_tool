@@ -378,6 +378,7 @@ private:
     QLineEdit* wave_name_ = nullptr;
     QCheckBox* wave_enabled_ = nullptr;
     QCheckBox* wave_sync_ = nullptr;
+    QComboBox* wave_audio_response_ = nullptr;
     QDoubleSpinBox* wave_x_ = nullptr;
     QDoubleSpinBox* wave_y_ = nullptr;
     QDoubleSpinBox* wave_amplitude_ = nullptr;
@@ -452,7 +453,22 @@ private:
     QDoubleSpinBox* swing_center_y_ = nullptr;
     QDoubleSpinBox* swing_radius_ = nullptr;
 
+    QGroupBox* project_audio_response_group_ = nullptr;
+    QCheckBox* project_audio_sync_only_ = nullptr;
+    QCheckBox* project_audio_waves_enabled_ = nullptr;
+    QComboBox* project_audio_wave_source_ = nullptr;
+    QDoubleSpinBox* project_audio_wave_amount_ = nullptr;
+    QCheckBox* project_audio_effects_enabled_ = nullptr;
+    QComboBox* project_audio_effect_source_ = nullptr;
+    QDoubleSpinBox* project_audio_effect_amount_ = nullptr;
+    QCheckBox* project_audio_color_enabled_ = nullptr;
+    QComboBox* project_audio_color_source_ = nullptr;
+    QDoubleSpinBox* project_audio_color_amount_ = nullptr;
+
     QGroupBox* audio_response_group_ = nullptr;
+    QCheckBox* audio_response_enabled_ = nullptr;
+    QLabel* audio_response_effective_ = nullptr;
+    QPushButton* audio_copy_project_ = nullptr;
     QCheckBox* audio_sync_only_ = nullptr;
     QCheckBox* audio_waves_enabled_ = nullptr;
     QComboBox* audio_wave_source_ = nullptr;
@@ -469,6 +485,7 @@ private:
     QLineEdit* effect_name_ = nullptr;
     QCheckBox* effect_enabled_ = nullptr;
     QCheckBox* effect_sync_ = nullptr;
+    QComboBox* effect_audio_response_ = nullptr;
     QComboBox* effect_type_ = nullptr;
     QComboBox* effect_space_ = nullptr;
     QSpinBox* effect_cycles_ = nullptr;

@@ -32,6 +32,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QFuture>
 #include <QGroupBox>
 #include <QGridLayout>
@@ -359,12 +360,20 @@ std::vector<double> music_beats_for_ui(const pvt::ClockConfig& clock) {
 }
 
 QString wave_label(const pvt::WaveConfig& wave, std::size_t index) {
+    QString routing;
+    if (wave.synchronized
+        && wave.audio_response != pvt::AudioResponseMode::Default) {
+        routing = QStringLiteral(", audio ")
+                  + QString::fromUtf8(
+                      pvt::audio_response_mode_name(wave.audio_response))
+                        .toLower();
+    }
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(wave.name) + QStringLiteral("  [")
            + (wave.enabled ? QStringLiteral("on") : QStringLiteral("off"))
            + QStringLiteral(", ")
            + (wave.synchronized ? QStringLiteral("sync") : QStringLiteral("free"))
-           + QLatin1Char(']');
+           + routing + QLatin1Char(']');
 }
 
 QString swing_label(const pvt::SwingConfig& swing, std::size_t index) {
@@ -378,6 +387,14 @@ QString swing_label(const pvt::SwingConfig& swing, std::size_t index) {
 }
 
 QString effect_label(const pvt::EffectConfig& effect, std::size_t index) {
+    QString routing;
+    if (effect.synchronized
+        && effect.audio_response != pvt::AudioResponseMode::Default) {
+        routing = QStringLiteral(", audio ")
+                  + QString::fromUtf8(
+                      pvt::audio_response_mode_name(effect.audio_response))
+                        .toLower();
+    }
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(effect.name) + QStringLiteral("  [")
            + QString::fromUtf8(pvt::effect_type_name(effect.type))
@@ -387,7 +404,7 @@ QString effect_label(const pvt::EffectConfig& effect, std::size_t index) {
            + (effect.enabled ? QStringLiteral("on") : QStringLiteral("off"))
            + QStringLiteral(", ")
            + (effect.synchronized ? QStringLiteral("sync") : QStringLiteral("free"))
-           + QLatin1Char(']');
+           + routing + QLatin1Char(']');
 }
 
 std::size_t saturating_add(std::size_t left, std::size_t right) {
@@ -959,7 +976,8 @@ bool editor_change_is_continuous(const QObject* editor) {
     // them can turn an on->off sequence into a phantom Undo command whose
     // before and after values are both off.
     return qobject_cast<const QCheckBox*>(editor) == nullptr
-           && qobject_cast<const QComboBox*>(editor) == nullptr;
+           && qobject_cast<const QComboBox*>(editor) == nullptr
+           && qobject_cast<const QGroupBox*>(editor) == nullptr;
 }
 
 void preserve_control_text_width(QWidget* widget) {
@@ -985,6 +1003,11 @@ void configure_readable_layouts(QWidget* root) {
     for (QFormLayout* form : root->findChildren<QFormLayout*>()) {
         form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
         form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+        form->setHorizontalSpacing(12);
+        form->setVerticalSpacing(7);
+    }
+    for (QScrollArea* scroll : root->findChildren<QScrollArea*>()) {
+        scroll->setFrameShape(QFrame::NoFrame);
     }
     for (QPushButton* button : root->findChildren<QPushButton*>()) {
         preserve_control_text_width(button);
@@ -995,6 +1018,22 @@ void configure_readable_layouts(QWidget* root) {
     for (QLabel* label : root->findChildren<QLabel*>()) {
         update_wrapped_label_height(label);
     }
+}
+
+void make_checkable_group_collapsible(QGroupBox* group) {
+    if (group == nullptr || !group->isCheckable()) return;
+    const auto set_expanded = [group](bool expanded) {
+        // QGroupBox already owns the enable/disable semantics. Hiding only its
+        // direct content widgets also collapses nested panels while leaving
+        // the title checkbox visible as a compact, discoverable control.
+        for (QWidget* child : group->findChildren<QWidget*>(
+                 QString{}, Qt::FindDirectChildrenOnly)) {
+            child->setVisible(expanded);
+        }
+        group->updateGeometry();
+    };
+    QObject::connect(group, &QGroupBox::toggled, group, set_expanded);
+    set_expanded(group->isChecked());
 }
 
 } // namespace
@@ -1045,6 +1084,8 @@ MainWindow::MainWindow(QWidget* parent)
     auto* splitter = new QSplitter(Qt::Horizontal);
     preview_ = new PreviewWidget;
     tabs_ = new QTabWidget;
+    tabs_->setDocumentMode(true);
+    tabs_->setUsesScrollButtons(true);
     wave_page_ = createWavePage();
     synchronization_page_ = createSynchronizationPage();
     effect_page_ = createEffectPage();
@@ -1297,6 +1338,13 @@ QWidget* MainWindow::createWavePage() {
     wave_name_->setValidator(new Utf8TextValidator(TextRule::Name, wave_name_));
     wave_enabled_ = new QCheckBox(tr("Enabled"));
     wave_sync_ = new QCheckBox(tr("Synchronized (optional)"));
+    wave_audio_response_ = new QComboBox;
+    add_enum_item(wave_audio_response_, tr("Default (inherit routing)"),
+                  pvt::AudioResponseMode::Default);
+    add_enum_item(wave_audio_response_, tr("Respond"),
+                  pvt::AudioResponseMode::Enabled);
+    add_enum_item(wave_audio_response_, tr("Ignore"),
+                  pvt::AudioResponseMode::Disabled);
     wave_x_ = real_editor(-100.0, 200.0, 3, 1.0);
     wave_y_ = real_editor(-100.0, 200.0, 3, 1.0);
     wave_amplitude_ = real_editor(0.0, 10.0);
@@ -1307,6 +1355,7 @@ QWidget* MainWindow::createWavePage() {
     form->addRow(tr("Name"), wave_name_);
     form->addRow(wave_enabled_);
     form->addRow(wave_sync_);
+    form->addRow(tr("Audio response"), wave_audio_response_);
     form->addRow(tr("X position (%)"), wave_x_);
     form->addRow(tr("Y position (%)"), wave_y_);
     form->addRow(tr("Amplitude"), wave_amplitude_);
@@ -1314,6 +1363,18 @@ QWidget* MainWindow::createWavePage() {
     form->addRow(tr("Cycles per loop"), wave_cycles_);
     form->addRow(tr("Phase (degrees)"), wave_phase_);
     form->addRow(tr("Direction (0 horizontal, .5 radial, 1 vertical)"), wave_direction_);
+    wave_name_->setToolTip(tr("A descriptive layer-local name used in lists and semantic version diffs."));
+    wave_enabled_->setToolTip(tr("Bypasses this wave without deleting or resetting its authored settings."));
+    wave_sync_->setToolTip(tr("Uses the layer's swung synchronized clock. Clear it for an independent seamless clock."));
+    wave_audio_response_->setToolTip(
+        tr("For synchronized waves: inherit the effective routing, opt this wave in, or opt it out. Missing/null project data is Default."));
+    wave_x_->setToolTip(tr("Horizontal wave source position. Values outside 0–100% place the source beyond the canvas."));
+    wave_y_->setToolTip(tr("Vertical wave source position. Values outside 0–100% place the source beyond the canvas."));
+    wave_amplitude_->setToolTip(tr("Peak contribution of this wave before optional audio modulation."));
+    wave_frequency_->setToolTip(tr("Number of spatial oscillations across the normalized wave coordinate."));
+    wave_cycles_->setToolTip(tr("Whole or signed motion cycles over one seamless project loop."));
+    wave_phase_->setToolTip(tr("Authored phase offset; large values are allowed for procedural workflows."));
+    wave_direction_->setToolTip(tr("Blends propagation from horizontal through radial to vertical."));
     layout->addWidget(properties);
 
     connect(add, &QPushButton::clicked, this, [this] {
@@ -1613,13 +1674,54 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_music_layout->addLayout(layer_progress_row);
     layer_clock_layout->addWidget(layer_music_group);
     layout->addWidget(layer_clock_group_);
+    make_checkable_group_collapsible(layer_clock_group_);
 
-    layout->addWidget(createSwingBlock());
+    project_audio_response_group_ = new QGroupBox(
+        tr("Audio response — project-wide defaults"));
+    project_audio_response_group_->setCheckable(true);
+    project_audio_response_group_->setObjectName(
+        QStringLiteral("projectAudioResponseGroup"));
+    auto* project_audio_layout = new QVBoxLayout(project_audio_response_group_);
+    auto* project_audio_help = new QLabel(
+        tr("Sets the response profile inherited by every layer that does not author an override. "
+           "This is the fastest way to art-direct a consistent music relationship across a project."));
+    project_audio_help->setWordWrap(true);
+    project_audio_layout->addWidget(project_audio_help);
+    auto* project_audio_form = new QFormLayout;
+    project_audio_sync_only_ = new QCheckBox(
+        tr("Only synchronized waves and effects"));
+    project_audio_waves_enabled_ = new QCheckBox(
+        tr("Modulate wave amplitude"));
+    project_audio_wave_source_ = new QComboBox;
+    project_audio_wave_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    project_audio_effects_enabled_ = new QCheckBox(
+        tr("Modulate effect strength"));
+    project_audio_effect_source_ = new QComboBox;
+    project_audio_effect_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    project_audio_color_enabled_ = new QCheckBox(tr("Modulate color hue"));
+    project_audio_color_source_ = new QComboBox;
+    project_audio_color_amount_ = real_editor(-3600.0, 3600.0, 2, 1.0);
+    project_audio_color_amount_->setSuffix(QChar(0x00b0));
 
-    audio_response_group_ = new QGroupBox(tr("Audio response — active layer"));
+    audio_response_group_ = new QGroupBox(
+        tr("Audio response — active-layer override"));
     audio_response_group_->setCheckable(true);
     audio_response_group_->setObjectName(QStringLiteral("audioResponseGroup"));
-    auto* audio_form = new QFormLayout(audio_response_group_);
+    auto* audio_layout = new QVBoxLayout(audio_response_group_);
+    audio_response_effective_ = new QLabel;
+    audio_response_effective_->setObjectName(
+        QStringLiteral("audioResponseEffective"));
+    audio_response_effective_->setWordWrap(true);
+    audio_response_effective_->setFrameStyle(QFrame::StyledPanel
+                                             | QFrame::Sunken);
+    audio_response_effective_->setToolTip(
+        tr("Shows whether this layer currently inherits the project profile or uses its own override."));
+    audio_copy_project_ = new QPushButton(tr("Copy project settings into override"));
+    audio_copy_project_->setToolTip(
+        tr("Copies every project-wide response value here, then enables the layer override so you can refine it independently."));
+    auto* audio_form = new QFormLayout;
+    audio_response_enabled_ = new QCheckBox(
+        tr("Enable audio response for this layer"));
     audio_sync_only_ = new QCheckBox(tr("Only synchronized waves and effects"));
     audio_waves_enabled_ = new QCheckBox(tr("Modulate wave amplitude"));
     audio_wave_source_ = new QComboBox;
@@ -1632,17 +1734,32 @@ QWidget* MainWindow::createSynchronizationPage() {
     audio_color_amount_ = real_editor(-3600.0, 3600.0, 2, 1.0);
     audio_color_amount_->setSuffix(QChar(0x00b0));
     // MusicFeature has an explicit byte-sized ABI. Discover every named value
-    // so analyzer upgrades automatically appear here without a second GUI list
-    // drifting out of sync.
+    // for both profiles so analyzer upgrades cannot make the editors drift.
     for (int raw = 0; raw <= (std::numeric_limits<std::uint8_t>::max)(); ++raw) {
         const auto feature = static_cast<pvt::MusicFeature>(raw);
         const char* const name = pvt::music_feature_name(feature);
         if (name == nullptr || std::string_view(name) == "Unknown") continue;
         const QString label = QString::fromUtf8(name);
+        add_enum_item(project_audio_wave_source_, label, feature);
+        add_enum_item(project_audio_effect_source_, label, feature);
+        add_enum_item(project_audio_color_source_, label, feature);
         add_enum_item(audio_wave_source_, label, feature);
         add_enum_item(audio_effect_source_, label, feature);
         add_enum_item(audio_color_source_, label, feature);
     }
+    project_audio_form->addRow(project_audio_sync_only_);
+    project_audio_form->addRow(project_audio_waves_enabled_);
+    project_audio_form->addRow(tr("Wave feature"), project_audio_wave_source_);
+    project_audio_form->addRow(tr("Wave amount"), project_audio_wave_amount_);
+    project_audio_form->addRow(project_audio_effects_enabled_);
+    project_audio_form->addRow(tr("Effect feature"), project_audio_effect_source_);
+    project_audio_form->addRow(tr("Effect amount"), project_audio_effect_amount_);
+    project_audio_form->addRow(project_audio_color_enabled_);
+    project_audio_form->addRow(tr("Color feature"), project_audio_color_source_);
+    project_audio_form->addRow(tr("Hue range"), project_audio_color_amount_);
+    project_audio_layout->addLayout(project_audio_form);
+
+    audio_form->addRow(audio_response_enabled_);
     audio_form->addRow(audio_sync_only_);
     audio_form->addRow(audio_waves_enabled_);
     audio_form->addRow(tr("Wave feature"), audio_wave_source_);
@@ -1653,7 +1770,62 @@ QWidget* MainWindow::createSynchronizationPage() {
     audio_form->addRow(audio_color_enabled_);
     audio_form->addRow(tr("Color feature"), audio_color_source_);
     audio_form->addRow(tr("Hue range"), audio_color_amount_);
+    audio_layout->addLayout(audio_form);
+
+    const auto set_audio_tooltips = [](
+        QCheckBox* synchronized_only, QCheckBox* waves_enabled,
+        QComboBox* wave_source, QDoubleSpinBox* wave_amount,
+        QCheckBox* effects_enabled, QComboBox* effect_source,
+        QDoubleSpinBox* effect_amount, QCheckBox* color_enabled,
+        QComboBox* color_source, QDoubleSpinBox* color_amount) {
+        synchronized_only->setToolTip(
+            tr("When enabled, free-running waves/effects ignore audio. Synchronized items can still use their individual Default, Respond, or Ignore choice."));
+        waves_enabled->setToolTip(
+            tr("Default routing for wave amplitude. A synchronized wave can override this with its Audio response selector."));
+        wave_source->setToolTip(
+            tr("Analyzed music feature sampled at the layer's effective timeline position."));
+        wave_amount->setToolTip(
+            tr("Scales wave amplitude by 1 + feature × amount. Negative values duck on peaks; -1 can reduce a full-scale peak to zero."));
+        effects_enabled->setToolTip(
+            tr("Default routing for effect intensity. A synchronized effect can override this with its Audio response selector."));
+        effect_source->setToolTip(
+            tr("Analyzed feature used to modulate enabled effect intensity."));
+        effect_amount->setToolTip(
+            tr("Scales effect intensity by 1 + feature × amount. The renderer clamps the multiplier at zero."));
+        color_enabled->setToolTip(
+            tr("Rotates the layer's evaluated starting colors without rewriting the authored palette."));
+        color_source->setToolTip(
+            tr("Analyzed feature used as the hue-rotation control signal."));
+        color_amount->setToolTip(
+            tr("Maximum signed hue rotation at a full-scale feature value."));
+    };
+    set_audio_tooltips(
+        project_audio_sync_only_, project_audio_waves_enabled_,
+        project_audio_wave_source_, project_audio_wave_amount_,
+        project_audio_effects_enabled_, project_audio_effect_source_,
+        project_audio_effect_amount_, project_audio_color_enabled_,
+        project_audio_color_source_, project_audio_color_amount_);
+    set_audio_tooltips(
+        audio_sync_only_, audio_waves_enabled_, audio_wave_source_,
+        audio_wave_amount_, audio_effects_enabled_, audio_effect_source_,
+        audio_effect_amount_, audio_color_enabled_, audio_color_source_,
+        audio_color_amount_);
+    project_audio_response_group_->setToolTip(
+        tr("The canonical response profile for layers whose active-layer override is off. Missing/null project data resolves to the safe Default profile."));
+    audio_response_group_->setToolTip(
+        tr("Check this group to stop inheriting and author an independent response profile for the selected layer."));
+    audio_response_enabled_->setToolTip(
+        tr("Master switch stored inside this layer's override. Clear it to keep an explicit no-response layer while project defaults remain active elsewhere."));
+
+    make_checkable_group_collapsible(project_audio_response_group_);
+    make_checkable_group_collapsible(audio_response_group_);
+
+    layout->addWidget(project_audio_response_group_);
+    layout->addWidget(audio_response_effective_);
+    layout->addWidget(audio_copy_project_, 0, Qt::AlignLeft);
     layout->addWidget(audio_response_group_);
+    layout->addWidget(createSwingBlock());
+    make_checkable_group_collapsible(swings_group_);
     layout->addStretch();
     scroll->setWidget(contents);
 
@@ -1853,6 +2025,13 @@ QWidget* MainWindow::createEffectPage() {
     effect_name_->setValidator(new Utf8TextValidator(TextRule::Name, effect_name_));
     effect_enabled_ = new QCheckBox(tr("Enabled"));
     effect_sync_ = new QCheckBox(tr("Synchronized (optional)"));
+    effect_audio_response_ = new QComboBox;
+    add_enum_item(effect_audio_response_, tr("Default (inherit routing)"),
+                  pvt::AudioResponseMode::Default);
+    add_enum_item(effect_audio_response_, tr("Respond"),
+                  pvt::AudioResponseMode::Enabled);
+    add_enum_item(effect_audio_response_, tr("Ignore"),
+                  pvt::AudioResponseMode::Disabled);
     effect_type_ = new QComboBox;
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
@@ -1887,6 +2066,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Name"), effect_name_);
     effect_form_->addRow(effect_enabled_);
     effect_form_->addRow(effect_sync_);
+    effect_form_->addRow(tr("Audio response"), effect_audio_response_);
     effect_form_->addRow(tr("Type"), effect_type_);
     effect_form_->addRow(tr("Apply to"), effect_space_);
     effect_form_->addRow(tr("Cycles per loop"), effect_cycles_);
@@ -1903,6 +2083,22 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Glow threshold"), effect_threshold_);
     effect_form_->addRow(tr("Glow soft knee"), effect_knee_);
     effect_form_->addRow(tr("Local area radius"), effect_area_radius_);
+    effect_name_->setToolTip(
+        tr("A descriptive layer-local name used in the stack and semantic version diffs."));
+    effect_enabled_->setToolTip(
+        tr("Bypasses this effect without deleting it or changing its authored parameters."));
+    effect_sync_->setToolTip(
+        tr("Uses the active synchronized/swung clock. Clear it for an independent seamless effect clock."));
+    effect_audio_response_->setToolTip(
+        tr("For synchronized effects: inherit the effective category default, force this effect to respond, or make it ignore audio. Missing/null data is Default."));
+    effect_type_->setToolTip(
+        tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
+    effect_space_->setToolTip(
+        tr("Texture edits artwork before wrapping; Mapped object edits the transformed surface and silhouette afterward."));
+    effect_cycles_->setToolTip(
+        tr("Signed motion cycles across the project loop; whole values preserve the seam."));
+    effect_phase_->setToolTip(
+        tr("Authored timing offset in degrees. Values beyond one rotation are retained."));
     scroll->setWidget(properties);
     layout->addWidget(scroll, 2);
 
@@ -3577,6 +3773,8 @@ void MainWindow::connectEditors() {
             [this] { applyWaveEditor(wave_enabled_); });
     connect(wave_sync_, &QCheckBox::toggled, this,
             [this] { applyWaveEditor(wave_sync_); });
+    connect(wave_audio_response_, &QComboBox::currentIndexChanged, this,
+            [this] { applyWaveEditor(wave_audio_response_); });
     for (auto* editor : {wave_x_, wave_y_, wave_amplitude_, wave_frequency_, wave_phase_,
                          wave_direction_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
@@ -3631,6 +3829,8 @@ void MainWindow::connectEditors() {
             [this] { applyEffectEditor(effect_enabled_); });
     connect(effect_sync_, &QCheckBox::toggled, this,
             [this] { applyEffectEditor(effect_sync_); });
+    connect(effect_audio_response_, &QComboBox::currentIndexChanged, this,
+            [this] { applyEffectEditor(effect_audio_response_); });
     connect(effect_type_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_type_); });
     connect(effect_space_, &QComboBox::currentIndexChanged, this,
@@ -3711,9 +3911,32 @@ void MainWindow::connectEditors() {
             valid ? QString{} : QStringLiteral("color: #d32f2f;"));
     });
 
+    connect(project_audio_response_group_, &QGroupBox::toggled, this,
+            [this] { applyAudioReactiveEditor(project_audio_response_group_); });
+    for (auto* editor : {project_audio_sync_only_,
+                         project_audio_waves_enabled_,
+                         project_audio_effects_enabled_,
+                         project_audio_color_enabled_}) {
+        connect(editor, &QCheckBox::toggled, this,
+                [this, editor] { applyAudioReactiveEditor(editor); });
+    }
+    for (auto* editor : {project_audio_wave_source_,
+                         project_audio_effect_source_,
+                         project_audio_color_source_}) {
+        connect(editor, &QComboBox::currentIndexChanged, this,
+                [this, editor] { applyAudioReactiveEditor(editor); });
+    }
+    for (auto* editor : {project_audio_wave_amount_,
+                         project_audio_effect_amount_,
+                         project_audio_color_amount_}) {
+        connect(editor, &QDoubleSpinBox::valueChanged, this,
+                [this, editor] { applyAudioReactiveEditor(editor); });
+    }
+
     connect(audio_response_group_, &QGroupBox::toggled, this,
             [this] { applyAudioReactiveEditor(audio_response_group_); });
-    for (auto* editor : {audio_sync_only_, audio_waves_enabled_,
+    for (auto* editor : {audio_response_enabled_, audio_sync_only_,
+                         audio_waves_enabled_,
                          audio_effects_enabled_, audio_color_enabled_}) {
         connect(editor, &QCheckBox::toggled, this,
                 [this, editor] { applyAudioReactiveEditor(editor); });
@@ -3728,6 +3951,19 @@ void MainWindow::connectEditors() {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applyAudioReactiveEditor(editor); });
     }
+    connect(audio_copy_project_, &QPushButton::clicked, this, [this] {
+        if (populating_) return;
+        auto before = captureActiveState();
+        config_.audio_reactive = config_.audio_reactive_defaults;
+        config_.audio_reactive_override_enabled = true;
+        syncActiveRender();
+        loadGlobalEditors();
+        preview_->setConfiguration(config_);
+        schedulePreview();
+        status_->setText(tr("Copied project audio response into the active-layer override."));
+        recordActiveStateChange(tr("Copy project audio response"),
+                                std::move(before));
+    });
 
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
@@ -4010,6 +4246,8 @@ void MainWindow::syncProjectGlobals() {
     project_.canvas.total_frames = config_.total_frames;
     project_.canvas.fps = config_.fps;
     project_.canvas.clock = config_.clock;
+    project_.canvas.audio_reactive_defaults =
+        config_.audio_reactive_defaults;
     project_.canvas.motion_paths = config_.motion_paths;
     project_.canvas.output_compatibility = config_.output_compatibility;
     project_.output = config_.output;
@@ -5193,7 +5431,30 @@ void MainWindow::updateSynchronizationState() {
         editor->setEnabled(editable);
     }
     swings_group_->setEnabled(editable);
+    project_audio_response_group_->setEnabled(editable);
     audio_response_group_->setEnabled(editable);
+    audio_response_effective_->setEnabled(editable);
+    audio_copy_project_->setEnabled(editable);
+    const bool layer_override = config_.audio_reactive_override_enabled;
+    const pvt::AudioReactiveConfig& effective_audio =
+        layer_override ? config_.audio_reactive
+                       : config_.audio_reactive_defaults;
+    audio_response_effective_->setText(
+        layer_override
+            ? tr("Effective routing: active-layer override — %1")
+                  .arg(effective_audio.enabled ? tr("enabled")
+                                               : tr("disabled"))
+            : tr("Effective routing: project-wide defaults — %1. Check this group to override them for this layer.")
+                  .arg(effective_audio.enabled ? tr("enabled")
+                                               : tr("disabled")));
+    if (const auto wave = selectedWaveIndex()) {
+        wave_audio_response_->setEnabled(
+            editable && config_.waves[*wave].synchronized);
+    }
+    if (const auto effect = selectedEffectIndex()) {
+        effect_audio_response_->setEnabled(
+            editable && config_.effects[*effect].synchronized);
+    }
     clock_form_->setRowVisible(clock_frame_interval_, mode == pvt::ClockMode::Frame);
     clock_form_->setRowVisible(clock_time_interval_ms_, mode == pvt::ClockMode::Time);
     const bool meter = mode == pvt::ClockMode::Meter;
@@ -5625,6 +5886,7 @@ void MainWindow::loadSelectedWave() {
     populating_ = true;
     const bool enabled = index.has_value();
     for (auto* widget : std::initializer_list<QWidget*>{wave_name_, wave_enabled_, wave_sync_,
+                                                        wave_audio_response_,
                                                         wave_x_, wave_y_, wave_amplitude_,
                                                         wave_frequency_, wave_cycles_, wave_phase_,
                                                         wave_direction_}) {
@@ -5635,6 +5897,8 @@ void MainWindow::loadSelectedWave() {
         wave_name_->setText(QString::fromStdString(wave.name));
         wave_enabled_->setChecked(wave.enabled);
         wave_sync_->setChecked(wave.synchronized);
+        select_enum(wave_audio_response_, wave.audio_response);
+        wave_audio_response_->setEnabled(wave.synchronized);
         wave_x_->setValue(wave.x_percent);
         wave_y_->setValue(wave.y_percent);
         wave_amplitude_->setValue(wave.amplitude);
@@ -5839,7 +6103,8 @@ void MainWindow::loadSelectedEffect() {
     populating_ = true;
     const bool enabled = index.has_value();
     for (auto* widget : std::initializer_list<QWidget*>{
-             effect_name_, effect_enabled_, effect_sync_, effect_type_, effect_space_,
+             effect_name_, effect_enabled_, effect_sync_, effect_audio_response_,
+             effect_type_, effect_space_,
              effect_cycles_,
              effect_phase_, effect_edge_, effect_intensity_, effect_magnitude_,
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
@@ -5852,6 +6117,8 @@ void MainWindow::loadSelectedEffect() {
         effect_name_->setText(QString::fromStdString(effect.name));
         effect_enabled_->setChecked(effect.enabled);
         effect_sync_->setChecked(effect.synchronized);
+        select_enum(effect_audio_response_, effect.audio_response);
+        effect_audio_response_->setEnabled(effect.synchronized);
         select_enum(effect_type_, effect.type);
         select_enum(effect_space_, effect.space);
         updateEffectEditorVisibility();
@@ -5928,7 +6195,32 @@ void MainWindow::loadGlobalEditors() {
     layer_music_data_only_->setChecked(
         config_.layer_clock.clock.data_only);
     swings_group_->setChecked(config_.swings_enabled);
-    audio_response_group_->setChecked(config_.audio_reactive.enabled);
+    project_audio_response_group_->setChecked(
+        config_.audio_reactive_defaults.enabled);
+    project_audio_sync_only_->setChecked(
+        config_.audio_reactive_defaults.synchronized_only);
+    project_audio_waves_enabled_->setChecked(
+        config_.audio_reactive_defaults.waves_enabled);
+    select_enum(project_audio_wave_source_,
+                config_.audio_reactive_defaults.wave_source);
+    project_audio_wave_amount_->setValue(
+        config_.audio_reactive_defaults.wave_amount);
+    project_audio_effects_enabled_->setChecked(
+        config_.audio_reactive_defaults.effects_enabled);
+    select_enum(project_audio_effect_source_,
+                config_.audio_reactive_defaults.effect_source);
+    project_audio_effect_amount_->setValue(
+        config_.audio_reactive_defaults.effect_amount);
+    project_audio_color_enabled_->setChecked(
+        config_.audio_reactive_defaults.color_enabled);
+    select_enum(project_audio_color_source_,
+                config_.audio_reactive_defaults.color_source);
+    project_audio_color_amount_->setValue(
+        config_.audio_reactive_defaults.color_amount_degrees);
+
+    audio_response_group_->setChecked(
+        config_.audio_reactive_override_enabled);
+    audio_response_enabled_->setChecked(config_.audio_reactive.enabled);
     audio_sync_only_->setChecked(config_.audio_reactive.synchronized_only);
     audio_waves_enabled_->setChecked(config_.audio_reactive.waves_enabled);
     select_enum(audio_wave_source_, config_.audio_reactive.wave_source);
@@ -6141,6 +6433,10 @@ void MainWindow::applyWaveEditor(const QObject* changed_editor) {
         wave.enabled = wave_enabled_->isChecked();
     } else if (changed_editor == wave_sync_) {
         wave.synchronized = wave_sync_->isChecked();
+        wave_audio_response_->setEnabled(wave.synchronized);
+    } else if (changed_editor == wave_audio_response_) {
+        wave.audio_response = static_cast<pvt::AudioResponseMode>(
+            wave_audio_response_->currentData().toInt());
     } else if (changed_editor == wave_x_) {
         wave.x_percent = wave_x_->value();
     } else if (changed_editor == wave_y_) {
@@ -6408,9 +6704,50 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
 void MainWindow::applyAudioReactiveEditor(const QObject* changed_editor) {
     if (populating_) return;
     auto before = captureActiveState();
-    auto& audio = config_.audio_reactive;
-    if (changed_editor == audio_response_group_) {
-        audio.enabled = audio_response_group_->isChecked();
+    const bool project_scope =
+        changed_editor == project_audio_response_group_
+        || changed_editor == project_audio_sync_only_
+        || changed_editor == project_audio_waves_enabled_
+        || changed_editor == project_audio_wave_source_
+        || changed_editor == project_audio_wave_amount_
+        || changed_editor == project_audio_effects_enabled_
+        || changed_editor == project_audio_effect_source_
+        || changed_editor == project_audio_effect_amount_
+        || changed_editor == project_audio_color_enabled_
+        || changed_editor == project_audio_color_source_
+        || changed_editor == project_audio_color_amount_;
+    auto& audio = project_scope ? config_.audio_reactive_defaults
+                                : config_.audio_reactive;
+    if (changed_editor == project_audio_response_group_) {
+        audio.enabled = project_audio_response_group_->isChecked();
+    } else if (changed_editor == project_audio_sync_only_) {
+        audio.synchronized_only = project_audio_sync_only_->isChecked();
+    } else if (changed_editor == project_audio_waves_enabled_) {
+        audio.waves_enabled = project_audio_waves_enabled_->isChecked();
+    } else if (changed_editor == project_audio_wave_source_) {
+        audio.wave_source = static_cast<pvt::MusicFeature>(
+            project_audio_wave_source_->currentData().toInt());
+    } else if (changed_editor == project_audio_wave_amount_) {
+        audio.wave_amount = project_audio_wave_amount_->value();
+    } else if (changed_editor == project_audio_effects_enabled_) {
+        audio.effects_enabled = project_audio_effects_enabled_->isChecked();
+    } else if (changed_editor == project_audio_effect_source_) {
+        audio.effect_source = static_cast<pvt::MusicFeature>(
+            project_audio_effect_source_->currentData().toInt());
+    } else if (changed_editor == project_audio_effect_amount_) {
+        audio.effect_amount = project_audio_effect_amount_->value();
+    } else if (changed_editor == project_audio_color_enabled_) {
+        audio.color_enabled = project_audio_color_enabled_->isChecked();
+    } else if (changed_editor == project_audio_color_source_) {
+        audio.color_source = static_cast<pvt::MusicFeature>(
+            project_audio_color_source_->currentData().toInt());
+    } else if (changed_editor == project_audio_color_amount_) {
+        audio.color_amount_degrees = project_audio_color_amount_->value();
+    } else if (changed_editor == audio_response_group_) {
+        config_.audio_reactive_override_enabled =
+            audio_response_group_->isChecked();
+    } else if (changed_editor == audio_response_enabled_) {
+        audio.enabled = audio_response_enabled_->isChecked();
     } else if (changed_editor == audio_sync_only_) {
         audio.synchronized_only = audio_sync_only_->isChecked();
     } else if (changed_editor == audio_waves_enabled_) {
@@ -6437,15 +6774,26 @@ void MainWindow::applyAudioReactiveEditor(const QObject* changed_editor) {
     } else {
         return;
     }
-    syncActiveRender();
+    if (project_scope) {
+        syncProjectGlobals();
+    } else {
+        syncActiveRender();
+    }
+    updateSynchronizationState();
     preview_->setConfiguration(config_);
     schedulePreview();
     const QString key = editor_change_is_continuous(changed_editor)
                             ? QStringLiteral("audio-response:%1:%2")
-                                  .arg(QString::fromStdString(active_layer_uuid_))
+                                  .arg(project_scope
+                                           ? QStringLiteral("project")
+                                           : QString::fromStdString(
+                                                 active_layer_uuid_))
                                   .arg(reinterpret_cast<quintptr>(changed_editor))
                             : QString{};
-    recordActiveStateChange(tr("Edit audio response"), std::move(before), key);
+    recordActiveStateChange(
+        project_scope ? tr("Edit project audio response")
+                      : tr("Edit layer audio response"),
+        std::move(before), key);
 }
 
 void MainWindow::applyEffectEditor(const QObject* changed_editor) {
@@ -6462,6 +6810,10 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.enabled = effect_enabled_->isChecked();
     } else if (changed_editor == effect_sync_) {
         effect.synchronized = effect_sync_->isChecked();
+        effect_audio_response_->setEnabled(effect.synchronized);
+    } else if (changed_editor == effect_audio_response_) {
+        effect.audio_response = static_cast<pvt::AudioResponseMode>(
+            effect_audio_response_->currentData().toInt());
     } else if (changed_editor == effect_space_) {
         effect.space = static_cast<pvt::EffectSpace>(
             effect_space_->currentData().toInt());
@@ -6473,6 +6825,7 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             const auto id = effect.id;
             const bool enabled = effect.enabled;
             const bool synchronized = effect.synchronized;
+            const auto audio_response = effect.audio_response;
             const auto space = effect.space;
             const int cycles = effect.cycles_per_loop;
             const double phase = effect.phase_degrees;
@@ -6486,6 +6839,7 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             effect.id = id;
             effect.enabled = enabled;
             effect.synchronized = synchronized;
+            effect.audio_response = audio_response;
             effect.space = space;
             effect.cycles_per_loop = cycles;
             effect.phase_degrees = phase;
@@ -7359,11 +7713,12 @@ void MainWindow::finishMusicAnalysis(const MusicAnalysisResult& result) {
     target_clock.music.source_sha256 = result.attached.sha256;
     target_clock.music.source_basename = result.attached.basename;
     if (result.action == MusicAnalysisAction::Choose) {
-        // Importing a source opts the current layer into the behavior users
-        // selected Music for. This is a one-time default: later layer toggles
-        // and clock-mode changes never force Audio Response back on.
+        // A first project source enables the shared default once so inheriting
+        // layers immediately demonstrate the feature. Explicit layer
+        // overrides remain authoritative, and later imports/mode changes never
+        // force either profile back on.
         if (!result.layer_clock && first_music_source) {
-            config_.audio_reactive.enabled = true;
+            config_.audio_reactive_defaults.enabled = true;
         }
         target_clock.mode = pvt::ClockMode::Music;
         target_clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
@@ -8213,7 +8568,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || tabs_->indexOf(synchronization_page_)
                == tabs_->indexOf(wave_page_)
         || swings_group_ == nullptr || swings_group_->parentWidget() == nullptr
+        || project_audio_response_group_ == nullptr
         || audio_response_group_ == nullptr
+        || audio_response_effective_ == nullptr
+        || audio_copy_project_ == nullptr
+        || wave_audio_response_ == nullptr
+        || effect_audio_response_ == nullptr
+        || wave_audio_response_->count() != 3
+        || effect_audio_response_->count() != 3
+        || wave_audio_response_->toolTip().isEmpty()
+        || effect_audio_response_->toolTip().isEmpty()
+        || project_audio_response_group_->toolTip().isEmpty()
+        || audio_response_group_->toolTip().isEmpty()
         || audio_wave_source_->count() < 6
         || audio_wave_source_->count() != audio_effect_source_->count()
         || audio_wave_source_->count() != audio_color_source_->count()) {
@@ -8375,11 +8741,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // A first successful import should make Music visibly useful without an
-    // extra layer toggle. Once the user turns Audio Response off, ordinary
-    // clock-mode changes must preserve that explicit choice.
+    // A first successful project import enables the shared default so all
+    // inheriting layers become useful without creating surprise overrides.
+    // Once the user turns that default off, ordinary clock-mode changes and
+    // replacement imports must preserve the explicit choice.
     config_.clock.music = {};
     config_.audio_reactive.enabled = false;
+    config_.audio_reactive_override_enabled = false;
+    config_.audio_reactive_defaults.enabled = false;
     syncActiveRender();
     syncProjectGlobals();
     MusicAnalysisResult imported_result;
@@ -8395,22 +8764,30 @@ bool MainWindow::runSmokeChecks(QString* error) {
         std::make_shared<pvt::ProjectDocument>(*document_);
     finishMusicAnalysis(imported_result);
     if (config_.clock.mode != pvt::ClockMode::Music
-        || !config_.audio_reactive.enabled || activeLayer() == nullptr
-        || !activeLayer()->render.audio_reactive.enabled
-        || !audio_response_group_->isChecked()) {
+        || !config_.audio_reactive_defaults.enabled
+        || config_.audio_reactive_override_enabled
+        || activeLayer() == nullptr
+        || activeLayer()->render.audio_reactive_override_enabled
+        || !project_audio_response_group_->isChecked()
+        || audio_response_group_->isChecked()
+        || !audio_response_effective_->text().contains(
+            tr("project-wide defaults"), Qt::CaseInsensitive)
+        || !audio_copy_project_->isEnabled()) {
         if (error != nullptr) {
-            *error = tr("A first music import did not enable Audio Response for the active layer.");
+            *error = tr("A first music import did not enable inheritable project-wide Audio Response correctly.");
         }
         return false;
     }
-    audio_response_group_->setChecked(false);
+    project_audio_response_group_->setChecked(false);
     const int default_clock = clock_mode_->findData(
         static_cast<int>(pvt::ClockMode::Default));
     const int music_clock = clock_mode_->findData(
         static_cast<int>(pvt::ClockMode::Music));
     clock_mode_->setCurrentIndex(default_clock);
     clock_mode_->setCurrentIndex(music_clock);
-    if (config_.audio_reactive.enabled || audio_response_group_->isChecked()) {
+    if (config_.audio_reactive_defaults.enabled
+        || project_audio_response_group_->isChecked()
+        || config_.audio_reactive_override_enabled) {
         if (error != nullptr) {
             *error = tr("Returning to Music overrode the user's Audio Response choice.");
         }
@@ -8424,7 +8801,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
     replacement_result.staged_document =
         std::make_shared<pvt::ProjectDocument>(*document_);
     finishMusicAnalysis(replacement_result);
-    if (config_.audio_reactive.enabled || audio_response_group_->isChecked()) {
+    if (config_.audio_reactive_defaults.enabled
+        || project_audio_response_group_->isChecked()
+        || config_.audio_reactive_override_enabled) {
         if (error != nullptr) {
             *error = tr("Replacing music overrode the user's Audio Response choice.");
         }
@@ -8478,23 +8857,106 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
-    const bool original_audio_enabled = config_.audio_reactive.enabled;
-    audio_response_group_->setChecked(!original_audio_enabled);
-    if (config_.audio_reactive.enabled == original_audio_enabled
+    const bool original_audio_override =
+        config_.audio_reactive_override_enabled;
+    audio_response_group_->setChecked(!original_audio_override);
+    if (config_.audio_reactive_override_enabled == original_audio_override
         || activeLayer() == nullptr
-        || activeLayer()->render.audio_reactive.enabled
-               != config_.audio_reactive.enabled) {
+        || activeLayer()->render.audio_reactive_override_enabled
+               != config_.audio_reactive_override_enabled) {
         if (error != nullptr) {
-            *error = tr("The active-layer Audio Response toggle was not synchronized.");
+            *error = tr("The active-layer Audio Response override toggle was not synchronized.");
         }
         return false;
     }
     undo_stack_->undo();
-    if (config_.audio_reactive.enabled != original_audio_enabled) {
+    if (config_.audio_reactive_override_enabled != original_audio_override) {
         if (error != nullptr) {
-            *error = tr("Undo did not restore the active-layer Audio Response toggle.");
+            *error = tr("Undo did not restore the active-layer Audio Response override toggle.");
         }
         return false;
+    }
+
+    const bool original_project_audio =
+        config_.audio_reactive_defaults.enabled;
+    project_audio_response_group_->setChecked(!original_project_audio);
+    if (config_.audio_reactive_defaults.enabled == original_project_audio
+        || project_.canvas.audio_reactive_defaults.enabled
+               != config_.audio_reactive_defaults.enabled) {
+        if (error != nullptr) {
+            *error = tr("The project-wide Audio Response toggle was not synchronized.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.audio_reactive_defaults.enabled != original_project_audio) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore the project-wide Audio Response toggle.");
+        }
+        return false;
+    }
+
+    const pvt::AudioReactiveConfig original_layer_audio =
+        config_.audio_reactive;
+    audio_copy_project_->click();
+    if (!config_.audio_reactive_override_enabled
+        || !audio_response_group_->isChecked()
+        || config_.audio_reactive.enabled
+               != config_.audio_reactive_defaults.enabled
+        || config_.audio_reactive.wave_amount
+               != config_.audio_reactive_defaults.wave_amount) {
+        if (error != nullptr) {
+            *error = tr("Copying project Audio Response into a layer override failed.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.audio_reactive_override_enabled != original_audio_override
+        || config_.audio_reactive.enabled != original_layer_audio.enabled
+        || config_.audio_reactive.wave_amount
+               != original_layer_audio.wave_amount) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore the pre-copy layer Audio Response state.");
+        }
+        return false;
+    }
+
+    // Per-item routing is editable only for synchronized items.
+    if (const auto wave = selectedWaveIndex()) {
+        const bool synchronized = config_.waves[*wave].synchronized;
+        config_.waves[*wave].synchronized = false;
+        loadSelectedWave();
+        const bool disabled_when_free = !wave_audio_response_->isEnabled();
+        config_.waves[*wave].synchronized = true;
+        loadSelectedWave();
+        const bool enabled_when_synchronized =
+            wave_audio_response_->isEnabled();
+        config_.waves[*wave].synchronized = synchronized;
+        loadSelectedWave();
+        if (!disabled_when_free || !enabled_when_synchronized) {
+            if (error != nullptr) {
+                *error = tr("Wave Audio Response did not follow synchronization state.");
+            }
+            return false;
+        }
+    }
+    if (const auto effect = selectedEffectIndex()) {
+        const bool synchronized = config_.effects[*effect].synchronized;
+        config_.effects[*effect].synchronized = false;
+        loadSelectedEffect();
+        const bool disabled_when_free = !effect_audio_response_->isEnabled();
+        config_.effects[*effect].synchronized = true;
+        loadSelectedEffect();
+        const bool enabled_when_synchronized =
+            effect_audio_response_->isEnabled();
+        config_.effects[*effect].synchronized = synchronized;
+        loadSelectedEffect();
+        if (!disabled_when_free || !enabled_when_synchronized) {
+            if (error != nullptr) {
+                *error = tr("Effect Audio Response did not follow synchronization state.");
+            }
+            return false;
+        }
     }
 
     const QString path = directory.filePath(QStringLiteral("round-trip.pvt"));
