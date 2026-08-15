@@ -20,9 +20,10 @@ inline constexpr const char* kMusicSourceAttachmentId = "music.source";
 
 struct ProjectAttachmentCache;
 
-// One logical use of an embedded file. New bundle versions store it under
-// assets/<sha256>/<original-filename>, preserving the user-facing filename and
-// extension while retaining a collision-safe content-identity directory.
+// One logical use of an embedded file. Bundle storage keeps one physical file
+// beneath assets/<sha256>/ for each unique byte identity. Logical references
+// retain their own user-facing filename and extension even when names alias the
+// same physical object.
 // local_path and bundle_path are managed runtime locations and are never
 // serialized or included in semantic project digests.
 struct ProjectAttachment {

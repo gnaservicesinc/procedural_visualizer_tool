@@ -1181,6 +1181,127 @@ bool split_render_output_and_music(
         canvas, output, render_output, error);
 }
 
+bool split_layer_and_music(
+    const RenderData& render,
+    const std::vector<CubicMotionPath>& motion_paths,
+    std::string& layer_bytes,
+    std::string& analysis_bytes,
+    std::string& analysis_digest,
+    std::string& complete_layer_digest,
+    std::string* error) {
+    std::string complete_layer;
+    if (!detail::serialize_layer_config(
+            render, complete_layer, error, &motion_paths)
+        || !detail::sha256_hex(
+            complete_layer, complete_layer_digest, error)
+        || !detail::serialize_music_analysis_config(
+            render.layer_clock.clock.music, analysis_bytes, error)) {
+        return false;
+    }
+    MusicAnalysis empty_analysis;
+    std::string empty_bytes;
+    if (!detail::serialize_music_analysis_config(
+            empty_analysis, empty_bytes, error)) {
+        return false;
+    }
+    if (analysis_bytes == empty_bytes) {
+        analysis_bytes.clear();
+        analysis_digest.clear();
+        layer_bytes = std::move(complete_layer);
+        return true;
+    }
+    if (!detail::sha256_hex(analysis_bytes, analysis_digest, error)) {
+        return false;
+    }
+    // Unknown/rejected analysis records need their original codec envelope;
+    // keep those uncommon future-data layers whole rather than risking loss.
+    if (!render.layer_clock.clock.music.compatibility.records.empty()) {
+        analysis_bytes.clear();
+        analysis_digest.clear();
+        layer_bytes = std::move(complete_layer);
+        return true;
+    }
+
+    const std::string complete_header =
+        "PVT_LAYER\t" + std::to_string(detail::kLayerConfigFormatVersion)
+        + "\n";
+    if (complete_layer.rfind(complete_header, 0U) != 0U) {
+        return fail(error,
+                    "Layer codec returned an unexpected header during compaction.");
+    }
+    layer_bytes = "PVT_LAYER_SPLIT\t1\n";
+    std::size_t start = complete_header.size();
+    while (start < complete_layer.size()) {
+        const std::size_t newline = complete_layer.find('\n', start);
+        const std::size_t end = newline == std::string::npos
+                                    ? complete_layer.size() : newline;
+        const std::string_view line(
+            complete_layer.data() + start, end - start);
+        const std::size_t tab = line.find('\t');
+        if (tab == std::string_view::npos) {
+            return fail(error,
+                        "Layer codec returned a malformed record during compaction.");
+        }
+        const std::string_view key = line.substr(0U, tab);
+        if (key.rfind("layer_clock.music.", 0U) != 0U) {
+            layer_bytes.append(line.data(), line.size());
+            layer_bytes.push_back('\n');
+        }
+        if (newline == std::string::npos) break;
+        start = newline + 1U;
+    }
+    return true;
+}
+
+bool deserialize_split_layer_and_music(
+    const std::string& split_layer,
+    const std::string& analysis_bytes,
+    RenderData& render,
+    const std::vector<CubicMotionPath>& motion_paths,
+    std::string* error) {
+    constexpr std::string_view split_header = "PVT_LAYER_SPLIT\t1\n";
+    constexpr std::string_view analysis_header =
+        "PVT_MUSIC_ANALYSIS\t1\n";
+    if (split_layer.rfind(split_header, 0U) != 0U
+        || analysis_bytes.rfind(analysis_header, 0U) != 0U) {
+        return fail(error,
+                    "Layer music-analysis split has an unsupported header.");
+    }
+    std::string combined =
+        "PVT_LAYER\t" + std::to_string(detail::kLayerConfigFormatVersion)
+        + "\n";
+    combined.append(split_layer.data() + split_header.size(),
+                    split_layer.size() - split_header.size());
+    std::size_t start = analysis_header.size();
+    while (start < analysis_bytes.size()) {
+        const std::size_t newline = analysis_bytes.find('\n', start);
+        const std::size_t end = newline == std::string::npos
+                                    ? analysis_bytes.size() : newline;
+        const std::string_view line(
+            analysis_bytes.data() + start, end - start);
+        const std::size_t tab = line.find('\t');
+        if (tab == std::string_view::npos) {
+            return fail(error,
+                        "Shared layer music analysis contains a malformed record.");
+        }
+        const std::string_view key = line.substr(0U, tab);
+        constexpr std::string_view source_prefix = "timing.music.";
+        if (key.rfind(source_prefix, 0U) != 0U) {
+            return fail(error,
+                        "Shared layer music analysis contains an unrelated field.");
+        }
+        combined.append("layer_clock.music.");
+        combined.append(key.data() + source_prefix.size(),
+                        key.size() - source_prefix.size());
+        combined.append(line.data() + tab, line.size() - tab);
+        combined.push_back('\n');
+        if (newline == std::string::npos) break;
+        start = newline + 1U;
+    }
+    return detail::deserialize_layer_config(
+        combined, render, error, &motion_paths);
+}
+
 bool stage_music_analysis(
     detail::BundleFileSet& files, const std::string& analysis_bytes,
     const std::string& analysis_digest, std::string* error) {
@@ -1447,6 +1568,12 @@ std::string version_path(std::uint64_t version, std::string_view filename) {
     return std::to_string(version) + "/" + std::string(filename);
 }
 
+std::string layer_music_analysis_reference_path(
+    std::uint64_t version, std::uint64_t file_id) {
+    return version_path(
+        version, std::to_string(file_id) + ".music_analysis.txt");
+}
+
 bool version_directory_present(const detail::BundleFileSet& files,
                                std::uint64_t version) {
     const std::string prefix = std::to_string(version) + "/";
@@ -1487,14 +1614,6 @@ bool raw_version_digests(const detail::BundleFileSet& files,
     return version_tree_digest(files, version, tree_digest, error);
 }
 
-bool hash_matches(const std::string& bytes, const std::string& expected,
-                  bool& matches, std::string* error) {
-    std::string actual;
-    if (!detail::sha256_hex(bytes, actual, error)) return false;
-    matches = actual == expected;
-    return true;
-}
-
 bool find_file(const detail::BundleFileSet& files, const std::string& path,
                const std::string*& bytes, std::string* error) {
     const auto found = files.files.find(path);
@@ -1505,18 +1624,24 @@ bool find_file(const detail::BundleFileSet& files, const std::string& path,
     return true;
 }
 
-bool project_content_digest(const ProjectConfig& project,
-                            const std::vector<ProjectAttachment>& attachments,
-                            std::string& digest,
-                            std::string* error) {
-    std::string output_bytes;
-    if (!detail::serialize_render_output_config(project.canvas, project.output,
-                                                output_bytes, error)) return false;
+bool project_content_digest_from_component_digests(
+    const ProjectConfig& project,
+    const std::vector<ProjectAttachment>& attachments,
+    const std::string& output_digest,
+    const std::vector<std::string>& layer_digests,
+    std::string& digest,
+    std::string* error) {
+    if (!canonical_hash(output_digest)
+        || layer_digests.size() != project.layers.size()
+        || !std::all_of(
+            layer_digests.begin(), layer_digests.end(),
+            [](const std::string& value) { return canonical_hash(value); })) {
+        return fail(error,
+                    "Could not canonicalize invalid project component digests.");
+    }
     TextBuilder builder("PVT_PROJECT_CONTENT", 1U);
     builder.string("project.uuid", project.uuid);
     builder.string("project.name", project.name);
-    std::string output_digest;
-    if (!detail::sha256_hex(output_bytes, output_digest, error)) return false;
     builder.add("render_output.sha256", output_digest);
     builder.integer("groups.count", project.groups.size());
     for (std::size_t index = 0U; index < project.groups.size(); ++index) {
@@ -1529,12 +1654,6 @@ bool project_content_digest(const ProjectConfig& project,
     builder.integer("layers.count", project.layers.size());
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
-        std::string layer_bytes;
-        if (!detail::serialize_layer_config(
-                layer.render, layer_bytes, error,
-                &project.canvas.motion_paths)) return false;
-        std::string layer_digest;
-        if (!detail::sha256_hex(layer_bytes, layer_digest, error)) return false;
         builder.integer(indexed("layers", index, "file_id"), layer.file_id);
         builder.string(indexed("layers", index, "uuid"), layer.uuid);
         builder.string(indexed("layers", index, "name"), layer.name);
@@ -1546,7 +1665,8 @@ bool project_content_digest(const ProjectConfig& project,
         builder.string(indexed("layers", index, "group_uuid"),
                        layer.group_uuid);
         builder.real(indexed("layers", index, "opacity"), layer.opacity);
-        builder.add(indexed("layers", index, "render_sha256"), layer_digest);
+        builder.add(indexed("layers", index, "render_sha256"),
+                    layer_digests[index]);
     }
     std::vector<const ProjectAttachment*> ordered_attachments;
     ordered_attachments.reserve(attachments.size());
@@ -1582,6 +1702,36 @@ bool project_content_digest(const ProjectConfig& project,
     return detail::sha256_hex(builder.bytes(), digest, error);
 }
 
+bool project_content_digest(const ProjectConfig& project,
+                            const std::vector<ProjectAttachment>& attachments,
+                            std::string& digest,
+                            std::string* error) {
+    std::string output_bytes;
+    std::string output_digest;
+    if (!detail::serialize_render_output_config(
+            project.canvas, project.output, output_bytes, error)
+        || !detail::sha256_hex(output_bytes, output_digest, error)) {
+        return false;
+    }
+    std::vector<std::string> layer_digests;
+    layer_digests.reserve(project.layers.size());
+    for (const LayerConfig& layer : project.layers) {
+        std::string layer_bytes;
+        std::string layer_digest;
+        if (!detail::serialize_layer_config(
+                layer.render, layer_bytes, error,
+                &project.canvas.motion_paths)
+            || !detail::sha256_hex(
+                layer_bytes, layer_digest, error)) {
+            return false;
+        }
+        layer_digests.push_back(std::move(layer_digest));
+    }
+    return project_content_digest_from_component_digests(
+        project, attachments, output_digest, layer_digests,
+        digest, error);
+}
+
 struct CachedGlobalConfig {
     CanvasLoopConfig canvas;
     ExportConfig output;
@@ -1591,7 +1741,16 @@ struct CachedGlobalConfig {
 struct BundleValidationCache {
     std::map<std::string, std::string> asset_digests;
     std::map<std::string, std::string> analysis_digests;
+    std::map<std::string, MusicAnalysis> music_analyses;
+    std::map<std::string, std::string> music_analysis_placeholders;
     std::map<std::string, CachedGlobalConfig> global_configs;
+    std::map<std::string, RenderData> layer_configs;
+    std::map<std::string, std::string> layer_complete_digests;
+};
+
+struct ProjectComponentDigests {
+    std::string output;
+    std::vector<std::string> layers;
 };
 
 bool load_snapshot(const detail::BundleFileSet& files,
@@ -1603,7 +1762,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
                    bool& externally_modified,
                    std::string* error,
                    std::vector<ProjectAttachment>* snapshot_attachments = nullptr,
-                   BundleValidationCache* validation_cache = nullptr) {
+                   BundleValidationCache* validation_cache = nullptr,
+                   ProjectComponentDigests* component_digests = nullptr) {
     const std::string* metadata_bytes = nullptr;
     if (!find_file(files, version_path(version, "metadata.txt"),
                    metadata_bytes, error)) return false;
@@ -1627,6 +1787,18 @@ bool load_snapshot(const detail::BundleFileSet& files,
             preserved->second.observed_metadata_digest == actual_metadata_digest;
     }
     bool external = !metadata_recorded;
+    std::string actual_tree_digest;
+    if (!version_tree_digest(
+            files, version, actual_tree_digest, error)) {
+        return false;
+    }
+    const auto recorded_tree = root.version_tree_digests.find(version);
+    bool tree_recorded = recorded_tree != root.version_tree_digests.end()
+                         && recorded_tree->second == actual_tree_digest;
+    if (indexed_digest == root.version_digests.end()
+        && preserved != root.preserved_versions.end()) {
+        tree_recorded = preserved->second.tree_digest == actual_tree_digest;
+    }
 
     const std::string* output_bytes = nullptr;
     if (!find_file(files, version_path(version, "render_output.txt"),
@@ -1784,6 +1956,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
     if (has_analysis_reference) {
         expected_paths.insert(analysis_reference_path);
     }
+    std::vector<std::string> canonical_layer_digests;
+    canonical_layer_digests.reserve(candidate.layers.size());
     for (std::size_t index = 0U; index < candidate.layers.size(); ++index) {
         LayerConfig& layer = candidate.layers[index];
         const std::string filename = std::to_string(layer.file_id) + ".pvt";
@@ -1791,16 +1965,225 @@ bool load_snapshot(const detail::BundleFileSet& files,
         expected_paths.insert(path);
         const std::string* layer_bytes = nullptr;
         if (!find_file(files, path, layer_bytes, error)) return false;
-        bool layer_hash_matches = false;
-        if (!hash_matches(*layer_bytes, manifest.layer_digests[index],
-                          layer_hash_matches, error)) return false;
-        external = external || !layer_hash_matches;
-        if (!detail::deserialize_layer_config(
-                *layer_bytes, layer.render, &codec_error,
-                &candidate.canvas.motion_paths)) {
-            return fail(error, "Could not recover layer '" + layer.name
-                                   + "': " + codec_error);
+
+        std::string stored_layer_digest;
+        if (!detail::sha256_hex(
+                *layer_bytes, stored_layer_digest, error)) {
+            return false;
         }
+        const std::string layer_analysis_reference_path =
+            layer_music_analysis_reference_path(version, layer.file_id);
+        const auto layer_analysis_reference =
+            files.files.find(layer_analysis_reference_path);
+        const bool has_layer_analysis_reference =
+            layer_analysis_reference != files.files.end();
+        const std::string* layer_analysis_bytes = nullptr;
+        std::string actual_layer_analysis_digest;
+        bool layer_analysis_identity_matches = true;
+        MusicAnalysis local_layer_analysis;
+        std::string local_layer_analysis_placeholder;
+        const MusicAnalysis* shared_layer_analysis = nullptr;
+        const std::string* layer_analysis_placeholder = nullptr;
+        if (has_layer_analysis_reference) {
+            expected_paths.insert(layer_analysis_reference_path);
+            std::string referenced_digest;
+            if (!parse_music_analysis_reference(
+                    layer_analysis_reference->second,
+                    referenced_digest, error)) {
+                return false;
+            }
+            const std::string object_path =
+                music_analysis_asset_path(referenced_digest);
+            const auto object = files.files.find(object_path);
+            if (object == files.files.end()) {
+                return fail(error,
+                            "Layer references missing shared music analysis '"
+                                + object_path + "'.");
+            }
+            layer_analysis_bytes = &object->second;
+            bool found_cached_analysis = false;
+            if (validation_cache != nullptr) {
+                const auto cached =
+                    validation_cache->analysis_digests.find(object_path);
+                if (cached != validation_cache->analysis_digests.end()) {
+                    actual_layer_analysis_digest = cached->second;
+                    found_cached_analysis = true;
+                }
+            }
+            if (!found_cached_analysis) {
+                if (!detail::sha256_hex(
+                        object->second, actual_layer_analysis_digest, error)) {
+                    return false;
+                }
+                if (validation_cache != nullptr) {
+                    validation_cache->analysis_digests.emplace(
+                        object_path, actual_layer_analysis_digest);
+                }
+            }
+            layer_analysis_identity_matches =
+                actual_layer_analysis_digest == referenced_digest;
+            external = external || !layer_analysis_identity_matches;
+
+            if (validation_cache != nullptr) {
+                auto parsed = validation_cache->music_analyses.find(
+                    actual_layer_analysis_digest);
+                if (parsed == validation_cache->music_analyses.end()) {
+                    MusicAnalysis analysis;
+                    if (!detail::deserialize_music_analysis_config(
+                            object->second, analysis, error)) {
+                        return false;
+                    }
+                    parsed = validation_cache->music_analyses.emplace(
+                        actual_layer_analysis_digest,
+                        std::move(analysis)).first;
+                }
+                shared_layer_analysis = &parsed->second;
+                auto placeholder =
+                    validation_cache->music_analysis_placeholders.find(
+                        actual_layer_analysis_digest);
+                if (placeholder
+                    == validation_cache->music_analysis_placeholders.end()) {
+                    MusicAnalysis compact = *shared_layer_analysis;
+                    if (compact.beat_times_seconds.size() > 1U) {
+                        compact.beat_times_seconds.resize(1U);
+                    }
+                    if (compact.tempo_points.size() > 1U) {
+                        compact.tempo_points.resize(1U);
+                    }
+                    compact.feature_samples.clear();
+                    compact.compatibility = {};
+                    std::string bytes;
+                    if (!detail::serialize_music_analysis_config(
+                            compact, bytes, error)) {
+                        return false;
+                    }
+                    placeholder =
+                        validation_cache->music_analysis_placeholders.emplace(
+                            actual_layer_analysis_digest,
+                            std::move(bytes)).first;
+                }
+                layer_analysis_placeholder = &placeholder->second;
+            } else {
+                if (!detail::deserialize_music_analysis_config(
+                        object->second, local_layer_analysis, error)) {
+                    return false;
+                }
+                MusicAnalysis compact = local_layer_analysis;
+                if (compact.beat_times_seconds.size() > 1U) {
+                    compact.beat_times_seconds.resize(1U);
+                }
+                if (compact.tempo_points.size() > 1U) {
+                    compact.tempo_points.resize(1U);
+                }
+                compact.feature_samples.clear();
+                compact.compatibility = {};
+                if (!detail::serialize_music_analysis_config(
+                        compact, local_layer_analysis_placeholder, error)) {
+                    return false;
+                }
+                shared_layer_analysis = &local_layer_analysis;
+                layer_analysis_placeholder =
+                    &local_layer_analysis_placeholder;
+            }
+        }
+
+        const std::string layer_cache_key =
+            stored_layer_digest + ":" + actual_layer_analysis_digest;
+        bool found_cached_layer = false;
+        if (validation_cache != nullptr) {
+            const auto cached =
+                validation_cache->layer_configs.find(layer_cache_key);
+            if (cached != validation_cache->layer_configs.end()) {
+                layer.render = cached->second;
+                found_cached_layer = true;
+            }
+        }
+        if (!found_cached_layer) {
+            const bool decoded = layer_analysis_bytes == nullptr
+                ? detail::deserialize_layer_config(
+                    *layer_bytes, layer.render, &codec_error,
+                    &candidate.canvas.motion_paths)
+                : deserialize_split_layer_and_music(
+                    *layer_bytes, *layer_analysis_placeholder, layer.render,
+                    candidate.canvas.motion_paths, &codec_error);
+            if (!decoded) {
+                return fail(error,
+                            "Could not recover layer '" + layer.name
+                                + "': " + codec_error);
+            }
+            if (validation_cache != nullptr) {
+                RenderData cached_render = layer.render;
+                if (layer_analysis_bytes != nullptr) {
+                    cached_render.layer_clock.clock.music = {};
+                }
+                validation_cache->layer_configs.emplace(
+                    layer_cache_key, std::move(cached_render));
+            }
+        }
+        if (shared_layer_analysis != nullptr) {
+            layer.render.layer_clock.clock.music = *shared_layer_analysis;
+        }
+
+        bool layer_hash_matches =
+            stored_layer_digest == manifest.layer_digests[index];
+        std::string canonical_layer_digest = stored_layer_digest;
+        if (has_layer_analysis_reference && tree_recorded
+            && layer_analysis_identity_matches) {
+            // The exact compact layer/reference tree is authenticated by the
+            // root tree digest, and the shared object matches its content
+            // identity. The migration already proved that this pair
+            // reconstructs the manifest's complete-layer digest.
+            layer_hash_matches = true;
+            canonical_layer_digest = manifest.layer_digests[index];
+        } else if (has_layer_analysis_reference) {
+            std::string reconstructed_digest;
+            bool found_cached_digest = false;
+            if (validation_cache != nullptr) {
+                const auto cached =
+                    validation_cache->layer_complete_digests.find(
+                        layer_cache_key);
+                if (cached
+                    != validation_cache->layer_complete_digests.end()) {
+                    reconstructed_digest = cached->second;
+                    found_cached_digest = true;
+                }
+            }
+            if (!found_cached_digest) {
+                std::string reconstructed_layer;
+                if (!detail::serialize_layer_config(
+                        layer.render, reconstructed_layer, error,
+                        &candidate.canvas.motion_paths)
+                    || !detail::sha256_hex(
+                        reconstructed_layer, reconstructed_digest, error)) {
+                    return false;
+                }
+                if (validation_cache != nullptr) {
+                    validation_cache->layer_complete_digests.emplace(
+                        layer_cache_key, reconstructed_digest);
+                }
+            }
+            layer_hash_matches =
+                reconstructed_digest == manifest.layer_digests[index];
+            canonical_layer_digest = std::move(reconstructed_digest);
+        } else {
+            const std::string current_layer_header =
+                "PVT_LAYER\t"
+                + std::to_string(detail::kLayerConfigFormatVersion) + "\n";
+            if (!layer_hash_matches
+                || layer_bytes->rfind(current_layer_header, 0U) != 0U) {
+                std::string canonical_layer;
+                if (!detail::serialize_layer_config(
+                        layer.render, canonical_layer, error,
+                        &candidate.canvas.motion_paths)
+                    || !detail::sha256_hex(
+                        canonical_layer, canonical_layer_digest, error)) {
+                    return false;
+                }
+            }
+        }
+        external = external || !layer_hash_matches;
+        canonical_layer_digests.push_back(
+            std::move(canonical_layer_digest));
     }
     if (manifest.format_version >= 2U) {
         const auto attachment_for = [&manifest](std::string_view reference_id)
@@ -1875,6 +2258,43 @@ bool load_snapshot(const detail::BundleFileSet& files,
         std::string asset_path = expected_asset_path;
         auto asset = files.files.find(asset_path);
         bool renamed = false;
+        if (asset == files.files.end() && manifest.format_version >= 3U) {
+            // One physical object per digest is sufficient even when older
+            // immutable manifests remember different user-facing filenames.
+            // Prefer any byte-identical object in the digest directory while
+            // preserving this version's recorded display basename.
+            const std::string directory = legacy_attachment_asset_path(
+                                              attachment.sha256)
+                                          + "/";
+            for (auto entry = files.files.lower_bound(directory);
+                 entry != files.files.end()
+                 && entry->first.compare(0U, directory.size(), directory) == 0;
+                 ++entry) {
+                if (entry->first.size() >= 19U
+                    && entry->first.compare(
+                        entry->first.size() - 19U, 19U,
+                        "/music_analysis.txt") == 0) {
+                    continue;
+                }
+                std::string actual;
+                const auto verified = verified_assets.find(entry->first);
+                if (verified == verified_assets.end()) {
+                    if (!detail::sha256_hex(
+                            entry->second, actual, error)) {
+                        return false;
+                    }
+                    verified_assets.emplace(entry->first, actual);
+                } else {
+                    actual = verified->second;
+                }
+                if (actual == attachment.sha256
+                    && entry->second.size() == attachment.size_bytes) {
+                    asset_path = entry->first;
+                    asset = entry;
+                    break;
+                }
+            }
+        }
         if (asset == files.files.end() && manifest.format_version >= 3U) {
             const auto already_resolved = resolved_missing_asset_paths.find(
                 expected_asset_path);
@@ -1999,16 +2419,10 @@ bool load_snapshot(const detail::BundleFileSet& files,
     if (!validation.ok) {
         return fail(error, "Version project failed validation: " + validation.message);
     }
-    if (!project_content_digest(candidate, manifest.attachments,
-                                semantic_digest, error)) return false;
-    std::string actual_tree_digest;
-    if (!version_tree_digest(files, version, actual_tree_digest, error)) return false;
-    const auto recorded_tree = root.version_tree_digests.find(version);
-    bool tree_recorded = recorded_tree != root.version_tree_digests.end()
-                         && recorded_tree->second == actual_tree_digest;
-    if (indexed_digest == root.version_digests.end()
-        && preserved != root.preserved_versions.end()) {
-        tree_recorded = preserved->second.tree_digest == actual_tree_digest;
+    if (!project_content_digest_from_component_digests(
+            candidate, manifest.attachments, canonical_output_digest,
+            canonical_layer_digests, semantic_digest, error)) {
+        return false;
     }
     const bool changed_since_recorded = !tree_recorded;
     external = external || changed_since_recorded;
@@ -2017,6 +2431,10 @@ bool load_snapshot(const detail::BundleFileSet& files,
     project = std::move(candidate);
     if (snapshot_attachments != nullptr) {
         *snapshot_attachments = std::move(manifest.attachments);
+    }
+    if (component_digests != nullptr) {
+        component_digests->output = canonical_output_digest;
+        component_digests->layers = std::move(canonical_layer_digests);
     }
     version_info = std::move(manifest.info);
     externally_modified = external;
@@ -2522,13 +2940,32 @@ bool build_version(ProjectConfig project,
     manifest.layer_digests.reserve(project.layers.size());
     for (const LayerConfig& layer : project.layers) {
         std::string layer_bytes;
+        std::string layer_analysis_bytes;
+        std::string layer_analysis_digest;
         std::string digest;
-        if (!detail::serialize_layer_config(
-                layer.render, layer_bytes, error,
-                &project.canvas.motion_paths)
-            || !detail::sha256_hex(layer_bytes, digest, error)) return false;
+        if (!split_layer_and_music(
+                layer.render, project.canvas.motion_paths,
+                layer_bytes, layer_analysis_bytes,
+                layer_analysis_digest,
+                digest, error)) {
+            return false;
+        }
         files.files[version_path(number, std::to_string(layer.file_id) + ".pvt")] =
             std::move(layer_bytes);
+        if (!layer_analysis_digest.empty()) {
+            if (!stage_music_analysis(
+                    files, layer_analysis_bytes,
+                    layer_analysis_digest, error)) {
+                return false;
+            }
+            std::string reference;
+            if (!serialize_music_analysis_reference(
+                    layer_analysis_digest, reference, error)) {
+                return false;
+            }
+            files.files[layer_music_analysis_reference_path(
+                number, layer.file_id)] = std::move(reference);
+        }
         manifest.layer_digests.push_back(std::move(digest));
     }
     std::string metadata_bytes;
@@ -2607,6 +3044,119 @@ bool compact_embedded_music_analysis(
         files.transactional_updates.insert(reference_path);
         version.changed_since_recorded = true;
         compacted = true;
+    }
+    return true;
+}
+
+bool compact_embedded_layer_music_analysis(
+    detail::BundleFileSet& files,
+    const RootMetadata& root,
+    std::vector<BundleVersionInfo>& versions,
+    bool& compacted,
+    std::string* error) {
+    compacted = false;
+    struct CompactLayer {
+        std::string layer_bytes;
+        std::string analysis_bytes;
+        std::string analysis_digest;
+    };
+    std::map<std::string, CompactLayer> compact_by_complete_digest;
+    BundleValidationCache validation_cache;
+    for (BundleVersionInfo& version : versions) {
+        if (!version.valid || !version.indexed) continue;
+        const auto metadata = files.files.find(
+            version_path(version.number, "metadata.txt"));
+        if (metadata == files.files.end()) continue;
+        VersionManifest manifest;
+        std::string load_error;
+        if (!parse_version_manifest(
+                metadata->second, manifest, &load_error)) {
+            continue;
+        }
+        const bool has_embedded_layer_analysis = std::any_of(
+            manifest.layers.begin(), manifest.layers.end(),
+            [&files, &version](const LayerConfig& layer) {
+                if (files.files.find(
+                    layer_music_analysis_reference_path(
+                        version.number, layer.file_id))
+                    != files.files.end()) {
+                    return false;
+                }
+                const auto stored = files.files.find(version_path(
+                    version.number,
+                    std::to_string(layer.file_id) + ".pvt"));
+                if (stored == files.files.end()) return false;
+                constexpr std::string_view key =
+                    "layer_clock.music.source_sha256\t";
+                const std::size_t at = stored->second.find(key);
+                return at != std::string::npos
+                       && at + key.size() < stored->second.size()
+                       && stored->second[at + key.size()] != '\n'
+                       && stored->second[at + key.size()] != '\r';
+            });
+        if (!has_embedded_layer_analysis) continue;
+
+        ProjectConfig project;
+        BundleVersionInfo loaded_info;
+        std::string semantic_digest;
+        bool external = false;
+        if (!load_snapshot(
+                files, root, version.number, project, loaded_info,
+                semantic_digest, external, &load_error, nullptr,
+                &validation_cache)) {
+            continue;
+        }
+        if (manifest.layers.size() != project.layers.size()
+            || manifest.layer_digests.size() != project.layers.size()) {
+            continue;
+        }
+        for (std::size_t index = 0U; index < project.layers.size(); ++index) {
+            const std::uint64_t file_id = manifest.layers[index].file_id;
+            const std::string reference_path =
+                layer_music_analysis_reference_path(version.number, file_id);
+            if (files.files.find(reference_path) != files.files.end()) {
+                continue;
+            }
+            const std::string layer_path = version_path(
+                version.number, std::to_string(file_id) + ".pvt");
+            if (files.files.find(layer_path) == files.files.end()) continue;
+
+            auto cached = compact_by_complete_digest.find(
+                manifest.layer_digests[index]);
+            if (cached == compact_by_complete_digest.end()) {
+                CompactLayer compact;
+                std::string complete_digest;
+                if (!split_layer_and_music(
+                        project.layers[index].render,
+                        project.canvas.motion_paths,
+                        compact.layer_bytes, compact.analysis_bytes,
+                        compact.analysis_digest, complete_digest, error)) {
+                    return false;
+                }
+                if (complete_digest != manifest.layer_digests[index]
+                    || compact.analysis_digest.empty()) {
+                    continue; // Preserve direct edits and analysis-free layers.
+                }
+                cached = compact_by_complete_digest.emplace(
+                    manifest.layer_digests[index], std::move(compact)).first;
+            }
+            if (!stage_music_analysis(
+                    files, cached->second.analysis_bytes,
+                    cached->second.analysis_digest, error)) {
+                return false;
+            }
+            std::string reference;
+            if (!serialize_music_analysis_reference(
+                    cached->second.analysis_digest, reference, error)) {
+                return false;
+            }
+            files.files[layer_path] = cached->second.layer_bytes;
+            files.files[reference_path] = std::move(reference);
+            files.transactional_updates.insert(layer_path);
+            files.transactional_updates.insert(reference_path);
+            version.changed_since_recorded = true;
+            compacted = true;
+        }
     }
     return true;
 }
@@ -3156,9 +3706,11 @@ bool load_project_document(const std::string& path,
             std::string semantic_digest;
             bool version_external = false;
             std::string load_error;
+            ProjectComponentDigests component_digests;
             if (!load_snapshot(files, root, candidate_number, project, info,
                                semantic_digest, version_external, &load_error,
-                               &snapshot_attachments, &validation_cache)) {
+                               &snapshot_attachments, &validation_cache,
+                               &component_digests)) {
                 last_failure = std::move(load_error);
                 continue;
             }
@@ -3167,9 +3719,11 @@ bool load_project_document(const std::string& path,
                 display_name_external = project.name != root.project_name;
                 if (display_name_external) {
                     project.name = root.project_name;
-                    if (!project_content_digest(project, snapshot_attachments,
-                                                semantic_digest,
-                                                &load_error)) {
+                    if (!project_content_digest_from_component_digests(
+                            project, snapshot_attachments,
+                            component_digests.output,
+                            component_digests.layers,
+                            semantic_digest, &load_error)) {
                         last_failure = std::move(load_error);
                         continue;
                     }
@@ -3179,14 +3733,21 @@ bool load_project_document(const std::string& path,
                                           || candidate_number != current
                                           || current_digest != info.metadata_digest;
             ProjectDocument document;
+            const bool attachment_content_changed = std::any_of(
+                snapshot_attachments.begin(), snapshot_attachments.end(),
+                [](const ProjectAttachment& attachment) {
+                    return attachment.externally_modified;
+                });
             if (!materialize_snapshot_attachments(
                     files, project, snapshot_attachments,
                     document.attachment_cache, &load_error)) {
                 last_failure = std::move(load_error);
                 continue;
             }
-            if (!project_content_digest(project, snapshot_attachments,
-                                        semantic_digest, &load_error)) {
+            if (attachment_content_changed
+                && !project_content_digest(
+                    project, snapshot_attachments,
+                    semantic_digest, &load_error)) {
                 last_failure = std::move(load_error);
                 continue;
             }
@@ -3667,20 +4228,31 @@ bool stage_attachment_assets(const ProjectDocument& document,
                              std::string* error) {
     std::set<std::string> staged;
     for (const ProjectAttachment& attachment : document.attachments) {
-        const std::string asset_path = attachment_asset_path(
-            attachment.sha256, attachment.basename);
-        if (!staged.insert(asset_path).second) continue;
-        const auto existing = files.files.find(asset_path);
-        if (existing != files.files.end()) {
-            std::string actual;
-            if (existing->second.size() != attachment.size_bytes
-                || !detail::sha256_hex(existing->second, actual, error)
-                || actual != attachment.sha256) {
-                return fail(error,
-                            "Existing embedded asset does not match its content identity.");
+        if (!staged.insert(attachment.sha256).second) continue;
+        const std::string identity_directory =
+            legacy_attachment_asset_path(attachment.sha256) + "/";
+        bool found_identity = false;
+        for (auto existing = files.files.lower_bound(identity_directory);
+             existing != files.files.end()
+             && existing->first.compare(
+                    0U, identity_directory.size(), identity_directory) == 0;
+             ++existing) {
+            if (existing->first.size() >= 19U
+                && existing->first.compare(
+                    existing->first.size() - 19U, 19U,
+                    "/music_analysis.txt") == 0) {
+                continue;
             }
-            continue;
+            std::string actual;
+            if (existing->second.size() != attachment.size_bytes) continue;
+            if (!detail::sha256_hex(existing->second, actual, error)) {
+                return false;
+            }
+            if (actual != attachment.sha256) continue;
+            found_identity = true;
+            break;
         }
+        if (found_identity) continue;
         if (attachment.local_path.empty()) {
             return fail(error, "New project attachment has no readable local source.");
         }
@@ -3696,7 +4268,63 @@ bool stage_attachment_assets(const ProjectDocument& document,
             return fail(error,
                         "Materialized attachment changed before it could be saved.");
         }
-        files.files.emplace(asset_path, std::move(bytes));
+        std::string asset_path = attachment_asset_path(
+            attachment.sha256, attachment.basename);
+        if (files.files.find(asset_path) != files.files.end()) {
+            asset_path = attachment_asset_path(
+                attachment.sha256,
+                attachment.sha256 + safe_cache_extension(attachment.basename));
+        }
+        if (!files.files.emplace(asset_path, std::move(bytes)).second) {
+            return fail(error,
+                        "Could not choose a unique path for an embedded asset.");
+        }
+    }
+    return true;
+}
+
+bool compact_duplicate_attachment_assets(
+    detail::BundleFileSet& files,
+    const std::vector<ProjectAttachment>& current_attachments,
+    bool& compacted,
+    std::string* error) {
+    std::map<std::string, std::vector<std::string>> paths_by_digest;
+    for (const auto& entry : files.files) {
+        if (entry.first.rfind("assets/", 0U) != 0U) continue;
+        const std::size_t slash = entry.first.find('/', 7U);
+        if (slash == std::string::npos) continue; // Keep legacy v2 objects.
+        const std::string digest = entry.first.substr(7U, slash - 7U);
+        if (!canonical_hash(digest)
+            || entry.first.substr(slash + 1U) == "music_analysis.txt") {
+            continue;
+        }
+        std::string actual;
+        if (!detail::sha256_hex(entry.second, actual, error)) return false;
+        if (actual == digest) {
+            paths_by_digest[digest].push_back(entry.first);
+        }
+    }
+
+    for (auto& group : paths_by_digest) {
+        std::vector<std::string>& paths = group.second;
+        if (paths.size() < 2U) continue;
+        std::sort(paths.begin(), paths.end());
+        std::string keep = paths.front();
+        for (const ProjectAttachment& attachment : current_attachments) {
+            if (attachment.sha256 != group.first) continue;
+            const std::string preferred = attachment_asset_path(
+                attachment.sha256, attachment.basename);
+            if (std::binary_search(paths.begin(), paths.end(), preferred)) {
+                keep = preferred;
+                break;
+            }
+        }
+        for (const std::string& path : paths) {
+            if (path == keep) continue;
+            files.files.erase(path);
+            files.transactional_removals.insert(path);
+            compacted = true;
+        }
     }
     return true;
 }
@@ -3870,9 +4498,21 @@ bool save_with_reason(ProjectDocument& document,
                 files, root, root_external, versions, error)) return false;
     }
 
-    bool compacted_storage = false;
+    bool compacted_global_analysis = false;
+    bool compacted_layer_analysis = false;
+    bool compacted_duplicate_assets = false;
     if (!compact_embedded_music_analysis(
-            files, versions, compacted_storage, error)) return false;
+            files, versions, compacted_global_analysis, error)
+        || !compact_embedded_layer_music_analysis(
+            files, root, versions, compacted_layer_analysis, error)
+        || !compact_duplicate_attachment_assets(
+            files, working.attachments,
+            compacted_duplicate_assets, error)) {
+        return false;
+    }
+    const bool compacted_storage = compacted_global_analysis
+                                   || compacted_layer_analysis
+                                   || compacted_duplicate_assets;
 
     if (!destination_exists) {
         files.root_name = portable_root_name(working.project.name);
@@ -3897,8 +4537,32 @@ bool save_with_reason(ProjectDocument& document,
         }
     }
     for (ProjectAttachment& attachment : working.attachments) {
-        attachment.bundle_path = attachment_asset_path(
-            attachment.sha256, attachment.basename);
+        attachment.bundle_path.clear();
+        const std::string identity_directory =
+            legacy_attachment_asset_path(attachment.sha256) + "/";
+        for (auto entry = files.files.lower_bound(identity_directory);
+             entry != files.files.end()
+             && entry->first.compare(
+                    0U, identity_directory.size(), identity_directory) == 0;
+             ++entry) {
+            if (entry->first.size() >= 19U
+                && entry->first.compare(
+                    entry->first.size() - 19U, 19U,
+                    "/music_analysis.txt") == 0) {
+                continue;
+            }
+            std::string actual;
+            if (!detail::sha256_hex(entry->second, actual, error)) return false;
+            if (actual == attachment.sha256
+                && entry->second.size() == attachment.size_bytes) {
+                attachment.bundle_path = entry->first;
+                break;
+            }
+        }
+        if (attachment.bundle_path.empty()) {
+            return fail(error,
+                        "Saved attachment has no physical content object.");
+        }
         attachment.externally_modified = false;
     }
     working.source_path = path;

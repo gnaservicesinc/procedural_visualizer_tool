@@ -421,13 +421,13 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This patch keeps embedded PNG layers on Metal. Stretch, Contain, Cover, and Tile fitting now run in a dedicated GPU source stage, and built-in layer placement, rotation, and scale run on Metal as well. Strict GPU mode therefore supports starting-image animation instead of rejecting it, while the CPU reference path and bounded decoded-image cache remain intact. CPU/Metal regression tests cover every image fit and compact motion path, including the combined path used by real projects.
+          This patch restores unpacked directory projects as a first-class workflow. Open / Import explicitly offers project files or folders, while Save As offers the unpacked form first for large projects so ordinary saves do not rebuild a ZIP archive.
 
-          Starting-image Choose and Clear controls remain available while the source is disabled, with a separate checkbox controlling whether the embedded PNG is used. Automated Cocoa smoke guards against this circular prerequisite.
+          Embedded music, images, OBJ files, and other attachments now keep exactly one physical copy per SHA-256 identity even when historical references retain different filenames. Repeated active-layer music-analysis tables are stored once in the shared content-addressed analysis store; the next explicit Save transactionally compacts existing history without deleting versions.
 
-          This release adds full-resolution, full-quality export of the current timeline frame; per-layer Alpha Over and Alpha Under compositing; and flat layer groups with visibility, preview solo, lock/unlock, rename, membership, safe removal, and whole-folder reordering. Project-version manifest format 5 preserves these settings while formats 1 through 4 continue to load as ungrouped Alpha Over layers.
+          Large-project loading reuses validated component digests and parsed layer/analysis data. On the 18-version Potato Fire regression fixture, the original directory load improved from about 28.1 to 10.8 seconds; after a one-time Save reduced the expanded tree from 419 MiB to 41 MiB, the complete history loaded in about 4.0 seconds.
 
-          A capacity audit also removes arbitrary OBJ and authoring ceilings. OBJ files, records, polygons, meshes, and transparent depth layers now stop only at their concrete index, address-space, allocation, or caller-supplied budget boundary. Canvas/frame and collection counts, project history, metadata/text, attachments, source images, music-analysis tracks, undo history, and worker admission likewise use real representation or platform limits. Checked arithmetic, transactional parsing and writes, portable filename components, codec domains, and hostile-archive protections remain enforced.
+          Save locks remain advisory and stale-writer-safe but are now transient. A successful save removes the exact still-locked sidecar identity before releasing the OS lock, and stale blank sidecars from a crash or older release are reused and cleaned automatically.
 
           It also includes resilient project recovery with lossless unknown-field preservation, embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, adaptive music-responsive editing and export, native macOS movie output, and versioned project bundles.
 

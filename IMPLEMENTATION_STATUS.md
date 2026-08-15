@@ -8,11 +8,27 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.1.2 and has one source of truth in
+The public product version is now 1.1.3 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.1.3 persistence patch restores directory projects as a first-class GUI
+workflow: Open / Import explicitly chooses a project file or unpacked folder,
+and Save As offers the unpacked form first for large projects. Storage now keeps
+one physical copy per attachment SHA-256 even when historical references retain
+different filenames. Repeated active-layer music-analysis tables are split into
+shared content-addressed objects and legacy history is compacted transactionally
+on the next explicit Save. Normal completion removes the transient sibling save
+lock by file identity before unlocking; stale blank locks from crashes or older
+builds are reused and cleaned by the next successful save.
+
+On the supplied 18-version Potato Fire directory, load improved from 28.1 to
+10.8 seconds without modifying the fixture. A cloned explicit-Save migration
+reduced the expanded tree from 419 MiB to 41 MiB, retained all 18 loadable
+versions, collapsed the reported duplicate MP3/PNG objects, and then loaded in
+about 4.0 seconds.
 
 The 1.1.2 patch keeps embedded starting-image layers on Metal: the bounded PNG
 decoder supplies a linear-float source buffer, while Stretch, Contain, Cover,
@@ -214,9 +230,9 @@ and lineage aliases keep descendants valid when an ancestor is externally
 changed or removed. A hidden sibling OS advisory lock plus an expected whole-tree
 digest comparison serializes cooperating writers and closes the stale-save
 check/commit window without placing machine-specific lock state inside bundles.
-The empty lock sidecar intentionally persists: ownership is represented by the
-OS lock, and unlinking the shared file could split concurrent writers across
-different inodes.
+The lock sidecar is transient: cleanup targets the still-locked file identity,
+and a contender verifies path identity after acquiring so normal completion can
+remove the file without splitting cooperating writers across stale inodes.
 
 The sanitized archive/directory root is selected on first Save/Save As and then
 stays stable for that associated bundle when the user chooses to keep its
@@ -245,14 +261,20 @@ to 74,609,085 bytes. A reproduced clean CLI load-and-save fell from 49.97 to
 is dominated by the already single-copy, poorly compressible 69,120,154-byte
 WAV attachment.
 
+The subsequent layer-analysis/asset-identity pass covers the 18-version Potato
+Fire fixture. Before migration, load fell from 28.1 to 10.8 seconds through
+component-digest and parsed-layer reuse. One explicit directory Save compacted
+419 MiB to 41 MiB and removed byte-identical MP3/PNG filename aliases; the
+complete compacted history then loaded in about 4.0 seconds.
+
 All registered files now use a generic readable attachment store. Music, custom
 OBJ meshes, images, and future attachment types are copied into a managed cache
-at import and saved as `assets/<sha256>/<original-filename.ext>`. The digest
-directory prevents collisions while the actual asset retains the exact user
-filename and extension. Valid direct replacements or unambiguous renames are
-loaded dirty and promoted with fresh identity metadata on Save; directly
-replaced music is reanalyzed before acceptance. Legacy version-2 bare-digest
-assets remain readable.
+at import and saved once beneath `assets/<sha256>/`. The digest directory is the
+physical identity; logical version references retain their exact user filenames
+and extensions even when multiple names share those bytes. Valid direct
+replacements or unambiguous renames are loaded dirty and promoted with fresh
+identity metadata on Save; directly replaced music is reanalyzed before
+acceptance. Legacy version-2 bare-digest assets remain readable.
 
 The Qt GUI separates Synchronization, Layer Render, and global Output, adds a
 topmost-first Layers dock, project name/title, blend/alpha/opacity/enable/rename/
@@ -512,12 +534,13 @@ consumers do not inherit minizip requirements.
 - Every numeric version directory is either canonical or explicitly preserved
   by its exact raw-tree digest; no clean validation silently skips orphaned,
   malformed, or externally removed history.
-- Bundle commits hold a hidden sibling advisory lock and compare the complete
-  expected on-disk state while locked; lock sidecars contain no project data.
-- New attachments live at `assets/<sha256>/<original-filename.ext>`. The final
-  component is always the imported filename, while the parent identity prevents
-  collisions. Valid direct replacements are treated as external edits and Save
-  gives them a fresh identity; legacy bare-digest assets remain readable.
+- Bundle commits hold a transient hidden sibling advisory lock and compare the
+  complete expected on-disk state while locked. Successful completion removes
+  that exact lock identity before unlock; sidecars contain no project data.
+- New attachments live once beneath `assets/<sha256>/`; logical references keep
+  imported filenames while identical bytes share one physical file. Valid
+  direct replacements are treated as external edits and Save gives them a
+  fresh identity; legacy bare-digest assets remain readable.
 - Music rendering trusts only cached analysis tied to a valid embedded source
   digest. Relink verifies identity; reanalysis is the explicit content-change
   path. The clock uses event times, never one global BPM estimate.
@@ -526,6 +549,20 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-14 1.1.3 persistence patch passed the complete Qt-enabled Release
+suite 21/21, the independent C++20 suite 20/20, and the AddressSanitizer plus
+UndefinedBehaviorSanitizer suite 20/20; leak detection alone was disabled on
+this macOS beta host. The focused bundle regression verifies transient lock
+cleanup, one physical attachment per SHA-256 identity, shared layer-analysis
+references, legacy migration, and directory/ZIP round trips. The untouched
+18-version Potato Fire directory loaded in 10.8 seconds versus a 28.1-second
+baseline. An explicit Save on a clone retained all 18 loadable versions,
+reduced 419 MiB to 41 MiB, and produced an approximately 4.0-second load. The
+self-contained macOS distribution verifier passed over 27 Mach-O files;
+embedded `pvt-render` reported `1.1.3` and passed self-test, deep strict
+code-sign verification passed, the staged app passed Cocoa smoke, and
+`git diff --check` passed.
 
 The 2026-08-14 1.1.2 patch passed the Qt-enabled Release, C++20, and
 AddressSanitizer plus UndefinedBehaviorSanitizer suites at 21/21 each; leak

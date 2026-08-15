@@ -787,14 +787,7 @@ void test_archive_compare_and_swap(const fs::path& directory) {
         CHECK(::close(lock_descriptor) == 0);
         CHECK(pvt::detail::write_bundle_file_set(
             as_utf8(locked_path), lock_state, &error));
-        CHECK(fs::exists(lock_path));
-        const int probe_descriptor = ::open(lock_path.c_str(), O_RDWR);
-        CHECK(probe_descriptor >= 0);
-        if (probe_descriptor >= 0) {
-            CHECK(::flock(probe_descriptor, LOCK_EX | LOCK_NB) == 0);
-            CHECK(::flock(probe_descriptor, LOCK_UN) == 0);
-            CHECK(::close(probe_descriptor) == 0);
-        }
+        CHECK(!fs::exists(lock_path));
     }
 
     const fs::path victim = directory / "lock-victim.txt";
@@ -1750,6 +1743,9 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(directory_files.files["0/render_output.txt"].find(
               "timing.music.feature_samples") == std::string::npos);
     CHECK(directory_files.files.count("0/music_analysis.txt") == 1U);
+    CHECK(directory_files.files.count("0/0.music_analysis.txt") == 1U);
+    CHECK(directory_files.files["0/0.pvt"].find(
+              "layer_clock.music.feature_samples") == std::string::npos);
     CHECK(directory_files.files.count(".DS_Store") == 0U
           && directory_files.files.count("0/.DS_Store") == 0U);
 
@@ -1911,8 +1907,16 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 2U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 4U);
-    CHECK(directory_files.files.count(readable_asset_path(renamed_attachment)) == 1U);
+    CHECK(asset_entry_count(directory_files) == 3U);
+    CHECK(static_cast<std::size_t>(std::count_if(
+              directory_files.files.begin(), directory_files.files.end(),
+              [&renamed_attachment](const auto& entry) {
+                  return entry.first.rfind(
+                             "assets/" + renamed_attachment.sha256 + "/",
+                             0U) == 0U
+                         && entry.first.find("/music_analysis.txt")
+                                == std::string::npos;
+              })) == 1U);
 
     const std::string changed_audio_bytes = audio_bytes + "changed";
     CHECK(write_bytes(renamed_audio, changed_audio_bytes));
@@ -1929,7 +1933,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 3U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 5U);
+    CHECK(asset_entry_count(directory_files) == 4U);
     CHECK(directory_files.files.count(readable_asset_path(music_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(changed_attachment)) == 1U);
 
@@ -1966,6 +1970,15 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         legacy_output, legacy_output_digest, &error));
     legacy_files.files["0/render_output.txt"] = legacy_output;
     legacy_files.files.erase("0/music_analysis.txt");
+    std::string legacy_layer;
+    std::string legacy_layer_digest;
+    CHECK(pvt::detail::serialize_layer_config(
+        independent.project.layers.front().render, legacy_layer, &error,
+        &independent.project.canvas.motion_paths));
+    CHECK(pvt::detail::sha256_hex(
+        legacy_layer, legacy_layer_digest, &error));
+    legacy_files.files["0/0.pvt"] = legacy_layer;
+    legacy_files.files.erase("0/0.music_analysis.txt");
     std::vector<std::pair<std::string, std::string>> legacy_assets;
     for (auto iterator = legacy_files.files.begin();
          iterator != legacy_files.files.end();) {
@@ -1992,6 +2005,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(erase_record(legacy_manifest, "music_analysis.sha256"));
     CHECK(replace_record_value(legacy_manifest, "render_output.sha256",
                                legacy_output_digest));
+    CHECK(replace_record_value(legacy_manifest, "layers.0.sha256",
+                               legacy_layer_digest));
     const fs::path legacy_zip = directory / "legacy-assets-v2.zip";
     CHECK(pvt::detail::write_bundle_file_set(as_utf8(legacy_zip), legacy_files,
                                              &error));
@@ -2022,6 +2037,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     pvt::detail::BundleFileSet legacy_directory_files = zip_files;
     legacy_directory_files.files["0/render_output.txt"] = legacy_output;
     legacy_directory_files.files.erase("0/music_analysis.txt");
+    legacy_directory_files.files["0/0.pvt"] = legacy_layer;
+    legacy_directory_files.files.erase("0/0.music_analysis.txt");
     for (auto iterator = legacy_directory_files.files.begin();
          iterator != legacy_directory_files.files.end();) {
         if (iterator->first.rfind("assets/", 0U) == 0U
@@ -2041,6 +2058,9 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(replace_record_value(legacy_directory_manifest,
                                "render_output.sha256",
                                legacy_output_digest));
+    CHECK(replace_record_value(legacy_directory_manifest,
+                               "layers.0.sha256",
+                               legacy_layer_digest));
     std::string legacy_directory_metadata_digest;
     CHECK(pvt::detail::sha256_hex(legacy_directory_manifest,
                                   legacy_directory_metadata_digest, &error));

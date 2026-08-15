@@ -239,11 +239,32 @@ public:
     ~BundleWriteLock() {
 #if defined(_WIN32)
         if (handle_ != INVALID_HANDLE_VALUE) {
+            // Mark the exact locked file for deletion before releasing the
+            // lock. FILE_SHARE_DELETE keeps this safe across cooperating
+            // openers, and deleting by handle cannot remove a replacement
+            // that happens to reuse the same pathname.
+            FILE_DISPOSITION_INFO disposition{};
+            disposition.DeleteFile = TRUE;
+            (void)SetFileInformationByHandle(
+                handle_, FileDispositionInfo, &disposition,
+                static_cast<DWORD>(sizeof(disposition)));
             (void)UnlockFileEx(handle_, 0, MAXDWORD, MAXDWORD, &overlapped_);
             (void)CloseHandle(handle_);
         }
 #else
         if (descriptor_ >= 0) {
+            // Unlink while the exact inode is still locked. A contender that
+            // opened this inode before the unlink must verify that it is still
+            // the pathname's inode before entering the save transaction.
+            struct stat held{};
+            struct stat named{};
+            if (!lock_path_.empty()
+                && ::fstat(descriptor_, &held) == 0
+                && ::lstat(lock_path_.c_str(), &named) == 0
+                && held.st_dev == named.st_dev
+                && held.st_ino == named.st_ino) {
+                (void)::unlink(lock_path_.c_str());
+            }
             (void)::flock(descriptor_, LOCK_UN);
             (void)::close(descriptor_);
         }
@@ -266,8 +287,10 @@ public:
             && (existing_attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
             return fail(error, "Project save lock is a reparse point; refusing save.");
         }
-        handle_ = CreateFileW(lock_path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE,
+        handle_ = CreateFileW(lock_path.c_str(),
+                              GENERIC_READ | GENERIC_WRITE | DELETE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE
+                                  | FILE_SHARE_DELETE,
                               nullptr, OPEN_ALWAYS,
                               FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT,
                               nullptr);
@@ -291,6 +314,30 @@ public:
             handle_ = INVALID_HANDLE_VALUE;
             return fail(error, "Another process is already saving this project "
                                    "(Windows error " + std::to_string(failure) + ").");
+        }
+
+        // A previous owner may have unlinked its locked file after this
+        // process opened it but before this process acquired the lock. Verify
+        // that the pathname still names this exact file; otherwise retrying a
+        // later save will create or open the current lock identity.
+        HANDLE named = CreateFileW(
+            lock_path.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        BY_HANDLE_FILE_INFORMATION named_information{};
+        const bool same_identity = named != INVALID_HANDLE_VALUE
+            && GetFileInformationByHandle(named, &named_information) != 0
+            && information.dwVolumeSerialNumber
+                   == named_information.dwVolumeSerialNumber
+            && information.nFileIndexHigh == named_information.nFileIndexHigh
+            && information.nFileIndexLow == named_information.nFileIndexLow;
+        if (named != INVALID_HANDLE_VALUE) (void)CloseHandle(named);
+        if (!same_identity) {
+            (void)UnlockFileEx(handle_, 0, MAXDWORD, MAXDWORD, &overlapped_);
+            (void)CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+            return fail(error,
+                        "Project save lock identity changed during acquisition; retry the save.");
         }
 #else
         int flags = O_RDWR | O_CREAT | O_NONBLOCK;
@@ -325,6 +372,17 @@ public:
             return fail(error, "Another process is already saving this project: "
                                    + std::generic_category().message(failure) + ".");
         }
+        struct stat named_information{};
+        if (::lstat(lock_path.c_str(), &named_information) != 0
+            || information.st_dev != named_information.st_dev
+            || information.st_ino != named_information.st_ino) {
+            (void)::flock(descriptor_, LOCK_UN);
+            (void)::close(descriptor_);
+            descriptor_ = -1;
+            return fail(error,
+                        "Project save lock identity changed during acquisition; retry the save.");
+        }
+        lock_path_ = lock_path;
 #endif
         return true;
     }
@@ -335,6 +393,7 @@ private:
     OVERLAPPED overlapped_{};
 #else
     int descriptor_ = -1;
+    fs::path lock_path_;
 #endif
 };
 
@@ -649,8 +708,28 @@ bool supported_transactional_update(std::string_view path) {
     const std::size_t slash = path.find('/');
     if (slash == std::string_view::npos) return false;
     const std::string_view filename = path.substr(slash + 1U);
-    return filename == "render_output.txt"
-           || filename == "music_analysis.txt";
+    if (filename == "render_output.txt" || filename == "music_analysis.txt") {
+        return true;
+    }
+    const auto numeric_stem = [](std::string_view value) {
+        return !value.empty()
+               && std::all_of(value.begin(), value.end(), [](char character) {
+                      return character >= '0' && character <= '9';
+                  });
+    };
+    constexpr std::string_view layer_suffix = ".pvt";
+    constexpr std::string_view analysis_suffix = ".music_analysis.txt";
+    if (filename.size() > layer_suffix.size()
+        && filename.substr(filename.size() - layer_suffix.size())
+               == layer_suffix) {
+        return numeric_stem(
+            filename.substr(0U, filename.size() - layer_suffix.size()));
+    }
+    return filename.size() > analysis_suffix.size()
+           && filename.substr(filename.size() - analysis_suffix.size())
+                  == analysis_suffix
+           && numeric_stem(
+               filename.substr(0U, filename.size() - analysis_suffix.size()));
 }
 
 bool update_existing_directory(const fs::path& destination,
@@ -669,6 +748,13 @@ bool update_existing_directory(const fs::path& destination,
             || desired.files.find(path) == desired.files.end()) {
             return fail(error,
                         "Bundle save requested an invalid transactional update path.");
+        }
+    }
+    for (const std::string& path : desired.transactional_removals) {
+        if (!asset_entry_path(path)
+            || desired.files.find(path) != desired.files.end()) {
+            return fail(error,
+                        "Bundle save requested an invalid redundant-asset removal.");
         }
     }
     for (const auto& entry : desired.files) {
@@ -828,6 +914,30 @@ bool update_existing_directory(const fs::path& destination,
                                found->second, error)) {
             return false;
         }
+    }
+
+    // Remove only assets that the project layer explicitly proved redundant
+    // by content identity. Root controls are already durable, so a crash can
+    // at worst leave an extra harmless copy rather than a missing dependency.
+    for (const std::string& relative : desired.transactional_removals) {
+        const fs::path target = destination / path_from_utf8(relative);
+        std::error_code filesystem_error;
+        const fs::file_status status = fs::symlink_status(target, filesystem_error);
+        if (filesystem_error || !fs::is_regular_file(status)
+            || fs::is_symlink(status) || path_is_reparse_point(target)) {
+            return fail(error,
+                        "Redundant bundle asset changed type before cleanup.");
+        }
+        if (!fs::remove(target, filesystem_error) || filesystem_error) {
+            return fail(error, "Could not remove a redundant bundle asset.");
+        }
+        const fs::path identity_directory = target.parent_path();
+        (void)flush_path(identity_directory);
+        filesystem_error.clear();
+        (void)fs::remove(identity_directory, filesystem_error);
+    }
+    if (!desired.transactional_removals.empty()) {
+        (void)flush_path(destination / "assets");
     }
     return true;
 }

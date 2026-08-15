@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.1.2**. The version is read from `VERSION` by every
+Current product version: **1.1.3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -529,7 +529,10 @@ is the portable project name plus `.zip`:
 ```
 
 ZIP bundles and unpacked bundle directories contain the same human-readable
-tree. The first Save/Save As fixes the sanitized archive/directory root. When a
+tree. **Open / Import** explicitly offers either a project file or an unpacked
+project folder, and **Save As** offers an unpacked folder first because it avoids
+rebuilding a compressed archive after every large-project edit. The first
+Save/Save As fixes the sanitized archive/directory root. When a
 project that has already been saved is renamed in the GUI, it offers four
 explicit choices:
 
@@ -567,26 +570,30 @@ Midnight Bonfire/
     render_output.txt
     music_analysis.txt
     0.pvt
+    0.music_analysis.txt
     1.pvt
+    1.music_analysis.txt
 ```
 
-`render_output.txt` holds the small global canvas/clock/export settings, while
-the small per-version `music_analysis.txt` is a checksum reference to a shared,
-content-addressed analysis object. The large time-varying feature table is
-therefore stored once when multiple versions use identical analysis, but each
-version remains independently reconstructable: there is no base snapshot or
-delta chain that can be invalidated by deleting an older version. Exact legacy
-snapshots with embedded analysis are compacted on their next Save without
-discarding history; direct/manual edits are either preserved or promoted through
-the normal external-edit path. Each numbered `.pvt` stores only one layer's
-render data. Version metadata stores the project display name, program/time,
+`render_output.txt` and each numbered `.pvt` hold the small global and per-layer
+settings. Their correspondingly named `music_analysis.txt` files are checksum
+references to shared, content-addressed analysis objects. A large time-varying
+feature table is therefore stored once even when many layers and historical
+versions use it, while every version remains independently reconstructable:
+there is no base snapshot or delta chain that can be invalidated by deleting an
+older version. Exact legacy snapshots with embedded global or layer analysis are
+compacted transactionally on their next Save without discarding history;
+direct/manual edits are either preserved or promoted through the normal
+external-edit path. Version metadata stores the project display name, program/time,
 group UUIDs, names, visibility and lock state, plus layer UUIDs, stable file
 IDs, order, names, enabled states, group membership, blend and alpha modes,
-opacity, attachment references, and SHA-256 digests. Root
-assets use collision-safe content-identity directories, but the asset itself
-always keeps the exact imported filename and extension. A valid direct file
-replacement or unambiguous rename is loaded as a dirty external edit; Save
-records fresh filename/digest/size metadata and promotes it to a new version.
+opacity, attachment references, and SHA-256 digests. Root assets use
+collision-safe content-identity directories and store exactly one physical copy
+of each SHA-256 identity. Logical references keep their imported display
+filenames and extensions even when two names refer to the same bytes. A valid
+direct file replacement or unambiguous rename is loaded as a dirty external
+edit; Save records fresh filename/digest/size metadata and promotes it to a new
+version.
 Directly replaced music is reanalyzed
 before it is accepted, matching the GUI import behavior. Managed cached copies
 are created at attachment time, so moving or deleting the original
@@ -619,11 +626,18 @@ aliases keep valid descendants connected even if an ancestor was edited or
 deleted outside the application. Saves are serialized with a hidden sibling
 advisory lock (`.<bundle>.pvt-save.lock`) and compare the complete expected
 on-disk digest while holding that lock, so cooperating processes cannot erase a
-newer save. The lock file contains no project data and intentionally remains
-beside the bundle between sessions. Its presence does not mean a save is active;
-the operating-system lock state does. Removing it after unlock would be unsafe,
-because a waiting process and a new process could then lock different file
-identities while writing the same project.
+newer save. The transient lock file contains no project data. It is removed by
+file identity while still locked after the commit is complete, before the OS
+lock is released; a contender verifies that its open handle still names the
+current path before entering the transaction. Normal exit therefore leaves no
+lock sidecar, while a stale blank sidecar from a crash or older release is
+reused safely and removed by the next successful save.
+
+On the 18-version Potato Fire regression fixture, the directory loader improved
+from 28.1 seconds to 10.8 seconds before migration. One explicit Save compacted
+repeated layer analysis and duplicate attachment objects, reducing the expanded
+tree from 419 MiB to 41 MiB; the resulting complete-history load took about 4.0
+seconds. These figures are local measurements, not cross-platform guarantees.
 
 Load is read-only and transactional. It tries the valid `current` snapshot first,
 then numeric directories from highest to lowest until one validates. Missing or

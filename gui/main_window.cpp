@@ -3381,6 +3381,10 @@ void MainWindow::createToolbar() {
     open_folder_action_ = new QAction(tr("Open Bundle Folder…"), this);
     save_action_ = new QAction(tr("Save…"), this);
     save_as_action_ = new QAction(tr("Save As…"), this);
+    open_action_->setObjectName(QStringLiteral("openImportAction"));
+    open_folder_action_->setObjectName(
+        QStringLiteral("openBundleFolderAction"));
+    save_as_action_->setObjectName(QStringLiteral("saveAsAction"));
     new_action_->setShortcut(QKeySequence::New);
     open_action_->setShortcut(QKeySequence::Open);
     save_action_->setShortcut(QKeySequence::Save);
@@ -11533,12 +11537,47 @@ void MainWindow::saveSetup() {
 void MainWindow::saveSetupAs() {
     const QString filename = QString::fromStdString(
         pvt::portable_project_filename(project_.name));
-    const QString initial_path = QDir(usableDialogDirectory()).filePath(filename);
-    QString path = QFileDialog::getSaveFileName(
-        this, tr("Save project bundle"), initial_path,
-        tr("PVT project bundle (*.zip);;All files (*)"));
-    if (path.isEmpty()) return;
-    if (QFileInfo(path).suffix().isEmpty()) path.append(QStringLiteral(".zip"));
+    QMessageBox choice(this);
+    choice.setWindowTitle(tr("Save project as"));
+    choice.setIcon(QMessageBox::Question);
+    choice.setText(tr("Choose the project bundle form."));
+    choice.setInformativeText(
+        tr("An unpacked folder is recommended for large projects because each save updates files directly without rebuilding a ZIP archive."));
+    QPushButton* const folder = choice.addButton(
+        tr("Unpacked Folder…"), QMessageBox::AcceptRole);
+    QPushButton* const zip = choice.addButton(
+        tr("ZIP File…"), QMessageBox::ActionRole);
+    QPushButton* const cancel = choice.addButton(QMessageBox::Cancel);
+    folder->setObjectName(QStringLiteral("saveAsUnpackedFolderButton"));
+    zip->setObjectName(QStringLiteral("saveAsZipButton"));
+    choice.setDefaultButton(folder);
+    choice.setEscapeButton(cancel);
+    choice.exec();
+    if (choice.clickedButton() == cancel) return;
+
+    QString path;
+    if (choice.clickedButton() == folder) {
+        const QString parent = QFileDialog::getExistingDirectory(
+            this, tr("Choose parent folder for unpacked project"),
+            usableDialogDirectory());
+        if (parent.isEmpty()) return;
+        QString directory_name = filename;
+        if (directory_name.endsWith(
+                QStringLiteral(".zip"), Qt::CaseInsensitive)) {
+            directory_name.chop(4);
+        }
+        path = QDir(parent).filePath(directory_name);
+    } else {
+        const QString initial_path =
+            QDir(usableDialogDirectory()).filePath(filename);
+        path = QFileDialog::getSaveFileName(
+            this, tr("Save ZIP project bundle"), initial_path,
+            tr("PVT project bundle (*.zip);;All files (*)"));
+        if (path.isEmpty()) return;
+        if (QFileInfo(path).suffix().isEmpty()) {
+            path.append(QStringLiteral(".zip"));
+        }
+    }
     (void)saveProjectPath(path);
 }
 
@@ -11585,12 +11624,36 @@ bool MainWindow::saveProjectPath(const QString& path) {
 void MainWindow::loadSetup() {
     if (!documentReplacementAllowed()) return;
     if (!confirmDiscardChanges()) return;
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("Open project or import legacy setup"), usableDialogDirectory(),
-        tr("PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)"));
-    if (path.isEmpty()) {
-        return;
+    QMessageBox choice(this);
+    choice.setWindowTitle(tr("Open / Import"));
+    choice.setIcon(QMessageBox::Question);
+    choice.setText(tr("Choose a project file or an unpacked project folder."));
+    choice.setInformativeText(
+        tr("Project files include ZIP bundles and legacy .pvt setups. Unpacked folders are the recommended form for large projects."));
+    QPushButton* const file = choice.addButton(
+        tr("Project File…"), QMessageBox::AcceptRole);
+    QPushButton* const folder = choice.addButton(
+        tr("Project Folder…"), QMessageBox::ActionRole);
+    QPushButton* const cancel = choice.addButton(QMessageBox::Cancel);
+    file->setObjectName(QStringLiteral("openProjectFileButton"));
+    folder->setObjectName(QStringLiteral("openProjectFolderButton"));
+    choice.setDefaultButton(file);
+    choice.setEscapeButton(cancel);
+    choice.exec();
+    if (choice.clickedButton() == cancel) return;
+
+    QString path;
+    if (choice.clickedButton() == folder) {
+        path = QFileDialog::getExistingDirectory(
+            this, tr("Open unpacked project bundle"),
+            usableDialogDirectory());
+    } else {
+        path = QFileDialog::getOpenFileName(
+            this, tr("Open project or import legacy setup"),
+            usableDialogDirectory(),
+            tr("PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)"));
     }
+    if (path.isEmpty()) return;
     rememberDialogLocation(path);
     QString error;
     if (!loadSetupFile(path, &error)) {

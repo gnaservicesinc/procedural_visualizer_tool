@@ -14,6 +14,9 @@ struct BundleFileSet {
     // digests. Project-format migrations may atomically add or replace only
     // these explicitly verified files inside existing immutable versions.
     std::set<std::string> transactional_updates;
+    // Verified redundant content-addressed assets may be removed after their
+    // one surviving byte-identical object and root controls are durable.
+    std::set<std::string> transactional_removals;
     bool from_zip = false;
 };
 
@@ -28,8 +31,9 @@ bool write_bundle_file_set(const std::string& path,
                            const BundleFileSet& files,
                            std::string* error);
 
-// Serializes writers with a sibling advisory lock and performs the expected
-// state check while that lock is held. `destination_existed == false` is a
+// Serializes writers with a transient sibling advisory lock, removes its exact
+// file identity after a completed transaction, and performs the expected state
+// check while that lock is held. `destination_existed == false` is a
 // compare-and-create operation; otherwise `expected_state_digest` must match
 // the complete file-set digest currently on disk. This is the application save
 // path. Unchanged entries from an existing validated ZIP are copied in their
