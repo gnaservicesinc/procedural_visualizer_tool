@@ -24,6 +24,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 
@@ -1260,25 +1261,41 @@ bool deserialize_split_layer_and_music(
     const std::vector<CubicMotionPath>& motion_paths,
     std::string* error) {
     constexpr std::string_view split_header = "PVT_LAYER_SPLIT\t1\n";
-    constexpr std::string_view analysis_header =
-        "PVT_MUSIC_ANALYSIS\t1\n";
-    if (split_layer.rfind(split_header, 0U) != 0U
-        || analysis_bytes.rfind(analysis_header, 0U) != 0U) {
+    if (split_layer.rfind(split_header, 0U) != 0U) {
         return fail(error,
                     "Layer music-analysis split has an unsupported header.");
     }
+    MusicAnalysis analysis;
+    if (!detail::deserialize_music_analysis_config(
+            analysis_bytes, analysis, error)) {
+        return false;
+    }
+    MusicAnalysis validation_analysis = analysis;
+    validation_analysis.compatibility = {};
+    validation_analysis.feature_samples.clear();
+    validation_analysis.tempo_points.clear();
+    if (validation_analysis.beat_times_seconds.size() > 1U) {
+        validation_analysis.beat_times_seconds.resize(1U);
+    }
+    std::string validation_analysis_bytes;
+    if (!detail::serialize_music_analysis_config(
+            validation_analysis, validation_analysis_bytes, error)) {
+        return false;
+    }
+    constexpr std::string_view analysis_header =
+        "PVT_MUSIC_ANALYSIS\t1\n";
     std::string combined =
         "PVT_LAYER\t" + std::to_string(detail::kLayerConfigFormatVersion)
         + "\n";
     combined.append(split_layer.data() + split_header.size(),
                     split_layer.size() - split_header.size());
     std::size_t start = analysis_header.size();
-    while (start < analysis_bytes.size()) {
-        const std::size_t newline = analysis_bytes.find('\n', start);
+    while (start < validation_analysis_bytes.size()) {
+        const std::size_t newline = validation_analysis_bytes.find('\n', start);
         const std::size_t end = newline == std::string::npos
-                                    ? analysis_bytes.size() : newline;
+                                    ? validation_analysis_bytes.size() : newline;
         const std::string_view line(
-            analysis_bytes.data() + start, end - start);
+            validation_analysis_bytes.data() + start, end - start);
         const std::size_t tab = line.find('\t');
         if (tab == std::string_view::npos) {
             return fail(error,
@@ -1298,8 +1315,14 @@ bool deserialize_split_layer_and_music(
         if (newline == std::string::npos) break;
         start = newline + 1U;
     }
-    return detail::deserialize_layer_config(
-        combined, render, error, &motion_paths);
+    RenderData candidate;
+    if (!detail::deserialize_layer_config(
+            combined, candidate, error, &motion_paths)) {
+        return false;
+    }
+    candidate.layer_clock.clock.music = std::move(analysis);
+    render = std::move(candidate);
+    return true;
 }
 
 bool stage_music_analysis(
@@ -1730,6 +1753,149 @@ bool project_content_digest(const ProjectConfig& project,
     return project_content_digest_from_component_digests(
         project, attachments, output_digest, layer_digests,
         digest, error);
+}
+
+class FastProjectFingerprint {
+public:
+    void bytes(const void* data, std::size_t size) {
+        const auto* input = static_cast<const unsigned char*>(data);
+        for (std::size_t index = 0U; index < size; ++index) {
+            first_ ^= input[index];
+            first_ *= 1099511628211ULL;
+            second_ ^= static_cast<std::uint64_t>(input[index]) + 0x9dU;
+            second_ *= 14029467366897019727ULL;
+        }
+    }
+
+    template <typename Value>
+    void scalar(const Value& value) {
+        static_assert(std::is_trivially_copyable_v<Value>);
+        bytes(&value, sizeof(value));
+    }
+
+    void text(std::string_view value) {
+        scalar(value.size());
+        bytes(value.data(), value.size());
+    }
+
+    std::string result() const {
+        std::ostringstream stream;
+        stream << std::hex << std::setfill('0')
+               << std::setw(16) << first_
+               << std::setw(16) << second_;
+        return stream.str();
+    }
+
+private:
+    std::uint64_t first_ = 1469598103934665603ULL;
+    std::uint64_t second_ = 1099511628211ULL;
+};
+
+void add_music_fingerprint(FastProjectFingerprint& fingerprint,
+                           const MusicAnalysis& analysis) {
+    fingerprint.scalar(analysis.beat_times_seconds.size());
+    for (const double value : analysis.beat_times_seconds) {
+        fingerprint.scalar(value);
+    }
+    fingerprint.scalar(analysis.tempo_points.size());
+    for (const MusicTempoPoint& point : analysis.tempo_points) {
+        fingerprint.scalar(point.time_seconds);
+        fingerprint.scalar(point.bpm);
+        fingerprint.scalar(point.confidence);
+    }
+    fingerprint.scalar(analysis.feature_samples.size());
+    for (const MusicFeatureSample& sample : analysis.feature_samples) {
+        fingerprint.scalar(sample.energy);
+        fingerprint.scalar(sample.bass);
+        fingerprint.scalar(sample.midrange);
+        fingerprint.scalar(sample.treble);
+        fingerprint.scalar(sample.onset);
+        fingerprint.scalar(sample.beat);
+        fingerprint.scalar(sample.spectral_centroid);
+        fingerprint.scalar(sample.spectral_flatness);
+        fingerprint.scalar(sample.chroma_hue);
+        fingerprint.scalar(sample.chroma_strength);
+    }
+}
+
+void minimize_music_for_fast_serialization(MusicAnalysis& analysis) {
+    analysis.feature_samples.clear();
+    analysis.tempo_points.clear();
+    if (analysis.beat_times_seconds.size() > 1U) {
+        analysis.beat_times_seconds.resize(1U);
+    }
+}
+
+bool fast_project_fingerprint(
+    const ProjectConfig& project,
+    const std::vector<ProjectAttachment>& attachments,
+    std::string& destination,
+    std::string* error) {
+    FastProjectFingerprint fingerprint;
+    fingerprint.text(project.uuid);
+    fingerprint.text(project.name);
+
+    CanvasLoopConfig canvas = project.canvas;
+    add_music_fingerprint(fingerprint, canvas.clock.music);
+    minimize_music_for_fast_serialization(canvas.clock.music);
+    std::string output_bytes;
+    if (!detail::serialize_render_output_config(
+            canvas, project.output, output_bytes, error)) {
+        return false;
+    }
+    fingerprint.text(output_bytes);
+
+    fingerprint.scalar(project.groups.size());
+    for (const LayerGroup& group : project.groups) {
+        fingerprint.text(group.uuid);
+        fingerprint.text(group.name);
+        fingerprint.scalar(group.enabled);
+        fingerprint.scalar(group.locked);
+    }
+    fingerprint.scalar(project.layers.size());
+    for (const LayerConfig& layer : project.layers) {
+        fingerprint.scalar(layer.file_id);
+        fingerprint.text(layer.uuid);
+        fingerprint.text(layer.name);
+        fingerprint.scalar(layer.enabled);
+        fingerprint.scalar(layer.blend_mode);
+        fingerprint.scalar(layer.alpha_mode);
+        fingerprint.text(layer.group_uuid);
+        fingerprint.scalar(layer.opacity);
+
+        RenderData render = layer.render;
+        add_music_fingerprint(
+            fingerprint, render.layer_clock.clock.music);
+        minimize_music_for_fast_serialization(
+            render.layer_clock.clock.music);
+        std::string layer_bytes;
+        if (!detail::serialize_layer_config(
+                render, layer_bytes, error,
+                &project.canvas.motion_paths)) {
+            return false;
+        }
+        fingerprint.text(layer_bytes);
+    }
+
+    std::vector<const ProjectAttachment*> ordered;
+    ordered.reserve(attachments.size());
+    for (const ProjectAttachment& attachment : attachments) {
+        ordered.push_back(&attachment);
+    }
+    std::sort(ordered.begin(), ordered.end(),
+              [](const ProjectAttachment* left,
+                 const ProjectAttachment* right) {
+                  return left->reference_id < right->reference_id;
+              });
+    fingerprint.scalar(ordered.size());
+    for (const ProjectAttachment* attachment : ordered) {
+        fingerprint.text(attachment->reference_id);
+        fingerprint.text(attachment->sha256);
+        fingerprint.text(attachment->basename);
+        fingerprint.scalar(attachment->size_bytes);
+    }
+    destination = fingerprint.result();
+    return true;
 }
 
 struct CachedGlobalConfig {
@@ -2668,11 +2834,11 @@ bool current_candidate(const detail::BundleFileSet& files,
            && parse_current(*current, version, digest, error);
 }
 
-bool collect_version_infos(const detail::BundleFileSet& files,
-                           const RootMetadata& root,
-                           std::vector<BundleVersionInfo>& destination,
-                           std::string* error,
-                           BundleValidationCache* shared_cache = nullptr) {
+bool collect_version_infos_full(const detail::BundleFileSet& files,
+                                const RootMetadata& root,
+                                std::vector<BundleVersionInfo>& destination,
+                                std::string* error,
+                                BundleValidationCache* shared_cache = nullptr) {
     BundleValidationCache local_cache;
     BundleValidationCache* validation_cache =
         shared_cache != nullptr ? shared_cache : &local_cache;
@@ -2762,6 +2928,108 @@ bool collect_version_infos(const detail::BundleFileSet& files,
             }
         }
         candidate.push_back(std::move(invalid));
+    }
+    destination = std::move(candidate);
+    return true;
+}
+
+// History rows are shown on every open and consulted by every save. Decoding
+// every immutable snapshot here made those ordinary operations scale with the
+// complete project history (and repeatedly reconstructed large shared music
+// analyses). Root metadata already records the exact metadata and tree digest
+// produced after a snapshot passed full validation. Use those small recorded
+// identities for the history summary; opening, diffing, reverting, and the
+// explicit Validate action still decode the requested snapshots on demand.
+bool collect_version_infos(const detail::BundleFileSet& files,
+                           const RootMetadata& root,
+                           std::vector<BundleVersionInfo>& destination,
+                           std::string* error) {
+    std::set<std::uint64_t> numbers = numeric_version_directories(files);
+    for (const auto& indexed_version : root.version_digests) {
+        numbers.insert(indexed_version.first);
+    }
+    if (numbers.size() > kMaximumVersions) {
+        return fail(error, "Bundle exceeds the signed-int version-history limit.");
+    }
+
+    std::vector<BundleVersionInfo> candidate;
+    candidate.reserve(numbers.size());
+    for (const std::uint64_t number : numbers) {
+        BundleVersionInfo info;
+        info.number = number;
+        info.indexed = root.version_digests.find(number)
+                       != root.version_digests.end();
+        const auto metadata = files.files.find(
+            version_path(number, "metadata.txt"));
+        if (metadata == files.files.end()) {
+            info.valid = false;
+            info.externally_modified = true;
+            info.changed_since_recorded = true;
+            info.integrity_message = "Version metadata is missing.";
+            candidate.push_back(std::move(info));
+            continue;
+        }
+
+        std::string actual_metadata_digest;
+        if (!detail::sha256_hex(metadata->second,
+                                actual_metadata_digest, error)) {
+            return false;
+        }
+        info.metadata_digest = actual_metadata_digest;
+        VersionManifest manifest;
+        std::string manifest_error;
+        const bool metadata_valid = parse_version_manifest(
+            metadata->second, manifest, &manifest_error)
+            && manifest.info.number == number;
+        if (metadata_valid) {
+            info.uuid = std::move(manifest.info.uuid);
+            info.parent_digest = std::move(manifest.info.parent_digest);
+            info.reason = std::move(manifest.info.reason);
+            info.saved_utc = std::move(manifest.info.saved_utc);
+            info.saved_with_version =
+                std::move(manifest.info.saved_with_version);
+            info.layer_count = manifest.info.layer_count;
+        }
+
+        std::string actual_tree_digest;
+        if (!version_tree_digest(files, number,
+                                 actual_tree_digest, error)) {
+            return false;
+        }
+        bool metadata_recorded = false;
+        bool tree_recorded = false;
+        const auto indexed = root.version_digests.find(number);
+        if (indexed != root.version_digests.end()) {
+            metadata_recorded = indexed->second == actual_metadata_digest;
+            const auto tree = root.version_tree_digests.find(number);
+            tree_recorded = tree != root.version_tree_digests.end()
+                            && tree->second == actual_tree_digest;
+        } else {
+            const auto preserved = root.preserved_versions.find(number);
+            if (preserved != root.preserved_versions.end()) {
+                metadata_recorded =
+                    preserved->second.observed_metadata_digest
+                    == actual_metadata_digest;
+                tree_recorded = preserved->second.tree_digest
+                                == actual_tree_digest;
+            }
+        }
+
+        info.valid = metadata_valid;
+        info.externally_modified = !metadata_recorded || !tree_recorded;
+        info.changed_since_recorded = !tree_recorded;
+        if (!metadata_valid) {
+            info.integrity_message = manifest_error.empty()
+                                         ? "Version metadata is malformed."
+                                         : std::move(manifest_error);
+        } else if (info.externally_modified) {
+            info.integrity_message =
+                "Version metadata or files changed since the last explicit save.";
+        } else {
+            info.integrity_message =
+                "Recorded snapshot; contents validate when opened, compared, reverted, or explicitly checked.";
+        }
+        candidate.push_back(std::move(info));
     }
     destination = std::move(candidate);
     return true;
@@ -2970,9 +3238,14 @@ bool build_version(ProjectConfig project,
     }
     std::string metadata_bytes;
     if (!serialize_version_manifest(manifest, metadata_bytes, error)
-        || !detail::sha256_hex(metadata_bytes, manifest.info.metadata_digest, error)
-        || !project_content_digest(project, manifest.attachments,
-                                   semantic_digest, error)) return false;
+        || !detail::sha256_hex(
+            metadata_bytes, manifest.info.metadata_digest, error)) {
+        return false;
+    }
+    if (!canonical_hash(semantic_digest)) {
+        return fail(error,
+                    "Cannot save a version without a semantic project identity.");
+    }
     files.files[version_path(number, "metadata.txt")] = std::move(metadata_bytes);
     version_info = std::move(manifest.info);
     return true;
@@ -3753,6 +4026,13 @@ bool load_project_document(const std::string& path,
             }
             document.project = std::move(project);
             document.attachments = std::move(snapshot_attachments);
+            if (!fast_project_fingerprint(
+                    document.project, document.attachments,
+                    document.loaded_fast_project_fingerprint,
+                    &load_error)) {
+                last_failure = std::move(load_error);
+                continue;
+            }
             document.source_path = path;
             document.bundle_root_name = files.root_name;
             document.first_created_utc = root.first_created_utc;
@@ -3772,8 +4052,8 @@ bool load_project_document(const std::string& path,
             document.newer_program_version =
                 program_version_is_newer(root.created_with_version)
                 || program_version_is_newer(root.last_changed_with_version);
-            if (!collect_version_infos(files, root, document.versions, error,
-                                       &validation_cache)) return false;
+            if (!collect_version_infos(
+                    files, root, document.versions, error)) return false;
             const bool unrecorded_history_change = std::any_of(
                 document.versions.begin(), document.versions.end(),
                 [](const BundleVersionInfo& value) {
@@ -4403,9 +4683,26 @@ bool save_with_reason(ProjectDocument& document,
     }
 
     if (!stage_attachment_assets(working, files, error)) return false;
+    std::string current_fast_fingerprint;
+    if (!fast_project_fingerprint(
+            working.project, working.attachments,
+            current_fast_fingerprint, error)) {
+        return false;
+    }
     std::string semantic_digest;
-    if (!project_content_digest(working.project, working.attachments,
-                                semantic_digest, error)) return false;
+    const bool fast_unchanged =
+        !working.loaded_fast_project_fingerprint.empty()
+        && current_fast_fingerprint
+               == working.loaded_fast_project_fingerprint
+        && !working.externally_modified && !root_external
+        && !working.loaded_snapshot_digest.empty();
+    if (fast_unchanged) {
+        semantic_digest = working.loaded_snapshot_digest;
+    } else if (!project_content_digest(
+                   working.project, working.attachments,
+                   semantic_digest, error)) {
+        return false;
+    }
     const bool needs_version = versions.empty() || working.externally_modified
                                || root_external || working.legacy_import
                                || !reason_override.empty()
@@ -4569,6 +4866,8 @@ bool save_with_reason(ProjectDocument& document,
     working.imported_from_path.clear();
     working.bundle_root_name = files.root_name;
     working.loaded_snapshot_digest = semantic_digest;
+    working.loaded_fast_project_fingerprint =
+        std::move(current_fast_fingerprint);
     working.loaded_bundle_state_digest = std::move(committed_state_digest);
     working.current_version = current_version;
     working.versions = versions;
@@ -4792,7 +5091,7 @@ bool validate_project_bundle(const std::string& path,
         bool root_external = false;
         if (!read_document_source(path, files, root, root_external, error)) return false;
         std::vector<BundleVersionInfo> checked;
-        if (!collect_version_infos(files, root, checked, error)
+        if (!collect_version_infos_full(files, root, checked, error)
             || !validate_loaded_bundle_state(
                 files, root, root_external, checked, error)) return false;
         if (versions != nullptr) *versions = std::move(checked);

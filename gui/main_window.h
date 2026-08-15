@@ -71,6 +71,29 @@ private:
         QString success_message;
     };
 
+    enum class ProjectIoOperation {
+        Load,
+        Save
+    };
+
+    struct ProjectIoResult {
+        bool ok = false;
+        ProjectIoOperation operation = ProjectIoOperation::Load;
+        QString path;
+        QString error;
+        std::shared_ptr<pvt::ProjectDocument> document;
+        pvt::BundleSaveReport save_report;
+    };
+
+    struct VersionDiffResult {
+        bool ok = false;
+        QString error;
+        std::vector<pvt::BundleDiffEntry> differences;
+        std::uint64_t before = 0U;
+        std::uint64_t after = 0U;
+        std::uint64_t document_revision = 0U;
+    };
+
     enum class MusicAnalysisAction {
         Choose,
         Relink,
@@ -177,7 +200,7 @@ private:
     void updateCompatibilityWarning();
     void noteDocumentChange();
     bool hasUnsavedChanges() const;
-    bool confirmDiscardChanges();
+    bool confirmDiscardChanges(std::function<void()> after_save = {});
     void restoreUserSettings();
     void saveUserSettings();
     void showApplicationSettings();
@@ -192,9 +215,18 @@ private:
     bool documentReplacementAllowed(QString* error = nullptr);
     void refreshVersionsPage();
     void refreshVersionDiff();
+    void startVersionDiff();
     void makeSelectedVersionCurrent();
     void revertSelectedVersion();
     bool loadProjectPath(const QString& path, QString* error = nullptr);
+    bool adoptLoadedProject(pvt::ProjectDocument loaded,
+                            QString* error = nullptr);
+    void startProjectLoad(const QString& path);
+    void startProjectSave(const QString& path);
+    void setProjectIoActive(bool active, const QString& message = {});
+    void finishProjectSave(pvt::ProjectDocument saved,
+                           const pvt::BundleSaveReport& report,
+                           const QString& path);
 
     struct ActiveDocumentState {
         pvt::RenderData render;
@@ -325,6 +357,9 @@ private:
     std::uint64_t music_analysis_generation_ = 0;
     bool music_analysis_active_ = false;
     bool music_analysis_layer_clock_ = false;
+    bool project_io_active_ = false;
+    bool close_after_project_io_ = false;
+    std::function<void()> project_io_success_continuation_;
     QString startup_working_directory_;
     QString last_dialog_directory_;
     QString current_project_path_;
@@ -341,6 +376,7 @@ private:
     QWidget* effect_page_ = nullptr;
     QLabel* status_ = nullptr;
     QProgressBar* export_progress_ = nullptr;
+    QProgressBar* project_io_progress_ = nullptr;
     QLabel* frame_label_ = nullptr;
     QSlider* timeline_ = nullptr;
     QSlider* audio_volume_ = nullptr;
@@ -352,6 +388,8 @@ private:
     QFutureWatcher<PreviewResult>* preview_watcher_ = nullptr;
     QFutureWatcher<ExportResult>* export_watcher_ = nullptr;
     QFutureWatcher<MusicAnalysisResult>* music_analysis_watcher_ = nullptr;
+    QFutureWatcher<ProjectIoResult>* project_io_watcher_ = nullptr;
+    QFutureWatcher<VersionDiffResult>* version_diff_watcher_ = nullptr;
     QUndoStack* undo_stack_ = nullptr;
     QAction* export_action_ = nullptr;
     QAction* current_frame_export_action_ = nullptr;
@@ -390,6 +428,7 @@ private:
     QListWidget* version_list_ = nullptr;
     QComboBox* version_before_ = nullptr;
     QComboBox* version_after_ = nullptr;
+    QPushButton* version_compare_ = nullptr;
     QPlainTextEdit* version_diff_ = nullptr;
     QLabel* version_summary_ = nullptr;
     QPushButton* version_make_current_ = nullptr;

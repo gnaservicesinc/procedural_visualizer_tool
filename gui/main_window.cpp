@@ -1172,6 +1172,8 @@ MainWindow::MainWindow(QWidget* parent)
     preview_watcher_ = new QFutureWatcher<PreviewResult>(this);
     export_watcher_ = new QFutureWatcher<ExportResult>(this);
     music_analysis_watcher_ = new QFutureWatcher<MusicAnalysisResult>(this);
+    project_io_watcher_ = new QFutureWatcher<ProjectIoResult>(this);
+    version_diff_watcher_ = new QFutureWatcher<VersionDiffResult>(this);
     preview_cancel_ = std::make_shared<std::atomic_bool>(false);
     music_analysis_cancel_ = std::make_shared<std::atomic_bool>(false);
 
@@ -1212,6 +1214,12 @@ MainWindow::MainWindow(QWidget* parent)
     export_progress_->setMaximumWidth(220);
     export_progress_->hide();
     statusBar()->addPermanentWidget(export_progress_);
+    project_io_progress_ = new QProgressBar;
+    project_io_progress_->setRange(0, 0);
+    project_io_progress_->setMaximumWidth(180);
+    project_io_progress_->setAccessibleName(tr("Project file operation in progress"));
+    project_io_progress_->hide();
+    statusBar()->addPermanentWidget(project_io_progress_);
     createToolbar();
 
     connect(preview_timer_, &QTimer::timeout, this, &MainWindow::startPreview);
@@ -1313,6 +1321,80 @@ MainWindow::MainWindow(QWidget* parent)
                     startProjectAudioPlayback();
                 }
             });
+    connect(project_io_watcher_, &QFutureWatcher<ProjectIoResult>::finished,
+            this, [this] {
+                ProjectIoResult result = project_io_watcher_->result();
+                bool adopted = false;
+                if (result.ok && result.document != nullptr) {
+                    if (result.operation == ProjectIoOperation::Load) {
+                        QString adoption_error;
+                        adopted = adoptLoadedProject(
+                            std::move(*result.document), &adoption_error);
+                        if (!adopted) result.error = adoption_error;
+                    } else {
+                        finishProjectSave(std::move(*result.document),
+                                          result.save_report, result.path);
+                        adopted = true;
+                    }
+                }
+                setProjectIoActive(false);
+                if (adopted && result.operation == ProjectIoOperation::Load
+                    && compatibility_warning_.isEmpty()) {
+                    status_->setText(tr("Loaded %1").arg(result.path));
+                } else if (!adopted) {
+                    status_->setText(result.operation == ProjectIoOperation::Load
+                                         ? tr("Load failed")
+                                         : tr("Save failed"));
+                    QMessageBox::critical(
+                        this,
+                        result.operation == ProjectIoOperation::Load
+                            ? tr("Load failed") : tr("Save failed"),
+                        result.operation == ProjectIoOperation::Load
+                            ? tr("The active project was not changed.\n\n%1")
+                                  .arg(result.error)
+                            : result.error);
+                }
+                if (close_after_project_io_) {
+                    close_after_project_io_ = false;
+                    if (adopted) QTimer::singleShot(0, this, &QWidget::close);
+                }
+                std::function<void()> continuation =
+                    std::move(project_io_success_continuation_);
+                project_io_success_continuation_ = {};
+                if (adopted && result.operation == ProjectIoOperation::Save
+                    && continuation) {
+                    continuation();
+                }
+            });
+    connect(version_diff_watcher_, &QFutureWatcher<VersionDiffResult>::finished,
+            this, [this] {
+                const VersionDiffResult result = version_diff_watcher_->result();
+                if (version_compare_ != nullptr) version_compare_->setEnabled(true);
+                if (version_diff_ == nullptr || document_ == nullptr
+                    || result.document_revision != document_revision_
+                    || version_before_->currentData().toULongLong() != result.before
+                    || version_after_->currentData().toULongLong() != result.after) {
+                    return;
+                }
+                if (!result.ok) {
+                    version_diff_->setPlainText(
+                        tr("Could not compare versions: %1").arg(result.error));
+                    return;
+                }
+                if (result.differences.empty()) {
+                    version_diff_->setPlainText(tr("No semantic project differences."));
+                    return;
+                }
+                QStringList lines;
+                lines.reserve(static_cast<qsizetype>(result.differences.size()));
+                for (const auto& difference : result.differences) {
+                    lines.push_back(tr("%1\n  %2\n→ %3")
+                                        .arg(QString::fromStdString(difference.field),
+                                             friendly_diff_value(difference.before),
+                                             friendly_diff_value(difference.after)));
+                }
+                version_diff_->setPlainText(lines.join(QStringLiteral("\n\n")));
+            });
 
     connectEditors();
     connect(undo_stack_, &QUndoStack::cleanChanged, this,
@@ -1345,6 +1427,7 @@ MainWindow::~MainWindow() {
     preview_watcher_->waitForFinished();
     music_analysis_watcher_->waitForFinished();
     export_watcher_->waitForFinished();
+    project_io_watcher_->waitForFinished();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -1355,7 +1438,14 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
+    if (project_io_watcher_ != nullptr && project_io_watcher_->isRunning()) {
+        close_after_project_io_ = true;
+        status_->setText(tr("Finishing the project file operation before closing…"));
+        event->ignore();
+        return;
+    }
     if (!confirmDiscardChanges()) {
+        if (project_io_active_) close_after_project_io_ = true;
         event->ignore();
         return;
     }
@@ -2688,6 +2778,10 @@ QWidget* MainWindow::createVersionsPage() {
     selectors->addWidget(version_before_, 1);
     selectors->addWidget(new QLabel(tr("To")));
     selectors->addWidget(version_after_, 1);
+    version_compare_ = new QPushButton(tr("Compare"));
+    version_compare_->setToolTip(
+        tr("Load and compare the selected snapshots in the background."));
+    selectors->addWidget(version_compare_);
     compare_layout->addLayout(selectors);
     version_diff_ = new QPlainTextEdit;
     version_diff_->setReadOnly(true);
@@ -2696,10 +2790,18 @@ QWidget* MainWindow::createVersionsPage() {
     compare_layout->addWidget(version_diff_, 1);
     layout->addWidget(compare_group, 1);
 
+    connect(version_compare_, &QPushButton::clicked,
+            this, &MainWindow::startVersionDiff);
+    const auto clear_stale_diff = [this] {
+        if (version_diff_ != nullptr) {
+            version_diff_->setPlainText(
+                tr("Choose two versions and select Compare. Comparison runs in the background."));
+        }
+    };
     connect(version_before_, &QComboBox::currentIndexChanged,
-            this, &MainWindow::refreshVersionDiff);
+            this, clear_stale_diff);
     connect(version_after_, &QComboBox::currentIndexChanged,
-            this, &MainWindow::refreshVersionDiff);
+            this, clear_stale_diff);
     connect(version_make_current_, &QPushButton::clicked,
             this, &MainWindow::makeSelectedVersionCurrent);
     connect(version_revert_, &QPushButton::clicked,
@@ -2780,7 +2882,8 @@ void MainWindow::refreshVersionsPage() {
                                   + QStringLiteral("\n\n⚠ ")
                                   + compatibility_warning_);
     }
-    refreshVersionDiff();
+    version_diff_->setPlainText(
+        tr("Choose two versions and select Compare. Comparison runs in the background."));
 }
 
 void MainWindow::refreshVersionDiff() {
@@ -2820,6 +2923,40 @@ void MainWindow::refreshVersionDiff() {
     version_diff_->setPlainText(lines.join(QStringLiteral("\n\n")));
 }
 
+void MainWindow::startVersionDiff() {
+    if (version_diff_ == nullptr || version_diff_watcher_ == nullptr
+        || version_diff_watcher_->isRunning()) {
+        return;
+    }
+    if (document_ == nullptr || version_before_->currentIndex() < 0
+        || version_after_->currentIndex() < 0) {
+        version_diff_->clear();
+        return;
+    }
+    const auto before = version_before_->currentData().toULongLong();
+    const auto after = version_after_->currentData().toULongLong();
+    if (before == after) {
+        version_diff_->setPlainText(tr("The same version is selected on both sides."));
+        return;
+    }
+    auto snapshot = std::make_shared<pvt::ProjectDocument>(*document_);
+    const std::uint64_t revision = document_revision_;
+    version_compare_->setEnabled(false);
+    version_diff_->setPlainText(tr("Comparing versions in the background…"));
+    version_diff_watcher_->setFuture(QtConcurrent::run(
+        [snapshot = std::move(snapshot), before, after, revision] {
+            VersionDiffResult result;
+            result.before = before;
+            result.after = after;
+            result.document_revision = revision;
+            std::string error;
+            result.ok = pvt::diff_project_versions(
+                *snapshot, before, after, result.differences, &error);
+            result.error = QString::fromStdString(error);
+            return result;
+        }));
+}
+
 void MainWindow::makeSelectedVersionCurrent() {
     if (document_ == nullptr || version_list_ == nullptr
         || version_list_->currentItem() == nullptr) return;
@@ -2827,7 +2964,18 @@ void MainWindow::makeSelectedVersionCurrent() {
     // Saving from the dirty confirmation refreshes the list, so capture the
     // user's target before that refresh can change the selection.
     const auto version = version_list_->currentItem()->data(Qt::UserRole).toULongLong();
-    if (!confirmDiscardChanges()) return;
+    const auto resume = [this, version] {
+        if (version_list_ == nullptr) return;
+        for (int row = 0; row < version_list_->count(); ++row) {
+            if (version_list_->item(row)->data(Qt::UserRole).toULongLong()
+                == version) {
+                version_list_->setCurrentRow(row);
+                makeSelectedVersionCurrent();
+                return;
+            }
+        }
+    };
+    if (!confirmDiscardChanges(resume)) return;
     cancelMusicAnalysis();
     pvt::BundleSaveReport report;
     std::string error;
@@ -2859,7 +3007,18 @@ void MainWindow::revertSelectedVersion() {
         || version_list_->currentItem() == nullptr) return;
     if (!documentReplacementAllowed()) return;
     const auto version = version_list_->currentItem()->data(Qt::UserRole).toULongLong();
-    if (!confirmDiscardChanges()) return;
+    const auto resume = [this, version] {
+        if (version_list_ == nullptr) return;
+        for (int row = 0; row < version_list_->count(); ++row) {
+            if (version_list_->item(row)->data(Qt::UserRole).toULongLong()
+                == version) {
+                version_list_->setCurrentRow(row);
+                revertSelectedVersion();
+                return;
+            }
+        }
+    };
+    if (!confirmDiscardChanges(resume)) return;
     const auto choice = QMessageBox::question(
         this, tr("Revert as a new version?"),
         tr("Create a new version copied from version %1 and make it current?").arg(version),
@@ -3456,26 +3615,20 @@ void MainWindow::createToolbar() {
 
     connect(new_action_, &QAction::triggered, this, [this] {
         if (!documentReplacementAllowed()) return;
-        if (!confirmDiscardChanges()) return;
+        if (!confirmDiscardChanges(
+                [this] { replaceWithNewProject(); })) return;
         replaceWithNewProject();
     });
     connect(open_action_, &QAction::triggered, this, &MainWindow::loadSetup);
     connect(open_folder_action_, &QAction::triggered, this, [this] {
         if (!documentReplacementAllowed()) return;
-        if (!confirmDiscardChanges()) return;
         const QString path = QFileDialog::getExistingDirectory(
             this, tr("Open unpacked project bundle"), usableDialogDirectory());
         if (path.isEmpty()) return;
+        if (!confirmDiscardChanges(
+                [this, path] { startProjectLoad(path); })) return;
         rememberDialogLocation(path);
-        QString error;
-        if (!loadProjectPath(path, &error)) {
-            QMessageBox::critical(this, tr("Load failed"),
-                                  tr("The active project was not changed.\n\n%1").arg(error));
-            return;
-        }
-        if (compatibility_warning_.isEmpty()) {
-            status_->setText(tr("Loaded %1").arg(path));
-        }
+        startProjectLoad(path);
     });
     connect(save_action_, &QAction::triggered, this, &MainWindow::saveSetup);
     connect(save_as_action_, &QAction::triggered, this, &MainWindow::saveSetupAs);
@@ -5659,7 +5812,7 @@ bool MainWindow::hasUnsavedChanges() const {
            || (undo_stack_ != nullptr && !undo_stack_->isClean());
 }
 
-bool MainWindow::confirmDiscardChanges() {
+bool MainWindow::confirmDiscardChanges(std::function<void()> after_save) {
     if (!hasUnsavedChanges()) {
         return true;
     }
@@ -5672,10 +5825,23 @@ bool MainWindow::confirmDiscardChanges() {
     if (choice == QMessageBox::Cancel) return false;
     if (choice == QMessageBox::Discard) return true;
     saveSetup();
+    if (project_io_active_) {
+        project_io_success_continuation_ = std::move(after_save);
+    }
     return !hasUnsavedChanges();
 }
 
 bool MainWindow::documentReplacementAllowed(QString* error) {
+    if (project_io_active_) {
+        const QString message =
+            tr("Finish the active project load or save before replacing the project or version.");
+        if (error != nullptr) {
+            *error = message;
+        } else if (status_ != nullptr) {
+            status_->setText(message);
+        }
+        return false;
+    }
     if (export_watcher_ == nullptr || !export_watcher_->isRunning()) {
         return true;
     }
@@ -6320,7 +6486,7 @@ void MainWindow::updateSynchronizationState() {
 }
 
 void MainWindow::updateMusicTransactionGuards() {
-    const bool editable = !music_analysis_active_;
+    const bool editable = !music_analysis_active_ && !project_io_active_;
     for (QAction* action : {new_action_, open_action_, open_folder_action_,
                             save_action_, save_as_action_}) {
         if (action != nullptr) action->setEnabled(editable);
@@ -6446,11 +6612,12 @@ void MainWindow::updateExportAvailability() {
     first_frame_->setEnabled(true);
     filename_digits_->setEnabled(true);
     if (export_action_ != nullptr && !export_active_) {
-        export_action_->setEnabled(!music_analysis_active_);
+        export_action_->setEnabled(!music_analysis_active_ && !project_io_active_);
         export_action_->setToolTip(QString{});
     }
     if (current_frame_export_action_ != nullptr && !export_active_) {
-        current_frame_export_action_->setEnabled(!music_analysis_active_);
+        current_frame_export_action_->setEnabled(!music_analysis_active_
+                                                  && !project_io_active_);
         current_frame_export_action_->setToolTip(
             tr("Render the timeline's current frame at the full canvas resolution using the selected PNG/EXR quality settings."));
     }
@@ -6458,6 +6625,7 @@ void MainWindow::updateExportAvailability() {
         static const pvt::video::Capabilities video =
             pvt::video::capabilities();
         video_export_action_->setEnabled(!music_analysis_active_
+                                         && !project_io_active_
                                          && video.available);
         video_export_action_->setToolTip(
             video.available ? tr("Export a native macOS QuickTime movie without FFmpeg.")
@@ -9084,6 +9252,11 @@ bool MainWindow::loadProjectPath(const QString& path, QString* error) {
         if (error != nullptr) *error = QString::fromStdString(load_error);
         return false;
     }
+    return adoptLoadedProject(std::move(loaded), error);
+}
+
+bool MainWindow::adoptLoadedProject(pvt::ProjectDocument loaded,
+                                    QString* error) {
     if (loaded.project.layers.empty()) {
         if (error != nullptr) *error = tr("The loaded project contains no layers.");
         return false;
@@ -9110,6 +9283,46 @@ bool MainWindow::loadProjectPath(const QString& path, QString* error) {
     updateWindowTitle();
     schedulePreview();
     return true;
+}
+
+void MainWindow::setProjectIoActive(bool active, const QString& message) {
+    project_io_active_ = active;
+    if (project_io_progress_ != nullptr) {
+        project_io_progress_->setVisible(active);
+    }
+    updateMusicTransactionGuards();
+    if (active && status_ != nullptr && !message.isEmpty()) {
+        status_->setText(message);
+    }
+}
+
+void MainWindow::startProjectLoad(const QString& path) {
+    if (path.isEmpty() || project_io_watcher_ == nullptr
+        || project_io_watcher_->isRunning()) {
+        return;
+    }
+    rememberDialogLocation(path);
+    cancelMusicAnalysis();
+    stopPlayback();
+    setProjectIoActive(true, tr("Loading %1 in the background…").arg(path));
+    project_io_watcher_->setFuture(QtConcurrent::run([path] {
+        ProjectIoResult result;
+        result.operation = ProjectIoOperation::Load;
+        result.path = path;
+        result.document = std::make_shared<pvt::ProjectDocument>();
+        std::string error;
+        const QFileInfo source_info(path);
+        const bool legacy = source_info.isFile()
+                            && source_info.suffix().compare(
+                                   QStringLiteral("pvt"), Qt::CaseInsensitive) == 0;
+        result.ok = legacy
+                        ? pvt::import_legacy_setup(
+                              path.toStdString(), *result.document, &error)
+                        : pvt::load_project_document(
+                              path.toStdString(), *result.document, &error);
+        result.error = QString::fromStdString(error);
+        return result;
+    }));
 }
 
 bool MainWindow::runSmokeChecks(QString* error) {
@@ -11077,6 +11290,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
     });
     makeSelectedVersionCurrent();
+    while (project_io_watcher_->isRunning()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        QThread::msleep(1);
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
     if (document_->current_version != first_version || hasUnsavedChanges()) {
         if (error != nullptr) {
             *error = tr("Saving during Make Current lost the selected version or left dirty state.");
@@ -11531,7 +11749,7 @@ void MainWindow::saveSetup() {
         saveSetupAs();
         return;
     }
-    (void)saveProjectPath(current_project_path_);
+    startProjectSave(current_project_path_);
 }
 
 void MainWindow::saveSetupAs() {
@@ -11578,7 +11796,74 @@ void MainWindow::saveSetupAs() {
             path.append(QStringLiteral(".zip"));
         }
     }
-    (void)saveProjectPath(path);
+    startProjectSave(path);
+}
+
+void MainWindow::startProjectSave(const QString& path) {
+    if (path.isEmpty() || project_io_watcher_ == nullptr
+        || project_io_watcher_->isRunning() || music_analysis_active_) {
+        return;
+    }
+    rememberDialogLocation(path);
+    setProjectIoActive(true, tr("Saving %1 in the background…").arg(path));
+    std::shared_ptr<pvt::ProjectDocument> staged;
+    try {
+        if (document_ == nullptr) {
+            document_ = std::make_unique<pvt::ProjectDocument>(
+                pvt::default_project_document());
+        }
+        staged = std::make_shared<pvt::ProjectDocument>(*document_);
+        staged->project = project_;
+        staged->dirty = baseline_dirty_
+                        || (undo_stack_ != nullptr && !undo_stack_->isClean());
+    } catch (const std::bad_alloc&) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Save failed"),
+            tr("There was not enough memory to prepare the project for saving."));
+        return;
+    }
+    project_io_watcher_->setFuture(QtConcurrent::run(
+        [staged = std::move(staged), path] {
+            ProjectIoResult result;
+            result.operation = ProjectIoOperation::Save;
+            result.path = path;
+            result.document = staged;
+            std::string error;
+            result.ok = pvt::save_project_document(
+                *staged, path.toStdString(), &result.save_report, &error);
+            result.error = QString::fromStdString(error);
+            return result;
+        }));
+}
+
+void MainWindow::finishProjectSave(pvt::ProjectDocument saved,
+                                   const pvt::BundleSaveReport& report,
+                                   const QString& path) {
+    document_ = std::make_unique<pvt::ProjectDocument>(std::move(saved));
+    project_ = document_->project;
+    current_project_path_ = QString::fromStdString(document_->source_path);
+    imported_legacy_path_.clear();
+    baseline_dirty_ = false;
+    if (undo_stack_ != nullptr) undo_stack_->setClean();
+    updateCompatibilityWarning();
+    refreshVersionsPage();
+    updateWindowTitle();
+    if (report.validated_only) {
+        if (report.compacted_storage) {
+            status_->setText(
+                tr("No project changes; verified current state and compacted shared music analysis at %1")
+                    .arg(path));
+        } else {
+            status_->setText(
+                tr("No changes; verified the bundle state at %1").arg(path));
+        }
+    } else if (report.promoted_external_change) {
+        status_->setText(tr("Saved external changes/integrity mismatch as version %1 in %2")
+                             .arg(report.version).arg(path));
+    } else {
+        status_->setText(tr("Saved version %1 to %2").arg(report.version).arg(path));
+    }
 }
 
 bool MainWindow::saveProjectPath(const QString& path) {
@@ -11606,11 +11891,11 @@ bool MainWindow::saveProjectPath(const QString& path) {
     if (report.validated_only) {
         if (report.compacted_storage) {
             status_->setText(
-                tr("No project changes; validated and compacted shared music analysis at %1")
+                tr("No project changes; verified state and compacted shared storage at %1")
                     .arg(path));
         } else {
             status_->setText(
-                tr("No changes; validated the complete bundle at %1").arg(path));
+                tr("No changes; verified the bundle state at %1").arg(path));
         }
     } else if (report.promoted_external_change) {
         status_->setText(tr("Saved external changes/integrity mismatch as version %1 in %2")
@@ -11623,7 +11908,6 @@ bool MainWindow::saveProjectPath(const QString& path) {
 
 void MainWindow::loadSetup() {
     if (!documentReplacementAllowed()) return;
-    if (!confirmDiscardChanges()) return;
     QMessageBox choice(this);
     choice.setWindowTitle(tr("Open / Import"));
     choice.setIcon(QMessageBox::Question);
@@ -11654,14 +11938,8 @@ void MainWindow::loadSetup() {
             tr("PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)"));
     }
     if (path.isEmpty()) return;
+    if (!confirmDiscardChanges(
+            [this, path] { startProjectLoad(path); })) return;
     rememberDialogLocation(path);
-    QString error;
-    if (!loadSetupFile(path, &error)) {
-        QMessageBox::critical(this, tr("Load failed"),
-                              tr("The active setup was not changed.\n\n%1").arg(error));
-        return;
-    }
-    if (compatibility_warning_.isEmpty()) {
-        status_->setText(tr("Loaded %1").arg(path));
-    }
+    startProjectLoad(path);
 }

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.1.3**. The version is read from `VERSION` by every
+Current product version: **1.1.4**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -609,8 +609,10 @@ version-metadata digest; its digest is necessarily kept in the separate
 portable across ZIP extractors and avoids archive symlink hazards. A changed Save
 appends the next numeric directory, then replaces root metadata/current through
 checked atomic file operations (a ZIP replaces the whole outer archive);
-old snapshots are immutable and gaps are valid. A no-change Save validates the
-entire bundle and creates no version. When rewriting a ZIP, already validated,
+old snapshots are immutable and gaps are valid. A no-change Save verifies the
+recorded tree identities and current snapshot and creates no version; the CLI
+Versions menu's explicit Validate action remains the full-history content check.
+When rewriting a ZIP, already validated,
 unchanged entries retain their compressed bytes rather than being recompressed;
 the completed temporary archive is still read back and compared with the exact
 desired file set before installation. **Make Current** changes root bookkeeping
@@ -633,11 +635,23 @@ current path before entering the transaction. Normal exit therefore leaves no
 lock sidecar, while a stale blank sidecar from a crash or older release is
 reused safely and removed by the next successful save.
 
-On the 18-version Potato Fire regression fixture, the directory loader improved
-from 28.1 seconds to 10.8 seconds before migration. One explicit Save compacted
-repeated layer analysis and duplicate attachment objects, reducing the expanded
-tree from 419 MiB to 41 MiB; the resulting complete-history load took about 4.0
-seconds. These figures are local measurements, not cross-platform guarantees.
+The current loader validates and materializes only the selected snapshot during
+normal Open; immutable history rows use their recorded metadata/tree identities
+and are decoded on demand by Open, Compare, Revert, or explicit full validation.
+The decimal music-analysis parser uses a locale-safe fast path, and split global
+and layer analysis is decoded once rather than reconstructed repeatedly.
+Normal GUI Open and Save are background transactions with an indeterminate
+status indicator, so slow storage never blocks the event loop. Version diff is
+also explicit and asynchronous instead of being launched merely by opening the
+Versions tab.
+
+On the expanded 41 MiB, 20-version Potato Fire reference directory, the released
+1.1.3 CLI took about 5.3 seconds to load, 11.6 seconds for a no-change load/save,
+and 13.2 seconds for a changed load/save. The 1.1.4 implementation measured
+about 1.05, 1.77, and 3.38 seconds respectively on the same Mac Studio. These
+figures include process startup and are local measurements, not cross-platform
+guarantees; the asynchronous GUI path remains responsive when slower hardware
+or storage takes longer.
 
 Load is read-only and transactional. It tries the valid `current` snapshot first,
 then numeric directories from highest to lowest until one validates. Missing or

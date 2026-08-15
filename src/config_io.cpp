@@ -6,7 +6,10 @@
 #include <array>
 #include <cerrno>
 #include <charconv>
+#include <cctype>
+#include <clocale>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -371,6 +374,26 @@ bool parse_integer_exact(std::string_view text, Integer& destination) {
 bool parse_double_exact(std::string_view text, double& destination) {
     if (text.empty()) {
         return false;
+    }
+    // Music analyses contain hundreds of thousands of decimal fields. A
+    // locale-owning stringstream per value dominated large-project loads.
+    // The C-locale fast path avoids stream/facet setup; retain the old parser
+    // whenever the process uses another numeric locale or for an accepted
+    // spelling that strtod does not consume exactly.
+    const std::lconv* numeric_locale = std::localeconv();
+    if (numeric_locale != nullptr && numeric_locale->decimal_point != nullptr
+        && numeric_locale->decimal_point[0] == '.'
+        && numeric_locale->decimal_point[1] == '\0'
+        && !std::isspace(static_cast<unsigned char>(text.front()))) {
+        const std::string terminated(text);
+        char* end = nullptr;
+        errno = 0;
+        const double fast_parsed = std::strtod(terminated.c_str(), &end);
+        if (errno != ERANGE && end == terminated.c_str() + terminated.size()
+            && std::isfinite(fast_parsed)) {
+            destination = fast_parsed;
+            return true;
+        }
     }
     std::istringstream stream{std::string(text)};
     stream.imbue(std::locale::classic());

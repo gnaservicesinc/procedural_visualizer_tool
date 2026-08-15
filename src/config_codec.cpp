@@ -952,19 +952,28 @@ bool deserialize_split_render_output_config(
                 music_analysis, candidate_analysis, error)) {
             return false;
         }
-        MusicAnalysis canonical_analysis = candidate_analysis;
-        canonical_analysis.compatibility = {};
-        std::string canonical_analysis_bytes;
+        // The combined decoder validates a Music clock before the complete
+        // analysis is installed below. Give it the real source metadata and
+        // one beat, but do not serialize and parse the enormous feature table
+        // a second time.
+        MusicAnalysis validation_analysis = candidate_analysis;
+        validation_analysis.compatibility = {};
+        validation_analysis.feature_samples.clear();
+        validation_analysis.tempo_points.clear();
+        if (validation_analysis.beat_times_seconds.size() > 1U) {
+            validation_analysis.beat_times_seconds.resize(1U);
+        }
+        std::string validation_analysis_bytes;
         if (!serialize_music_analysis_config(
-                canonical_analysis, canonical_analysis_bytes, error)) {
+                validation_analysis, validation_analysis_bytes, error)) {
             return false;
         }
         const std::string analysis_header =
             "PVT_MUSIC_ANALYSIS\t"
             + std::to_string(kMusicAnalysisConfigFormatVersion);
-        std::vector<std::string_view> canonical_analysis_records;
-        if (!split_document(canonical_analysis_bytes, analysis_header,
-                            canonical_analysis_records, error)) {
+        std::vector<std::string_view> validation_analysis_records;
+        if (!split_document(validation_analysis_bytes, analysis_header,
+                            validation_analysis_records, error)) {
             return false;
         }
 
@@ -985,10 +994,10 @@ bool deserialize_split_render_output_config(
                             "Combined render/output data exceeds the signed-int format limit.");
             }
         }
-        for (const std::string_view line : canonical_analysis_records) {
+        for (const std::string_view line : validation_analysis_records) {
             if (!append_bounded_line(combined, line)) {
                 return fail(error,
-                            "Combined render/output and analysis data exceeds the signed-int format limit.");
+                            "Combined render/output data exceeds the signed-int format limit.");
             }
         }
         CanvasLoopConfig candidate_canvas;

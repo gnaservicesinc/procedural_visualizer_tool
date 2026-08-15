@@ -1998,9 +1998,9 @@ bool save_project_interactive(CliState& state) {
     }
     if (report.validated_only) {
         if (report.compacted_storage) {
-            std::cout << "No project changes; validated and compacted shared music analysis.\n";
+            std::cout << "No project changes; verified state and compacted shared storage.\n";
         } else {
-            std::cout << "No changes; validated the complete bundle.\n";
+            std::cout << "No changes; verified the bundle state.\n";
         }
     } else {
         std::cout << "Saved version " << report.version << " to " << report.path << ".\n";
@@ -3053,9 +3053,9 @@ int main(int argc, char** argv) {
         }
         if (report.validated_only) {
             if (report.compacted_storage) {
-                std::cout << "No project changes; validated and compacted shared music analysis.\n";
+                std::cout << "No project changes; verified state and compacted shared storage.\n";
             } else {
-                std::cout << "No changes; validated the complete bundle.\n";
+                std::cout << "No changes; verified the bundle state.\n";
             }
         } else {
             std::cout << "Saved project version " << report.version << " to "

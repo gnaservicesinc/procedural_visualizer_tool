@@ -1749,6 +1749,39 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(directory_files.files.count(".DS_Store") == 0U
           && directory_files.files.count("0/.DS_Store") == 0U);
 
+    // The no-change fast path must still notice direct API edits inside the
+    // large music tables even when a caller does not separately set dirty.
+    const fs::path fingerprint_bundle = directory / "analysis-fingerprint-edit";
+    filesystem_error.clear();
+    fs::copy(bundle, fingerprint_bundle, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    pvt::ProjectDocument fingerprint_document;
+    CHECK(pvt::load_project_document(
+        as_utf8(fingerprint_bundle), fingerprint_document, &error));
+    CHECK(pvt::save_project_document(
+        fingerprint_document, as_utf8(fingerprint_bundle), &report, &error));
+    CHECK(report.validated_only && !report.created_version);
+    CHECK(!fingerprint_document.project.canvas.clock.music.feature_samples.empty());
+    const float changed_energy = 0.625F;
+    if (!fingerprint_document.project.canvas.clock.music.feature_samples.empty()) {
+        fingerprint_document.project.canvas.clock.music.feature_samples.front().energy =
+            changed_energy;
+    }
+    CHECK(pvt::save_project_document(
+        fingerprint_document, as_utf8(fingerprint_bundle), &report, &error));
+    CHECK(report.created_version && report.version == 1U);
+    pvt::ProjectDocument fingerprint_reloaded;
+    CHECK(pvt::load_project_document(
+        as_utf8(fingerprint_bundle), fingerprint_reloaded, &error));
+    CHECK(!fingerprint_reloaded.project.canvas.clock.music.feature_samples.empty());
+    if (!fingerprint_reloaded.project.canvas.clock.music.feature_samples.empty()) {
+        CHECK(fingerprint_reloaded.project.canvas.clock.music.feature_samples.front().energy
+              == changed_energy);
+    }
+    CHECK(pvt::validate_project_bundle(
+        as_utf8(fingerprint_bundle), nullptr, &error));
+
     // The shared analysis object is also directly editable. A valid edit is
     // loaded dirty and promoted to a new content identity on Save instead of
     // corrupting or silently discarding the user's manual change.

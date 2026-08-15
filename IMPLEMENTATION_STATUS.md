@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -8,11 +8,29 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.1.3 and has one source of truth in
+The public product version is now 1.1.4 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.1.4 performance patch removes complete-history decoding from ordinary
+Open and Save. The selected snapshot is still fully validated and materialized;
+history metadata/tree identities remain checked, while historical content is
+decoded on demand for comparison, revert, direct open, or explicit validation.
+Music-analysis decimal parsing now avoids a locale/facet stream per value,
+split analysis is decoded once, and a runtime-only dual 64-bit semantic
+fingerprint makes no-change detection cheap without replacing any persisted
+SHA-256 integrity identity. Changed saves reuse their already-computed semantic
+identity instead of serializing the project twice.
+
+Normal GUI Open and Save now run as transactional QtConcurrent work with visible
+busy state and editing guards; completion adopts the document atomically and
+continues pending close/new/open/version actions. Version comparison is an
+explicit background action instead of hidden synchronous work when the Versions
+tab refreshes. On the supplied 41 MiB Potato Fire directory, local CLI timings
+fell from approximately 5.3 to 1.05 seconds for load, 11.6 to 1.77 seconds for a
+no-change load/save, and 13.2 to 3.38 seconds for a changed load/save.
 
 The 1.1.3 persistence patch restores directory projects as a first-class GUI
 workflow: Open / Import explicitly chooses a project file or unpacked folder,
@@ -217,7 +235,8 @@ without history deltas or a dependency on the oldest version. Exact legacy
 snapshots are compacted transactionally on their next Save. Root metadata and
 its separate SHA-256 sidecar index immutable versions;
 `current` is a portable checksummed text pointer rather than a filesystem
-symlink. Changed saves append, no-change saves fully validate, Make Current only
+symlink. Changed saves append; no-change saves verify recorded history trees and
+the current snapshot while explicit Validate decodes all history. Make Current only
 changes root bookkeeping/pointer state (never a snapshot), and Revert creates a
 new highest-numbered snapshot. Loads are transactional/read-only, fall back from
 a bad current snapshot in descending numeric order, and promote parseable
@@ -549,6 +568,17 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-15 1.1.4 performance patch passed the fresh Qt-enabled Release
+suite 21/21, the independent C++20 suite 20/20, and the AddressSanitizer plus
+UndefinedBehaviorSanitizer suite 20/20; leak detection alone was disabled on
+this macOS beta host. On the supplied 41 MiB, 20-version Potato Fire directory,
+the released 1.1.3 CLI measured about 5.3 seconds for Open, 11.6 seconds for an
+unchanged open/save cycle, and 13.2 seconds after a real change; 1.1.4 measured
+about 1.05, 1.77, and 3.38 seconds respectively. The self-contained macOS
+distribution verifier passed over 27 Mach-O files; embedded `pvt-render`
+reported `1.1.4` and passed self-test, deep strict code-sign verification
+passed, the staged app passed native Cocoa smoke, and `git diff --check` passed.
 
 The 2026-08-14 1.1.3 persistence patch passed the complete Qt-enabled Release
 suite 21/21, the independent C++20 suite 20/20, and the AddressSanitizer plus

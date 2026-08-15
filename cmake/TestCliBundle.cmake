@@ -31,7 +31,7 @@ endif()
 
 run_cli("bundle reload and clean save"
     --load CliFire.zip --save CliFire.zip)
-if(NOT last_output MATCHES "No changes; validated the complete bundle")
+if(NOT last_output MATCHES "No changes; verified the bundle state")
     message(FATAL_ERROR "Clean save did not report validation-only behavior:\n${last_output}")
 endif()
 

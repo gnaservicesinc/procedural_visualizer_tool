@@ -90,6 +90,10 @@ struct ProjectDocument {
     std::string created_with_version;
     std::string last_changed_with_version;
     std::string loaded_snapshot_digest;
+    // Runtime-only, non-security fingerprint of the loaded semantic project.
+    // It lets ordinary no-op saves avoid rebuilding the large canonical text
+    // representation while the persisted SHA-256 identities remain unchanged.
+    std::string loaded_fast_project_fingerprint;
     // Digest of the exact on-disk bundle state seen at load/save time. It is
     // used to reject stale writes when another process advances or edits the
     // bundle while this document remains open.
@@ -186,9 +190,10 @@ bool revert_project_as_new(ProjectDocument& document,
                            BundleSaveReport* report = nullptr,
                            std::string* error = nullptr);
 
-// Save and Save-As share this operation. A clean document performs full bundle
-// validation and does not add a version. Changed or externally edited data is
-// appended as a new immutable version.
+// Save and Save-As share this operation. A clean document verifies recorded
+// state and the current snapshot without decoding every immutable ancestor;
+// validate_project_bundle remains the explicit full-history check. Changed or
+// externally edited data is appended as a new immutable version.
 bool save_project_document(ProjectDocument& document,
                            const std::string& path,
                            BundleSaveReport* report = nullptr,

@@ -421,11 +421,11 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This patch restores unpacked directory projects as a first-class workflow. Open / Import explicitly offers project files or folders, while Save As offers the unpacked form first for large projects so ordinary saves do not rebuild a ZIP archive.
+          This release makes large directory projects practical. Normal Open validates and materializes the selected snapshot instead of decoding every immutable historical snapshot; version content is decoded on demand for Open, Compare, Revert, or explicit full validation. Directory saves remain first-class and do not rebuild a ZIP archive.
 
-          Embedded music, images, OBJ files, and other attachments now keep exactly one physical copy per SHA-256 identity even when historical references retain different filenames. Repeated active-layer music-analysis tables are stored once in the shared content-addressed analysis store; the next explicit Save transactionally compacts existing history without deleting versions.
+          Music-analysis decimal parsing now uses a lightweight locale-safe fast path, shared split analysis is decoded once, and unchanged saves use an in-memory semantic fingerprint to avoid repeatedly serializing enormous analysis tables. Persisted SHA-256 identities and integrity checks are unchanged. Embedded music, images, OBJ files, and other attachments keep exactly one physical copy per content identity, and shared analysis tables remain content-addressed across history.
 
-          Large-project loading reuses validated component digests and parsed layer/analysis data. On the 18-version Potato Fire regression fixture, the original directory load improved from about 28.1 to 10.8 seconds; after a one-time Save reduced the expanded tree from 419 MiB to 41 MiB, the complete history loaded in about 4.0 seconds.
+          GUI Open, Save, Save As, and version comparison now run as background transactions with visible busy state, guarded editing, and atomic completion, so slow storage does not freeze the interface. On the supplied 41 MiB, 20-version Potato Fire directory, local CLI measurements improved from about 5.3 to 1.05 seconds for Open, 11.6 to 1.77 seconds for an unchanged open/save cycle, and 13.2 to 3.38 seconds after a real change. Timings include process startup and are not cross-platform guarantees.
 
           Save locks remain advisory and stale-writer-safe but are now transient. A successful save removes the exact still-locked sidecar identity before releasing the OS lock, and stale blank sidecars from a crash or older release are reused and cleaned automatically.
 
