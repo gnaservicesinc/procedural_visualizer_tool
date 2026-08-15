@@ -1,0 +1,2 @@
+Tests: smoke
+Depends: @, desktop-file-utils, libxml2-utils

@@ -290,8 +290,21 @@ if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI OR BUILD_TESTING)
 endif()
 
 if(PVT_NEEDS_BUNDLE_SUPPORT)
+    set(PVT_MINIZIP_TARGET)
     find_package(minizip 4.2 CONFIG QUIET)
-    if(NOT TARGET MINIZIP::minizip)
+    if(TARGET MINIZIP::minizip)
+        set(PVT_MINIZIP_TARGET MINIZIP::minizip)
+    else()
+        # Debian and Ubuntu package minizip-ng under its project name and
+        # export a correspondingly named target. Prefer that system package
+        # when it is available so distribution builds remain offline and
+        # reproducible; upstream and vcpkg builds retain their existing path.
+        find_package(minizip-ng 4.0 CONFIG QUIET)
+        if(TARGET MINIZIP::minizip-ng)
+            set(PVT_MINIZIP_TARGET MINIZIP::minizip-ng)
+        endif()
+    endif()
+    if(NOT PVT_MINIZIP_TARGET)
         include(FetchContent)
         set(MZ_COMPAT OFF CACHE BOOL "" FORCE)
         set(MZ_ZLIB ON CACHE BOOL "" FORCE)
@@ -324,6 +337,7 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
             GIT_REPOSITORY https://github.com/zlib-ng/minizip-ng.git
             GIT_TAG 7b2387161c542fa9f427352dcdef76097d0d692b)
         FetchContent_MakeAvailable(minizip_ng)
+        set(PVT_MINIZIP_TARGET MINIZIP::minizip)
         set(BUILD_SHARED_LIBS "${_pvt_saved_build_shared_libs}")
         unset(_pvt_saved_build_shared_libs)
         if(_pvt_had_skip_install_all)
@@ -355,7 +369,7 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
     target_link_libraries(ProceduralVisualizerBundle
         PUBLIC ProceduralVisualizerTool::ProceduralVisualizerTool
         PRIVATE
-            MINIZIP::minizip
+            ${PVT_MINIZIP_TARGET}
             ProceduralVisualizerTool::Audio)
     pvt_enable_warnings(ProceduralVisualizerBundle)
 endif()
@@ -620,7 +634,7 @@ if(BUILD_TESTING)
     set_target_properties(pvt_bundle_tests PROPERTIES CXX_EXTENSIONS NO)
     target_link_libraries(pvt_bundle_tests PRIVATE
         ProceduralVisualizerTool::Bundle
-        MINIZIP::minizip)
+        ${PVT_MINIZIP_TARGET})
     pvt_enable_warnings(pvt_bundle_tests)
     add_test(NAME pvt_bundle COMMAND pvt_bundle_tests)
 
@@ -635,11 +649,20 @@ if(BUILD_TESTING)
     add_test(NAME pvt_obj_mesh
         COMMAND pvt_obj_mesh_tests ${CMAKE_CURRENT_SOURCE_DIR})
 
-    add_executable(pvt_obj_surface_tests tests/obj_surface_isolated_test.cpp)
+    # This test intentionally exercises the private OBJ surface mapper. Build
+    # those implementation files into the isolated test instead of relying on
+    # hidden symbols from the public shared library.
+    add_executable(pvt_obj_surface_tests
+        tests/obj_surface_isolated_test.cpp
+        src/obj_mesh.cpp
+        src/obj_mesh.h
+        src/obj_surface.cpp
+        src/obj_surface.h)
     target_compile_features(pvt_obj_surface_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_obj_surface_tests PROPERTIES CXX_EXTENSIONS NO)
-    target_link_libraries(pvt_obj_surface_tests PRIVATE
-        ProceduralVisualizerTool::ProceduralVisualizerTool)
+    target_include_directories(pvt_obj_surface_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(pvt_obj_surface_tests PRIVATE Threads::Threads)
     pvt_enable_warnings(pvt_obj_surface_tests)
     add_test(NAME pvt_obj_surface
         COMMAND pvt_obj_surface_tests ${CMAKE_CURRENT_SOURCE_DIR})
@@ -727,6 +750,18 @@ if(PVT_BUILD_QT_GUI)
     install(TARGETS ProceduralVisualizerToolGui
         BUNDLE DESTINATION .
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(UNIX AND NOT APPLE)
+        install(FILES script/procedural-visualizer-tool.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+        install(FILES icon/procedural-visualizer-tool.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/64x64/apps)
+        install(FILES icon/procedural-visualizer-tool_128.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps
+            RENAME procedural-visualizer-tool.png)
+        install(FILES
+            script/application-x-procedural-visualizer-tool-project.xml
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
+    endif()
     if(PVT_DEPLOY_QT_RUNTIME)
         qt_generate_deploy_app_script(
             TARGET ProceduralVisualizerToolGui

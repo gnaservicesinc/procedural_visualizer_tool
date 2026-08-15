@@ -1,13 +1,10 @@
 ## Process this file with automake to produce Makefile.in
-desktopdir 	 = $(datadir)/applications
-desktop_in_files = procedural_visualizer_tool.in
-desktop_DATA 	 = $(desktop_in_files:.desktop.in=.desktop)
-@INTLTOOL_DESKTOP_RULE@
+desktopdir = $(datadir)/applications
+desktop_DATA = procedural-visualizer-tool.desktop
 
-EXTRA_DIST = $(desktop_in_files) \
+mimedir = $(datadir)/mime/packages
+mime_DATA = application-x-procedural-visualizer-tool-project.xml
+
+EXTRA_DIST = $(desktop_DATA) $(mime_DATA) \
+	procedural_visualizer_tool.desktop.in \
 	procedural_visualizer_tool.desktop.in.in
-
-CLEANFILES = $(desktop_DATA)
-
-DISTCLEANFILES = $(desktop_DATA)
-

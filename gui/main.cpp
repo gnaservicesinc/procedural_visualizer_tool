@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QFileInfo>
 #include <QTabWidget>
 #include <QTimer>
 
@@ -10,6 +11,8 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName(QStringLiteral("Procedural Visualizer Tool"));
     QApplication::setApplicationDisplayName(
         QStringLiteral("Procedural Visualizer Tool"));
+    QApplication::setDesktopFileName(
+        QStringLiteral("procedural-visualizer-tool"));
 #ifdef PVT_PROGRAM_VERSION
     QApplication::setApplicationVersion(QStringLiteral(PVT_PROGRAM_VERSION));
 #endif
@@ -58,6 +61,24 @@ int main(int argc, char** argv) {
         return application.exec();
     }
 
+    QString startup_project;
+    for (qsizetype index = 1; index < arguments.size(); ++index) {
+        const QString& argument = arguments.at(index);
+        if (argument == QStringLiteral("--working-directory")) {
+            ++index;
+            continue;
+        }
+        if (!argument.startsWith(QLatin1Char('-'))) {
+            startup_project = QFileInfo(argument).absoluteFilePath();
+            break;
+        }
+    }
+
     window.show();
+    if (!startup_project.isEmpty()) {
+        QTimer::singleShot(0, &window, [&window, startup_project] {
+            window.openProject(startup_project);
+        });
+    }
     return application.exec();
 }

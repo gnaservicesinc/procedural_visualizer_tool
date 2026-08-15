@@ -9236,6 +9236,11 @@ bool MainWindow::loadSetupFile(const QString& path, QString* error) {
     return loadProjectPath(path, error);
 }
 
+void MainWindow::openProject(const QString& path) {
+    if (path.isEmpty()) return;
+    startProjectLoad(QFileInfo(path).absoluteFilePath());
+}
+
 bool MainWindow::loadProjectPath(const QString& path, QString* error) {
     cancelMusicAnalysis();
     stopPlayback();

@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+PVT_DEBIAN_BUILD_TESTING := ON
+else
+PVT_DEBIAN_BUILD_TESTING := OFF
+endif
+
+%:
+	dh $@ --buildsystem=cmake+ninja
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DBUILD_SHARED_LIBS=ON \
+		-DBUILD_TESTING=$(PVT_DEBIAN_BUILD_TESTING) \
+		-DCMAKE_INSTALL_DOCDIR=share/doc/procedural-visualizer-tool \
+		-DCMAKE_SKIP_INSTALL_RPATH=ON \
+		-DPVT_BUILD_CLI=ON \
+		-DPVT_BUILD_EXAMPLES=OFF \
+		-DPVT_BUILD_QT_GUI=ON \
+		-DPVT_DEPLOY_QT_RUNTIME=OFF \
+		-DPVT_ENABLE_METAL=OFF
+
+override_dh_auto_test:
+	QT_QPA_PLATFORM=offscreen dh_auto_test

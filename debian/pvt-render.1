@@ -1,0 +1,53 @@
+.TH PVT-RENDER 1 "August 2026" "Procedural Visualizer Tool 1.1.4" "User Commands"
+.SH NAME
+pvt-render \- render Procedural Visualizer Tool projects
+.SH SYNOPSIS
+.B pvt-render
+.br
+.B pvt-render --render
+.RI [ options ]
+.br
+.B pvt-render --load
+.I FILE
+.RI [ --render ]
+.br
+.B pvt-render --self-test
+.SH DESCRIPTION
+.B pvt-render
+is the command-line editor and renderer supplied with Procedural Visualizer
+Tool. With no arguments it starts an interactive menu. Options are processed
+from left to right, so
+.B --load
+must precede any project overrides.
+.SH COMMON OPTIONS
+.TP
+.BR --load " " FILE
+Open a ZIP bundle, unpacked bundle directory, or legacy .pvt project.
+.TP
+.BR --save " " FILE
+Save a versioned project bundle.
+.TP
+.B --render
+Render a composite frame sequence.
+.TP
+.BR --output-dir " " PATH
+Write rendered frames under PATH.
+.TP
+.BR --width " " N , " " --height " " N , " " --frames " " N , " " --fps " " N
+Set output dimensions, sequence length, and frame rate.
+.TP
+.BR --backend " " cpu|cpu+gpu|gpu
+Select the rendering policy.
+.TP
+.BR --self-test
+Run the command-line library smoke test. Use this option by itself.
+.TP
+.BR --version
+Print the program version.
+.TP
+.BR -h , " " --help
+Show the complete option reference.
+.SH SEE ALSO
+.BR procedural-visualizer-tool (1)
+.SH AUTHOR
+GNA Services Inc.

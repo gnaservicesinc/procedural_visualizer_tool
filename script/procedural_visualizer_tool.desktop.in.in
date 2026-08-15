@@ -1,17 +1,18 @@
 [Desktop Entry]
-_Name=PVT
-_GenericName=Procedural Visualizer Tool
-_Comment=Eaisly create complex looping Procedural generaterd animations. 
-Exec=procedural-visualizer-tool %F
+Version=1.0
+Name=Procedural Visualizer Tool
+GenericName=Procedural Animation Editor
+Comment=Create seamless looping procedural animations
+Exec=procedural-visualizer-tool %f
 Terminal=false
 Type=Application
 StartupNotify=true
-MimeType=text/plain;
+MimeType=application/x-procedural-visualizer-tool-project;
 Icon=procedural-visualizer-tool
-Categories=Graphics;Qt;Art;Utility;Music;
-Actions=Window;
-_Keywords=Render;Video;Loop;Sound;Visualizer;Animaion;Procedurall;Tool
+Categories=Graphics;2DGraphics;Qt;
+Actions=NewWindow;
+Keywords=Animation;Audio;Loop;Procedural;Render;Video;Visualizer;
 
-[Desktop Action Window]
-_Name=Open a New Window
+[Desktop Action NewWindow]
+Name=New Window
 Exec=procedural-visualizer-tool

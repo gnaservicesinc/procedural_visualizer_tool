@@ -1,12 +1,8 @@
 ## Process this file with automake to produce Makefile.in
-## To change default icon size. 
-##
-## Remove tpad.png
-## Hardlink the icon size of your choosing to tpad.png
-## Rebuild / Reinstall
+icons64dir = $(datadir)/icons/hicolor/64x64/apps
+icons64_DATA = procedural-visualizer-tool.png
 
-iconsdir =  ${datadir}/icons
-icons_DATA = procedural-visualizer-tool.png
-EXTRA_DIST = \
-	procedural-visualizer-tool.png \
-	procedural-visualizer-tool_128.png
+icons128dir = $(datadir)/icons/hicolor/128x128/apps
+icons128_DATA = procedural-visualizer-tool_128.png
+
+EXTRA_DIST = icon.png icon.icns icon.ico

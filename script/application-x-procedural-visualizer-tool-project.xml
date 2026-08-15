@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-procedural-visualizer-tool-project">
+    <comment>Procedural Visualizer Tool project</comment>
+    <acronym>PVT</acronym>
+    <icon name="procedural-visualizer-tool"/>
+    <sub-class-of type="text/plain"/>
+    <glob pattern="*.pvt" weight="80"/>
+    <magic priority="80">
+      <match type="string" value="PVT_SETUP&#x9;" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>

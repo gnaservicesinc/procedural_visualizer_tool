@@ -1,0 +1,70 @@
+name: procedural-visualizer-tool
+title: Procedural Visualizer Tool
+adopt-info: procedural-visualizer-tool
+base: core24
+summary: Create seamless looping procedural animations
+description: |
+  Procedural Visualizer Tool is a layered Qt editor and renderer for seamless
+  looping animations. Build procedural artwork, synchronize motion and effects
+  to analyzed music, edit reusable motion paths, preserve project history, and
+  export PNG or OpenEXR frame sequences.
+
+  The snap also includes the pvt-render command-line renderer.
+website: https://github.com/gnaservicesinc/procedural_visualizer_tool
+source-code: https://github.com/gnaservicesinc/procedural_visualizer_tool
+issues: https://github.com/gnaservicesinc/procedural_visualizer_tool/issues
+contact: https://github.com/gnaservicesinc/procedural_visualizer_tool/issues
+license: GPL-3.0-or-later
+icon: icon/procedural-visualizer-tool_128.png
+
+grade: stable
+confinement: strict
+
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  procedural-visualizer-tool:
+    command: usr/bin/procedural-visualizer-tool
+    desktop: usr/share/applications/procedural-visualizer-tool.desktop
+    extensions:
+      - kde-neon-qt6
+    plugs:
+      - audio-playback
+      - home
+      - removable-media
+  pvt-render:
+    command: usr/bin/pvt-render
+    plugs:
+      - home
+      - removable-media
+
+parts:
+  procedural-visualizer-tool:
+    plugin: cmake
+    source: .
+    override-pull: |
+      craftctl default
+      craftctl set version="$(tr -d '\r\n' < "$CRAFT_PART_SRC/VERSION")"
+    cmake-parameters:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_INSTALL_LIBDIR=lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
+      - -DBUILD_SHARED_LIBS=ON
+      - -DBUILD_TESTING=OFF
+      - -DPVT_BUILD_CLI=ON
+      - -DPVT_BUILD_EXAMPLES=OFF
+      - -DPVT_BUILD_QT_GUI=ON
+      - -DPVT_DEPLOY_QT_RUNTIME=OFF
+      - -DPVT_ENABLE_METAL=OFF
+    build-packages:
+      - git
+      - libpng-dev
+      - zlib1g-dev
+    stage-packages:
+      - libpng16-16t64
+    prime:
+      - -usr/include
+      - -usr/lib/*/cmake
+      - -usr/lib/*/libProceduralVisualizerTool.so

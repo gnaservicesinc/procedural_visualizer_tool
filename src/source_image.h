@@ -9,8 +9,8 @@
 
 namespace pvt::detail {
 
-bool validate_starting_image_source(const std::string& path,
-                                    std::string* error);
+PVT_API bool validate_starting_image_source(const std::string& path,
+                                            std::string* error);
 
 bool load_starting_image_source(const std::string& path,
                                 std::shared_ptr<const Image>& image,

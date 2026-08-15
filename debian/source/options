@@ -1,0 +1,9 @@
+tar-ignore = .git
+tar-ignore = .github
+tar-ignore = .snapcraft
+tar-ignore = CMakeFiles
+tar-ignore = build*
+tar-ignore = parts
+tar-ignore = prime
+tar-ignore = stage
+tar-ignore = *.snap

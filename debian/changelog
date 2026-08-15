@@ -1,0 +1,6 @@
+procedural-visualizer-tool (1.1.4) stonking; urgency=medium
+
+  * Add the initial Debian and Ubuntu packaging.
+  * Install the desktop launcher, application icons, and PVT MIME definition.
+
+ -- Andrew Smith (GNA SERVICES INC) <Andrew@GNAServicesInc.com>  Sat, 15 Aug 2026 04:20:00 -0400

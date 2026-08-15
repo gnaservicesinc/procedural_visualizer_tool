@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+pvt-render --self-test
+QT_QPA_PLATFORM=offscreen procedural-visualizer-tool --smoke-test
+test -r /usr/share/applications/procedural-visualizer-tool.desktop
+test -r /usr/share/mime/packages/application-x-procedural-visualizer-tool-project.xml
+desktop-file-validate \
+    /usr/share/applications/procedural-visualizer-tool.desktop
+xmllint --noout \
+    /usr/share/mime/packages/application-x-procedural-visualizer-tool-project.xml

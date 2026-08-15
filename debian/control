@@ -1,0 +1,49 @@
+Source: procedural-visualizer-tool
+Section: graphics
+Maintainer: Andrew Smith (GNA SERVICES INC) <Andrew@GNAServicesInc.com>
+Build-Depends:
+ cmake (>= 3.20),
+ debhelper-compat (= 13),
+ libminizip-ng-dev (>= 4.0),
+ libpng-dev,
+ ninja-build,
+ qt6-base-dev (>= 6.5.0~),
+ zlib1g-dev
+Standards-Version: 4.7.3
+Homepage: https://github.com/gnaservicesinc/procedural_visualizer_tool
+Vcs-Git: https://github.com/gnaservicesinc/procedural_visualizer_tool.git
+Vcs-Browser: https://github.com/gnaservicesinc/procedural_visualizer_tool
+
+Package: procedural-visualizer-tool
+Architecture: any
+Depends:
+ hicolor-icon-theme,
+ shared-mime-info,
+ ${misc:Depends},
+ ${shlibs:Depends}
+Description: procedural animation editor and renderer
+ Procedural Visualizer Tool creates seamless looping animations from layered
+ procedural artwork. It provides a Qt desktop editor, music-responsive timing,
+ reusable motion paths, project history, PNG and EXR frame export, and the
+ pvt-render command-line renderer.
+
+Package: libproceduralvisualizertool1
+Section: libs
+Architecture: any
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: procedural animation rendering library
+ This package contains the shared rendering library used by Procedural
+ Visualizer Tool and compatible third-party applications.
+
+Package: libproceduralvisualizertool-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends:
+ libpng-dev,
+ libproceduralvisualizertool1 (= ${binary:Version}),
+ ${misc:Depends}
+Description: development files for Procedural Visualizer Tool
+ This package contains the public C++ header, unversioned library link, and
+ CMake package metadata for applications using the procedural renderer.

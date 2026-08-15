@@ -58,14 +58,14 @@ struct PreparedFrame {
     std::vector<std::array<double, 4U>> starting_palette;
 };
 
-bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
-                                        double normalized_phase,
-                                        PreparedFrame& prepared,
-                                        std::string* error);
-bool prepare_frame_for_backend(const RenderConfig& config,
-                               int frame_index,
-                               PreparedFrame& prepared,
-                               std::string* error);
+PVT_API bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
+                                                double normalized_phase,
+                                                PreparedFrame& prepared,
+                                                std::string* error);
+PVT_API bool prepare_frame_for_backend(const RenderConfig& config,
+                                       int frame_index,
+                                       PreparedFrame& prepared,
+                                       std::string* error);
 
 bool metal_backend_compiled();
 bool metal_backend_available(std::string* device_name,

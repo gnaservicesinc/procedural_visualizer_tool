@@ -1,0 +1,3 @@
+usr/include/procedural_visualizer_tool.h
+usr/lib/*/cmake/ProceduralVisualizerTool/*
+usr/lib/*/libProceduralVisualizerTool.so

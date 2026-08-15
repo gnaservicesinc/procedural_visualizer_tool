@@ -1181,7 +1181,12 @@ bool write_zip(const fs::path& destination,
         info.external_fa = 0100644U << 16U;
         info.filename = archive_path.c_str();
         info.filename_size = static_cast<std::uint16_t>(archive_path.size());
-        if (mz_zip_writer_add_buffer(writer.handle, entry.second.data(),
+        // minizip-ng 4.0's C declaration predates the const-correct buffer
+        // parameter used by newer releases. The writer only reads these
+        // bytes, so the cast keeps the distro library ABI compatible without
+        // copying every bundle entry.
+        if (mz_zip_writer_add_buffer(writer.handle,
+                                     const_cast<char*>(entry.second.data()),
                                      static_cast<int32_t>(entry.second.size()),
                                      &info) != MZ_OK) {
             (void)mz_zip_writer_close(writer.handle);

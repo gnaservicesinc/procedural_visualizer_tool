@@ -213,7 +213,8 @@ bool write_test_zip(const fs::path& path,
             info.filename = name.c_str();
             info.filename_size = static_cast<std::uint16_t>(name.size());
             const std::string value = "x";
-            if (mz_zip_writer_add_buffer(writer, value.data(), 1, &info) != MZ_OK) {
+            if (mz_zip_writer_add_buffer(
+                    writer, const_cast<char*>(value.data()), 1, &info) != MZ_OK) {
                 ok = false;
                 break;
             }
