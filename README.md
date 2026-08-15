@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.1.4**. The version is read from `VERSION` by every
+Current product version: **1.1.5**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -657,6 +657,9 @@ and the pointer but never alters a numbered snapshot;
 **Revert as New** copies the selected snapshot into a new highest-numbered
 version, so even a rollback can itself be rolled back. Semantic diffs follow
 layer UUIDs instead of confusing renames/reorders with unrelated objects.
+Starting **New Project** clears the prior bundle's version rows, selectors,
+summary, and action targets immediately. Version comparison controls remain
+disabled until the active document has at least two saved versions.
 
 Every numeric directory is accounted for during full validation. Parseable
 orphans can be promoted, while unrelated malformed/external trees are retained

@@ -8,11 +8,17 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.1.4 and has one source of truth in
+The public product version is now 1.1.5 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
 tagging, building, or publishing a release.
+
+The 1.1.5 correctness patch keeps the Versions page synchronized with document
+replacement. Starting a new project clears the prior bundle's rows, summary,
+diff selectors, and action targets; comparison remains unavailable until the
+active document has at least two saved versions. Completion from an older
+background comparison is revision-gated and cannot re-enable stale controls.
 
 The 1.1.4 performance patch removes complete-history decoding from ordinary
 Open and Save. The selected snapshot is still fully validated and materialized;
@@ -403,7 +409,7 @@ consumers do not inherit minizip requirements.
 | 18 | Layer compositing | Complete | Sequential bounded float-RGBA compositing implements all 11 requested modes plus opacity; only one layer frame and one accumulator are retained. |
 | 19 | Alpha split | Complete | Per-layer procedural modulation and global final RGB/RGBA selection are independent. Multi-layer creation enables final alpha without changing artwork; validation follows actual final-composite transparency. |
 | 20 | Human-readable project bundles | Complete | ZIP/directory bundle tree stores root/version metadata, small per-version global output, shared content-addressed music analysis, per-layer `.pvt` data, SHA-256 indexes, and a portable text current pointer. |
-| 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, field-level recovery/preservation, external-change promotion, semantic diff, Make Current, and revert-as-new preserve recoverability. |
+| 21 | Automatic immutable save versions | Complete | Changed Save appends; clean Save validates and compacts exact legacy analysis; ZIP saves reuse unchanged compressed entries; load fallback, field-level recovery/preservation, external-change promotion, semantic diff, Make Current, and revert-as-new preserve recoverability. New Project clears every prior-version view and action target. |
 | 22 | Legacy compatibility without overwrite | Complete | Setup v1-v8 imports remain supported; setup v8 adds hierarchical/nullable audio routing and setup v9 adds explicit per-item feature overrides while preserving every older meaning. Only explicit one-layer `--save-legacy` writes `.pvt`. |
 | 23 | GUI session undo/redo and preferences | Complete | All editor/structural actions use undo/redo; Application Settings exposes an Unlimited-or-signed-int step limit, rendering backend, and complete current-project default template. Allocation failure safely clears history without losing edits; UI preferences live outside portable bundles. |
 | 24 | Hostile-input bundle handling | Complete | Strict tree/archive/metadata bounds and checks reject traversal, collisions, links/special files, unsupported/encrypted archives, expansion abuse, stale saves, and invalid typed data transactionally. |
@@ -568,6 +574,15 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-15 1.1.5 correctness patch passed the Qt-enabled Release suite
+21/21, including a Cocoa GUI regression that replaces a saved project and
+checks the empty new-document version list, selectors, summary, diff text, and
+disabled actions. The self-contained macOS distribution verifier passed over
+27 Mach-O files; embedded `pvt-render` reported `1.1.5` and passed self-test,
+deep strict code-sign verification passed, the staged app passed Cocoa smoke,
+and the workflow-shaped archive contained only the package directory with the
+application, README, and license. `git diff --check` passed.
 
 The 2026-08-15 1.1.4 performance patch passed the fresh Qt-enabled Release
 suite 21/21, the independent C++20 suite 20/20, and the AddressSanitizer plus

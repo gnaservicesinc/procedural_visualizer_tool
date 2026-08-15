@@ -421,7 +421,9 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This release makes large directory projects practical. Normal Open validates and materializes the selected snapshot instead of decoding every immutable historical snapshot; version content is decoded on demand for Open, Compare, Revert, or explicit full validation. Directory saves remain first-class and do not rebuild a ZIP archive.
+          This patch keeps the Versions tab synchronized when starting a new project. The prior bundle's rows, summary, semantic-diff selectors, and action targets are cleared immediately, and version comparison stays disabled until the active document has at least two saved versions. A completed background comparison from an older document cannot re-enable stale controls.
+
+          This release also makes large directory projects practical. Normal Open validates and materializes the selected snapshot instead of decoding every immutable historical snapshot; version content is decoded on demand for Open, Compare, Revert, or explicit full validation. Directory saves remain first-class and do not rebuild a ZIP archive.
 
           Music-analysis decimal parsing now uses a lightweight locale-safe fast path, shared split analysis is decoded once, and unchanged saves use an in-memory semantic fingerprint to avoid repeatedly serializing enormous analysis tables. Persisted SHA-256 identities and integrity checks are unchanged. Embedded music, images, OBJ files, and other attachments keep exactly one physical copy per content identity, and shared analysis tables remain content-addressed across history.
 

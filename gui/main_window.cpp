@@ -1369,7 +1369,16 @@ MainWindow::MainWindow(QWidget* parent)
     connect(version_diff_watcher_, &QFutureWatcher<VersionDiffResult>::finished,
             this, [this] {
                 const VersionDiffResult result = version_diff_watcher_->result();
-                if (version_compare_ != nullptr) version_compare_->setEnabled(true);
+                if (version_compare_ != nullptr) {
+                    // The document may have been replaced while the snapshot
+                    // comparison was running. Do not let completion from the
+                    // old document re-enable comparison for an unsaved project.
+                    version_compare_->setEnabled(
+                        document_ != nullptr && version_before_ != nullptr
+                        && version_after_ != nullptr
+                        && version_before_->count() >= 2
+                        && version_after_->count() >= 2);
+                }
                 if (version_diff_ == nullptr || document_ == nullptr
                     || result.document_revision != document_revision_
                     || version_before_->currentData().toULongLong() != result.before
@@ -2869,6 +2878,14 @@ void MainWindow::refreshVersionsPage() {
                                                      : std::min(1, version_before_->count() - 1));
     version_after_->setCurrentIndex(old_after >= 0 ? old_after
                                                    : (version_after_->count() > 0 ? 0 : -1));
+    const bool can_compare = version_before_->count() >= 2
+                             && version_after_->count() >= 2;
+    version_before_->setEnabled(can_compare);
+    version_after_->setEnabled(can_compare);
+    version_compare_->setEnabled(
+        can_compare
+        && (version_diff_watcher_ == nullptr
+            || !version_diff_watcher_->isRunning()));
     const QString source = document_->source_path.empty()
                                ? tr("Not saved as a bundle yet")
                                : QString::fromStdString(document_->source_path);
@@ -2882,8 +2899,12 @@ void MainWindow::refreshVersionsPage() {
                                   + QStringLiteral("\n\n⚠ ")
                                   + compatibility_warning_);
     }
-    version_diff_->setPlainText(
-        tr("Choose two versions and select Compare. Comparison runs in the background."));
+    if (can_compare) {
+        version_diff_->setPlainText(
+            tr("Choose two versions and select Compare. Comparison runs in the background."));
+    } else {
+        version_diff_->clear();
+    }
 }
 
 void MainWindow::refreshVersionDiff() {
@@ -6163,6 +6184,7 @@ void MainWindow::replaceWithNewProject() {
     refreshLayerList();
     refreshAll();
     ++document_revision_;
+    refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
     status_->setText(warning.isEmpty()
@@ -11391,6 +11413,31 @@ bool MainWindow::runSmokeChecks(QString* error) {
                                             Qt::CaseInsensitive)) {
         if (error != nullptr) {
             *error = tr("Preserved future data did not produce an accurate recovery notice.");
+        }
+        return false;
+    }
+
+    // Replacing a saved document must also replace every Versions-page view
+    // and action target. Otherwise the old rows remain clickable even though
+    // document_ now points at an unrelated unsaved project.
+    if (version_list_->count() < 1) {
+        if (error != nullptr) {
+            *error = tr("The Versions page regression setup has no saved version to replace.");
+        }
+        return false;
+    }
+    replaceWithNewProject();
+    if (!document_->versions.empty() || !current_project_path_.isEmpty()
+        || version_list_->count() != 0 || version_before_->count() != 0
+        || version_after_->count() != 0 || version_before_->isEnabled()
+        || version_after_->isEnabled() || version_compare_->isEnabled()
+        || version_make_current_->isEnabled() || version_revert_->isEnabled()
+        || !version_diff_->toPlainText().isEmpty()
+        || !version_summary_->text().contains(tr("Not saved as a bundle yet"))
+        || !version_summary_->text().contains(
+            QString::fromStdString(project_.uuid))) {
+        if (error != nullptr) {
+            *error = tr("New Project retained stale version rows, selectors, actions, or bundle details.");
         }
         return false;
     }
