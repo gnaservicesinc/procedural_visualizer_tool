@@ -2664,9 +2664,11 @@ QWidget* MainWindow::createLayerSettingsPage() {
                 starting_alpha_steps_);
     starting_colors_layout->addLayout(channels);
     auto* starting_colors_help = new QLabel(tr(
-        "Used when the authored starting palette is off. Channel loops vary one "
-        "channel at a time; Interleaved advances all channels at different "
-        "rates; Additive rises from the minima; Subtractive falls from the maxima."));
+        "Used when the authored starting palette is off. Every ordering visits "
+        "the complete combination of the enabled channel values; it changes "
+        "only where those colors appear. Channel loops use nested RGBA order, "
+        "Interleaved changes channel rates, and Additive/Subtractive create "
+        "opposing cumulative arrangements."));
     starting_colors_help->setWordWrap(true);
     starting_colors_layout->addWidget(starting_colors_help);
     layout->addWidget(starting_colors_group);

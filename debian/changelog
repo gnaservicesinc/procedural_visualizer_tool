@@ -1,3 +1,9 @@
+procedural-visualizer-tool (1.2.2) stonking; urgency=medium
+
+  * New upstream release.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sun, 16 Aug 2026 03:26:25 -0400
+
 procedural-visualizer-tool (1.2.1) stonking; urgency=medium
 
   * Make the FFmpeg concat-script smoke test portable to Windows runners.

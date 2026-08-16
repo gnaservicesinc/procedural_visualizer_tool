@@ -2690,55 +2690,67 @@ double stepped_channel(std::size_t index, int steps,
 }
 
 Color generated_starting_color(const StartingColorConfig& config,
-                               std::size_t index,
-                               int block_x, int block_y) {
+                               std::size_t index) {
     const std::size_t red_steps = static_cast<std::size_t>(config.red_steps);
     const std::size_t green_steps = static_cast<std::size_t>(config.green_steps);
     const std::size_t blue_steps = static_cast<std::size_t>(config.blue_steps);
-    std::size_t red_index = index;
-    std::size_t green_index = index / red_steps;
-    std::size_t blue_index = green_index / green_steps;
-    std::size_t alpha_index = blue_index / blue_steps;
+    const std::size_t alpha_steps = config.include_alpha
+                                        ? static_cast<std::size_t>(
+                                              config.alpha_steps)
+                                        : 1U;
+
+    // This is the literal nested RGBA loop: alpha changes fastest, followed
+    // by blue, green, and red. Every ordering below is a bijection of these
+    // mixed-radix digits, so it can change spatial placement without silently
+    // deleting colors from the configured Cartesian product.
+    std::size_t remaining = index;
+    std::size_t alpha_index = remaining % alpha_steps;
+    remaining /= alpha_steps;
+    std::size_t blue_index = remaining % blue_steps;
+    remaining /= blue_steps;
+    std::size_t green_index = remaining % green_steps;
+    remaining /= green_steps;
+    std::size_t red_index = remaining % red_steps;
 
     switch (config.mode) {
         case StartingColorMode::LegacyHue:
         case StartingColorMode::ChannelLoops:
             break;
         case StartingColorMode::Interleaved: {
-            // Co-prime strides prevent adjacent blocks from walking every
-            // channel in lockstep while remaining deterministic and seamless.
-            const std::size_t spatial = index
-                + static_cast<std::size_t>(std::max(0, block_x)) * 3U
-                + static_cast<std::size_t>(std::max(0, block_y)) * 5U;
-            red_index = spatial;
-            green_index = spatial * 3U + 1U;
-            blue_index = spatial * 5U + 2U;
-            alpha_index = spatial * 7U + 3U;
+            // Change the mixed-radix significance order, not the available
+            // values. Red advances fastest here, yielding a different spatial
+            // weave while retaining every RGBA tuple exactly once per cycle.
+            remaining = index;
+            red_index = remaining % red_steps;
+            remaining /= red_steps;
+            green_index = remaining % green_steps;
+            remaining /= green_steps;
+            blue_index = remaining % blue_steps;
+            remaining /= blue_steps;
+            alpha_index = remaining % alpha_steps;
             break;
         }
         case StartingColorMode::Additive:
         case StartingColorMode::Subtractive: {
-            const int maximum_steps = std::max(
-                std::max(config.red_steps, config.green_steps),
-                std::max(config.blue_steps,
-                         config.include_alpha ? config.alpha_steps : 1));
-            const std::size_t ramp = index
-                % static_cast<std::size_t>(maximum_steps);
-            const double direction = config.mode == StartingColorMode::Additive
-                                         ? static_cast<double>(ramp)
-                                         : static_cast<double>(maximum_steps - 1)
-                                               - static_cast<double>(ramp);
-            const double normalized = maximum_steps > 1
-                ? direction / static_cast<double>(maximum_steps - 1)
-                : 0.0;
-            const auto scaled_index = [normalized](int steps) {
-                return static_cast<std::size_t>(std::llround(
-                    normalized * static_cast<double>(steps - 1)));
-            };
-            red_index = scaled_index(config.red_steps);
-            green_index = scaled_index(config.green_steps);
-            blue_index = scaled_index(config.blue_steps);
-            alpha_index = scaled_index(config.alpha_steps);
+            // A triangular modular shear makes neighboring channels add into
+            // one another. It is invertible for arbitrary per-channel step
+            // counts, unlike the former diagonal ramp, so no combination is
+            // lost. Subtractive reverses each sheared channel afterward.
+            const std::size_t source_red = red_index;
+            const std::size_t source_green = green_index;
+            const std::size_t source_blue = blue_index;
+            const std::size_t source_alpha = alpha_index;
+            red_index = source_red;
+            green_index = (source_green + source_red) % green_steps;
+            blue_index = (source_blue + source_green + source_red) % blue_steps;
+            alpha_index = (source_alpha + source_blue + source_green
+                           + source_red) % alpha_steps;
+            if (config.mode == StartingColorMode::Subtractive) {
+                red_index = red_steps - 1U - red_index;
+                green_index = green_steps - 1U - green_index;
+                blue_index = blue_steps - 1U - blue_index;
+                alpha_index = alpha_steps - 1U - alpha_index;
+            }
             break;
         }
     }
@@ -2891,6 +2903,8 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                            + config.ghost_mix * ghost_signal;
             const double hue = (combined_signal + 1.45) * 260.0
                                + 360.0 * config.hue_cycles * (loop_phase / kTau);
+            const double generated_hue_shift = combined_signal * 260.0
+                + 360.0 * config.hue_cycles * (loop_phase / kTau);
             const double audio_hue_shift =
                 audio.enabled && audio.color_enabled
                     ? audio.color_amount_degrees
@@ -2921,10 +2935,12 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 }
             } else if (starting_palette.empty()) {
                 base = generated_starting_color(
-                    config.starting_colors, starting_color_index,
-                    block_x / std::max(1, config.block_size),
-                    block_y / std::max(1, config.block_size));
-                base = rotate_linear_hue(base, audio_hue_shift);
+                    config.starting_colors, starting_color_index);
+                // Generated modes define the complete source-color set and
+                // its placement. Procedural spiral/wall/hue controls then
+                // transform those source colors instead of being bypassed.
+                base = rotate_linear_hue(
+                    base, generated_hue_shift + audio_hue_shift);
                 if (config.lighting_enabled) {
                     const double lighting_scale = lightness / 0.40;
                     base.r *= lighting_scale;

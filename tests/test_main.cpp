@@ -278,6 +278,87 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(pvt::render_frame_at_phase(generated, 0.0, subtractive, &error));
     CHECK(mean_absolute_difference(additive, subtractive) > 0.0001);
 
+    // Every generated ordering is a permutation of the complete constrained
+    // Cartesian product. With two values in each RGBA channel, all sixteen
+    // tuples must appear before the sequence repeats.
+    pvt::RenderConfig exhaustive = generated;
+    exhaustive.width = 16;
+    exhaustive.height = 16;
+    exhaustive.block_size = 4;
+    exhaustive.starting_colors.include_alpha = true;
+    exhaustive.starting_colors.red_steps = 2;
+    exhaustive.starting_colors.green_steps = 2;
+    exhaustive.starting_colors.blue_steps = 2;
+    exhaustive.starting_colors.alpha_steps = 2;
+    exhaustive.starting_colors.red_minimum = 0.0;
+    exhaustive.starting_colors.red_maximum = 1.0;
+    exhaustive.starting_colors.green_minimum = 0.0;
+    exhaustive.starting_colors.green_maximum = 1.0;
+    exhaustive.starting_colors.blue_minimum = 0.0;
+    exhaustive.starting_colors.blue_maximum = 1.0;
+    exhaustive.starting_colors.alpha_minimum = 0.25;
+    exhaustive.starting_colors.alpha_maximum = 0.75;
+    exhaustive.hue_cycles = 0;
+    for (const auto mode : {pvt::StartingColorMode::ChannelLoops,
+                            pvt::StartingColorMode::Interleaved,
+                            pvt::StartingColorMode::Additive,
+                            pvt::StartingColorMode::Subtractive}) {
+        exhaustive.starting_colors.mode = mode;
+        pvt::Image combinations;
+        CHECK(pvt::render_frame_at_phase(
+            exhaustive, 0.0, combinations, &error));
+        std::set<unsigned int> observed;
+        for (int y = 0; y < exhaustive.height; y += exhaustive.block_size) {
+            for (int x = 0; x < exhaustive.width; x += exhaustive.block_size) {
+                if (const float* pixel = combinations.pixel(x, y)) {
+                const unsigned int code =
+                    (pixel[0] > 0.5F ? 8U : 0U)
+                    | (pixel[1] > 0.5F ? 4U : 0U)
+                    | (pixel[2] > 0.5F ? 2U : 0U)
+                    | (pixel[3] > 0.5F ? 1U : 0U);
+                    observed.insert(code);
+                }
+            }
+        }
+        CHECK(observed.size() == 16U);
+        if (mode == pvt::StartingColorMode::ChannelLoops) {
+            const float* alpha_next = combinations.pixel(4, 0);
+            const float* blue_next = combinations.pixel(8, 0);
+            const float* green_next = combinations.pixel(0, 4);
+            const float* red_next = combinations.pixel(0, 8);
+            CHECK(alpha_next != nullptr && alpha_next[3] > 0.5F);
+            CHECK(blue_next != nullptr && blue_next[2] > 0.5F);
+            CHECK(green_next != nullptr && green_next[1] > 0.5F);
+            CHECK(red_next != nullptr && red_next[0] > 0.5F);
+        }
+    }
+
+    // Non-legacy source ordering must not bypass the procedural color signal.
+    exhaustive.width = 32;
+    exhaustive.height = 16;
+    exhaustive.starting_colors.include_alpha = false;
+    exhaustive.starting_colors.mode = pvt::StartingColorMode::Interleaved;
+    exhaustive.spiral_enabled = false;
+    exhaustive.wall_reflection_enabled = false;
+    pvt::Image procedural_off;
+    CHECK(pvt::render_frame_at_phase(
+        exhaustive, 0.25, procedural_off, &error));
+    exhaustive.spiral_enabled = true;
+    exhaustive.spiral_frequency = 2.25;
+    exhaustive.spiral_arms = 3;
+    pvt::Image procedural_spiral;
+    CHECK(pvt::render_frame_at_phase(
+        exhaustive, 0.25, procedural_spiral, &error));
+    CHECK(mean_absolute_difference(procedural_off, procedural_spiral) > 0.0001);
+    exhaustive.spiral_enabled = false;
+    exhaustive.wall_reflection_enabled = true;
+    exhaustive.wall_frequency = 3.5;
+    exhaustive.wall_mix = 1.0;
+    pvt::Image procedural_wall;
+    CHECK(pvt::render_frame_at_phase(
+        exhaustive, 0.25, procedural_wall, &error));
+    CHECK(mean_absolute_difference(procedural_off, procedural_wall) > 0.0001);
+
     pvt::RenderConfig path_config = pvt::default_config();
     make_small(path_config);
     path_config.motion_paths.push_back(
