@@ -11031,8 +11031,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         const QString contents = QString::fromUtf8(script.readAll());
         const QFileDevice::Permissions permissions = QFile::permissions(script_path);
-        const bool absolute_inputs = contents.contains(
-            QDir::toNativeSeparators(directory.path()));
+        const bool absolute_inputs = std::all_of(
+            chunks.cbegin(), chunks.cend(), [&contents](const QString& chunk) {
+                return contents.contains(ffconcat_single_quote(
+                    QFileInfo(chunk).absoluteFilePath()));
+            });
         const bool expected_command = contents.contains(
             QStringLiteral("ffmpeg -f concat -safe 0 -i \"$input_file_list\" -c copy \"$output\""));
         const bool relative_default = contents.contains(
@@ -11040,15 +11043,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const bool argument_override = contents.contains(
             QStringLiteral("if [[ -d \"$1\" ]]"))
             && contents.contains(QStringLiteral("output=$1"));
+        bool valid_syntax = true;
+        bool executable = true;
+#ifndef Q_OS_WIN
         QProcess syntax;
         syntax.start(QStringLiteral("/bin/bash"),
                      {QStringLiteral("-n"), script_path});
-        const bool valid_syntax = syntax.waitForFinished(10000)
-                                  && syntax.exitStatus() == QProcess::NormalExit
-                                  && syntax.exitCode() == 0;
+        valid_syntax = syntax.waitForFinished(10000)
+                       && syntax.exitStatus() == QProcess::NormalExit
+                       && syntax.exitCode() == 0;
+        executable = permissions & QFileDevice::ExeOwner;
+#else
+        Q_UNUSED(permissions);
+#endif
         if (!absolute_inputs || !expected_command || !relative_default
             || !argument_override || !valid_syntax
-            || !(permissions & QFileDevice::ExeOwner)) {
+            || !executable) {
             if (error != nullptr) {
                 *error = tr("The generated concat script is not portable, executable, or syntactically valid.");
             }
