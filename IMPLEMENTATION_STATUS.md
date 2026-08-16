@@ -1,6 +1,6 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-15
+Last updated: 2026-08-16
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
@@ -8,7 +8,35 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The public product version is now 1.1.5 and has one source of truth in
+The 1.2.3 correctness and acceleration pass removes fixed generated-color
+`Values` controls. Non-legacy generated sources now choose a float32 RGB/RGBA
+lattice from the full-resolution block count, preserve Min/Max ranges, keep
+every block unique whenever the selected output representation permits it, and
+use transient full-resolution coordinates in reduced previews. With all
+procedural controls disabled the generated source is time-invariant, block size
+is honored, and current-frame/sequence exports sample the same source placement
+as preview. Direct 16-bit PNG decode coverage proves that source values never
+pass through an 8-bit intermediate; 32-bit FLOAT remains available for EXR
+output, while starting-image input is explicitly 8/16-bit PNG.
+
+Metal now renders generated orderings, generated/source alpha, fitted-image
+palette selection and parallel dithers, reusable path bindings, and particle
+fields. Floyd-Steinberg input quantization and custom OBJ depth peeling remain
+ordered CPU stages inside the same accelerated frame rather than forcing a
+whole-layer retry. CPU + GPU pairs independent project layers on CPU and Metal,
+uses Metal for a single layer's parallel pixel stages, and surfaces unexpected
+Metal errors instead of silently repeating a frame on CPU. The supplied Test
+Fire project renders successfully in GPU mode at 1920×1080; its two
+otherwise-static test frames are byte-identical and each of the 2,073,600
+pixels has a distinct exported RGB tuple.
+
+Blur modulation now uses `Cycles per loop` as its sole count and ignores the
+retained legacy `blur_pulses_per_cycle` record; the duplicate UI field is gone.
+Saving preserves the user's selected tab, including background completion, and
+Cocoa smoke covers the regression. Effect synchronization is labeled simply
+`Synchronization`, without the misleading swing-clock wording.
+
+The public product version is now 1.2.3 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
@@ -420,9 +448,9 @@ consumers do not inherit minizip requirements.
 | 29 | Localized Swings | Complete | Zero radius retains global clock modulation; positive shorter-edge-relative radius creates a movable feathered source/UV timing region for waves and Texture effects. Mapped-object effects use the global synchronized clock because projection is not uniquely invertible. |
 | 30 | Per-layer starting palettes | Complete | One or more embedded sRGB source colors through signed-int UI/API indexing, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
 | 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization on both CPU and Metal. |
-| 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/strict-GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, starting-image and built-in motion stages, analytic surface/effect kernels, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Hybrid project frames pair CPU and Metal layer lanes with ordered compositing and resilient fallback; custom OBJ depth peeling, reusable cubic paths, and particles intentionally remain CPU-only. |
+| 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, output-scaled generated sources, fitted-image palette/dither and alpha handling, path resolution, particles, starting images, motion, analytic surfaces/effects, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Project frames pair independent CPU and Metal layer lanes with ordered compositing. Floyd-Steinberg source quantization and custom OBJ depth peeling are dependency-ordered CPU stages inside the accelerated frame; neither causes whole-layer fallback. Available-Metal failures are surfaced rather than silently retried on CPU. |
 | 33 | Layer starting image | Complete | Embedded PNG layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, CPU and Metal Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, cancellation, and seam/render/parity coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
-| 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, hybrid fallback, checked arc-length sampling, and seam/round-trip tests cover the feature. |
+| 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, Metal preparation, checked arc-length sampling, and seam/round-trip tests cover the feature. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, an authoritative per-layer Swing block, project audio defaults, and a visible layer override live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and a dense multiband/onset/spectral/chroma track through signed-int container/API capacity drive the base clock and independently routable wave/effect/color response. First project import enables the shared profile without creating layer overrides, Energy supplies a visibly dynamic default hue route, and later user choices remain intact. No fixed whole-song BPM clock is used. |
 | 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; bounded parallel frame render/conversion feeds one ordered writer while hardware policy, alpha, synchronized audio, Data-only exclusion, progress, cancellation, and collision safety remain explicit. No FFmpeg executable or library is used. |
@@ -449,9 +477,9 @@ consumers do not inherit minizip requirements.
   motion, float RGBA layer rendering,
   quantization, alpha, and analytic surface mappings.
 - `src/frame_renderer.cpp` / `src/metal_backend.cpp` / `src/metal_kernels.metal`:
-  backend-neutral dispatch, CPU fallback, cached metal-cpp resources and compute
+  backend-neutral dispatch, explicit Metal failure reporting, cached metal-cpp resources and compute
   pipelines, bounded admission, transactional cancellation, and GPU kernels for
-  base generation, starting images, ordered effects, analytic surfaces,
+  output-scaled base generation, starting images and palette mapping, ordered effects including particles, analytic surfaces,
   transforms, built-in layer motion, and quantization. Non-Apple/disabled
   builds use `src/metal_backend_stub.cpp`.
 - `src/composite.cpp`: project/layer validation, UUIDs, active-layer clock
@@ -574,6 +602,22 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-16 1.2.3 correction passed the complete Qt-enabled Release suite
+21/21, including real-Metal generated-source, image/palette/dither, particle,
+path, blur, custom-OBJ split-stage, cancellation, and CPU parity coverage plus
+the native Cocoa save-tab regression. The independent C++20 suite and the
+AddressSanitizer plus UndefinedBehaviorSanitizer suite each passed 20/20; leak
+detection alone was disabled on this macOS beta host. Clang 22 static analysis
+reported no project-owned findings; all 24 reports were confined to the pinned
+vendored miniaudio amalgamation. The supplied Test Fire project rendered two
+byte-identical 1920×1080 frames through the packaged GPU renderer, with all
+2,073,600 exported RGB tuples distinct. The self-contained macOS distribution
+verifier passed over 27 Mach-O files; its embedded `pvt-render` reported 1.2.3
+and passed self-test, deep strict signing and native Cocoa smoke passed, and the
+workflow-shaped archive passed checksum, integrity, architecture, deployment-
+target, and single-root layout checks. The release workflow YAML and
+`git diff --check` passed.
 
 The 2026-08-15 1.1.5 correctness patch passed the Qt-enabled Release suite
 21/21, including a Cocoa GUI regression that replaces a saved project and
@@ -803,8 +847,9 @@ target.
 3. **Debian/PPA distribution:** build and test Debian packages and a Launchpad
    PPA from Debian/Ubuntu systems, including clean-install, upgrade, dependency,
    and desktop-entry behavior.
-4. **Cross-platform acceleration:** retain explicit CPU, CPU+GPU, and strict-GPU
-   policy plus dependable CPU fallback. Metal is the only implemented/tested GPU
+4. **Cross-platform acceleration:** retain explicit CPU, CPU+GPU, and GPU
+   policy, and use CPU-only rendering automatically only where no GPU backend is
+   available. Metal is the only implemented/tested GPU
    backend today. Implement the staged Qt-hosted OpenGL design in
    `PORTABILITY_ROADMAP.md`, exercise it first with Mesa CI parity, and call it
    production-ready only after real Linux/Windows GPU stacks pass; a

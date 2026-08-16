@@ -22,6 +22,10 @@ struct FrameConstants {
     float4 pattern0;         // displacement, wave depth, spiral freq, wall freq
     float4 pattern1;         // wall mix, saturation, audio hue, alpha spatial freq
     float4 alpha_quant;      // alpha min/max, alpha phase radians, quant mix
+    uint4 starting_flags;    // mode, include alpha, use source alpha, dither+1
+    uint4 starting_reference; // full width/height/block size, auto levels
+    float4 starting_minimum; // RGBA range minima
+    float4 starting_maximum; // RGBA range maxima
 };
 
 struct GpuWave {
@@ -55,6 +59,14 @@ struct GpuSourceImage {
 struct GpuMotion {
     float4 source_target; // source center x/y, destination center x/y
     float4 rotation_scale; // cosine, sine, scale, unused
+};
+
+struct GpuParticlePoint {
+    float4 geometry; // center x/y, local radius, trail gain
+};
+
+struct GpuParticleGrid {
+    uint4 layout; // tiles across/down, tile size, point count
 };
 
 float clamp_unit(float value) {
@@ -192,20 +204,116 @@ float wave_height(constant FrameConstants& frame,
 }
 
 float4 nearest_palette(float4 input, const device float4* palette,
-                       uint count) {
+                       uint count, bool compare_alpha) {
     if (count == 0u) return input;
+    if (compare_alpha && input.a <= 1.0e-12f) return float4(0.0f);
     float4 closest = palette[0];
     float closest_distance = INFINITY;
     for (uint index = 0u; index < count; ++index) {
         const float3 delta = input.rgb - palette[index].rgb;
+        const float alpha_delta = input.a - palette[index].a;
         const float distance = dot(delta * delta,
-                                   float3(0.2126f, 0.7152f, 0.0722f));
+                                   float3(0.2126f, 0.7152f, 0.0722f))
+                               + (compare_alpha
+                                      ? alpha_delta * alpha_delta : 0.0f);
         if (distance < closest_distance) {
             closest = palette[index];
             closest_distance = distance;
         }
     }
     return closest;
+}
+
+ulong generated_starting_index(constant FrameConstants& frame,
+                               uint block_x, uint block_y) {
+    const ulong reference_width = ulong(frame.starting_reference.x);
+    const ulong reference_height = ulong(frame.starting_reference.y);
+    const ulong reference_block = ulong(frame.starting_reference.z);
+    const ulong reference_x = min(
+        reference_width - 1ul,
+        ulong(block_x) * reference_width
+            / ulong(frame.dimensions_counts.x));
+    const ulong reference_y = min(
+        reference_height - 1ul,
+        ulong(block_y) * reference_height
+            / ulong(frame.dimensions_counts.y));
+    const ulong blocks_across =
+        (reference_width + reference_block - 1ul) / reference_block;
+    return (reference_y / reference_block) * blocks_across
+           + reference_x / reference_block;
+}
+
+float4 generated_starting_color(constant FrameConstants& frame,
+                                ulong index) {
+    const ulong levels = max(1ul, ulong(frame.starting_reference.w));
+    const ulong alpha_levels = frame.starting_flags.y != 0u ? levels : 1ul;
+    ulong remaining = index;
+    ulong alpha_index = remaining % alpha_levels;
+    remaining /= alpha_levels;
+    ulong blue_index = remaining % levels;
+    remaining /= levels;
+    ulong green_index = remaining % levels;
+    remaining /= levels;
+    ulong red_index = remaining % levels;
+
+    const uint mode = frame.starting_flags.x;
+    if (mode == 2u) {
+        remaining = index;
+        red_index = remaining % levels;
+        remaining /= levels;
+        green_index = remaining % levels;
+        remaining /= levels;
+        blue_index = remaining % levels;
+        remaining /= levels;
+        alpha_index = remaining % alpha_levels;
+    } else if (mode == 3u || mode == 4u) {
+        const ulong source_red = red_index;
+        const ulong source_green = green_index;
+        const ulong source_blue = blue_index;
+        const ulong source_alpha = alpha_index;
+        green_index = (source_green + source_red) % levels;
+        blue_index = (source_blue + source_green + source_red) % levels;
+        alpha_index = (source_alpha + source_blue + source_green
+                       + source_red) % alpha_levels;
+        if (mode == 4u) {
+            red_index = levels - 1ul - red_index;
+            green_index = levels - 1ul - green_index;
+            blue_index = levels - 1ul - blue_index;
+            alpha_index = alpha_levels - 1ul - alpha_index;
+        }
+    }
+
+    const float denominator = levels > 1ul ? float(levels - 1ul) : 1.0f;
+    const float alpha_denominator = alpha_levels > 1ul
+                                        ? float(alpha_levels - 1ul) : 1.0f;
+    const float4 unit = float4(
+        float(red_index) / denominator,
+        float(green_index) / denominator,
+        float(blue_index) / denominator,
+        frame.starting_flags.y != 0u
+            ? float(alpha_index) / alpha_denominator : 1.0f);
+    const float4 ranged = mix(frame.starting_minimum,
+                              frame.starting_maximum, unit);
+    return float4(srgb_to_linear(ranged.r), srgb_to_linear(ranged.g),
+                  srgb_to_linear(ranged.b),
+                  frame.starting_flags.y != 0u ? ranged.a : 1.0f);
+}
+
+float procedural_alpha(constant FrameConstants& frame,
+                       uint x, uint y, uint width, uint height) {
+    if (frame.counts_flags.z == 0u) return 1.0f;
+    const float width_scale = width > 1u
+        ? float(x) / float(width - 1u) : 0.0f;
+    const float height_scale = height > 1u
+        ? float(y) / float(height - 1u) : 0.0f;
+    const float spatial =
+        (width_scale + height_scale) * 0.7071067811865476f;
+    const float alpha_phase =
+        kTau * frame.pattern1.w * spatial
+        - float(frame.signed_values.x) * frame.phases.x
+        + frame.alpha_quant.z;
+    const float amount = 0.5f + 0.5f * sin(alpha_phase);
+    return mix(frame.alpha_quant.x, frame.alpha_quant.y, amount);
 }
 
 kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
@@ -283,14 +391,32 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
                          : 0.28f * normalized_light;
     }
     lightness = clamp(lightness, 0.04f, 0.68f);
+    const ulong starting_index = generated_starting_index(
+        frame, block_x, block_y);
     float4 base;
-    if (frame.counts_flags.y == 0u) {
+    if (frame.counts_flags.y == 0u && frame.starting_flags.x == 0u) {
         base = hsl_to_linear(hue, frame.pattern1.y, lightness);
         base = rotate_linear_hue(base, frame.pattern1.z);
+        if (frame.starting_flags.y != 0u) {
+            const uint alpha_steps = max(1u, frame.starting_reference.w);
+            const uint alpha_index = uint(starting_index % ulong(alpha_steps));
+            const float position = alpha_steps > 1u
+                ? float(alpha_index) / float(alpha_steps - 1u) : 0.0f;
+            base.a = mix(frame.starting_minimum.a,
+                         frame.starting_maximum.a, position);
+        }
+    } else if (frame.counts_flags.y == 0u) {
+        base = generated_starting_color(frame, starting_index);
+        base = rotate_linear_hue(
+            base, combined * 260.0f + frame.pattern1.z);
+        if (frame.base_flags.x != 0u) {
+            base.rgb *= lightness / 0.40f;
+        }
     } else {
         base = nearest_palette(
             hsl_to_linear(hue, frame.pattern1.y, 0.40f),
-            palette, frame.counts_flags.y);
+            palette, frame.counts_flags.y,
+            frame.starting_flags.z != 0u);
         base = rotate_linear_hue(base, frame.pattern1.z);
         if (frame.base_flags.x != 0u) {
             base.rgb *= lightness / 0.40f;
@@ -301,21 +427,11 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     const uint end_y = min(block_y + block_size, height);
     for (uint py = block_y; py < end_y; ++py) {
         for (uint px = block_x; px < end_x; ++px) {
-            float alpha = 1.0f;
-            if (frame.counts_flags.z != 0u) {
-                const float width_scale = width > 1u
-                    ? float(px) / float(width - 1u) : 0.0f;
-                const float height_scale = height > 1u
-                    ? float(py) / float(height - 1u) : 0.0f;
-                const float spatial =
-                    (width_scale + height_scale) * 0.7071067811865476f;
-                const float alpha_phase =
-                    kTau * frame.pattern1.w * spatial
-                    - float(frame.signed_values.x) * frame.phases.x
-                    + frame.alpha_quant.z;
-                const float amount = 0.5f + 0.5f * sin(alpha_phase);
-                alpha = mix(frame.alpha_quant.x, frame.alpha_quant.y, amount);
-            }
+            const float source_alpha = frame.starting_flags.z != 0u
+                                           ? base.a : 1.0f;
+            const float alpha = source_alpha
+                                * procedural_alpha(frame, px, py,
+                                                   width, height);
             output[py * width + px] = float4(base.rgb, clamp_unit(alpha));
         }
     }
@@ -411,11 +527,34 @@ float4 sample_starting_image(const device float4* image, float x, float y,
     return mix(top, bottom, ty);
 }
 
+ulong source_dither_hash(ulong value) {
+    value ^= value >> 30u;
+    value *= 0xbf58476d1ce4e5b9ul;
+    value ^= value >> 27u;
+    value *= 0x94d049bb133111ebul;
+    return value ^ (value >> 31u);
+}
+
+float source_dither_noise(uint x, uint y, uint method) {
+    if (method == 2u) {
+        const int bayer[16] = {
+            0, 8, 2, 10, 12, 4, 14, 6,
+            3, 11, 1, 9, 15, 7, 13, 5};
+        const uint index = (y & 3u) * 4u + (x & 3u);
+        return (float(bayer[index]) + 0.5f) / 16.0f - 0.5f;
+    }
+    const ulong coordinate = (ulong(x) << 32u) | ulong(y);
+    const ulong bits = source_dither_hash(
+        coordinate ^ 0xa0761d6478bd642ful);
+    return float(bits >> 40u) * (1.0f / 16777216.0f) - 0.5f;
+}
+
 kernel void source_image_render(
     constant FrameConstants& frame [[buffer(0)]],
     constant GpuSourceImage& source [[buffer(1)]],
     const device float4* image [[buffer(2)]],
-    device float4* output [[buffer(3)]],
+    const device float4* palette [[buffer(3)]],
+    device float4* output [[buffer(4)]],
     uint2 gid [[thread_position_in_grid]]) {
     const uint source_width = source.source.x;
     const uint source_height = source.source.y;
@@ -423,6 +562,11 @@ kernel void source_image_render(
     const uint destination_width = source.destination.x;
     const uint destination_height = source.destination.y;
     if (gid.x >= destination_width || gid.y >= destination_height) return;
+    if (source.source.w != 0u) {
+        output[gid.y * destination_width + gid.x] =
+            image[gid.y * destination_width + gid.x];
+        return;
+    }
 
     const float sx = float(destination_width) / float(source_width);
     const float sy = float(destination_height) / float(source_height);
@@ -448,20 +592,28 @@ kernel void source_image_render(
     float4 color = sample_starting_image(
         image, source_x, source_y, source_width, source_height, tile,
         transparent_outside);
-    if (frame.counts_flags.z != 0u) {
-        const float width_scale = destination_width > 1u
-            ? float(gid.x) / float(destination_width - 1u) : 0.0f;
-        const float height_scale = destination_height > 1u
-            ? float(gid.y) / float(destination_height - 1u) : 0.0f;
-        const float spatial =
-            (width_scale + height_scale) * 0.7071067811865476f;
-        const float alpha_phase =
-            kTau * frame.pattern1.w * spatial
-            - float(frame.signed_values.x) * frame.phases.x
-            + frame.alpha_quant.z;
-        const float amount = 0.5f + 0.5f * sin(alpha_phase);
-        color.a *= mix(frame.alpha_quant.x, frame.alpha_quant.y, amount);
+    const bool compare_alpha = frame.starting_flags.z != 0u;
+    if (frame.counts_flags.y != 0u) {
+        if (compare_alpha && color.a <= 1.0e-12f) {
+            color = float4(0.0f);
+            output[gid.y * destination_width + gid.x] = color;
+            return;
+        }
+        if (frame.starting_flags.w != 0u) {
+            const float amplitude = clamp(
+                0.5f / pow(float(frame.counts_flags.y), 1.0f / 3.0f),
+                0.015f, 0.18f);
+            const float noise = source_dither_noise(
+                gid.x, gid.y, frame.starting_flags.w) * amplitude;
+            color.rgb = clamp(color.rgb + noise, 0.0f, 1.0f);
+            if (compare_alpha) color.a = clamp_unit(color.a + noise);
+        }
+        color = nearest_palette(
+            color, palette, frame.counts_flags.y, compare_alpha);
     }
+    color.a = (compare_alpha ? color.a : 1.0f)
+              * procedural_alpha(frame, gid.x, gid.y,
+                                 destination_width, destination_height);
     output[gid.y * destination_width + gid.x] = color;
 }
 
@@ -938,6 +1090,62 @@ kernel void block_scale(constant FrameConstants& frame [[buffer(0)]],
             output[y * width + x] = value;
         }
     }
+}
+
+kernel void particle_field(
+    constant FrameConstants& frame [[buffer(0)]],
+    constant GpuEffect& effect [[buffer(1)]],
+    constant GpuParticleGrid& grid [[buffer(2)]],
+    const device GpuParticlePoint* points [[buffer(3)]],
+    const device uint* tile_offsets [[buffer(4)]],
+    const device uint* tile_indices [[buffer(5)]],
+    const device float4* source [[buffer(6)]],
+    device float4* output [[buffer(7)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    if (gid.x >= width || gid.y >= height) return;
+    float4 color = source[gid.y * width + gid.x];
+    const uint tile_x = gid.x / grid.layout.z;
+    const uint tile_y = gid.y / grid.layout.z;
+    const uint tile = tile_y * grid.layout.x + tile_x;
+    const uint begin = tile_offsets[tile];
+    const uint end = tile_offsets[tile + 1u];
+    const float base_brightness = max(0.0f, effect.primary.y);
+    const float core = clamp_unit(effect.glow_area.y);
+    const float softness = max(0.05f, effect.glow_area.z);
+    for (uint slot = begin; slot < end; ++slot) {
+        const uint point_index = tile_indices[slot];
+        if (point_index >= grid.layout.w) continue;
+        const float4 point = points[point_index].geometry;
+        const float dx = (float(gid.x) - point.x) / point.z;
+        const float dy = (float(gid.y) - point.y) / point.z;
+        const float distance_squared = dx * dx + dy * dy;
+        if (distance_squared > 6.25f) continue;
+        const float gaussian = exp(
+            -distance_squared / (0.22f + 1.55f * softness));
+        const float area = circular_influence(
+            effect.placement.y, effect.placement.z, effect.glow_area.w,
+            float(gid.x), float(gid.y), width, height);
+        const float amount = gaussian * point.w * area;
+        if (amount <= 1.0e-8f) continue;
+        const float white_core = pow(gaussian, 1.0f + 5.0f * core);
+        const float particle_alpha = clamp_unit(amount);
+        const float previous_alpha = clamp_unit(color.a);
+        const float combined_alpha = particle_alpha
+            + previous_alpha * (1.0f - particle_alpha);
+        const float3 emission = base_brightness * float3(
+            1.20f + 0.80f * white_core,
+            0.28f + 0.72f * white_core,
+            0.05f + 0.65f * white_core);
+        if (combined_alpha > 1.0e-12f) {
+            color.rgb = (color.rgb * previous_alpha
+                         + emission * particle_alpha)
+                        / combined_alpha;
+        }
+        color.a = combined_alpha;
+    }
+    output[gid.y * width + gid.x] = color;
 }
 
 kernel void glow_extract(constant FrameConstants& frame [[buffer(0)]],

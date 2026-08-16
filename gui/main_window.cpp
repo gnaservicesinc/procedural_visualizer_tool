@@ -825,6 +825,9 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
 }
 
 void scale_project_for_preview(pvt::ProjectConfig& project) {
+    const int source_width = project.canvas.width;
+    const int source_height = project.canvas.height;
+    const int source_block_size = project.canvas.block_size;
     const int source_short_edge =
         std::max(1, std::min(project.canvas.width, project.canvas.height));
     const double scale = std::min(
@@ -841,6 +844,9 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
     // These controls are defined in output pixels. Scale them with the preview
     // so the low-resolution image preserves their full-resolution proportions.
     for (auto& layer : project.layers) {
+        layer.render.starting_colors.reference_width = source_width;
+        layer.render.starting_colors.reference_height = source_height;
+        layer.render.starting_colors.reference_block_size = source_block_size;
         layer.render.displacement *= pixel_scale;
         for (auto& effect : layer.render.effects) {
             if (effect.type == pvt::EffectType::Glow
@@ -1223,7 +1229,6 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.blur_minimum = random_real(random, 0.0, 0.35);
             effect.blur_maximum = random_real(
                 random, (std::max)(effect.blur_minimum, 0.45), 1.0);
-            effect.blur_pulses_per_cycle = random_integer(random, 1, 6);
             effect.center_x = random_real(random, 0.2, 0.8);
             effect.center_y = random_real(random, 0.2, 0.8);
             effect.angle_degrees = random_real(random, -180.0, 180.0);
@@ -1677,7 +1682,7 @@ QWidget* MainWindow::createWavePage() {
     auto* layout = new QVBoxLayout(page);
     auto* explanation = new QLabel(
         tr("Drag numbered handles in the preview to place waves. A synchronized wave uses "
-           "the shared swung clock; a free wave remains independently periodic."));
+           "the effective project or per-layer clock; a free wave remains independently periodic."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
@@ -2394,7 +2399,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
     effect_name_->setValidator(new Utf8TextValidator(TextRule::Name, effect_name_));
     effect_enabled_ = new QCheckBox(tr("Enabled"));
-    effect_sync_ = new QCheckBox(tr("Follow shared synchronized/swung clock"));
+    effect_sync_ = new QCheckBox(tr("Synchronization"));
     effect_audio_response_ = new QComboBox;
     populate_audio_response_combo(effect_audio_response_);
     effect_type_ = new QComboBox;
@@ -2440,7 +2445,6 @@ QWidget* MainWindow::createEffectPage() {
     effect_blur_samples_ = integer_editor(2, 129);
     effect_blur_minimum_ = real_editor(0.0, 1.0, 4, 0.01);
     effect_blur_maximum_ = real_editor(0.0, 1.0, 4, 0.01);
-    effect_blur_pulses_ = integer_editor(1, 1000);
     effect_form_->addRow(tr("Name"), effect_name_);
     effect_form_->addRow(effect_enabled_);
     effect_form_->addRow(effect_sync_);
@@ -2466,13 +2470,12 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Samples per pass"), effect_blur_samples_);
     effect_form_->addRow(tr("Minimum blur mix"), effect_blur_minimum_);
     effect_form_->addRow(tr("Maximum blur mix"), effect_blur_maximum_);
-    effect_form_->addRow(tr("Modulations per cycle"), effect_blur_pulses_);
     effect_name_->setToolTip(
         tr("A descriptive layer-local name used in the stack and semantic version diffs."));
     effect_enabled_->setToolTip(
         tr("Bypasses this effect without deleting it or changing its authored parameters."));
     effect_sync_->setToolTip(
-        tr("On: follows the shared project/layer clock after swing and music timing. Off: uses a smooth independent linear loop. Both choices animate according to Cycles per loop."));
+        tr("On: use the effective project or per-layer clock. Off: use an independent seamless clock. Cycles per loop is the modulation count in either mode."));
     effect_audio_response_->setToolTip(
         tr("For synchronized effects, Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Missing/null project data is Default."));
     effect_type_->setToolTip(
@@ -2489,10 +2492,8 @@ QWidget* MainWindow::createEffectPage() {
         tr("Lowest wet/dry mix reached on the effect's selected clock. Set equal to the maximum for constant blur."));
     effect_blur_maximum_->setToolTip(
         tr("Highest wet/dry mix reached on the effect's selected clock. Set equal to the minimum for constant blur."));
-    effect_blur_pulses_->setToolTip(
-        tr("Number of complete minimum-to-maximum-to-minimum blur modulations per effect cycle."));
     effect_cycles_->setToolTip(
-        tr("Signed motion cycles across the project loop; whole values preserve the seam."));
+        tr("Signed effect modulations across the project loop; whole values preserve the seam. For Blur, this directly controls the number of minimum-to-maximum-to-minimum pulses."));
     effect_phase_->setToolTip(
         tr("Authored timing offset in degrees. Values beyond one rotation are retained."));
     scroll->setWidget(properties);
@@ -2563,7 +2564,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     ghost_mix_ = real_editor(0.0, 1.0, 4, 0.01);
     ghost_lag_ = real_editor(-360.0, 360.0, 3, 1.0);
     phrase_warp_->setToolTip(
-        tr("Periodic warp applied to the shared synchronized clock."));
+        tr("Periodic warp applied to the effective project-wide or per-layer synchronized clock."));
     ghost_mix_->setToolTip(tr("Mix between the main and phase-lagged color signals."));
     ghost_lag_->setToolTip(tr("Phase separation of the ghost color signal."));
     rhythm->addRow(tr("Phrase warp"), phrase_warp_);
@@ -2596,7 +2597,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         add_enum_item(starting_image_fit_,
                       QString::fromUtf8(pvt::starting_image_fit_name(fit)), fit);
     }
-    source_form->addRow(tr("Embedded PNG"), source_row);
+    source_form->addRow(tr("Embedded PNG (8/16-bit)"), source_row);
     source_form->addRow(tr("Fit"), starting_image_fit_);
     starting_image_palette_dither_ = new QCheckBox(
         tr("Dither when quantizing this image to the starting palette"));
@@ -2611,7 +2612,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
     source_form->addRow(tr("Source quantization dither"),
                         starting_image_palette_dither_method_);
     starting_image_group_->setToolTip(tr(
-        "The fitted in-memory PNG controls where source colors appear. When a "
+        "The fitted PNG is decoded directly to float32; 16-bit channel values "
+        "are not reduced through an 8-bit intermediate. It controls where source colors appear. When a "
         "starting palette is enabled, the image is quantized to that palette "
         "before effects; the two options are intentionally composable."));
     layout->addWidget(starting_image_group_);
@@ -2641,34 +2643,27 @@ QWidget* MainWindow::createLayerSettingsPage() {
     channels->addWidget(new QLabel(tr("Channel")), 0, 0);
     channels->addWidget(new QLabel(tr("Minimum")), 0, 1);
     channels->addWidget(new QLabel(tr("Maximum")), 0, 2);
-    channels->addWidget(new QLabel(tr("Values")), 0, 3);
     const auto add_channel = [channels](int row, const QString& name,
                                         QDoubleSpinBox*& minimum,
-                                        QDoubleSpinBox*& maximum,
-                                        QSpinBox*& steps) {
+                                        QDoubleSpinBox*& maximum) {
         minimum = real_editor(0.0, 1.0, 4, 0.01);
         maximum = real_editor(0.0, 1.0, 4, 0.01);
-        steps = integer_editor(1, 65536);
         channels->addWidget(new QLabel(name), row, 0);
         channels->addWidget(minimum, row, 1);
         channels->addWidget(maximum, row, 2);
-        channels->addWidget(steps, row, 3);
     };
-    add_channel(1, tr("Red"), starting_red_minimum_, starting_red_maximum_,
-                starting_red_steps_);
-    add_channel(2, tr("Green"), starting_green_minimum_, starting_green_maximum_,
-                starting_green_steps_);
-    add_channel(3, tr("Blue"), starting_blue_minimum_, starting_blue_maximum_,
-                starting_blue_steps_);
-    add_channel(4, tr("Alpha"), starting_alpha_minimum_, starting_alpha_maximum_,
-                starting_alpha_steps_);
+    add_channel(1, tr("Red"), starting_red_minimum_, starting_red_maximum_);
+    add_channel(2, tr("Green"), starting_green_minimum_, starting_green_maximum_);
+    add_channel(3, tr("Blue"), starting_blue_minimum_, starting_blue_maximum_);
+    add_channel(4, tr("Alpha"), starting_alpha_minimum_, starting_alpha_maximum_);
     starting_colors_layout->addLayout(channels);
     auto* starting_colors_help = new QLabel(tr(
-        "Used when the authored starting palette is off. Every ordering visits "
-        "the complete combination of the enabled channel values; it changes "
-        "only where those colors appear. Channel loops use nested RGBA order, "
-        "Interleaved changes channel rates, and Additive/Subtractive create "
-        "opposing cumulative arrangements."));
+        "Used when the authored starting palette is off. Channel resolution "
+        "scales automatically with the full-resolution output block count, so "
+        "every block receives a unique working-precision RGB or RGBA tuple "
+        "unless a minimum/maximum range collapses a channel. Values remain "
+        "32-bit float through effects and compositing; only the selected output "
+        "format quantizes them. Spatial ordering changes where tuples appear."));
     starting_colors_help->setWordWrap(true);
     starting_colors_layout->addWidget(starting_colors_help);
     layout->addWidget(starting_colors_group);
@@ -2990,7 +2985,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                                           layer.render.starting_image.basename)));
         }
         if (!reusable.empty()) {
-            labels.push_back(tr("Load a different PNG from disk…"));
+            labels.push_back(tr("Load a different 8/16-bit PNG from disk…"));
             bool accepted = false;
             const QString selection = QInputDialog::getItem(
                 this, tr("Choose starting image asset"),
@@ -3031,7 +3026,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         }
         const QString selected = QFileDialog::getOpenFileName(
             this, tr("Choose starting image"), usableDialogDirectory(),
-            tr("PNG image (*.png)"));
+            tr("8/16-bit PNG image (*.png)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
             if (!config_.starting_image.sha256.empty()
@@ -3239,6 +3234,11 @@ QWidget* MainWindow::createVersionsPage() {
 
 void MainWindow::refreshVersionsPage() {
     if (version_list_ == nullptr || document_ == nullptr) return;
+    // Rebuilding hidden Versions controls must never navigate the user. Keep
+    // the tab they selected even if a platform style or signal handler reacts
+    // to the list/combo changes below.
+    QWidget* const selected_page = tabs_ != nullptr ? tabs_->currentWidget()
+                                                    : nullptr;
     const QVariant before_value = version_before_->currentData();
     const QVariant after_value = version_after_->currentData();
     const QSignalBlocker before_blocker(version_before_);
@@ -3314,6 +3314,10 @@ void MainWindow::refreshVersionsPage() {
             tr("Choose two versions and select Compare. Comparison runs in the background."));
     } else {
         version_diff_->clear();
+    }
+    if (tabs_ != nullptr && selected_page != nullptr
+        && tabs_->currentWidget() != selected_page) {
+        tabs_->setCurrentWidget(selected_page);
     }
 }
 
@@ -4750,8 +4754,7 @@ void MainWindow::connectEditors() {
             [this] { applyEffectEditor(effect_edge_); });
     connect(effect_cycles_, &QSpinBox::valueChanged, this,
             [this] { applyEffectEditor(effect_cycles_); });
-    for (auto* editor : {effect_blur_passes_, effect_blur_samples_,
-                         effect_blur_pulses_}) {
+    for (auto* editor : {effect_blur_passes_, effect_blur_samples_}) {
         connect(editor, &QSpinBox::valueChanged, this,
                 [this, editor] { applyEffectEditor(editor); });
     }
@@ -4885,9 +4888,7 @@ void MainWindow::connectEditors() {
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
-                         motion_cycles_y_, motion_rotations_, starting_red_steps_,
-                         starting_green_steps_, starting_blue_steps_,
-                         starting_alpha_steps_}) {
+                         motion_cycles_y_, motion_rotations_}) {
         connect(editor, &QSpinBox::valueChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -5947,7 +5948,10 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
         && QFileInfo(source_path).suffix().compare(
                QStringLiteral("png"), Qt::CaseInsensitive) != 0) {
         QMessageBox::warning(this, tr("Unsupported starting image"),
-                             tr("PVT currently accepts PNG starting images."));
+                             tr("PVT accepts 8/16-bit PNG starting images. "
+                                "They are decoded directly to float32. "
+                                "32-bit float image input is not currently supported; "
+                                "32-bit OpenEXR is available as an output format."));
         return false;
     }
 
@@ -7441,7 +7445,6 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_blur_samples_, is_blur);
     effect_form_->setRowVisible(effect_blur_minimum_, is_blur);
     effect_form_->setRowVisible(effect_blur_maximum_, is_blur);
-    effect_form_->setRowVisible(effect_blur_pulses_, is_blur);
 
     effect_radius_->setRange(
         is_particles ? 0.01 : 0.0,
@@ -7599,8 +7602,7 @@ void MainWindow::loadSelectedEffect() {
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
              effect_angle_, effect_radius_, effect_threshold_, effect_knee_,
              effect_area_radius_, effect_blur_type_, effect_blur_passes_,
-             effect_blur_samples_, effect_blur_minimum_, effect_blur_maximum_,
-             effect_blur_pulses_}) {
+             effect_blur_samples_, effect_blur_minimum_, effect_blur_maximum_}) {
         widget->setEnabled(enabled);
     }
     if (index) {
@@ -7637,7 +7639,6 @@ void MainWindow::loadSelectedEffect() {
         effect_blur_samples_->setValue(effect.blur_samples);
         effect_blur_minimum_->setValue(effect.blur_minimum);
         effect_blur_maximum_->setValue(effect.blur_maximum);
-        effect_blur_pulses_->setValue(effect.blur_pulses_per_cycle);
     }
     updateEffectEditorVisibility();
     populating_ = false;
@@ -7781,10 +7782,6 @@ void MainWindow::loadGlobalEditors() {
     select_enum(starting_color_mode_, config_.starting_colors.mode);
     starting_color_include_alpha_->setChecked(
         config_.starting_colors.include_alpha);
-    starting_red_steps_->setValue(config_.starting_colors.red_steps);
-    starting_green_steps_->setValue(config_.starting_colors.green_steps);
-    starting_blue_steps_->setValue(config_.starting_colors.blue_steps);
-    starting_alpha_steps_->setValue(config_.starting_colors.alpha_steps);
     starting_red_minimum_->setValue(config_.starting_colors.red_minimum);
     starting_red_maximum_->setValue(config_.starting_colors.red_maximum);
     starting_green_minimum_->setValue(config_.starting_colors.green_minimum);
@@ -8819,8 +8816,6 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             const QSignalBlocker blocker(effect_blur_minimum_);
             effect_blur_minimum_->setValue(effect.blur_minimum);
         }
-    } else if (changed_editor == effect_blur_pulses_) {
-        effect.blur_pulses_per_cycle = effect_blur_pulses_->value();
     } else {
         return;
     }
@@ -8971,14 +8966,6 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == starting_color_include_alpha_) {
         config_.starting_colors.include_alpha =
             starting_color_include_alpha_->isChecked();
-    } else if (changed_editor == starting_red_steps_) {
-        config_.starting_colors.red_steps = starting_red_steps_->value();
-    } else if (changed_editor == starting_green_steps_) {
-        config_.starting_colors.green_steps = starting_green_steps_->value();
-    } else if (changed_editor == starting_blue_steps_) {
-        config_.starting_colors.blue_steps = starting_blue_steps_->value();
-    } else if (changed_editor == starting_alpha_steps_) {
-        config_.starting_colors.alpha_steps = starting_alpha_steps_->value();
     } else if (changed_editor == starting_red_minimum_) {
         config_.starting_colors.red_minimum = starting_red_minimum_->value();
         if (config_.starting_colors.red_maximum
@@ -11154,12 +11141,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || wave_sync_->text() != tr("Use synchronized clock")
         || wave_form_ == nullptr
         || effect_sync_ == nullptr
-        || effect_sync_->text() != tr("Follow shared synchronized/swung clock")
+        || effect_sync_->text() != tr("Synchronization")
         || effect_type_->findData(static_cast<int>(pvt::EffectType::Blur)) < 0
         || effect_blur_type_ == nullptr || effect_blur_type_->count() != 5
         || effect_blur_passes_ == nullptr || effect_blur_samples_ == nullptr
         || effect_blur_minimum_ == nullptr || effect_blur_maximum_ == nullptr
-        || effect_blur_pulses_ == nullptr
         || starting_color_mode_ == nullptr
         || starting_color_include_alpha_ == nullptr
         || alpha_use_source_ == nullptr
@@ -11731,10 +11717,6 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || static_cast<pvt::StartingColorMode>(
                starting_color_mode_->currentData().toInt())
                != expected.starting_colors.mode
-        || starting_red_steps_->value() != expected.starting_colors.red_steps
-        || starting_green_steps_->value() != expected.starting_colors.green_steps
-        || starting_blue_steps_->value() != expected.starting_colors.blue_steps
-        || starting_alpha_steps_->value() != expected.starting_colors.alpha_steps
         || starting_red_minimum_->value()
                != expected.starting_colors.red_minimum
         || starting_red_maximum_->value()
@@ -12672,9 +12654,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
     undo_stack_->setClean();
     baseline_dirty_ = false;
     const QString bundle_path = directory.filePath(QStringLiteral("smoke-project.zip"));
+    tabs_->setCurrentWidget(effect_page_);
+    QWidget* const tab_before_save = tabs_->currentWidget();
     if (!saveProjectPath(bundle_path) || document_ == nullptr
         || document_->versions.size() != 1U || hasUnsavedChanges()) {
         if (error != nullptr) *error = tr("The GUI could not create the first bundle version.");
+        return false;
+    }
+    if (tabs_->currentWidget() != tab_before_save) {
+        if (error != nullptr) {
+            *error = tr("Saving navigated away from the user's selected tab.");
+        }
         return false;
     }
 

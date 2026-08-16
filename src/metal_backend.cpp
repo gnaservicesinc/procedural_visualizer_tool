@@ -1,6 +1,7 @@
 #include "frame_renderer_internal.h"
 
 #include "metal_kernels_source.h"
+#include "obj_surface.h"
 #include "source_image.h"
 
 #define METALCPP_SYMBOL_VISIBILITY_HIDDEN
@@ -18,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -60,6 +62,10 @@ struct alignas(16) GpuFrameConstants {
     Float4 pattern0;
     Float4 pattern1;
     Float4 alpha_quant;
+    UInt4 starting_flags;
+    UInt4 starting_reference;
+    Float4 starting_minimum;
+    Float4 starting_maximum;
 };
 
 struct alignas(16) GpuWave {
@@ -95,16 +101,26 @@ struct alignas(16) GpuMotion {
     Float4 rotation_scale;
 };
 
+struct alignas(16) GpuParticlePoint {
+    Float4 geometry;
+};
+
+struct alignas(16) GpuParticleGrid {
+    UInt4 layout;
+};
+
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
-static_assert(sizeof(GpuFrameConstants) == 192U);
+static_assert(sizeof(GpuFrameConstants) == 256U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 80U);
 static_assert(sizeof(GpuSurface) == 32U);
 static_assert(sizeof(GpuSourceImage) == 32U);
 static_assert(sizeof(GpuMotion) == 32U);
+static_assert(sizeof(GpuParticlePoint) == 16U);
+static_assert(sizeof(GpuParticleGrid) == 16U);
 
 bool cancelled(const std::atomic_bool* cancel) {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
@@ -149,6 +165,7 @@ enum class Pipeline : std::size_t {
     Coordinate,
     Surface,
     BlockScale,
+    Particle,
     GlowExtract,
     GlowHorizontal,
     GlowVertical,
@@ -167,6 +184,7 @@ constexpr const char* kPipelineNames[] = {
     "coordinate_effect",
     "surface_mapping",
     "block_scale",
+    "particle_field",
     "glow_extract",
     "glow_blur_horizontal",
     "glow_blur_vertical",
@@ -372,6 +390,47 @@ void encode_grid(MTL::CommandBuffer* command_buffer,
     encoder->endEncoding();
 }
 
+bool generated_capacity_reaches(std::uint64_t levels,
+                                unsigned int dimensions,
+                                std::uint64_t required) {
+    std::uint64_t capacity = 1U;
+    for (unsigned int dimension = 0U; dimension < dimensions; ++dimension) {
+        if (capacity >= (required + levels - 1U) / levels) return true;
+        capacity *= levels;
+    }
+    return capacity >= required;
+}
+
+std::uint64_t generated_channel_levels(const RenderConfig& config) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const std::uint64_t reference_width = static_cast<std::uint64_t>(
+        starting.reference_width > 0 ? starting.reference_width : config.width);
+    const std::uint64_t reference_height = static_cast<std::uint64_t>(
+        starting.reference_height > 0 ? starting.reference_height : config.height);
+    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+        starting.reference_block_size > 0
+            ? starting.reference_block_size : config.block_size);
+    const std::uint64_t block_count =
+        ((reference_width + reference_block - 1U) / reference_block)
+        * ((reference_height + reference_block - 1U) / reference_block);
+    if (block_count <= 1U) return 1U;
+    const unsigned int dimensions = starting.include_alpha ? 4U : 3U;
+    std::uint64_t low = 1U;
+    std::uint64_t high = 2U;
+    while (!generated_capacity_reaches(high, dimensions, block_count)) {
+        high *= 2U;
+    }
+    while (low + 1U < high) {
+        const std::uint64_t middle = low + (high - low) / 2U;
+        if (generated_capacity_reaches(middle, dimensions, block_count)) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    return high;
+}
+
 GpuFrameConstants make_constants(const RenderConfig& config,
                                  const PreparedFrame& prepared) {
     GpuFrameConstants result;
@@ -401,7 +460,9 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         config.quantization.enabled ? 1U : 0U,
         static_cast<std::uint32_t>(config.quantization.mode)};
     result.quant_values = {
-        static_cast<std::uint32_t>(config.quantization.levels), 0U, 0U, 0U};
+        static_cast<std::uint32_t>(config.quantization.levels),
+        0U,
+        0U, 0U};
     result.phases = {
         static_cast<float>(prepared.loop_phase),
         static_cast<float>(prepared.global_motion_phase),
@@ -435,6 +496,38 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<float>(config.alpha.maximum),
         static_cast<float>(config.alpha.phase_degrees * kPi / 180.0),
         static_cast<float>(config.quantization.mix)};
+    const StartingColorConfig& starting = config.starting_colors;
+    const std::uint32_t source_dither =
+        config.starting_image.palette_dither_enabled
+            ? static_cast<std::uint32_t>(
+                  config.starting_image.palette_dither_method) + 1U
+            : 0U;
+    result.starting_flags = {
+        static_cast<std::uint32_t>(starting.mode),
+        starting.include_alpha ? 1U : 0U,
+        config.alpha.use_source_alpha ? 1U : 0U,
+        source_dither};
+    result.starting_reference = {
+        static_cast<std::uint32_t>(
+            starting.reference_width > 0
+                ? starting.reference_width : config.width),
+        static_cast<std::uint32_t>(
+            starting.reference_height > 0
+                ? starting.reference_height : config.height),
+        static_cast<std::uint32_t>(
+            starting.reference_block_size > 0
+                ? starting.reference_block_size : config.block_size),
+        static_cast<std::uint32_t>(generated_channel_levels(config))};
+    result.starting_minimum = {
+        static_cast<float>(starting.red_minimum),
+        static_cast<float>(starting.green_minimum),
+        static_cast<float>(starting.blue_minimum),
+        static_cast<float>(starting.alpha_minimum)};
+    result.starting_maximum = {
+        static_cast<float>(starting.red_maximum),
+        static_cast<float>(starting.green_maximum),
+        static_cast<float>(starting.blue_maximum),
+        static_cast<float>(starting.alpha_maximum)};
     return result;
 }
 
@@ -503,6 +596,171 @@ GpuEffect make_effect(const PreparedEffect& effect) {
     return result;
 }
 
+std::uint64_t particle_hash(std::uint64_t value) {
+    value += UINT64_C(0x9e3779b97f4a7c15);
+    value = (value ^ (value >> 30U)) * UINT64_C(0xbf58476d1ce4e5b9);
+    value = (value ^ (value >> 27U)) * UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
+}
+
+double particle_unit(std::uint64_t value) {
+    return static_cast<double>(particle_hash(value) >> 11U)
+           * (1.0 / 9007199254740992.0);
+}
+
+struct ParticleData {
+    GpuParticleGrid grid;
+    std::vector<GpuParticlePoint> points;
+    std::vector<std::uint32_t> tile_offsets;
+    std::vector<std::uint32_t> tile_indices;
+};
+
+ParticleData make_particles(const RenderConfig& config,
+                            const PreparedEffect& effect) {
+    constexpr std::uint32_t kTileSize = 32U;
+    const std::uint32_t width = static_cast<std::uint32_t>(config.width);
+    const std::uint32_t height = static_cast<std::uint32_t>(config.height);
+    const std::uint32_t tiles_across =
+        (width + kTileSize - 1U) / kTileSize;
+    const std::uint32_t tiles_down =
+        (height + kTileSize - 1U) / kTileSize;
+    ParticleData result;
+    result.grid.layout = {tiles_across, tiles_down, kTileSize, 0U};
+
+    const int count = static_cast<int>(std::llround(effect.frequency));
+    const double radius = std::max(0.5, effect.radius_pixels);
+    const int trail_steps = 1 + static_cast<int>(std::llround(
+        std::clamp(effect.secondary, 0.0, 1.0) * 12.0));
+    const double progress = std::fmod(effect.phase / (2.0 * M_PI), 1.0);
+    const double wrapped_progress = progress < 0.0 ? progress + 1.0 : progress;
+    const double direction_x = std::cos(effect.angle_radians);
+    const double direction_y = std::sin(effect.angle_radians);
+    const double short_side = static_cast<double>(
+        std::min(config.width, config.height));
+    const double travel = effect.magnitude * short_side;
+    const double span_x = static_cast<double>(config.width) + 4.0 * radius;
+    const double span_y = static_cast<double>(config.height) + 4.0 * radius;
+    const std::size_t point_count = static_cast<std::size_t>(count)
+                                    * static_cast<std::size_t>(trail_steps);
+    if (point_count > (std::numeric_limits<std::uint32_t>::max)()) {
+        throw std::length_error(
+            "The particle field exceeds the GPU's addressable point index.");
+    }
+    result.points.reserve(point_count);
+
+    struct TileBounds {
+        std::uint32_t minimum_x;
+        std::uint32_t maximum_x;
+        std::uint32_t minimum_y;
+        std::uint32_t maximum_y;
+    };
+    std::vector<TileBounds> bounds;
+    bounds.reserve(point_count);
+    const std::size_t tile_count = static_cast<std::size_t>(tiles_across)
+                                   * static_cast<std::size_t>(tiles_down);
+    std::vector<std::uint64_t> tile_counts(tile_count, 0U);
+
+    for (int particle = 0; particle < count; ++particle) {
+        const std::uint64_t seed = particle_hash(
+            effect.id ^ (static_cast<std::uint64_t>(particle) + 1U)
+                            * UINT64_C(0xd1b54a32d192ed03));
+        const double start_x = particle_unit(seed) * span_x - 2.0 * radius;
+        const double start_y = particle_unit(seed ^ UINT64_C(0x94d049bb133111eb))
+                               * span_y - 2.0 * radius;
+        const int cycles = 1 + particle % 3;
+        const double orbit_offset = 2.0 * M_PI * particle_unit(
+            seed ^ UINT64_C(0xbf58476d1ce4e5b9));
+        const double twinkle = 0.55 + 0.45 * std::sin(
+            2.0 * M_PI
+            * (wrapped_progress * (1.0 + static_cast<double>(particle % 5))
+               + particle_unit(seed ^ UINT64_C(0x632be59bd9b4e019))));
+        const double orbit = 2.0 * M_PI * wrapped_progress
+                                 * static_cast<double>(cycles)
+                             + orbit_offset;
+        const double along = travel * std::sin(orbit);
+        const double across = travel * 0.28 * std::cos(orbit);
+        double center_x = start_x + direction_x * along - direction_y * across;
+        double center_y = start_y + direction_y * along + direction_x * across;
+        center_x = std::fmod(center_x + 2.0 * radius, span_x);
+        center_y = std::fmod(center_y + 2.0 * radius, span_y);
+        if (center_x < 0.0) center_x += span_x;
+        if (center_y < 0.0) center_y += span_y;
+        center_x -= 2.0 * radius;
+        center_y -= 2.0 * radius;
+
+        for (int trail = trail_steps - 1; trail >= 0; --trail) {
+            const double trail_fraction = trail_steps <= 1
+                ? 0.0 : static_cast<double>(trail)
+                            / static_cast<double>(trail_steps - 1);
+            const double local_radius = radius * (1.0 - 0.58 * trail_fraction);
+            const double trail_distance = radius * 1.35
+                                          * static_cast<double>(trail);
+            const double px = center_x - direction_x * trail_distance;
+            const double py = center_y - direction_y * trail_distance;
+            const int minimum_x = std::max(
+                0, static_cast<int>(std::floor(px - 2.5 * local_radius)));
+            const int maximum_x = std::min(
+                config.width - 1,
+                static_cast<int>(std::ceil(px + 2.5 * local_radius)));
+            const int minimum_y = std::max(
+                0, static_cast<int>(std::floor(py - 2.5 * local_radius)));
+            const int maximum_y = std::min(
+                config.height - 1,
+                static_cast<int>(std::ceil(py + 2.5 * local_radius)));
+            if (minimum_x > maximum_x || minimum_y > maximum_y) continue;
+            const float gain = static_cast<float>(
+                (1.0 - 0.82 * trail_fraction) * twinkle);
+            result.points.push_back({{
+                static_cast<float>(px), static_cast<float>(py),
+                static_cast<float>(local_radius), gain}});
+            const TileBounds point_bounds = {
+                static_cast<std::uint32_t>(minimum_x) / kTileSize,
+                static_cast<std::uint32_t>(maximum_x) / kTileSize,
+                static_cast<std::uint32_t>(minimum_y) / kTileSize,
+                static_cast<std::uint32_t>(maximum_y) / kTileSize};
+            bounds.push_back(point_bounds);
+            for (std::uint32_t tile_y = point_bounds.minimum_y;
+                 tile_y <= point_bounds.maximum_y; ++tile_y) {
+                for (std::uint32_t tile_x = point_bounds.minimum_x;
+                     tile_x <= point_bounds.maximum_x; ++tile_x) {
+                    ++tile_counts[static_cast<std::size_t>(tile_y)
+                                      * tiles_across + tile_x];
+                }
+            }
+        }
+    }
+
+    result.tile_offsets.resize(tile_count + 1U, 0U);
+    std::uint64_t total_tile_indices = 0U;
+    for (std::size_t tile = 0U; tile < tile_count; ++tile) {
+        total_tile_indices += tile_counts[tile];
+        if (total_tile_indices
+            > (std::numeric_limits<std::uint32_t>::max)()) {
+            throw std::length_error(
+                "The particle field exceeds the GPU's addressable tile index.");
+        }
+        result.tile_offsets[tile + 1U] =
+            static_cast<std::uint32_t>(total_tile_indices);
+    }
+    result.tile_indices.resize(result.tile_offsets.back());
+    std::vector<std::uint32_t> cursor = result.tile_offsets;
+    for (std::size_t point = 0U; point < result.points.size(); ++point) {
+        const TileBounds& point_bounds = bounds[point];
+        for (std::uint32_t tile_y = point_bounds.minimum_y;
+             tile_y <= point_bounds.maximum_y; ++tile_y) {
+            for (std::uint32_t tile_x = point_bounds.minimum_x;
+                 tile_x <= point_bounds.maximum_x; ++tile_x) {
+                const std::size_t tile = static_cast<std::size_t>(tile_y)
+                                             * tiles_across + tile_x;
+                result.tile_indices[cursor[tile]++] =
+                    static_cast<std::uint32_t>(point);
+            }
+        }
+    }
+    result.grid.layout.w = static_cast<std::uint32_t>(result.points.size());
+    return result;
+}
+
 GpuSurface make_surface(const RenderConfig& config,
                         const PreparedFrame& prepared) {
     constexpr double kPi = 3.141592653589793238462643383279502884;
@@ -521,12 +779,13 @@ GpuSurface make_surface(const RenderConfig& config,
 
 GpuSourceImage make_source_image(const StartingImageConfig& source,
                                  const Image& image,
-                                 const RenderConfig& config) {
+                                 const RenderConfig& config,
+                                 bool preprocessed) {
     GpuSourceImage result;
     result.source = {
         static_cast<std::uint32_t>(image.width),
         static_cast<std::uint32_t>(image.height),
-        static_cast<std::uint32_t>(source.fit), 0U};
+        static_cast<std::uint32_t>(source.fit), preprocessed ? 1U : 0U};
     result.destination = {
         static_cast<std::uint32_t>(config.width),
         static_cast<std::uint32_t>(config.height), 0U, 0U};
@@ -541,7 +800,7 @@ double triangle_motion(double phase) {
 GpuMotion make_motion(const RenderConfig& config,
                       const PreparedFrame& prepared) {
     constexpr double kPi = 3.141592653589793238462643383279502884;
-    const LayerMotionConfig& motion = config.motion;
+    const LayerMotionConfig& motion = prepared.motion;
     const double path_time = prepared.loop_phase
                              + motion.phase_degrees * kPi / 180.0;
     double path_x = 0.0;
@@ -641,57 +900,7 @@ bool metal_backend_available(std::string* device_name,
 
 bool metal_backend_supports(const RenderConfig& config,
                             std::string* reason) {
-    const bool bound_path = config.motion.custom_path.enabled
-        || std::any_of(config.waves.begin(), config.waves.end(),
-                       [](const WaveConfig& wave) {
-                           return wave.path.enabled;
-                       })
-        || std::any_of(config.effects.begin(), config.effects.end(),
-                       [](const EffectConfig& effect) {
-                           return effect.path.enabled;
-                       });
-    if (bound_path) {
-        if (reason != nullptr) {
-            *reason = "Reusable cubic-path bindings currently use the reference CPU sampler; use CPU + GPU for automatic per-layer fallback.";
-        }
-        return false;
-    }
-    if (surface_has_work(config.surface)
-        && config.surface.mapping == SurfaceMapping::CustomObj) {
-        if (reason != nullptr) {
-            *reason = "The strict GPU backend does not rasterize custom OBJ surfaces; use CPU + GPU for automatic CPU fallback.";
-        }
-        return false;
-    }
-    const auto particle = std::find_if(
-        config.effects.begin(), config.effects.end(),
-        [](const EffectConfig& effect) {
-            return effect.enabled && effect.type == EffectType::ParticleField
-                   && effect.intensity > 0.0;
-        });
-    if (particle != config.effects.end()) {
-        if (reason != nullptr) {
-            *reason = "Particle fields currently use the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
-        }
-        return false;
-    }
-    const bool advanced_source_colors =
-        config.starting_colors.mode != StartingColorMode::LegacyHue
-        || config.starting_colors.include_alpha
-        || (!config.alpha.use_source_alpha && config.starting_image.enabled)
-        || (config.starting_image.enabled && config.palette.enabled)
-        || (config.alpha.use_source_alpha && config.palette.enabled
-            && std::any_of(config.palette.colors.begin(),
-                           config.palette.colors.end(),
-                           [](const PaletteColor& color) {
-                               return color.alpha < 1.0;
-                           }));
-    if (advanced_source_colors) {
-        if (reason != nullptr) {
-            *reason = "Generated source-color ordering, source alpha, and image-to-starting-palette quantization currently use the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
-        }
-        return false;
-    }
+    (void)config;
     if (reason != nullptr) reason->clear();
     return true;
 }
@@ -710,10 +919,25 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     if (!context.ready()) return fail(error, context.status());
 
     std::shared_ptr<const Image> starting_image;
+    std::shared_ptr<Image> preprocessed_starting_image;
+    bool source_preprocessed = false;
     std::size_t starting_image_bytes = 0U;
     if (config.starting_image.enabled) {
-        if (!load_starting_image_source(
-                config.starting_image.path, starting_image, cancel, error)) {
+        source_preprocessed = config.palette.enabled
+            && config.starting_image.palette_dither_enabled
+            && config.starting_image.palette_dither_method
+                   == DitherMethod::FloydSteinberg;
+        if (source_preprocessed) {
+            preprocessed_starting_image = std::make_shared<Image>();
+            if (!prepare_starting_image_for_backend(
+                    config, prepared.loop_phase,
+                    *preprocessed_starting_image, cancel, error)) {
+                return false;
+            }
+            starting_image = preprocessed_starting_image;
+        } else if (!load_starting_image_source(
+                       config.starting_image.path, starting_image,
+                       cancel, error)) {
             return false;
         }
         if (!starting_image || starting_image->width <= 0
@@ -797,9 +1021,29 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     if (command_buffer == nullptr) {
         return fail(error, "Metal could not create a command buffer.");
     }
+    const auto complete_command_buffer = [&]() {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Metal rendering was cancelled before submission; destination was unchanged.");
+        }
+        command_buffer->commit();
+        command_buffer->waitUntilCompleted();
+        if (command_buffer->status() == MTL::CommandBufferStatusError) {
+            std::string message = "Metal command execution failed";
+            const std::string detail = ns_error_text(command_buffer->error());
+            if (!detail.empty()) message += ": " + detail;
+            return fail(error, std::move(message));
+        }
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Metal rendering was cancelled; destination was unchanged.");
+        }
+        return true;
+    };
     MTL::Buffer* current = first.get();
     MTL::Buffer* scratch = second.get();
     MTL::Buffer* aux = auxiliary.get();
+    std::vector<MetalPtr<MTL::Buffer>> retained_effect_buffers;
     const auto pixel_grid = MTL::Size(
         static_cast<NS::UInteger>(config.width),
         static_cast<NS::UInteger>(config.height), 1U);
@@ -815,14 +1059,16 @@ bool render_prepared_frame_metal(const RenderConfig& config,
 
     if (starting_image) {
         const GpuSourceImage source = make_source_image(
-            config.starting_image, *starting_image, config);
+            config.starting_image, *starting_image, config,
+            source_preprocessed);
         encode_grid(command_buffer,
                     context.pipeline(Pipeline::SourceImage), pixel_grid,
                     [&](MTL::ComputeCommandEncoder* encoder) {
                         encoder->setBytes(&constants, sizeof(constants), 0U);
                         encoder->setBytes(&source, sizeof(source), 1U);
                         encoder->setBuffer(starting_image_buffer.get(), 0U, 2U);
-                        encoder->setBuffer(current, 0U, 3U);
+                        encoder->setBuffer(palette_buffer.get(), 0U, 3U);
+                        encoder->setBuffer(current, 0U, 4U);
                     });
     } else {
         encode_grid(command_buffer, context.pipeline(Pipeline::Base), block_grid,
@@ -835,11 +1081,45 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                     });
     }
 
+    bool effect_buffer_failure = false;
     const auto encode_effect_stage = [&](EffectSpace stage) {
         for (const PreparedEffect& prepared_effect : prepared.effects) {
             if (prepared_effect.space != stage) continue;
             GpuEffect effect = make_effect(prepared_effect);
-            if (prepared_effect.type == EffectType::Glow) {
+            if (prepared_effect.type == EffectType::ParticleField) {
+                const ParticleData particles = make_particles(
+                    config, prepared_effect);
+                auto point_buffer = make_input_buffer(
+                    context.device(), particles.points);
+                auto offset_buffer = make_input_buffer(
+                    context.device(), particles.tile_offsets);
+                auto index_buffer = make_input_buffer(
+                    context.device(), particles.tile_indices);
+                if (!point_buffer || !offset_buffer || !index_buffer) {
+                    effect_buffer_failure = true;
+                    return;
+                }
+                MTL::Buffer* const points = point_buffer.get();
+                MTL::Buffer* const offsets = offset_buffer.get();
+                MTL::Buffer* const indices = index_buffer.get();
+                retained_effect_buffers.push_back(std::move(point_buffer));
+                retained_effect_buffers.push_back(std::move(offset_buffer));
+                retained_effect_buffers.push_back(std::move(index_buffer));
+                encode_grid(command_buffer,
+                            context.pipeline(Pipeline::Particle), pixel_grid,
+                            [&](MTL::ComputeCommandEncoder* encoder) {
+                                encoder->setBytes(&constants, sizeof(constants), 0U);
+                                encoder->setBytes(&effect, sizeof(effect), 1U);
+                                encoder->setBytes(&particles.grid,
+                                                  sizeof(particles.grid), 2U);
+                                encoder->setBuffer(points, 0U, 3U);
+                                encoder->setBuffer(offsets, 0U, 4U);
+                                encoder->setBuffer(indices, 0U, 5U);
+                                encoder->setBuffer(current, 0U, 6U);
+                                encoder->setBuffer(scratch, 0U, 7U);
+                            });
+                std::swap(current, scratch);
+            } else if (prepared_effect.type == EffectType::Glow) {
                 encode_grid(command_buffer,
                             context.pipeline(Pipeline::GlowExtract), pixel_grid,
                             [&](MTL::ComputeCommandEncoder* encoder) {
@@ -945,7 +1225,37 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     };
 
     encode_effect_stage(EffectSpace::Texture);
-    if (surface_has_work(config.surface)) {
+    if (effect_buffer_failure) {
+        return fail(error,
+                    "Metal could not allocate bounded particle acceleration buffers.");
+    }
+    if (surface_has_work(config.surface)
+        && config.surface.mapping == SurfaceMapping::CustomObj) {
+        // OBJ visibility is an ordered raster operation. Complete the GPU
+        // texture stages, rasterize only this dependency-heavy surface on the
+        // CPU, then resume transforms, motion, surface effects, and
+        // quantization on the GPU. This avoids a whole-layer CPU fallback.
+        if (!complete_command_buffer()) return false;
+        Image source;
+        source.width = config.width;
+        source.height = config.height;
+        source.pixels.resize(pixel_count * 4U);
+        std::memcpy(source.pixels.data(), current->contents(), frame_bytes);
+        Image mapped;
+        if (!apply_obj_surface_mapping(
+                source, mapped, config.surface.obj_path,
+                config.surface.rotations_per_loop,
+                config.surface.phase_degrees, config.surface.curvature,
+                config.surface.lighting, prepared.loop_phase, error, cancel)) {
+            return false;
+        }
+        std::memcpy(current->contents(), mapped.pixels.data(), frame_bytes);
+        command_buffer = context.queue()->commandBuffer();
+        if (command_buffer == nullptr) {
+            return fail(error,
+                        "Metal could not resume after OBJ surface rasterization.");
+        }
+    } else if (surface_has_work(config.surface)) {
         const GpuSurface surface = make_surface(config, prepared);
         encode_grid(command_buffer, context.pipeline(Pipeline::Surface),
                     pixel_grid,
@@ -967,7 +1277,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                     });
         std::swap(current, scratch);
     }
-    if (motion_has_work(config.motion)) {
+    if (motion_has_work(prepared.motion)) {
         const GpuMotion motion = make_motion(config, prepared);
         encode_grid(command_buffer, context.pipeline(Pipeline::Motion),
                     pixel_grid,
@@ -980,6 +1290,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         std::swap(current, scratch);
     }
     encode_effect_stage(EffectSpace::Surface);
+    if (effect_buffer_failure) {
+        return fail(error,
+                    "Metal could not allocate bounded particle acceleration buffers.");
+    }
     if (config.quantization.enabled && config.quantization.mix > 0.0) {
         encode_grid(command_buffer, context.pipeline(Pipeline::Quantize),
                     pixel_grid,
@@ -989,22 +1303,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                     });
     }
 
-    if (cancelled(cancel)) {
-        return fail(error,
-                    "Metal rendering was cancelled before submission; destination was unchanged.");
-    }
-    command_buffer->commit();
-    command_buffer->waitUntilCompleted();
-    if (command_buffer->status() == MTL::CommandBufferStatusError) {
-        std::string message = "Metal command execution failed";
-        const std::string detail = ns_error_text(command_buffer->error());
-        if (!detail.empty()) message += ": " + detail;
-        return fail(error, message);
-    }
-    if (cancelled(cancel)) {
-        return fail(error,
-                    "Metal rendering was cancelled; destination was unchanged.");
-    }
+    if (!complete_command_buffer()) return false;
 
     Image candidate;
     candidate.width = config.width;

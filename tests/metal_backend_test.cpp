@@ -189,6 +189,50 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.004, 0.00012, 0.004, 0.00012,
                 "independent-clock modulated blur");
 
+    // Generated colors use an output-scaled float32 lattice on both backends.
+    // They must no longer make strict Metal fail, including authored ranges
+    // and source alpha.
+    pvt::RenderConfig generated = parity_config();
+    generated.width = 97;
+    generated.height = 61;
+    generated.block_size = 1;
+    generated.waves.clear();
+    generated.swings.clear();
+    generated.effects.clear();
+    generated.palette.enabled = false;
+    generated.displacement_enabled = false;
+    generated.lighting_enabled = false;
+    generated.spiral_enabled = false;
+    generated.wall_reflection_enabled = false;
+    generated.transform = {};
+    generated.quantization.enabled = false;
+    generated.alpha.enabled = false;
+    generated.alpha.use_source_alpha = true;
+    generated.starting_colors.include_alpha = true;
+    generated.starting_colors.red_minimum = 0.13;
+    generated.starting_colors.red_maximum = 0.91;
+    generated.starting_colors.green_minimum = 0.07;
+    generated.starting_colors.green_maximum = 0.83;
+    generated.starting_colors.blue_minimum = 0.19;
+    generated.starting_colors.blue_maximum = 0.97;
+    generated.starting_colors.alpha_minimum = 0.21;
+    generated.starting_colors.alpha_maximum = 0.88;
+    for (const pvt::StartingColorMode mode : {
+             pvt::StartingColorMode::ChannelLoops,
+             pvt::StartingColorMode::Interleaved,
+             pvt::StartingColorMode::Additive,
+             pvt::StartingColorMode::Subtractive}) {
+        generated.starting_colors.mode = mode;
+        CHECK(pvt::render_frame_at_phase(generated, 0.31, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(generated, 0.31, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("generated source ")
+                                  + pvt::starting_color_mode_name(mode);
+        check_close(cpu, gpu, 0.00002, 0.000001,
+                    0.00002, 0.000001, label.c_str());
+    }
+
     // Starting PNGs are decoded once on the host, then fitted and processed
     // by Metal. Every fit mode must retain the reference renderer's linear
     // RGBA sampling, including contain transparency and tiled edges.
@@ -225,26 +269,41 @@ void test_backend_contract() {
                     label.c_str());
     }
 
-    // Image placement and starting palettes are now composable. The advanced
-    // source quantizer deliberately uses reference-CPU fallback until its
-    // dither and RGBA selection semantics have a matching Metal kernel.
+    // Image placement, source-alpha handling, and starting palettes are
+    // composable without rejecting strict Metal. Parallel dithers execute in
+    // Metal; Floyd-Steinberg's ordered dependency is prepared on CPU while all
+    // remaining full-frame stages stay GPU accelerated.
     source_image.palette = pvt::default_palette(1U);
     source_image.palette.enabled = true;
-    source_image.starting_image.palette_dither_enabled = true;
-    pvt::Image hybrid;
-    CHECK(pvt::render_frame_at_phase(source_image, 0.31, hybrid_options,
-                                     hybrid, nullptr, &error));
+    source_image.alpha.use_source_alpha = true;
+    for (const pvt::DitherMethod method : {
+             pvt::DitherMethod::BlueNoise,
+             pvt::DitherMethod::OrderedBayer,
+             pvt::DitherMethod::FloydSteinberg}) {
+        source_image.starting_image.palette_dither_enabled = true;
+        source_image.starting_image.palette_dither_method = method;
+        CHECK(pvt::render_frame_at_phase(source_image, 0.31, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("starting image palette ")
+                                  + pvt::dither_method_name(method);
+        check_close(cpu, gpu, 0.003, 0.00008, 0.003, 0.00008,
+                    label.c_str());
+    }
+    source_image.alpha.use_source_alpha = false;
+    source_image.starting_image.palette_dither_enabled = false;
     CHECK(pvt::render_frame_at_phase(source_image, 0.31, cpu_options,
                                      cpu, nullptr, &error));
-    CHECK(cpu.pixels == hybrid.pixels);
-    CHECK(!pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
-                                      gpu, nullptr, &error));
-    CHECK(error.find("image-to-starting-palette") != std::string::npos);
+    CHECK(pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.003, 0.00008, 0.003, 0.00008,
+                "starting image ignored source alpha");
     source_image.palette.enabled = false;
     source_image.starting_image.palette_dither_enabled = false;
 
     // Built-in placement, rotation, and scale are a downstream image stage.
-    // Exercise them with a starting source so strict GPU rendering covers the
+    // Exercise them with a starting source so GPU rendering covers the
     // same combination used by artist projects instead of only procedural art.
     source_image.starting_image.fit = pvt::StartingImageFit::Cover;
     source_image.motion.enabled = true;
@@ -304,7 +363,8 @@ void test_backend_contract() {
         pvt::EffectType::Shake,
         pvt::EffectType::FlagWave,
         pvt::EffectType::Glow,
-        pvt::EffectType::BlockScale};
+        pvt::EffectType::BlockScale,
+        pvt::EffectType::ParticleField};
     for (const pvt::EffectType type : effect_types) {
         pvt::RenderConfig single_effect = parity_config();
         single_effect.effects.clear();
@@ -325,6 +385,14 @@ void test_backend_contract() {
             effect.magnitude = 0.7;
             effect.frequency = 2.2;
             effect.secondary = 5.0;
+        } else if (type == pvt::EffectType::ParticleField) {
+            effect.intensity = 1.1;
+            effect.magnitude = 0.18;
+            effect.frequency = 24.0;
+            effect.secondary = 0.4;
+            effect.radius_pixels = 3.0;
+            effect.threshold = 0.55;
+            effect.soft_knee = 0.5;
         } else {
             effect.edge_mode = pvt::EdgeMode::Alpha;
         }
@@ -412,7 +480,8 @@ void test_backend_contract() {
 
     // All built-in analytic surfaces remain close to the CPU reference,
     // including their straight-alpha front/rear coverage. Custom OBJ geometry
-    // intentionally stays on the bounded CPU rasterizer in hybrid mode.
+    // rasterizes only its ordered mesh stage on CPU and resumes the same Metal
+    // pipeline afterward instead of falling back for the whole layer.
     config.surface.enabled = true;
     config.surface.curvature = 0.78;
     config.surface.lighting = 0.65;
@@ -435,21 +504,21 @@ void test_backend_contract() {
     config.surface.mapping = pvt::SurfaceMapping::CustomObj;
     config.surface.obj_path =
         PVT_TEST_SOURCE_DIR "/tests/assets/obj/closed_cube.obj";
-    pvt::Image sentinel = cpu;
-    CHECK(!pvt::render_frame(config, 4, gpu_options, sentinel, nullptr,
-                             &error));
-    CHECK(error.find("OBJ") != std::string::npos);
-    CHECK(sentinel.pixels == cpu.pixels);
-    pvt::Image fallback;
     pvt::Image reference;
-    CHECK(pvt::render_frame(config, 4, hybrid_options, fallback, nullptr,
-                            &error));
     CHECK(pvt::render_frame(config, 4, cpu_options, reference, nullptr,
                             &error));
-    CHECK(fallback.pixels == reference.pixels);
+    CHECK(pvt::render_frame(config, 4, gpu_options, gpu, nullptr,
+                            &error));
+    check_close(reference, gpu, 0.24, 0.018, 0.06, 0.0025,
+                "custom OBJ split CPU/GPU surface");
+    pvt::Image hybrid;
+    CHECK(pvt::render_frame(config, 4, hybrid_options, hybrid, nullptr,
+                            &error));
+    check_close(reference, hybrid, 0.24, 0.018, 0.06, 0.0025,
+                "custom OBJ hybrid surface");
 
     std::atomic_bool cancel {true};
-    sentinel = cpu;
+    pvt::Image sentinel = cpu;
     config.surface.enabled = false;
     CHECK(!pvt::render_frame(config, 3, gpu_options, sentinel, &cancel,
                              &error));
@@ -511,7 +580,7 @@ int main() {
         std::cerr << failures << " Metal backend test(s) failed.\n";
         return EXIT_FAILURE;
     }
-    std::cout << "Metal backend availability, fallback, cancellation, alpha, "
+    std::cout << "Metal backend availability, dispatch, cancellation, alpha, "
                  "image, layer, and seam parity tests passed.\n";
     return EXIT_SUCCESS;
 }

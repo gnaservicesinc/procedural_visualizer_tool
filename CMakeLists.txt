@@ -164,7 +164,7 @@ if(APPLE AND PVT_ENABLE_METAL)
     else()
         message(WARNING
             "PVT_ENABLE_METAL is ON, but metal-cpp was not found at "
-            "${PVT_METAL_CPP_DIR}; building the CPU fallback only")
+            "${PVT_METAL_CPP_DIR}; building the CPU-only backend")
     endif()
 endif()
 if(NOT PVT_METAL_BACKEND_ENABLED)

@@ -30,6 +30,7 @@ struct PreparedWave {
 };
 
 struct PreparedEffect {
+    std::uint64_t id = 0U;
     EffectType type = EffectType::Ripple;
     EffectSpace space = EffectSpace::Texture;
     EdgeMode edge_mode = EdgeMode::Reflect;
@@ -59,6 +60,7 @@ struct PreparedFrame {
     std::vector<PreparedWave> waves;
     std::vector<PreparedEffect> effects;
     std::vector<std::array<double, 4U>> starting_palette;
+    LayerMotionConfig motion;
 };
 
 PVT_API bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
@@ -73,6 +75,11 @@ PVT_API bool prepare_frame_for_backend(const RenderConfig& config,
 bool metal_backend_compiled();
 bool metal_backend_available(std::string* device_name,
                              std::string* status);
+bool prepare_starting_image_for_backend(const RenderConfig& config,
+                                        double loop_phase,
+                                        Image& destination,
+                                        const std::atomic_bool* cancel,
+                                        std::string* error);
 bool metal_backend_supports(const RenderConfig& config, std::string* reason);
 bool render_prepared_frame_metal(const RenderConfig& config,
                                  const PreparedFrame& prepared,

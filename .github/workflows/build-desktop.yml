@@ -421,21 +421,19 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This feature release adds artist-configurable blur effects with Gaussian, box, directional, radial, and zoom algorithms. Metal renders every blur type on the GPU on supported Macs, while a premultiplied-alpha CPU implementation provides matching output and the portable fallback. Blur strength can remain constant or move between user-selected limits for an exact number of pulses per cycle, using either an independent evenly spaced clock or the shared synchronized/swung clock.
+          Generated starting colors now scale automatically from the authored output dimensions and block size. They remain float32 through rendering, honor every channel Min/Max range, keep full-size preview and export coordinates aligned, and do not shift with time when every animation control is disabled. The former fixed Values controls have been removed. Direct regression coverage preserves every 16-bit PNG source code without an 8-bit intermediate; PNG input is explicitly 8/16-bit and FLOAT EXR remains available for 32-bit output.
 
-          Starting colors now support channel-loop, interleaved, additive, and subtractive layouts; optional alpha enumeration; constrained deterministic or entropy-seeded random generation; and selectable aesthetic relationship rules. RGBA palettes can be saved locally, reused across layers, or loaded from other layers without losing alpha values when layer color alpha is temporarily disabled.
+          Metal now supports generated orderings, source alpha, starting-image palette selection and dithering, reusable paths, particles, and the complete accelerated effect pipeline. Floyd-Steinberg source quantization and custom OBJ depth peeling run as dependency-ordered CPU stages inside the accelerated frame instead of forcing a whole-layer retry. CPU + GPU pairs independent project layers across both processors and uses Metal for the parallel pixel stages of single layers. Unexpected Metal failures are reported rather than silently rerendering the frame on CPU.
 
-          Embedded PNG sources and starting palettes are now composable. The image controls where starting colors appear, with optional blue-noise, ordered Bayer, or Floyd-Steinberg quantization before effects run and optional post-effect quantization afterward. Project assets such as images, OBJ files, and music can be reused from another compatible field without duplicating their stored bytes.
+          Blur now uses Cycles per loop as its sole modulation count, and the duplicate Modulations per cycle control is gone. Saving no longer changes the active editor tab, including after background completion. Effect timing is labeled Synchronization and describes the project or per-layer clock without the former swing-clock wording. Block size is honored by generated sources as well as the rest of the renderer.
 
-          Movie export can split work by frame count or maximum duration while preserving one continuous project clock. PVT writes numbered movie chunks plus an executable, shell-safe concat script using the exact absolute chunk paths; the script supports a caller-selected output file or directory.
-
-          The editor also adds a configurable recent-projects menu with full paths, locally remembered history length, richer alpha controls, and expanded CLI/setup persistence for the new rendering options.
+          Preview, current-frame export, and sequence export now share the same generated-source placement. The supplied 1920x1080 block-size-1 regression project renders successfully in GPU mode with 2,073,600 distinct exported RGB tuples, one for every pixel, while otherwise-static frames are byte-identical.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 
           The optional command-line renderer is named pvt-render. It is embedded inside the macOS application bundle and installed under bin/ in the Linux and Windows packages.
 
-          Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows currently use the dependable CPU renderer and PNG/EXR sequence export while portable GPU and native movie backends are developed. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
+          Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows currently have no GPU backend and therefore use the CPU renderer and PNG/EXR sequence export while portable GPU and native movie backends are developed. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
           EOF
 
       - name: Publish GitHub release

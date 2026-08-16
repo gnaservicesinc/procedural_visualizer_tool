@@ -2,10 +2,12 @@
 #include "../src/config_codec.h"
 #include "../src/frame_renderer_internal.h"
 #include "../src/path_utf8.h"
+#include "../src/source_image.h"
 
 #include <png.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -142,12 +144,45 @@ bool write_test_png(const fs::path& path, png_uint_32 width,
                                       pixels.data(), 0, nullptr) != 0;
 }
 
+bool write_test_png16(const fs::path& path, png_uint_32 width,
+                      png_uint_32 height,
+                      const std::vector<png_uint_16>& pixels) {
+    png_image image{};
+    image.version = PNG_IMAGE_VERSION;
+    image.width = width;
+    image.height = height;
+    image.format = PNG_FORMAT_LINEAR_RGB_ALPHA;
+    return pixels.size() == PNG_IMAGE_SIZE(image) / sizeof(png_uint_16)
+           && png_image_write_to_file(&image, path.string().c_str(), 0,
+                                      pixels.data(), 0, nullptr) != 0;
+}
+
 void test_starting_images_and_reusable_paths(const fs::path& directory) {
     const fs::path source = directory / "starting-image.png";
     CHECK(write_test_png(
         source, 2U, 2U,
         {255U, 0U, 0U, 255U, 0U, 255U, 0U, 255U,
          0U, 0U, 255U, 255U, 255U, 255U, 255U, 0U}));
+
+    // Loading is never routed through an 8-bit intermediate. Values that
+    // cannot be represented by 8-bit expansion must survive a 16-bit PNG
+    // decode into the float32 working image.
+    const fs::path source_16 = directory / "starting-image-16.png";
+    const std::vector<png_uint_16> source_16_values = {
+        258U, 1025U, 32769U, 65534U,
+        511U, 4097U, 49153U, 60001U};
+    CHECK(write_test_png16(source_16, 2U, 1U, source_16_values));
+    std::shared_ptr<const pvt::Image> decoded_16;
+    std::string precision_error;
+    CHECK(pvt::detail::load_starting_image_source(
+        source_16.string(), decoded_16, nullptr, &precision_error));
+    CHECK(decoded_16 != nullptr && decoded_16->pixels.size() == 8U);
+    if (decoded_16 != nullptr && decoded_16->pixels.size() == 8U) {
+        for (std::size_t index = 0U; index < source_16_values.size(); ++index) {
+            CHECK(std::llround(decoded_16->pixels[index] * 65535.0F)
+                  == source_16_values[index]);
+        }
+    }
 
     pvt::RenderConfig image_config = pvt::default_config();
     image_config.width = 16;
@@ -330,6 +365,196 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
             CHECK(blue_next != nullptr && blue_next[2] > 0.5F);
             CHECK(green_next != nullptr && green_next[1] > 0.5F);
             CHECK(red_next != nullptr && red_next[0] > 0.5F);
+        }
+    }
+
+    // Resolution, not an authored 8-bit step count, chooses the radix. Every
+    // full-resolution block receives a distinct float32 RGB tuple, and the
+    // generated source remains fixed across time when procedural controls are
+    // disabled.
+    pvt::RenderConfig scaled = exhaustive;
+    scaled.width = 192;
+    scaled.height = 108;
+    scaled.block_size = 1;
+    scaled.starting_colors.mode = pvt::StartingColorMode::Interleaved;
+    scaled.starting_colors.include_alpha = false;
+    scaled.hue_cycles = 73;
+    scaled.spiral_enabled = false;
+    scaled.wall_reflection_enabled = false;
+    scaled.lighting_enabled = false;
+    scaled.effects.clear();
+    scaled.waves.clear();
+    scaled.swings.clear();
+    pvt::Image scaled_start;
+    pvt::Image scaled_later;
+    CHECK(pvt::render_frame_at_phase(scaled, 0.0, scaled_start, &error));
+    CHECK(pvt::render_frame_at_phase(scaled, 0.713, scaled_later, &error));
+    CHECK(scaled_start.pixels == scaled_later.pixels);
+    pvt::RenderConfig legacy_values_changed = scaled;
+    legacy_values_changed.starting_colors.red_steps = 1;
+    legacy_values_changed.starting_colors.green_steps = 7;
+    legacy_values_changed.starting_colors.blue_steps = 31;
+    legacy_values_changed.starting_colors.alpha_steps = 65536;
+    pvt::Image ignored_legacy_values;
+    CHECK(pvt::render_frame_at_phase(
+        legacy_values_changed, 0.0, ignored_legacy_values, &error));
+    CHECK(scaled_start.pixels == ignored_legacy_values.pixels);
+    std::set<std::array<float, 3U>> scaled_colors;
+    for (std::size_t offset = 0U; offset < scaled_start.pixels.size();
+         offset += 4U) {
+        scaled_colors.insert({scaled_start.pixels[offset],
+                              scaled_start.pixels[offset + 1U],
+                              scaled_start.pixels[offset + 2U]});
+    }
+    CHECK(scaled_colors.size()
+          == static_cast<std::size_t>(scaled.width * scaled.height));
+
+    pvt::RenderConfig blocked = scaled;
+    blocked.width = 18;
+    blocked.height = 18;
+    blocked.block_size = 3;
+    pvt::Image blocked_image;
+    const bool blocked_ok = pvt::render_frame_at_phase(
+        blocked, 0.0, blocked_image, &error);
+    if (!blocked_ok) std::cerr << "blocked generated render: " << error << '\n';
+    CHECK(blocked_ok);
+    std::set<std::array<float, 3U>> block_colors;
+    for (int block_y = 0; block_y < blocked.height;
+         block_y += blocked.block_size) {
+        for (int block_x = 0; block_x < blocked.width;
+             block_x += blocked.block_size) {
+            const float* first = blocked_image.pixel(block_x, block_y);
+            CHECK(first != nullptr);
+            if (first == nullptr) continue;
+            block_colors.insert({first[0], first[1], first[2]});
+            for (int y = block_y;
+                 y < std::min(block_y + blocked.block_size, blocked.height);
+                 ++y) {
+                for (int x = block_x;
+                     x < std::min(block_x + blocked.block_size, blocked.width);
+                     ++x) {
+                    const float* pixel = blocked_image.pixel(x, y);
+                    CHECK(pixel != nullptr
+                          && std::equal(first, first + 4, pixel));
+                }
+            }
+        }
+    }
+    CHECK(block_colors.size()
+          == static_cast<std::size_t>(
+              (blocked.width / blocked.block_size)
+              * (blocked.height / blocked.block_size)));
+
+    pvt::RenderConfig ranged = scaled;
+    ranged.width = 16;
+    ranged.height = 16;
+    ranged.starting_colors.mode = pvt::StartingColorMode::ChannelLoops;
+    ranged.starting_colors.red_minimum = 0.25;
+    ranged.starting_colors.red_maximum = 0.25;
+    ranged.starting_colors.green_minimum = 0.2;
+    ranged.starting_colors.green_maximum = 0.4;
+    ranged.starting_colors.blue_minimum = 0.6;
+    ranged.starting_colors.blue_maximum = 0.8;
+    pvt::Image ranged_image;
+    const bool ranged_ok = pvt::render_frame_at_phase(
+        ranged, 0.0, ranged_image, &error);
+    if (!ranged_ok) std::cerr << "ranged generated render: " << error << '\n';
+    CHECK(ranged_ok);
+    const auto linear_test = [](double value) {
+        return value <= 0.04045 ? value / 12.92
+                                : std::pow((value + 0.055) / 1.055, 2.4);
+    };
+    float minimum_green = 1.0F;
+    float maximum_green = 0.0F;
+    float minimum_blue = 1.0F;
+    float maximum_blue = 0.0F;
+    const float expected_red = static_cast<float>(linear_test(0.25));
+    for (std::size_t offset = 0U; offset < ranged_image.pixels.size();
+         offset += 4U) {
+        CHECK(std::fabs(ranged_image.pixels[offset] - expected_red) < 1.0e-6F);
+        minimum_green = std::min(minimum_green,
+                                 ranged_image.pixels[offset + 1U]);
+        maximum_green = std::max(maximum_green,
+                                 ranged_image.pixels[offset + 1U]);
+        minimum_blue = std::min(minimum_blue,
+                                ranged_image.pixels[offset + 2U]);
+        maximum_blue = std::max(maximum_blue,
+                                ranged_image.pixels[offset + 2U]);
+    }
+    CHECK(std::fabs(minimum_green - linear_test(0.2)) < 1.0e-6);
+    CHECK(std::fabs(maximum_green - linear_test(0.4)) < 1.0e-6);
+    CHECK(std::fabs(minimum_blue - linear_test(0.6)) < 1.0e-6);
+    CHECK(std::fabs(maximum_blue - linear_test(0.8)) < 1.0e-6);
+
+    // Very large authored canvases choose their lattice from the authored
+    // dimensions without allocating that full image for a reduced preview.
+    // 24000^2 RGB blocks require ceil(cuberoot(576000000)) == 833 levels
+    // per channel; this locks the upper-size example without a 9+ GiB test.
+    pvt::RenderConfig large_reference = scaled;
+    large_reference.width = 64;
+    large_reference.height = 64;
+    large_reference.starting_colors.mode =
+        pvt::StartingColorMode::ChannelLoops;
+    large_reference.starting_colors.reference_width = 24000;
+    large_reference.starting_colors.reference_height = 24000;
+    large_reference.starting_colors.reference_block_size = 1;
+    pvt::Image large_preview;
+    CHECK(pvt::render_frame_at_phase(
+        large_reference, 0.0, large_preview, &error));
+    const int sample_x = large_reference.width - 1;
+    const int sample_y = large_reference.height - 1;
+    const std::uint64_t reference_x =
+        static_cast<std::uint64_t>(sample_x) * 24000U
+        / static_cast<std::uint64_t>(large_reference.width);
+    const std::uint64_t reference_y =
+        static_cast<std::uint64_t>(sample_y) * 24000U
+        / static_cast<std::uint64_t>(large_reference.height);
+    std::uint64_t large_index = reference_y * 24000U + reference_x;
+    constexpr std::uint64_t large_levels = 833U;
+    const std::uint64_t expected_blue = large_index % large_levels;
+    large_index /= large_levels;
+    const std::uint64_t expected_green = large_index % large_levels;
+    large_index /= large_levels;
+    const std::uint64_t expected_large_red = large_index % large_levels;
+    const float* large_pixel = large_preview.pixel(sample_x, sample_y);
+    CHECK(large_pixel != nullptr);
+    if (large_pixel != nullptr) {
+        CHECK(std::fabs(
+                  large_pixel[0]
+                  - linear_test(static_cast<double>(expected_large_red)
+                                / static_cast<double>(large_levels - 1U)))
+              < 1.0e-6);
+        CHECK(std::fabs(
+                  large_pixel[1]
+                  - linear_test(static_cast<double>(expected_green)
+                                / static_cast<double>(large_levels - 1U)))
+              < 1.0e-6);
+        CHECK(std::fabs(
+                  large_pixel[2]
+                  - linear_test(static_cast<double>(expected_blue)
+                                / static_cast<double>(large_levels - 1U)))
+              < 1.0e-6);
+    }
+
+    // A reduced preview samples the same full-resolution lattice coordinates
+    // as export. This prevents a preview resize from rearranging source colors.
+    pvt::RenderConfig preview = scaled;
+    preview.width = scaled.width / 2;
+    preview.height = scaled.height / 2;
+    preview.starting_colors.reference_width = scaled.width;
+    preview.starting_colors.reference_height = scaled.height;
+    preview.starting_colors.reference_block_size = scaled.block_size;
+    pvt::Image preview_image;
+    CHECK(pvt::render_frame_at_phase(preview, 0.0, preview_image, &error));
+    for (int y = 0; y < preview.height; ++y) {
+        for (int x = 0; x < preview.width; ++x) {
+            const float* preview_pixel = preview_image.pixel(x, y);
+            const float* export_pixel = scaled_start.pixel(x * 2, y * 2);
+            CHECK(preview_pixel != nullptr && export_pixel != nullptr);
+            if (preview_pixel != nullptr && export_pixel != nullptr) {
+                CHECK(std::equal(preview_pixel, preview_pixel + 4,
+                                 export_pixel));
+            }
         }
     }
 
@@ -1234,6 +1459,23 @@ void test_configurable_blur_effects() {
                                 || modulated.pixels[offset] < 0.999F;
     }
     CHECK(made_transparent_edge);
+
+    // The removed legacy field must not influence blur. Cycles per loop is the
+    // sole modulation count and changing it must visibly change the result.
+    pvt::Image one_cycle;
+    pvt::Image legacy_pulse_value;
+    pvt::Image two_cycles;
+    config.effects.front().blur_pulses_per_cycle = 1;
+    config.effects.front().cycles_per_loop = 1;
+    CHECK(pvt::render_frame_at_phase(config, 0.25, one_cycle, &error));
+    config.effects.front().blur_pulses_per_cycle = 97;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.25, legacy_pulse_value, &error));
+    CHECK(one_cycle.pixels == legacy_pulse_value.pixels);
+    config.effects.front().cycles_per_loop = 2;
+    CHECK(pvt::render_frame_at_phase(config, 0.25, two_cycles, &error));
+    CHECK(mean_absolute_difference(one_cycle, two_cycles) > 0.0001);
+    config.effects.front().cycles_per_loop = 1;
 
     for (const auto type : {pvt::BlurType::Gaussian, pvt::BlurType::Box,
                             pvt::BlurType::Directional, pvt::BlurType::Radial,

@@ -2431,6 +2431,15 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         }
     }
     const StartingColorConfig& starting = config.starting_colors;
+    const bool no_reference = starting.reference_width == 0
+                              && starting.reference_height == 0
+                              && starting.reference_block_size == 0;
+    const bool valid_reference = starting.reference_width > 0
+                                 && starting.reference_height > 0
+                                 && starting.reference_block_size > 0
+                                 && starting.reference_block_size
+                                        <= std::max(starting.reference_width,
+                                                    starting.reference_height);
     if (!valid_enum(starting.mode)
         || starting.red_steps < 1 || starting.red_steps > 65536
         || starting.green_steps < 1 || starting.green_steps > 65536
@@ -2447,9 +2456,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || starting.blue_minimum > starting.blue_maximum
         || !finite_in_range(starting.alpha_minimum, 0.0, 1.0)
         || !finite_in_range(starting.alpha_maximum, 0.0, 1.0)
-        || starting.alpha_minimum > starting.alpha_maximum) {
+        || starting.alpha_minimum > starting.alpha_maximum
+        || (!no_reference && !valid_reference)) {
         return invalid_result(
-            "Generated starting-color ranges and step counts are invalid.");
+            "Generated starting-color ranges, compatibility values, or preview reference are invalid.");
     }
     if (!valid_enum(config.transform.mirror)) {
         return invalid_result("The layer transform contains an unknown mirror mode.");
@@ -2689,45 +2699,105 @@ double stepped_channel(std::size_t index, int steps,
     return mix_value(minimum, maximum, position);
 }
 
-Color generated_starting_color(const StartingColorConfig& config,
-                               std::size_t index) {
-    const std::size_t red_steps = static_cast<std::size_t>(config.red_steps);
-    const std::size_t green_steps = static_cast<std::size_t>(config.green_steps);
-    const std::size_t blue_steps = static_cast<std::size_t>(config.blue_steps);
-    const std::size_t alpha_steps = config.include_alpha
-                                        ? static_cast<std::size_t>(
-                                              config.alpha_steps)
-                                        : 1U;
+bool generated_capacity_reaches(std::uint64_t levels,
+                                unsigned int dimensions,
+                                std::uint64_t required) {
+    std::uint64_t capacity = 1U;
+    for (unsigned int dimension = 0U; dimension < dimensions; ++dimension) {
+        if (capacity >= (required + levels - 1U) / levels) return true;
+        capacity *= levels;
+    }
+    return capacity >= required;
+}
 
-    // This is the literal nested RGBA loop: alpha changes fastest, followed
-    // by blue, green, and red. Every ordering below is a bijection of these
-    // mixed-radix digits, so it can change spatial placement without silently
-    // deleting colors from the configured Cartesian product.
-    std::size_t remaining = index;
-    std::size_t alpha_index = remaining % alpha_steps;
-    remaining /= alpha_steps;
-    std::size_t blue_index = remaining % blue_steps;
-    remaining /= blue_steps;
-    std::size_t green_index = remaining % green_steps;
-    remaining /= green_steps;
-    std::size_t red_index = remaining % red_steps;
+std::uint64_t generated_channel_levels(std::uint64_t block_count,
+                                       bool include_alpha) {
+    const unsigned int dimensions = include_alpha ? 4U : 3U;
+    std::uint64_t low = 1U;
+    std::uint64_t high = 2U;
+    while (!generated_capacity_reaches(high, dimensions, block_count)) {
+        high *= 2U;
+    }
+    while (low + 1U < high) {
+        const std::uint64_t middle = low + (high - low) / 2U;
+        if (generated_capacity_reaches(middle, dimensions, block_count)) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    return block_count <= 1U ? 1U : high;
+}
+
+std::uint64_t generated_block_count(const RenderConfig& config) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const std::uint64_t reference_width = static_cast<std::uint64_t>(
+        starting.reference_width > 0 ? starting.reference_width : config.width);
+    const std::uint64_t reference_height = static_cast<std::uint64_t>(
+        starting.reference_height > 0 ? starting.reference_height : config.height);
+    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+        starting.reference_block_size > 0
+            ? starting.reference_block_size : config.block_size);
+    const std::uint64_t blocks_across =
+        (reference_width + reference_block - 1U) / reference_block;
+    const std::uint64_t blocks_down =
+        (reference_height + reference_block - 1U) / reference_block;
+    return blocks_across * blocks_down;
+}
+
+std::uint64_t generated_starting_color_index(
+    const RenderConfig& config, int block_x, int block_y) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const std::uint64_t reference_width = static_cast<std::uint64_t>(
+        starting.reference_width > 0 ? starting.reference_width : config.width);
+    const std::uint64_t reference_height = static_cast<std::uint64_t>(
+        starting.reference_height > 0 ? starting.reference_height : config.height);
+    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+        starting.reference_block_size > 0
+            ? starting.reference_block_size : config.block_size);
+    const std::uint64_t reference_x = std::min(
+        reference_width - 1U,
+        static_cast<std::uint64_t>(block_x) * reference_width
+            / static_cast<std::uint64_t>(config.width));
+    const std::uint64_t reference_y = std::min(
+        reference_height - 1U,
+        static_cast<std::uint64_t>(block_y) * reference_height
+            / static_cast<std::uint64_t>(config.height));
+    const std::uint64_t blocks_across =
+        (reference_width + reference_block - 1U) / reference_block;
+    return (reference_y / reference_block) * blocks_across
+           + reference_x / reference_block;
+}
+
+Color generated_starting_color(const StartingColorConfig& config,
+                               std::uint64_t index,
+                               std::uint64_t levels) {
+    const std::uint64_t alpha_levels = config.include_alpha ? levels : 1U;
+    std::uint64_t remaining = index;
+    std::uint64_t alpha_index = remaining % alpha_levels;
+    remaining /= alpha_levels;
+    std::uint64_t blue_index = remaining % levels;
+    remaining /= levels;
+    std::uint64_t green_index = remaining % levels;
+    remaining /= levels;
+    std::uint64_t red_index = remaining % levels;
 
     switch (config.mode) {
         case StartingColorMode::LegacyHue:
         case StartingColorMode::ChannelLoops:
             break;
         case StartingColorMode::Interleaved: {
-            // Change the mixed-radix significance order, not the available
-            // values. Red advances fastest here, yielding a different spatial
-            // weave while retaining every RGBA tuple exactly once per cycle.
+            // Change mixed-radix significance so red advances fastest. The
+            // automatically sized radix keeps this a complete, nonrepeating
+            // permutation for every block in the output reference grid.
             remaining = index;
-            red_index = remaining % red_steps;
-            remaining /= red_steps;
-            green_index = remaining % green_steps;
-            remaining /= green_steps;
-            blue_index = remaining % blue_steps;
-            remaining /= blue_steps;
-            alpha_index = remaining % alpha_steps;
+            red_index = remaining % levels;
+            remaining /= levels;
+            green_index = remaining % levels;
+            remaining /= levels;
+            blue_index = remaining % levels;
+            remaining /= levels;
+            alpha_index = remaining % alpha_levels;
             break;
         }
         case StartingColorMode::Additive:
@@ -2736,36 +2806,41 @@ Color generated_starting_color(const StartingColorConfig& config,
             // one another. It is invertible for arbitrary per-channel step
             // counts, unlike the former diagonal ramp, so no combination is
             // lost. Subtractive reverses each sheared channel afterward.
-            const std::size_t source_red = red_index;
-            const std::size_t source_green = green_index;
-            const std::size_t source_blue = blue_index;
-            const std::size_t source_alpha = alpha_index;
-            red_index = source_red;
-            green_index = (source_green + source_red) % green_steps;
-            blue_index = (source_blue + source_green + source_red) % blue_steps;
+            const std::uint64_t source_red = red_index;
+            const std::uint64_t source_green = green_index;
+            const std::uint64_t source_blue = blue_index;
+            const std::uint64_t source_alpha = alpha_index;
+            green_index = (source_green + source_red) % levels;
+            blue_index = (source_blue + source_green + source_red) % levels;
             alpha_index = (source_alpha + source_blue + source_green
-                           + source_red) % alpha_steps;
+                           + source_red) % alpha_levels;
             if (config.mode == StartingColorMode::Subtractive) {
-                red_index = red_steps - 1U - red_index;
-                green_index = green_steps - 1U - green_index;
-                blue_index = blue_steps - 1U - blue_index;
-                alpha_index = alpha_steps - 1U - alpha_index;
+                red_index = levels - 1U - red_index;
+                green_index = levels - 1U - green_index;
+                blue_index = levels - 1U - blue_index;
+                alpha_index = alpha_levels - 1U - alpha_index;
             }
             break;
         }
     }
 
+    const double denominator = levels > 1U
+        ? static_cast<double>(levels - 1U) : 1.0;
+    const double alpha_denominator = alpha_levels > 1U
+        ? static_cast<double>(alpha_levels - 1U) : 1.0;
     Color result;
-    result.r = srgb_to_linear(stepped_channel(
-        red_index, config.red_steps, config.red_minimum, config.red_maximum));
-    result.g = srgb_to_linear(stepped_channel(
-        green_index, config.green_steps,
-        config.green_minimum, config.green_maximum));
-    result.b = srgb_to_linear(stepped_channel(
-        blue_index, config.blue_steps, config.blue_minimum, config.blue_maximum));
+    result.r = srgb_to_linear(mix_value(
+        config.red_minimum, config.red_maximum,
+        static_cast<double>(red_index) / denominator));
+    result.g = srgb_to_linear(mix_value(
+        config.green_minimum, config.green_maximum,
+        static_cast<double>(green_index) / denominator));
+    result.b = srgb_to_linear(mix_value(
+        config.blue_minimum, config.blue_maximum,
+        static_cast<double>(blue_index) / denominator));
     result.a = config.include_alpha
-        ? stepped_channel(alpha_index, config.alpha_steps,
-                          config.alpha_minimum, config.alpha_maximum)
+        ? mix_value(config.alpha_minimum, config.alpha_maximum,
+                    static_cast<double>(alpha_index) / alpha_denominator)
         : 1.0;
     return result;
 }
@@ -2811,6 +2886,8 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     const double breath = 0.85 + 0.35 * std::sin(loop_phase);
     const std::vector<Color> starting_palette =
         prepare_starting_palette(config.palette, config.alpha.use_source_alpha);
+    const std::uint64_t generated_levels = generated_channel_levels(
+        generated_block_count(config), config.starting_colors.include_alpha);
 
     std::size_t block_counter = 0U;
     for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
@@ -2820,7 +2897,8 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         for (std::int64_t block_x_wide = 0; block_x_wide < config.width;
              block_x_wide += config.block_size) {
             const int block_x = static_cast<int>(block_x_wide);
-            const std::size_t starting_color_index = block_counter;
+            const std::uint64_t starting_color_index =
+                generated_starting_color_index(config, block_x, block_y);
             if ((block_counter++ & 63U) == 0U) {
                 throw_if_cancelled(cancel);
             }
@@ -2903,8 +2981,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                            + config.ghost_mix * ghost_signal;
             const double hue = (combined_signal + 1.45) * 260.0
                                + 360.0 * config.hue_cycles * (loop_phase / kTau);
-            const double generated_hue_shift = combined_signal * 260.0
-                + 360.0 * config.hue_cycles * (loop_phase / kTau);
+            const double generated_hue_shift = combined_signal * 260.0;
             const double audio_hue_shift =
                 audio.enabled && audio.color_enabled
                     ? audio.color_amount_degrees
@@ -2929,13 +3006,14 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 if (config.starting_colors.include_alpha) {
                     base.a = stepped_channel(
                         starting_color_index,
-                        config.starting_colors.alpha_steps,
+                        static_cast<int>(generated_levels),
                         config.starting_colors.alpha_minimum,
                         config.starting_colors.alpha_maximum);
                 }
             } else if (starting_palette.empty()) {
                 base = generated_starting_color(
-                    config.starting_colors, starting_color_index);
+                    config.starting_colors, starting_color_index,
+                    generated_levels);
                 // Generated modes define the complete source-color set and
                 // its placement. Procedural spiral/wall/hue controls then
                 // transform those source colors instead of being bypassed.
@@ -4547,8 +4625,7 @@ bool render_frame_at_timeline_sample_cancellable(
                     render, effect, independent_loop_phase, motion_clock);
                 if (effect.type == EffectType::Blur) {
                     const double pulse = 0.5 - 0.5 * std::cos(
-                        static_cast<double>(effect.blur_pulses_per_cycle)
-                        * phase);
+                        phase);
                     effect.intensity = mix_value(
                         effect.blur_minimum, effect.blur_maximum, pulse);
                 }
@@ -4665,7 +4742,11 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
         kTau * wrap_unit(timeline.independent_phase);
     const MotionClockState motion_clock =
         prepare_motion_clock(config, candidate.loop_phase);
-    const AudioReactiveConfig& audio = effective_audio_reactive(config);
+    RenderConfig resolved_config = config;
+    resolve_path_bindings(resolved_config, candidate.independent_loop_phase,
+                          motion_clock);
+    const RenderConfig& render = resolved_config;
+    const AudioReactiveConfig& audio = effective_audio_reactive(render);
     candidate.global_motion_phase = motion_clock.global_phase;
     candidate.spatial_swings.reserve(motion_clock.spatial_swings.size());
     for (const SpatialSwingSample& swing : motion_clock.spatial_swings) {
@@ -4674,8 +4755,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              swing.contribution});
     }
 
-    candidate.waves.reserve(config.waves.size());
-    for (const WaveConfig& wave : config.waves) {
+    candidate.waves.reserve(render.waves.size());
+    for (const WaveConfig& wave : render.waves) {
         if (!wave.enabled) {
             continue;
         }
@@ -4690,8 +4771,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
                                                      response.source));
         }
         candidate.waves.push_back(
-            {wave.x_percent * 0.01 * static_cast<double>(config.width),
-             wave.y_percent * 0.01 * static_cast<double>(config.height),
+            {wave.x_percent * 0.01 * static_cast<double>(render.width),
+             wave.y_percent * 0.01 * static_cast<double>(render.height),
              amplitude, wave.spatial_frequency,
              radians(wave.phase_degrees), wave.direction,
              wave.cycles_per_loop, wave.synchronized});
@@ -4704,21 +4785,21 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
     }
 
     const std::vector<Color> palette =
-        prepare_starting_palette(config.palette, config.alpha.use_source_alpha);
+        prepare_starting_palette(render.palette, render.alpha.use_source_alpha);
     candidate.starting_palette.reserve(palette.size());
     for (const Color& color : palette) {
         candidate.starting_palette.push_back(
             {color.r, color.g, color.b, color.a});
     }
 
-    candidate.effects.reserve(config.effects.size());
-    for (const EffectConfig& authored : config.effects) {
+    candidate.effects.reserve(render.effects.size());
+    for (const EffectConfig& authored : render.effects) {
         EffectConfig effect = authored;
         const double phase = effect_phase(
-            config, effect, candidate.independent_loop_phase, motion_clock);
+            render, effect, candidate.independent_loop_phase, motion_clock);
         if (effect.type == EffectType::Blur) {
             const double pulse = 0.5 - 0.5 * std::cos(
-                static_cast<double>(effect.blur_pulses_per_cycle) * phase);
+                phase);
             effect.intensity = mix_value(
                 effect.blur_minimum, effect.blur_maximum, pulse);
         }
@@ -4735,7 +4816,7 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
             continue;
         }
         candidate.effects.push_back(
-            {effect.type, effect.space, effect.edge_mode,
+            {effect.id, effect.type, effect.space, effect.edge_mode,
              phase,
              effect.intensity, effect.magnitude, effect.frequency,
              effect.secondary, effect.center_x, effect.center_y,
@@ -4743,6 +4824,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              effect.threshold, effect.soft_knee, effect.area_radius,
              effect.blur_type, effect.blur_passes, effect.blur_samples});
     }
+
+    candidate.motion = render.motion;
 
     prepared = std::move(candidate);
     set_error(error, std::string{});
@@ -4774,6 +4857,39 @@ bool prepare_frame_for_backend(const RenderConfig& config, int frame_index,
                                std::string* error) {
     return prepare_frame_for_backend_timeline(
         config, resolve_timeline_sample(config, frame_index), prepared, error);
+}
+
+bool prepare_starting_image_for_backend(const RenderConfig& config,
+                                        double loop_phase,
+                                        Image& destination,
+                                        const std::atomic_bool* cancel,
+                                        std::string* error) {
+    try {
+        Image candidate;
+        if (!render_starting_image(config.starting_image, config.width,
+                                   config.height, candidate, cancel, error)) {
+            return false;
+        }
+        apply_starting_image_controls(config, loop_phase, candidate, cancel);
+        destination = std::move(candidate);
+        set_error(error, std::string{});
+        return true;
+    } catch (const RenderCancelled&) {
+        set_error(error,
+                  "Starting image preparation was cancelled; destination was unchanged.");
+        return false;
+    } catch (const std::bad_alloc&) {
+        set_error(error,
+                  "Starting image preparation could not allocate its validated working buffers.");
+        return false;
+    } catch (const std::exception& exception) {
+        set_error(error, std::string("Starting image preparation failed: ")
+                             + exception.what());
+        return false;
+    } catch (...) {
+        set_error(error, "Starting image preparation failed with an unknown exception.");
+        return false;
+    }
 }
 
 } // namespace detail

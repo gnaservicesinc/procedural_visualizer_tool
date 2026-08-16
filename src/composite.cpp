@@ -835,13 +835,7 @@ bool render_project_with_backend_validated(
         cpu_worker.join();
         if (!cpu_ok) return contextual_failure(cpu_index, cpu_error);
         if (!gpu_ok) {
-            // Hybrid mode remains resilient even if a Metal command fails
-            // after capability checks. Retry that layer through the reference
-            // path after the other lane has joined and released its buffers.
-            gpu_image = {};
-            if (!render_one(gpu_index, cpu_options, gpu_image, gpu_error)) {
-                return contextual_failure(gpu_index, gpu_error);
-            }
+            return contextual_failure(gpu_index, gpu_error);
         }
         Image& first_image = first_index == cpu_index
                                  ? cpu_image : gpu_image;

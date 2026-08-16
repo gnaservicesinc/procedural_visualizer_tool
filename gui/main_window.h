@@ -577,7 +577,6 @@ private:
     QSpinBox* effect_blur_samples_ = nullptr;
     QDoubleSpinBox* effect_blur_minimum_ = nullptr;
     QDoubleSpinBox* effect_blur_maximum_ = nullptr;
-    QSpinBox* effect_blur_pulses_ = nullptr;
     QFormLayout* effect_form_ = nullptr;
 
     QSpinBox* width_ = nullptr;
@@ -638,10 +637,6 @@ private:
     QListWidget* palette_colors_ = nullptr;
     QComboBox* starting_color_mode_ = nullptr;
     QCheckBox* starting_color_include_alpha_ = nullptr;
-    QSpinBox* starting_red_steps_ = nullptr;
-    QSpinBox* starting_green_steps_ = nullptr;
-    QSpinBox* starting_blue_steps_ = nullptr;
-    QSpinBox* starting_alpha_steps_ = nullptr;
     QDoubleSpinBox* starting_red_minimum_ = nullptr;
     QDoubleSpinBox* starting_red_maximum_ = nullptr;
     QDoubleSpinBox* starting_green_minimum_ = nullptr;

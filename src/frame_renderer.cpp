@@ -66,20 +66,21 @@ bool render_with_backend(const RenderConfig& config,
     const bool supported = available
                            && detail::metal_backend_supports(
                                   config, &unsupported_reason);
-    if (!available || !supported) {
+    if (!available) {
         if (options.backend == RenderBackend::Gpu) {
-            if (!available) {
-                return fail(error,
-                            metal_status.empty()
-                                ? "Metal rendering is unavailable on this host."
-                                : metal_status);
-            }
             return fail(error,
-                        unsupported_reason.empty()
-                            ? "This frame is not supported by the Metal backend."
-                            : unsupported_reason);
+                        metal_status.empty()
+                            ? "Metal rendering is unavailable on this host."
+                            : metal_status);
         }
+        // CPU is the only possible renderer on a host without Metal.
         return cpu_render();
+    }
+    if (!supported) {
+        return fail(error,
+                    unsupported_reason.empty()
+                        ? "This frame is not supported by the Metal backend."
+                        : unsupported_reason);
     }
 
     detail::PreparedFrame prepared;
@@ -92,16 +93,14 @@ bool render_with_backend(const RenderConfig& config,
         }
         return true;
     }
-    if (options.backend == RenderBackend::Gpu || cancelled(cancel)) {
-        return fail(error,
-                    metal_error.empty()
-                        ? "Metal rendering failed."
-                        : metal_error);
-    }
-
-    // CpuAndGpu is the resilient application mode: a pipeline/compiler/device
-    // failure affects only acceleration, never the user's ability to render.
-    return cpu_render();
+    // Once Metal is available, CPU + GPU never hides an acceleration failure
+    // behind an unexpectedly slow whole-frame retry. CPU participates in
+    // preparation and dependency-heavy stages; the GPU remains mandatory for
+    // the accelerated pixel pipeline.
+    return fail(error,
+                metal_error.empty()
+                    ? "Metal rendering failed."
+                    : metal_error);
 }
 
 } // namespace

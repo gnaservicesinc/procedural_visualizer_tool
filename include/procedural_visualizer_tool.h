@@ -528,14 +528,16 @@ struct EffectConfig {
     // initializers; omitted values inherit the effective routing profile.
     AudioResponseMode audio_response = AudioResponseMode::Default;
 
-    // Blur-specific controls. Synchronized blurs can pulse their mix between
-    // the authored bounds without rewriting `intensity`, which remains the
-    // unsynchronized/static mix and the compatibility value for older clients.
+    // Blur-specific controls. Blurs pulse their mix between the authored
+    // bounds according to cycles_per_loop without rewriting `intensity`, which
+    // remains the compatibility value for older clients.
     BlurType blur_type = BlurType::Gaussian;
     int blur_passes = 1;
     int blur_samples = 9;
     double blur_minimum = 0.0;
     double blur_maximum = 1.0;
+    // Deprecated serialized compatibility field from layer format 8. Rendering
+    // deliberately ignores it: cycles_per_loop is the sole modulation count.
     int blur_pulses_per_cycle = 1;
 };
 
@@ -608,10 +610,13 @@ struct AlphaConfig {
 struct StartingColorConfig {
     StartingColorMode mode = StartingColorMode::LegacyHue;
     bool include_alpha = false;
-    int red_steps = 8;
-    int green_steps = 8;
-    int blue_steps = 8;
-    int alpha_steps = 8;
+    // Deprecated layer-format-8 controls. Non-legacy generated modes use
+    // deterministic working-precision float channels and do not quantize to
+    // these values. They remain serialized only for lossless older-file round trips.
+    int red_steps = 256;
+    int green_steps = 256;
+    int blue_steps = 256;
+    int alpha_steps = 256;
     double red_minimum = 0.0;
     double red_maximum = 1.0;
     double green_minimum = 0.0;
@@ -620,6 +625,14 @@ struct StartingColorConfig {
     double blue_maximum = 1.0;
     double alpha_minimum = 0.0;
     double alpha_maximum = 1.0;
+
+    // Transient preview sampling reference. Hosts may set all three values to
+    // map a reduced preview back to full-resolution source-color blocks. These
+    // values are intentionally not serialized; zero selects the render's own
+    // width, height, and block size.
+    int reference_width = 0;
+    int reference_height = 0;
+    int reference_block_size = 0;
 };
 
 struct QuantizationConfig {

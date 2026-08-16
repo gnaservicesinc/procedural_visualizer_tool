@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.2.2**. The version is read from `VERSION` by every
+Current product version: **1.2.3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -28,7 +28,8 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
   `../3rd_party/metal-cpp` plus the system Foundation and Metal frameworks. Set
   `PVT_ENABLE_METAL=OFF` for an explicitly CPU-only build, or
   point `PVT_METAL_CPP_DIR` at another metal-cpp checkout. Other platforms build
-  the same public backend API with the CPU fallback.
+  the same public backend API with a CPU-only implementation because no portable
+  GPU backend exists there yet.
 - On macOS, GUI video export uses the system AVFoundation, VideoToolbox,
   CoreMedia, and CoreVideo frameworks directly. FFmpeg is neither launched nor
   bundled.
@@ -232,10 +233,20 @@ sudo apt install procedural-visualizer-tool
   source colors in linear light without changing alpha; lighting and effects
   may create other colors afterward. Presets never silently change
   whether the starting palette is enabled.
-- An optional embedded PNG starting image per layer, with Stretch, Contain,
-  Cover, and Tile fitting. It replaces procedural source generation and the
-  starting palette; effects, surface mapping, transforms, motion, quantization,
-  compositing, and export still run afterward. Files use the validated
+- Generated starting-color orderings use float32 working channels and choose
+  their per-channel lattice size from the full-resolution output block count.
+  The resulting RGB or RGBA capacity is always at least the number of blocks:
+  512×512 at block size 1 uses 64 levels per RGB channel, 1920×1080 uses 128,
+  and 24000×24000 uses 833. The removed `Values` controls are retained only as
+  ignored legacy file fields; Min/Max constrain the authored range without
+  reducing processing precision. Preview sampling retains the full-resolution
+  lattice coordinates, so resizing the live preview cannot rearrange colors.
+- An optional embedded 8/16-bit PNG starting image per layer, with Stretch,
+  Contain, Cover, and Tile fitting. The decoder converts directly to the
+  float32 linear working image without an 8-bit intermediate. It replaces
+  procedural generation; an enabled starting palette may then quantize those
+  fitted pixels before effects. Surface mapping, transforms, motion,
+  quantization, compositing, and export still run afterward. Files use the validated
   content-addressed attachment store, and an evicting shared decoded-image cache
   avoids repeated work across frames and layers.
 - Per-layer horizontal/vertical flips and directional mirror symmetry
@@ -255,11 +266,15 @@ sudo apt install procedural-visualizer-tool
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
-- CPU, CPU + GPU, and strict GPU frame backends. CPU + GPU is the application
-  default: it runs adjacent project layers through bounded CPU and Metal lanes
-  where possible, then preserves bottom-to-top compositing order. Strict GPU
-  reports unavailable or unsupported work. Custom OBJ depth peeling remains on
-  the CPU; hybrid mode falls back automatically for it.
+- CPU, CPU + GPU, and GPU frame backends. CPU + GPU is the application default:
+  it runs adjacent project layers through bounded CPU and Metal lanes while
+  preserving bottom-to-top compositing order. A single layer uses Metal for its
+  parallel pixel stages while CPU preparation handles only ordered dependencies
+  such as Floyd-Steinberg source dithering and custom OBJ rasterization. Generated
+  sources, source alpha, image-to-palette mapping, reusable paths, particles,
+  blur, and all analytic stages remain GPU accelerated. Once Metal is available,
+  CPU + GPU reports a Metal failure instead of silently repeating the whole
+  layer on CPU; CPU-only rendering is automatic only where Metal is unavailable.
 
 The GUI includes a topmost-first Layers dock, project naming, per-layer blend,
 alpha-order, group, and opacity controls, session-only layer/group **Solo**
@@ -422,13 +437,16 @@ thread. This keeps collision protection, deterministic filenames, cancellation,
 and callback behavior compatible with the former sequential exporter.
 
 The CLI and GUI default to **CPU + GPU**. A multi-layer frame pairs one CPU lane
-with one Metal lane when both layers are supported, while single layers and any
-remaining supported layer use Metal. CPU rendering remains the reference and is
-used automatically when Metal is unavailable, a Metal operation fails, or a
-custom OBJ surface, reusable cubic path, or particle field requires the bounded
-CPU renderer. Starting-image fitting and built-in layer placement, rotation,
-and scale run on Metal. **GPU (Strict)** never hides a fallback: every
-contributing layer must use Metal, while final
+with one Metal lane, while a single layer and any remaining layer use Metal for
+the parallel pixel pipeline. CPU rendering remains the reference and is used
+automatically only when Metal is unavailable. Generated source ordering,
+source alpha, starting-image palette selection, starting-image fitting,
+particles, reusable path resolution, built-in placement, rotation, and scale
+all keep Metal active. Floyd-Steinberg source dithering and custom OBJ depth
+peeling are ordered CPU stages inside the accelerated pipeline rather than
+whole-layer fallbacks. An unexpected Metal error is surfaced immediately instead
+of being hidden behind an unacceptably slow CPU retry. **GPU** likewise requires
+Metal for every contributing layer, while final
 linear-light project compositing remains on the CPU. The installed library's
 legacy overloads retain CPU as their compatibility default; callers opt into
 acceleration with
@@ -960,7 +978,8 @@ selection, video cancellation/collision safety,
 deterministic dithering, byte-identical one/four-worker sequence output,
 callback/cancel behavior, sequence collision preflight, Unicode paths,
 CPU/Metal base/effect/analytic-surface image and straight-alpha parity,
-near-seam parity, strict-backend errors, hybrid fallback, bounded admission,
+near-seam parity, generated-source/image/particle/OBJ Metal coverage, strict
+backend errors, bounded CPU/Metal lane admission,
 transactional cancellation, and the public library API. It also exercises CLI
 help, option rejection, and the
 multi-layer CLI self-test. With the GUI enabled, CTest launches it through Qt's

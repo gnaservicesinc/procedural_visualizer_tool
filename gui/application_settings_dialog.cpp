@@ -135,20 +135,21 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     render_backend_->addItem(tr("CPU"), static_cast<int>(pvt::RenderBackend::Cpu));
     render_backend_->addItem(tr("CPU + GPU (Recommended)"),
                              static_cast<int>(pvt::RenderBackend::CpuAndGpu));
-    render_backend_->addItem(tr("GPU (Strict)"),
+    render_backend_->addItem(tr("GPU"),
                              static_cast<int>(pvt::RenderBackend::Gpu));
     const int backend_index = render_backend_->findData(static_cast<int>(renderBackend));
     render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 1);
     render_backend_->setToolTip(
-        tr("CPU is the deterministic reference renderer. CPU + GPU uses Metal "
-           "where supported and falls back to CPU. GPU (Strict) requires Metal "
-           "and reports unsupported work."));
+        tr("CPU is the deterministic reference renderer. CPU + GPU pairs "
+           "independent CPU and Metal work and requires Metal whenever it is "
+           "available; it never hides a Metal failure behind a whole-frame CPU retry. "
+           "GPU requires Metal for the accelerated pixel pipeline."));
     backend_form->addRow(tr("Backend"), render_backend_);
     backend_form->addRow(
         explanatory_label(
             tr("This backend is used for both live preview and export. CPU + GPU "
-               "is recommended for normal use; strict GPU mode is useful for "
-               "diagnosing Metal compatibility."),
+               "is recommended for maximum throughput; GPU keeps every layer on "
+               "the accelerated pipeline and is useful for diagnosing Metal errors."),
             backend_group));
     rendering_layout->addWidget(backend_group);
     rendering_layout->addStretch(1);
