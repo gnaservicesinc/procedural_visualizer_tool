@@ -29,7 +29,7 @@ apps:
     command: usr/bin/procedural-visualizer-tool
     desktop: usr/share/applications/procedural-visualizer-tool.desktop
     extensions:
-      - kde-neon-qt6
+      - kde-neon-6
     plugs:
       - audio-playback
       - home
@@ -60,7 +60,10 @@ parts:
       - -DPVT_ENABLE_METAL=OFF
     build-packages:
       - git
+      - libfreetype-dev
+      - libglib2.0-dev
       - libpng-dev
+      - libxkbcommon-dev
       - zlib1g-dev
     stage-packages:
       - libpng16-16t64
