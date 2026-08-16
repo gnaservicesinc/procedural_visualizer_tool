@@ -401,7 +401,7 @@ bool generated_capacity_reaches(std::uint64_t levels,
     return capacity >= required;
 }
 
-std::uint64_t generated_channel_levels(const RenderConfig& config) {
+std::uint64_t generated_block_count(const RenderConfig& config) {
     const StartingColorConfig& starting = config.starting_colors;
     const std::uint64_t reference_width = static_cast<std::uint64_t>(
         starting.reference_width > 0 ? starting.reference_width : config.width);
@@ -410,9 +410,13 @@ std::uint64_t generated_channel_levels(const RenderConfig& config) {
     const std::uint64_t reference_block = static_cast<std::uint64_t>(
         starting.reference_block_size > 0
             ? starting.reference_block_size : config.block_size);
-    const std::uint64_t block_count =
-        ((reference_width + reference_block - 1U) / reference_block)
-        * ((reference_height + reference_block - 1U) / reference_block);
+    return ((reference_width + reference_block - 1U) / reference_block)
+           * ((reference_height + reference_block - 1U) / reference_block);
+}
+
+std::uint64_t generated_channel_levels(const RenderConfig& config) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const std::uint64_t block_count = generated_block_count(config);
     if (block_count <= 1U) return 1U;
     const unsigned int dimensions = starting.include_alpha ? 4U : 3U;
     std::uint64_t low = 1U;
@@ -459,10 +463,17 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         config.transform.flip_vertical ? 1U : 0U,
         config.quantization.enabled ? 1U : 0U,
         static_cast<std::uint32_t>(config.quantization.mode)};
+    const std::uint64_t generated_count = generated_block_count(config);
+    unsigned int generated_bits = 0U;
+    for (std::uint64_t highest = generated_count - 1U;
+         highest != 0U; highest >>= 1U) {
+        ++generated_bits;
+    }
     result.quant_values = {
         static_cast<std::uint32_t>(config.quantization.levels),
-        0U,
-        0U, 0U};
+        generated_bits,
+        static_cast<std::uint32_t>(generated_count),
+        static_cast<std::uint32_t>(generated_count >> 32U)};
     result.phases = {
         static_cast<float>(prepared.loop_phase),
         static_cast<float>(prepared.global_motion_phase),

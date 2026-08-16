@@ -15,7 +15,7 @@ struct FrameConstants {
     uint4 base_flags;        // lighting, spiral, wall, reserved
     int4 signed_values;      // alpha cycles, spiral arms, hue cycles, mirror
     uint4 transform_quant;   // flip H, flip V, quant enabled, quant mode
-    uint4 quant_values;      // quant levels, reserved...
+    uint4 quant_values;      // quant levels, generated bits/count low/count high
     float4 phases;           // loop, global motion, breath, short side
     float4 timelines;        // independent loop, reserved...
     float4 center_ghost;     // center x/y, ghost lag radians, ghost mix
@@ -245,6 +245,26 @@ ulong generated_starting_index(constant FrameConstants& frame,
 
 float4 generated_starting_color(constant FrameConstants& frame,
                                 ulong index) {
+    const ulong color_count = (ulong(frame.quant_values.w) << 32u)
+                              | ulong(frame.quant_values.z);
+    if (color_count > 1ul) {
+        const uint bits = frame.quant_values.y;
+        const ulong mask = (1ul << bits) - 1ul;
+        const uint shift1 = max(1u, bits / 2u);
+        const uint shift2 = max(1u, bits / 3u);
+        const uint shift3 = max(1u, (bits * 2u) / 3u);
+        do {
+            index = (index + 0x9e3779b97f4a7c15ul) & mask;
+            index ^= index >> shift1;
+            index = (index * 0xbf58476d1ce4e5b9ul) & mask;
+            index ^= index >> shift2;
+            index = (index * 0x94d049bb133111ebul) & mask;
+            index ^= index >> shift3;
+            index &= mask;
+        } while (index >= color_count);
+    } else {
+        index = 0ul;
+    }
     const ulong levels = max(1ul, ulong(frame.starting_reference.w));
     const ulong alpha_levels = frame.starting_flags.y != 0u ? levels : 1ul;
     ulong remaining = index;

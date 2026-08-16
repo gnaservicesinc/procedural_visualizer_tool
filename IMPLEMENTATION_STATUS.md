@@ -8,16 +8,20 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The 1.2.3 correctness and acceleration pass removes fixed generated-color
-`Values` controls. Non-legacy generated sources now choose a float32 RGB/RGBA
+The 1.2.4 generated-color correction builds on the 1.2.3 correctness and
+acceleration pass, which removed fixed generated-color `Values` controls.
+Non-legacy generated sources choose a float32 RGB/RGBA
 lattice from the full-resolution block count, preserve Min/Max ranges, keep
 every block unique whenever the selected output representation permits it, and
 use transient full-resolution coordinates in reduced previews. With all
 procedural controls disabled the generated source is time-invariant, block size
 is honored, and current-frame/sequence exports sample the same source placement
-as preview. Direct 16-bit PNG decode coverage proves that source values never
-pass through an 8-bit intermediate; 32-bit FLOAT remains available for EXR
-output, while starting-image input is explicitly 8/16-bit PNG.
+as preview. A deterministic bijective dispersion keeps the automatically sized
+channel lattice from collapsing into scanline bands without sacrificing a
+single generated tuple at any output size. Direct 16-bit PNG decode coverage
+proves that source values never pass through an 8-bit intermediate; 32-bit
+FLOAT remains available for EXR output, while starting-image input is explicitly
+8/16-bit PNG.
 
 Metal now renders generated orderings, generated/source alpha, fitted-image
 palette selection and parallel dithers, reusable path bindings, and particle
@@ -36,7 +40,7 @@ Saving preserves the user's selected tab, including background completion, and
 Cocoa smoke covers the regression. Effect synchronization is labeled simply
 `Synchronization`, without the misleading swing-clock wording.
 
-The public product version is now 1.2.3 and has one source of truth in
+The public product version is now 1.2.4 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
@@ -602,6 +606,19 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-16 1.2.4 generated-color correction passed the complete Qt-enabled
+Release suite 21/21, the independent C++20 suite 20/20, and the AddressSanitizer
+plus UndefinedBehaviorSanitizer suite 20/20 with leak detection disabled on the
+macOS beta host. The supplied 1920×1080 block-size-1 project retained all
+2,073,600 distinct RGB tuples; representative rows contain 233–244 values per
+channel and representative columns contain 214–232 instead of collapsing a
+channel to 1–3 values. CPU/Metal placement parity passed. The self-contained
+macOS distribution verifier inspected 27 Mach-O files, its embedded
+`pvt-render` reported 1.2.4 and passed self-test, deep strict signing and native
+Cocoa smoke passed, and both executables were arm64 with a macOS 13.0 minimum.
+The workflow-shaped single-root archive passed ZIP integrity, SHA-256,
+extracted-layout, version, self-test, and signature verification.
 
 The 2026-08-16 1.2.3 correction passed the complete Qt-enabled Release suite
 21/21, including real-Metal generated-source, image/palette/dither, particle,

@@ -1,3 +1,10 @@
+procedural-visualizer-tool (1.2.4) stonking; urgency=medium
+
+  * Disperse the complete generated-color lattice across both spatial axes.
+  * Preserve unique output-scaled RGB/RGBA tuples and CPU/Metal parity.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sun, 16 Aug 2026 16:41:55 -0400
+
 procedural-visualizer-tool (1.2.3) stonking; urgency=medium
 
   * New upstream release.

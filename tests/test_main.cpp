@@ -131,6 +131,32 @@ double mean_absolute_difference(const pvt::Image& a, const pvt::Image& b) {
     return total / static_cast<double>(a.pixels.size());
 }
 
+std::uint64_t dispersed_generated_index_for_test(std::uint64_t index,
+                                                 std::uint64_t count) {
+    if (count <= 1U) return 0U;
+    unsigned int bits = 0U;
+    for (std::uint64_t highest = count - 1U; highest != 0U; highest >>= 1U) {
+        ++bits;
+    }
+    const std::uint64_t mask = (std::uint64_t{1U} << bits) - 1U;
+    const unsigned int shift1 = std::max(1U, bits / 2U);
+    const unsigned int shift2 = std::max(1U, bits / 3U);
+    const unsigned int shift3 = std::max(1U, (bits * 2U) / 3U);
+    const auto permute = [=](std::uint64_t value) {
+        value = (value + UINT64_C(0x9e3779b97f4a7c15)) & mask;
+        value ^= value >> shift1;
+        value = (value * UINT64_C(0xbf58476d1ce4e5b9)) & mask;
+        value ^= value >> shift2;
+        value = (value * UINT64_C(0x94d049bb133111eb)) & mask;
+        value ^= value >> shift3;
+        return value & mask;
+    };
+    do {
+        index = permute(index);
+    } while (index >= count);
+    return index;
+}
+
 bool write_test_png(const fs::path& path, png_uint_32 width,
                     png_uint_32 height,
                     const std::vector<unsigned char>& pixels) {
@@ -356,16 +382,6 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
             }
         }
         CHECK(observed.size() == 16U);
-        if (mode == pvt::StartingColorMode::ChannelLoops) {
-            const float* alpha_next = combinations.pixel(4, 0);
-            const float* blue_next = combinations.pixel(8, 0);
-            const float* green_next = combinations.pixel(0, 4);
-            const float* red_next = combinations.pixel(0, 8);
-            CHECK(alpha_next != nullptr && alpha_next[3] > 0.5F);
-            CHECK(blue_next != nullptr && blue_next[2] > 0.5F);
-            CHECK(green_next != nullptr && green_next[1] > 0.5F);
-            CHECK(red_next != nullptr && red_next[0] > 0.5F);
-        }
     }
 
     // Resolution, not an authored 8-bit step count, chooses the radix. Every
@@ -408,6 +424,36 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     }
     CHECK(scaled_colors.size()
           == static_cast<std::size_t>(scaled.width * scaled.height));
+
+    // Regression: the supplied 1920x1080 Channel Loops project had millions
+    // of unique tuples but only 1-3 red values per row and 1-2 blue values per
+    // column. Generated precision is useful only if the full channel lattice
+    // is distributed in both spatial axes instead of becoming color bands.
+    pvt::RenderConfig distributed = scaled;
+    distributed.starting_colors.mode = pvt::StartingColorMode::ChannelLoops;
+    pvt::Image distributed_image;
+    CHECK(pvt::render_frame_at_phase(
+        distributed, 0.0, distributed_image, &error));
+    std::array<std::set<float>, 3U> row_channel_values;
+    std::array<std::set<float>, 3U> column_channel_values;
+    for (int x = 0; x < distributed.width; ++x) {
+        if (const float* pixel = distributed_image.pixel(x, 0)) {
+            for (std::size_t channel = 0U; channel < 3U; ++channel) {
+                row_channel_values[channel].insert(pixel[channel]);
+            }
+        }
+    }
+    for (int y = 0; y < distributed.height; ++y) {
+        if (const float* pixel = distributed_image.pixel(0, y)) {
+            for (std::size_t channel = 0U; channel < 3U; ++channel) {
+                column_channel_values[channel].insert(pixel[channel]);
+            }
+        }
+    }
+    for (std::size_t channel = 0U; channel < 3U; ++channel) {
+        CHECK(row_channel_values[channel].size() >= 24U);
+        CHECK(column_channel_values[channel].size() >= 24U);
+    }
 
     pvt::RenderConfig blocked = scaled;
     blocked.width = 18;
@@ -509,7 +555,8 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     const std::uint64_t reference_y =
         static_cast<std::uint64_t>(sample_y) * 24000U
         / static_cast<std::uint64_t>(large_reference.height);
-    std::uint64_t large_index = reference_y * 24000U + reference_x;
+    std::uint64_t large_index = dispersed_generated_index_for_test(
+        reference_y * 24000U + reference_x, 24000U * 24000U);
     constexpr std::uint64_t large_levels = 833U;
     const std::uint64_t expected_blue = large_index % large_levels;
     large_index /= large_levels;

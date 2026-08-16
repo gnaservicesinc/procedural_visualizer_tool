@@ -2769,9 +2769,43 @@ std::uint64_t generated_starting_color_index(
            + reference_x / reference_block;
 }
 
+std::uint64_t dispersed_generated_index(std::uint64_t index,
+                                        std::uint64_t count) {
+    if (count <= 1U) return 0U;
+
+    // Cycle-walk a reversible permutation of the smallest power-of-two domain
+    // containing the block grid. This keeps every generated tuple unique while
+    // preventing mixed-radix channel digits from collapsing into scanline
+    // bands. All arithmetic is integer-only so CPU and Metal placement agree.
+    unsigned int bits = 0U;
+    for (std::uint64_t highest = count - 1U; highest != 0U; highest >>= 1U) {
+        ++bits;
+    }
+    const std::uint64_t mask = (std::uint64_t{1U} << bits) - 1U;
+    const unsigned int shift1 = std::max(1U, bits / 2U);
+    const unsigned int shift2 = std::max(1U, bits / 3U);
+    const unsigned int shift3 = std::max(1U, (bits * 2U) / 3U);
+    const auto permute = [=](std::uint64_t value) {
+        value = (value + UINT64_C(0x9e3779b97f4a7c15)) & mask;
+        value ^= value >> shift1;
+        value = (value * UINT64_C(0xbf58476d1ce4e5b9)) & mask;
+        value ^= value >> shift2;
+        value = (value * UINT64_C(0x94d049bb133111eb)) & mask;
+        value ^= value >> shift3;
+        return value & mask;
+    };
+
+    do {
+        index = permute(index);
+    } while (index >= count);
+    return index;
+}
+
 Color generated_starting_color(const StartingColorConfig& config,
                                std::uint64_t index,
-                               std::uint64_t levels) {
+                               std::uint64_t levels,
+                               std::uint64_t color_count) {
+    index = dispersed_generated_index(index, color_count);
     const std::uint64_t alpha_levels = config.include_alpha ? levels : 1U;
     std::uint64_t remaining = index;
     std::uint64_t alpha_index = remaining % alpha_levels;
@@ -2886,8 +2920,9 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     const double breath = 0.85 + 0.35 * std::sin(loop_phase);
     const std::vector<Color> starting_palette =
         prepare_starting_palette(config.palette, config.alpha.use_source_alpha);
+    const std::uint64_t generated_color_count = generated_block_count(config);
     const std::uint64_t generated_levels = generated_channel_levels(
-        generated_block_count(config), config.starting_colors.include_alpha);
+        generated_color_count, config.starting_colors.include_alpha);
 
     std::size_t block_counter = 0U;
     for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
@@ -3013,7 +3048,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             } else if (starting_palette.empty()) {
                 base = generated_starting_color(
                     config.starting_colors, starting_color_index,
-                    generated_levels);
+                    generated_levels, generated_color_count);
                 // Generated modes define the complete source-color set and
                 // its placement. Procedural spiral/wall/hue controls then
                 // transform those source colors instead of being bypassed.

@@ -2663,7 +2663,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "every block receives a unique working-precision RGB or RGBA tuple "
         "unless a minimum/maximum range collapses a channel. Values remain "
         "32-bit float through effects and compositing; only the selected output "
-        "format quantizes them. Spatial ordering changes where tuples appear."));
+        "format quantizes them. Spatial ordering changes the channel relationship; "
+        "a deterministic one-to-one dispersion prevents scanline color bands."));
     starting_colors_help->setWordWrap(true);
     starting_colors_layout->addWidget(starting_colors_help);
     layout->addWidget(starting_colors_group);
