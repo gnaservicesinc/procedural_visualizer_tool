@@ -111,11 +111,6 @@ credentials.
 
 ### Ubuntu PPA and Snap Store packages
 
-The repository now includes native Debian packaging for the
-[`procedural-daily`](https://code.launchpad.net/~gnaservicesinc/+recipe/procedural-daily)
-Launchpad recipe. It builds the desktop application, command-line renderer,
-shared rendering library, development package, desktop launcher, hicolor icons,
-and the `application/x-procedural-visualizer-tool-project` MIME definition.
 Install published PPA builds with:
 
 ```sh
@@ -124,27 +119,9 @@ sudo apt update
 sudo apt install procedural-visualizer-tool
 ```
 
-The package intentionally uses the distribution's Qt 6 and minizip-ng rather
-than downloading build dependencies. Its current minimums are CMake 3.20,
-Qt 6.5, and minizip-ng 4.0. As of Ubuntu 26.04, the Launchpad recipe should
-therefore target Resolute and newer series; the older series currently selected
-on the recipe cannot satisfy these build dependencies.
+## Snapcraft
+[![procedural-visualizer-tool](https://snapcraft.io/procedural-visualizer-tool/badge.svg)](https://snapcraft.io/procedural-visualizer-tool)
 
-The root `snapcraft.yaml` is ready for the existing
-[`procedural-visualizer-tool` Launchpad Snap recipe](https://launchpad.net/~gnaservicesinc/procedural/+snap/procedural-visualizer-tool).
-It produces strict-confined amd64 and arm64 snaps, uses the maintained Qt 6
-desktop extension, reads the version from `VERSION`, installs the same desktop
-and MIME integration, and exposes the CLI as
-`procedural-visualizer-tool.pvt-render`. The Launchpad recipe is configured to
-build `main` automatically and upload successful revisions to the registered
-Snap Store name. For a manual local release, follow the
-[Snapcraft publishing guide](https://ubuntu.com/docs/snapcraft/9/how-to/publishing/publish-a-snap/):
-
-```sh
-snapcraft
-snapcraft upload --release=stable procedural-visualizer-tool_*.snap
-snap install procedural-visualizer-tool
-```
 
 ## What is configurable
 
