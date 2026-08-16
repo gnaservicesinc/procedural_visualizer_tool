@@ -2622,11 +2622,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* starting_colors_layout = new QVBoxLayout(starting_colors_group);
     auto* starting_colors_form = new QFormLayout;
     starting_color_mode_ = new QComboBox;
-    for (const auto mode : {pvt::StartingColorMode::LegacyHue,
-                            pvt::StartingColorMode::ChannelLoops,
-                            pvt::StartingColorMode::Interleaved,
-                            pvt::StartingColorMode::Additive,
-                            pvt::StartingColorMode::Subtractive}) {
+    for (const auto mode : {pvt::StartingColorMode::ContinuousHue,
+                            pvt::StartingColorMode::HorizontalRainbow,
+                            pvt::StartingColorMode::VerticalRainbow,
+                            pvt::StartingColorMode::DiagonalRainbow,
+                            pvt::StartingColorMode::SpiralRainbow,
+                            pvt::StartingColorMode::Random}) {
         add_enum_item(starting_color_mode_,
                       QString::fromUtf8(pvt::starting_color_mode_name(mode)), mode);
     }
@@ -2635,7 +2636,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     starting_color_include_alpha_->setToolTip(
         tr("When no starting palette is active, generated RGBA tuples may differ "
            "by alpha as well as RGB. Equal tuples are still represented only once."));
-    starting_colors_form->addRow(tr("Spatial ordering"), starting_color_mode_);
+    starting_colors_form->addRow(tr("Rainbow pattern"), starting_color_mode_);
     starting_colors_form->addRow(starting_color_include_alpha_);
     starting_colors_layout->addLayout(starting_colors_form);
 
@@ -2658,13 +2659,15 @@ QWidget* MainWindow::createLayerSettingsPage() {
     add_channel(4, tr("Alpha"), starting_alpha_minimum_, starting_alpha_maximum_);
     starting_colors_layout->addLayout(channels);
     auto* starting_colors_help = new QLabel(tr(
-        "Used when the authored starting palette is off. Channel resolution "
-        "scales automatically with the full-resolution output block count, so "
-        "every block receives a unique working-precision RGB or RGBA tuple "
-        "unless a minimum/maximum range collapses a channel. Values remain "
-        "32-bit float through effects and compositing; only the selected output "
-        "format quantizes them. Spatial ordering changes the channel relationship; "
-        "a deterministic one-to-one dispersion prevents scanline color bands."));
+        "Used when the authored starting palette is off. Every choice in this "
+        "box obeys its RGB/alpha Min/Max range. Channel resolution scales "
+        "automatically with the full-resolution output and block size; ordered "
+        "patterns walk an automatically sized RGB or RGBA lattice without "
+        "repetition in broad horizontal, vertical, diagonal, or spiral fields. "
+        "Random is the only shuffled color-static pattern. Generated values remain float32 "
+        "through effects and compositing; only the chosen output format "
+        "quantizes them. Preview and export use the same full-resolution "
+        "coordinates."));
     starting_colors_help->setWordWrap(true);
     starting_colors_layout->addWidget(starting_colors_help);
     layout->addWidget(starting_colors_group);
@@ -10958,7 +10961,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     expected.output.png_compression_level = 9;
     expected.output.write_alpha = true;
     expected.alpha.use_source_alpha = false;
-    expected.starting_colors.mode = pvt::StartingColorMode::Additive;
+    expected.starting_colors.mode = pvt::StartingColorMode::Random;
     expected.starting_colors.include_alpha = true;
     expected.starting_colors.red_steps = 17;
     expected.starting_colors.green_steps = 19;

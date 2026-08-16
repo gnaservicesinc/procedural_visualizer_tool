@@ -8,17 +8,23 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The 1.2.4 generated-color correction builds on the 1.2.3 correctness and
-acceleration pass, which removed fixed generated-color `Values` controls.
-Non-legacy generated sources choose a float32 RGB/RGBA
-lattice from the full-resolution block count, preserve Min/Max ranges, keep
-every block unique whenever the selected output representation permits it, and
-use transient full-resolution coordinates in reduced previews. With all
-procedural controls disabled the generated source is time-invariant, block size
+The 1.2.5 generated-color correction makes the selected pattern honest and
+artist-readable. **Continuous hue** is the default and carries no misleading
+qualifier. Horizontal, vertical, diagonal, and spiral rainbow choices now lay
+an automatically sized, nonrepeating RGB/RGBA lattice across the full render in
+distinct large repeatable fields instead of silently replacing every choice
+with color static. The deterministic bijective dispersion remains available only as the
+explicit **Random** mode.
+
+Generated sources automatically size their float32 RGB/RGBA lattice from the
+full-resolution dimensions and block size, preserve Min/Max ranges for every
+generated choice including Continuous hue, keep every block unique whenever
+the selected ranges and output representation permit it, and use transient
+full-resolution coordinates in reduced previews. Authored palettes and images
+are intentionally outside that generated-range stage. With all procedural
+controls disabled the ordered generated source is time-invariant, block size
 is honored, and current-frame/sequence exports sample the same source placement
-as preview. A deterministic bijective dispersion keeps the automatically sized
-channel lattice from collapsing into scanline bands without sacrificing a
-single generated tuple at any output size. Direct 16-bit PNG decode coverage
+as preview. Direct 16-bit PNG decode coverage
 proves that source values never pass through an 8-bit intermediate; 32-bit
 FLOAT remains available for EXR output, while starting-image input is explicitly
 8/16-bit PNG.
@@ -40,7 +46,7 @@ Saving preserves the user's selected tab, including background completion, and
 Cocoa smoke covers the regression. Effect synchronization is labeled simply
 `Synchronization`, without the misleading swing-clock wording.
 
-The public product version is now 1.2.4 and has one source of truth in
+The public product version is now 1.2.5 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
@@ -607,18 +613,21 @@ consumers do not inherit minizip requirements.
 
 ## Validation record
 
-The 2026-08-16 1.2.4 generated-color correction passed the complete Qt-enabled
-Release suite 21/21, the independent C++20 suite 20/20, and the AddressSanitizer
-plus UndefinedBehaviorSanitizer suite 20/20 with leak detection disabled on the
-macOS beta host. The supplied 1920×1080 block-size-1 project retained all
-2,073,600 distinct RGB tuples; representative rows contain 233–244 values per
-channel and representative columns contain 214–232 instead of collapsing a
-channel to 1–3 values. CPU/Metal placement parity passed. The self-contained
-macOS distribution verifier inspected 27 Mach-O files, its embedded
-`pvt-render` reported 1.2.4 and passed self-test, deep strict signing and native
-Cocoa smoke passed, and both executables were arm64 with a macOS 13.0 minimum.
-The workflow-shaped single-root archive passed ZIP integrity, SHA-256,
-extracted-layout, version, self-test, and signature verification.
+The 2026-08-16 1.2.5 generated-rainbow correction passed the complete
+Qt-enabled Release suite 21/21, the independent C++20 suite 20/20, and the
+AddressSanitizer plus UndefinedBehaviorSanitizer suite 20/20 with leak detection
+disabled on the macOS beta host. Core regressions cover the complete 2×2×2×2
+RGBA Cartesian product in every ordered/Random mode, non-square diagonal and
+spiral bijections, all-unique 192×108 block-size-1 RGB output, 24K reference
+scaling, stable preview/export coordinates, generated Min/Max including
+Continuous hue, and isolation of authored-image values from those generated
+limits. Native CPU/Metal parity passed for all six choices. The supplied Test
+Fire project rendered as a broad ordered whole-frame progression rather than
+shuffled color static. The self-contained macOS verifier inspected 27 Mach-O
+files; embedded `pvt-render` reported 1.2.5 and passed self-test, deep strict
+signing and native Cocoa smoke passed, and both executables were arm64 with a
+macOS 13.0 minimum. The workflow-shaped single-root archive passed ZIP
+integrity, SHA-256, layout, version, self-test, and signature verification.
 
 The 2026-08-16 1.2.3 correction passed the complete Qt-enabled Release suite
 21/21, including real-Metal generated-source, image/palette/dither, particle,

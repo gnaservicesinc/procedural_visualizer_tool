@@ -218,10 +218,12 @@ void test_backend_contract() {
     generated.starting_colors.alpha_minimum = 0.21;
     generated.starting_colors.alpha_maximum = 0.88;
     for (const pvt::StartingColorMode mode : {
-             pvt::StartingColorMode::ChannelLoops,
-             pvt::StartingColorMode::Interleaved,
-             pvt::StartingColorMode::Additive,
-             pvt::StartingColorMode::Subtractive}) {
+             pvt::StartingColorMode::ContinuousHue,
+             pvt::StartingColorMode::HorizontalRainbow,
+             pvt::StartingColorMode::VerticalRainbow,
+             pvt::StartingColorMode::DiagonalRainbow,
+             pvt::StartingColorMode::SpiralRainbow,
+             pvt::StartingColorMode::Random}) {
         generated.starting_colors.mode = mode;
         CHECK(pvt::render_frame_at_phase(generated, 0.31, cpu_options,
                                          cpu, nullptr, &error));

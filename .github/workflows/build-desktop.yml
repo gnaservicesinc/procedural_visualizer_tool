@@ -421,11 +421,11 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          Generated starting colors now use a deterministic one-to-one spatial dispersion instead of exposing the mixed-radix channel counter as scanline bands. The complete RGB/RGBA lattice remains unique and automatically scales from the authored dimensions and block size, but every channel is distributed across rows and columns rather than collapsing into broad slabs.
+          Generated starting colors now expose their selected whole-render pattern instead of forcing every choice through a color-static permutation. Continuous hue is named plainly. Horizontal, vertical, diagonal, and spiral rainbow walks produce distinct large repeatable fields, while deterministic one-to-one dispersion remains available only as the explicit Random option.
 
-          CPU and Metal use the same integer placement. Reduced preview, current-frame export, and sequence export continue to sample the same full-resolution source coordinates. The supplied 1920x1080 block-size-1 project retains all 2,073,600 distinct exported RGB tuples while representative rows and columns contain broad variation in every channel.
+          Every ordered pattern walks an automatically sized RGB/RGBA lattice without repetition, scales from the authored dimensions and block size, and uses the same integer placement on CPU and Metal. Reduced preview, current-frame export, and sequence export continue to sample the same full-resolution source coordinates.
 
-          Generated values remain float32 through effects and compositing, honor every channel Min/Max range, and are quantized only by the selected output format. PNG input remains explicitly 8/16-bit and FLOAT EXR remains available for 32-bit output.
+          Generated values remain float32 through effects and compositing, every choice in the Generated starting colors box honors every channel Min/Max range, and values are quantized only by the selected output format. Authored palettes and starting images remain separate sources. PNG input remains explicitly 8/16-bit and FLOAT EXR remains available for 32-bit output.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 

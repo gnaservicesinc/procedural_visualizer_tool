@@ -245,11 +245,12 @@ bool valid_enum(StartingImageFit value) {
 
 bool valid_enum(StartingColorMode value) {
     switch (value) {
-        case StartingColorMode::LegacyHue:
-        case StartingColorMode::ChannelLoops:
-        case StartingColorMode::Interleaved:
-        case StartingColorMode::Additive:
-        case StartingColorMode::Subtractive:
+        case StartingColorMode::ContinuousHue:
+        case StartingColorMode::HorizontalRainbow:
+        case StartingColorMode::VerticalRainbow:
+        case StartingColorMode::DiagonalRainbow:
+        case StartingColorMode::SpiralRainbow:
+        case StartingColorMode::Random:
             return true;
     }
     return false;
@@ -1088,6 +1089,24 @@ double linear_to_srgb_for_hue(double value) {
                : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
 }
 
+Color apply_generated_rgb_range(const StartingColorConfig& config,
+                                Color color) {
+    // Min/Max belongs to the Generated starting colors box. Work in authored
+    // sRGB space just like generated lattice decoding, then return to the
+    // renderer's linear-light working representation. Authored palettes and
+    // embedded starting images intentionally do not pass through this stage.
+    color.r = srgb_to_linear(mix_value(
+        config.red_minimum, config.red_maximum,
+        linear_to_srgb_for_hue(color.r)));
+    color.g = srgb_to_linear(mix_value(
+        config.green_minimum, config.green_maximum,
+        linear_to_srgb_for_hue(color.g)));
+    color.b = srgb_to_linear(mix_value(
+        config.blue_minimum, config.blue_maximum,
+        linear_to_srgb_for_hue(color.b)));
+    return color;
+}
+
 Color rotate_linear_hue(Color color, double degrees) {
     if (std::abs(degrees) <= 1.0e-12) return color;
     const double red = linear_to_srgb_for_hue(color.r);
@@ -1672,11 +1691,12 @@ const char* starting_image_fit_name(StartingImageFit value) {
 
 const char* starting_color_mode_name(StartingColorMode value) {
     switch (value) {
-        case StartingColorMode::LegacyHue: return "Continuous hue (legacy)";
-        case StartingColorMode::ChannelLoops: return "Loop one channel at a time";
-        case StartingColorMode::Interleaved: return "Interleave channel values";
-        case StartingColorMode::Additive: return "Add values up";
-        case StartingColorMode::Subtractive: return "Subtract values down";
+        case StartingColorMode::ContinuousHue: return "Continuous hue";
+        case StartingColorMode::HorizontalRainbow: return "Horizontal rainbow";
+        case StartingColorMode::VerticalRainbow: return "Vertical rainbow";
+        case StartingColorMode::DiagonalRainbow: return "Diagonal rainbow";
+        case StartingColorMode::SpiralRainbow: return "Spiral rainbow";
+        case StartingColorMode::Random: return "Random";
     }
     return "Unknown";
 }
@@ -2690,13 +2710,20 @@ Color nearest_starting_color(const Color& input,
     return *closest;
 }
 
-double stepped_channel(std::size_t index, int steps,
-                       double minimum, double maximum) {
-    if (steps <= 1) return minimum;
-    const std::size_t bounded_steps = static_cast<std::size_t>(steps);
-    const double position = static_cast<double>(index % bounded_steps)
-                            / static_cast<double>(bounded_steps - 1U);
-    return mix_value(minimum, maximum, position);
+std::uint64_t generated_block_count(const RenderConfig& config) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const std::uint64_t reference_width = static_cast<std::uint64_t>(
+        starting.reference_width > 0 ? starting.reference_width : config.width);
+    const std::uint64_t reference_height = static_cast<std::uint64_t>(
+        starting.reference_height > 0 ? starting.reference_height : config.height);
+    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+        starting.reference_block_size > 0
+            ? starting.reference_block_size : config.block_size);
+    const std::uint64_t blocks_across =
+        (reference_width + reference_block - 1U) / reference_block;
+    const std::uint64_t blocks_down =
+        (reference_height + reference_block - 1U) / reference_block;
+    return blocks_across * blocks_down;
 }
 
 bool generated_capacity_reaches(std::uint64_t levels,
@@ -2712,6 +2739,7 @@ bool generated_capacity_reaches(std::uint64_t levels,
 
 std::uint64_t generated_channel_levels(std::uint64_t block_count,
                                        bool include_alpha) {
+    if (block_count <= 1U) return 1U;
     const unsigned int dimensions = include_alpha ? 4U : 3U;
     std::uint64_t low = 1U;
     std::uint64_t high = 2U;
@@ -2726,23 +2754,60 @@ std::uint64_t generated_channel_levels(std::uint64_t block_count,
             low = middle;
         }
     }
-    return block_count <= 1U ? 1U : high;
+    return high;
 }
 
-std::uint64_t generated_block_count(const RenderConfig& config) {
-    const StartingColorConfig& starting = config.starting_colors;
-    const std::uint64_t reference_width = static_cast<std::uint64_t>(
-        starting.reference_width > 0 ? starting.reference_width : config.width);
-    const std::uint64_t reference_height = static_cast<std::uint64_t>(
-        starting.reference_height > 0 ? starting.reference_height : config.height);
-    const std::uint64_t reference_block = static_cast<std::uint64_t>(
-        starting.reference_block_size > 0
-            ? starting.reference_block_size : config.block_size);
-    const std::uint64_t blocks_across =
-        (reference_width + reference_block - 1U) / reference_block;
-    const std::uint64_t blocks_down =
-        (reference_height + reference_block - 1U) / reference_block;
-    return blocks_across * blocks_down;
+std::uint64_t diagonal_traversal_index(std::uint64_t x, std::uint64_t y,
+                                       std::uint64_t width,
+                                       std::uint64_t height) {
+    const std::uint64_t diagonal = x + y;
+    const std::uint64_t short_side = std::min(width, height);
+    const std::uint64_t long_side = std::max(width, height);
+    std::uint64_t prefix = 0U;
+    if (diagonal < short_side) {
+        prefix = diagonal * (diagonal + 1U) / 2U;
+    } else if (diagonal < long_side) {
+        prefix = short_side * (short_side + 1U) / 2U
+                 + (diagonal - short_side) * short_side;
+    } else {
+        const std::uint64_t remaining = width + height - 1U - diagonal;
+        prefix = width * height - remaining * (remaining + 1U) / 2U;
+    }
+    const std::uint64_t minimum_x = diagonal >= height
+        ? diagonal - (height - 1U) : 0U;
+    const std::uint64_t maximum_x = std::min(width - 1U, diagonal);
+    const std::uint64_t offset = (diagonal & 1U) == 0U
+        ? x - minimum_x : maximum_x - x;
+    return prefix + offset;
+}
+
+std::uint64_t spiral_traversal_index(std::uint64_t x, std::uint64_t y,
+                                     std::uint64_t width,
+                                     std::uint64_t height) {
+    const std::uint64_t layer = std::min(
+        std::min(x, y), std::min(width - 1U - x, height - 1U - y));
+    const std::uint64_t ring_width = width - 2U * layer;
+    const std::uint64_t ring_height = height - 2U * layer;
+    const std::uint64_t prefix = width * height - ring_width * ring_height;
+    const std::uint64_t local_x = x - layer;
+    const std::uint64_t local_y = y - layer;
+    std::uint64_t offset = 0U;
+    if (ring_height == 1U) {
+        offset = local_x;
+    } else if (ring_width == 1U) {
+        offset = local_y;
+    } else if (local_y == 0U) {
+        offset = local_x;
+    } else if (local_x == ring_width - 1U) {
+        offset = ring_width - 1U + local_y;
+    } else if (local_y == ring_height - 1U) {
+        offset = ring_width - 1U + ring_height - 1U
+                 + ring_width - 1U - local_x;
+    } else {
+        offset = 2U * (ring_width - 1U) + ring_height - 1U
+                 + ring_height - 1U - local_y;
+    }
+    return prefix + offset;
 }
 
 std::uint64_t generated_starting_color_index(
@@ -2765,8 +2830,25 @@ std::uint64_t generated_starting_color_index(
             / static_cast<std::uint64_t>(config.height));
     const std::uint64_t blocks_across =
         (reference_width + reference_block - 1U) / reference_block;
-    return (reference_y / reference_block) * blocks_across
-           + reference_x / reference_block;
+    const std::uint64_t blocks_down =
+        (reference_height + reference_block - 1U) / reference_block;
+    const std::uint64_t x = reference_x / reference_block;
+    const std::uint64_t y = reference_y / reference_block;
+    switch (starting.mode) {
+        case StartingColorMode::HorizontalRainbow:
+            return x * blocks_down + y;
+        case StartingColorMode::DiagonalRainbow:
+            return diagonal_traversal_index(
+                x, y, blocks_across, blocks_down);
+        case StartingColorMode::SpiralRainbow:
+            return spiral_traversal_index(
+                x, y, blocks_across, blocks_down);
+        case StartingColorMode::ContinuousHue:
+        case StartingColorMode::VerticalRainbow:
+        case StartingColorMode::Random:
+            return y * blocks_across + x;
+    }
+    return 0U;
 }
 
 std::uint64_t dispersed_generated_index(std::uint64_t index,
@@ -2805,59 +2887,25 @@ Color generated_starting_color(const StartingColorConfig& config,
                                std::uint64_t index,
                                std::uint64_t levels,
                                std::uint64_t color_count) {
-    index = dispersed_generated_index(index, color_count);
+    // The ordered modes take a nonrepeating walk through an automatically
+    // sized Cartesian RGB/RGBA lattice. This boustrophedon path changes only
+    // one channel by one working-precision step at each boundary, producing
+    // broad continuous color fields. Random alone shuffles the same tuples.
+    if (config.mode == StartingColorMode::Random) {
+        index = dispersed_generated_index(index, color_count);
+    }
     const std::uint64_t alpha_levels = config.include_alpha ? levels : 1U;
     std::uint64_t remaining = index;
-    std::uint64_t alpha_index = remaining % alpha_levels;
-    remaining /= alpha_levels;
     std::uint64_t blue_index = remaining % levels;
     remaining /= levels;
     std::uint64_t green_index = remaining % levels;
     remaining /= levels;
     std::uint64_t red_index = remaining % levels;
-
-    switch (config.mode) {
-        case StartingColorMode::LegacyHue:
-        case StartingColorMode::ChannelLoops:
-            break;
-        case StartingColorMode::Interleaved: {
-            // Change mixed-radix significance so red advances fastest. The
-            // automatically sized radix keeps this a complete, nonrepeating
-            // permutation for every block in the output reference grid.
-            remaining = index;
-            red_index = remaining % levels;
-            remaining /= levels;
-            green_index = remaining % levels;
-            remaining /= levels;
-            blue_index = remaining % levels;
-            remaining /= levels;
-            alpha_index = remaining % alpha_levels;
-            break;
-        }
-        case StartingColorMode::Additive:
-        case StartingColorMode::Subtractive: {
-            // A triangular modular shear makes neighboring channels add into
-            // one another. It is invertible for arbitrary per-channel step
-            // counts, unlike the former diagonal ramp, so no combination is
-            // lost. Subtractive reverses each sheared channel afterward.
-            const std::uint64_t source_red = red_index;
-            const std::uint64_t source_green = green_index;
-            const std::uint64_t source_blue = blue_index;
-            const std::uint64_t source_alpha = alpha_index;
-            green_index = (source_green + source_red) % levels;
-            blue_index = (source_blue + source_green + source_red) % levels;
-            alpha_index = (source_alpha + source_blue + source_green
-                           + source_red) % alpha_levels;
-            if (config.mode == StartingColorMode::Subtractive) {
-                red_index = levels - 1U - red_index;
-                green_index = levels - 1U - green_index;
-                blue_index = levels - 1U - blue_index;
-                alpha_index = alpha_levels - 1U - alpha_index;
-            }
-            break;
-        }
-    }
-
+    remaining /= levels;
+    const std::uint64_t alpha_index = remaining % alpha_levels;
+    if ((green_index & 1U) != 0U) blue_index = levels - 1U - blue_index;
+    if ((red_index & 1U) != 0U) green_index = levels - 1U - green_index;
+    if ((alpha_index & 1U) != 0U) red_index = levels - 1U - red_index;
     const double denominator = levels > 1U
         ? static_cast<double>(levels - 1U) : 1.0;
     const double alpha_denominator = alpha_levels > 1U
@@ -3035,15 +3083,19 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             Color base;
             if (starting_palette.empty()
                 && config.starting_colors.mode
-                       == StartingColorMode::LegacyHue) {
+                       == StartingColorMode::ContinuousHue) {
                 base = hsl_to_linear_rgb(hue, config.saturation, lightness);
+                base = apply_generated_rgb_range(
+                    config.starting_colors, base);
                 base = rotate_linear_hue(base, audio_hue_shift);
                 if (config.starting_colors.include_alpha) {
-                    base.a = stepped_channel(
-                        starting_color_index,
-                        static_cast<int>(generated_levels),
+                    const double alpha_position = generated_color_count > 1U
+                        ? static_cast<double>(starting_color_index)
+                              / static_cast<double>(generated_color_count - 1U)
+                        : 0.0;
+                    base.a = mix_value(
                         config.starting_colors.alpha_minimum,
-                        config.starting_colors.alpha_maximum);
+                        config.starting_colors.alpha_maximum, alpha_position);
                 }
             } else if (starting_palette.empty()) {
                 base = generated_starting_color(

@@ -131,32 +131,6 @@ double mean_absolute_difference(const pvt::Image& a, const pvt::Image& b) {
     return total / static_cast<double>(a.pixels.size());
 }
 
-std::uint64_t dispersed_generated_index_for_test(std::uint64_t index,
-                                                 std::uint64_t count) {
-    if (count <= 1U) return 0U;
-    unsigned int bits = 0U;
-    for (std::uint64_t highest = count - 1U; highest != 0U; highest >>= 1U) {
-        ++bits;
-    }
-    const std::uint64_t mask = (std::uint64_t{1U} << bits) - 1U;
-    const unsigned int shift1 = std::max(1U, bits / 2U);
-    const unsigned int shift2 = std::max(1U, bits / 3U);
-    const unsigned int shift3 = std::max(1U, (bits * 2U) / 3U);
-    const auto permute = [=](std::uint64_t value) {
-        value = (value + UINT64_C(0x9e3779b97f4a7c15)) & mask;
-        value ^= value >> shift1;
-        value = (value * UINT64_C(0xbf58476d1ce4e5b9)) & mask;
-        value ^= value >> shift2;
-        value = (value * UINT64_C(0x94d049bb133111eb)) & mask;
-        value ^= value >> shift3;
-        return value & mask;
-    };
-    do {
-        index = permute(index);
-    } while (index >= count);
-    return index;
-}
-
 bool write_test_png(const fs::path& path, png_uint_32 width,
                     png_uint_32 height,
                     const std::vector<unsigned char>& pixels) {
@@ -239,6 +213,17 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     if (const float* pixel = stretched.pixel(15, 15)) {
         CHECK(pixel[3] < 0.5F);
     }
+    pvt::RenderConfig image_with_generated_limits = image_config;
+    image_with_generated_limits.starting_colors.red_minimum = 0.35;
+    image_with_generated_limits.starting_colors.red_maximum = 0.35;
+    image_with_generated_limits.starting_colors.green_minimum = 0.45;
+    image_with_generated_limits.starting_colors.green_maximum = 0.45;
+    image_with_generated_limits.starting_colors.blue_minimum = 0.55;
+    image_with_generated_limits.starting_colors.blue_maximum = 0.55;
+    pvt::Image image_not_remapped;
+    CHECK(pvt::render_frame_at_phase(
+        image_with_generated_limits, 0.0, image_not_remapped, &error));
+    CHECK(image_not_remapped.pixels == stretched.pixels);
     image_config.alpha.use_source_alpha = false;
     pvt::Image ignored_source_alpha;
     CHECK(pvt::render_frame_at_phase(
@@ -300,7 +285,8 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
 
     pvt::RenderConfig generated = image_config;
     generated.starting_image = {};
-    generated.starting_colors.mode = pvt::StartingColorMode::ChannelLoops;
+    generated.starting_colors.mode =
+        pvt::StartingColorMode::HorizontalRainbow;
     generated.starting_colors.red_steps = 2;
     generated.starting_colors.green_steps = 3;
     generated.starting_colors.blue_steps = 4;
@@ -326,22 +312,31 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     }
     generated.alpha.use_source_alpha = true;
     generated.starting_colors.include_alpha = false;
-    generated.starting_colors.mode = pvt::StartingColorMode::Interleaved;
-    pvt::Image interleaved;
-    CHECK(pvt::render_frame_at_phase(generated, 0.0, interleaved, &error));
-    CHECK(mean_absolute_difference(generated_rgb, interleaved) > 0.0001);
-    generated.starting_colors.mode = pvt::StartingColorMode::Additive;
-    pvt::Image additive;
-    CHECK(pvt::render_frame_at_phase(generated, 0.0, additive, &error));
-    CHECK(mean_absolute_difference(interleaved, additive) > 0.0001);
-    generated.starting_colors.mode = pvt::StartingColorMode::Subtractive;
-    pvt::Image subtractive;
-    CHECK(pvt::render_frame_at_phase(generated, 0.0, subtractive, &error));
-    CHECK(mean_absolute_difference(additive, subtractive) > 0.0001);
+    generated.starting_colors.mode = pvt::StartingColorMode::VerticalRainbow;
+    pvt::Image vertical;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, vertical, &error));
+    CHECK(mean_absolute_difference(generated_rgb, vertical) > 0.0001);
+    generated.starting_colors.mode = pvt::StartingColorMode::DiagonalRainbow;
+    pvt::Image diagonal;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, diagonal, &error));
+    CHECK(mean_absolute_difference(vertical, diagonal) > 0.0001);
+    generated.starting_colors.mode = pvt::StartingColorMode::SpiralRainbow;
+    pvt::Image spiral;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, spiral, &error));
+    CHECK(mean_absolute_difference(diagonal, spiral) > 0.0001);
+    generated.starting_colors.mode = pvt::StartingColorMode::Random;
+    pvt::Image random;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, random, &error));
+    CHECK(mean_absolute_difference(spiral, random) > 0.0001);
 
-    // Every generated ordering is a permutation of the complete constrained
-    // Cartesian product. With two values in each RGBA channel, all sixteen
-    // tuples must appear before the sequence repeats.
+    CHECK(std::string(pvt::starting_color_mode_name(
+              pvt::StartingColorMode::ContinuousHue)) == "Continuous hue");
+    CHECK(std::string(pvt::starting_color_mode_name(
+              pvt::StartingColorMode::Random)) == "Random");
+
+    // Every traversal assigns a distinct position in one complete rainbow to
+    // each full-resolution block. The 4x4 fixture must therefore contain all
+    // sixteen unique generated RGBA colors in every ordered/Random mode.
     pvt::RenderConfig exhaustive = generated;
     exhaustive.width = 16;
     exhaustive.height = 16;
@@ -360,28 +355,59 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     exhaustive.starting_colors.alpha_minimum = 0.25;
     exhaustive.starting_colors.alpha_maximum = 0.75;
     exhaustive.hue_cycles = 0;
-    for (const auto mode : {pvt::StartingColorMode::ChannelLoops,
-                            pvt::StartingColorMode::Interleaved,
-                            pvt::StartingColorMode::Additive,
-                            pvt::StartingColorMode::Subtractive}) {
+    for (const auto mode : {pvt::StartingColorMode::HorizontalRainbow,
+                            pvt::StartingColorMode::VerticalRainbow,
+                            pvt::StartingColorMode::DiagonalRainbow,
+                            pvt::StartingColorMode::SpiralRainbow,
+                            pvt::StartingColorMode::Random}) {
         exhaustive.starting_colors.mode = mode;
         pvt::Image combinations;
         CHECK(pvt::render_frame_at_phase(
             exhaustive, 0.0, combinations, &error));
-        std::set<unsigned int> observed;
+        std::set<std::array<float, 4U>> observed;
+        std::array<bool, 3U> dominant_channels{};
         for (int y = 0; y < exhaustive.height; y += exhaustive.block_size) {
             for (int x = 0; x < exhaustive.width; x += exhaustive.block_size) {
                 if (const float* pixel = combinations.pixel(x, y)) {
-                const unsigned int code =
-                    (pixel[0] > 0.5F ? 8U : 0U)
-                    | (pixel[1] > 0.5F ? 4U : 0U)
-                    | (pixel[2] > 0.5F ? 2U : 0U)
-                    | (pixel[3] > 0.5F ? 1U : 0U);
-                    observed.insert(code);
+                    observed.insert({pixel[0], pixel[1], pixel[2], pixel[3]});
+                    const std::size_t dominant = static_cast<std::size_t>(
+                        std::max_element(pixel, pixel + 3) - pixel);
+                    dominant_channels[dominant] = true;
                 }
             }
         }
         CHECK(observed.size() == 16U);
+        CHECK(dominant_channels[0] && dominant_channels[1]
+              && dominant_channels[2]);
+    }
+
+    // Non-square grids exercise the diagonal and rectangular spiral rank
+    // formulas. Every spatial pattern must remain a bijection there too.
+    pvt::RenderConfig rectangular = exhaustive;
+    rectangular.width = 20;
+    rectangular.height = 16;
+    rectangular.block_size = 4;
+    rectangular.starting_colors.include_alpha = false;
+    for (const auto mode : {pvt::StartingColorMode::HorizontalRainbow,
+                            pvt::StartingColorMode::VerticalRainbow,
+                            pvt::StartingColorMode::DiagonalRainbow,
+                            pvt::StartingColorMode::SpiralRainbow,
+                            pvt::StartingColorMode::Random}) {
+        rectangular.starting_colors.mode = mode;
+        pvt::Image pattern;
+        CHECK(pvt::render_frame_at_phase(
+            rectangular, 0.0, pattern, &error));
+        std::set<std::array<float, 3U>> observed;
+        for (int y = 0; y < rectangular.height;
+             y += rectangular.block_size) {
+            for (int x = 0; x < rectangular.width;
+                 x += rectangular.block_size) {
+                if (const float* pixel = pattern.pixel(x, y)) {
+                    observed.insert({pixel[0], pixel[1], pixel[2]});
+                }
+            }
+        }
+        CHECK(observed.size() == 20U);
     }
 
     // Resolution, not an authored 8-bit step count, chooses the radix. Every
@@ -392,7 +418,7 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     scaled.width = 192;
     scaled.height = 108;
     scaled.block_size = 1;
-    scaled.starting_colors.mode = pvt::StartingColorMode::Interleaved;
+    scaled.starting_colors.mode = pvt::StartingColorMode::VerticalRainbow;
     scaled.starting_colors.include_alpha = false;
     scaled.hue_cycles = 73;
     scaled.spiral_enabled = false;
@@ -425,17 +451,69 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(scaled_colors.size()
           == static_cast<std::size_t>(scaled.width * scaled.height));
 
-    // Regression: the supplied 1920x1080 Channel Loops project had millions
-    // of unique tuples but only 1-3 red values per row and 1-2 blue values per
-    // column. Generated precision is useful only if the full channel lattice
-    // is distributed in both spatial axes instead of becoming color bands.
+    // The ordered traversal is an invertible rainbow weave rather than color
+    // static. Its first lattice run starts at black, immediately changes every
+    // RGB channel, spans each channel broadly, and covers red-, green-, and
+    // blue-dominant regions without repeating a tuple.
+    const float* walk_first = scaled_start.pixel(0, 0);
+    const float* walk_second = scaled_start.pixel(1, 0);
+    CHECK(walk_first != nullptr && walk_second != nullptr);
+    if (walk_first != nullptr && walk_second != nullptr) {
+        CHECK(walk_first[0] < 0.001F && walk_first[1] < 0.001F
+              && walk_first[2] < 0.001F);
+        CHECK(walk_second[0] == walk_first[0]
+              && walk_second[1] == walk_first[1]
+              && walk_second[2] > walk_first[2]);
+    }
+    std::array<float, 3U> ordered_minimum{1.0F, 1.0F, 1.0F};
+    std::array<float, 3U> ordered_maximum{};
+    for (std::size_t offset = 0U; offset < scaled_start.pixels.size();
+         offset += 4U) {
+        for (std::size_t channel = 0U; channel < 3U; ++channel) {
+            ordered_minimum[channel] = std::min(
+                ordered_minimum[channel],
+                scaled_start.pixels[offset + channel]);
+            ordered_maximum[channel] = std::max(
+                ordered_maximum[channel],
+                scaled_start.pixels[offset + channel]);
+        }
+    }
+    for (std::size_t channel = 0U; channel < 3U; ++channel) {
+        CHECK(ordered_minimum[channel] < 0.01F);
+        CHECK(ordered_maximum[channel] > 0.8F);
+    }
+    std::array<std::size_t, 3U> dominant_counts{};
+    for (std::size_t offset = 0U; offset < scaled_start.pixels.size();
+         offset += 4U) {
+        const auto begin = scaled_start.pixels.begin()
+                           + static_cast<std::ptrdiff_t>(offset);
+        const std::size_t dominant = static_cast<std::size_t>(
+            std::max_element(begin, begin + 3) - begin);
+        ++dominant_counts[dominant];
+    }
+    for (const std::size_t count : dominant_counts) {
+        CHECK(count > scaled_colors.size() / 5U);
+    }
+
+    // The former unconditional dispersion is now the explicit Random mode.
+    // It remains a one-to-one traversal and keeps its useful static-like spread
+    // across both axes without changing the ordered modes.
     pvt::RenderConfig distributed = scaled;
-    distributed.starting_colors.mode = pvt::StartingColorMode::ChannelLoops;
+    distributed.starting_colors.mode = pvt::StartingColorMode::Random;
     pvt::Image distributed_image;
     CHECK(pvt::render_frame_at_phase(
         distributed, 0.0, distributed_image, &error));
     std::array<std::set<float>, 3U> row_channel_values;
     std::array<std::set<float>, 3U> column_channel_values;
+    std::set<std::array<float, 3U>> random_colors;
+    for (std::size_t offset = 0U; offset < distributed_image.pixels.size();
+         offset += 4U) {
+        random_colors.insert({distributed_image.pixels[offset],
+                              distributed_image.pixels[offset + 1U],
+                              distributed_image.pixels[offset + 2U]});
+    }
+    CHECK(random_colors.size()
+          == static_cast<std::size_t>(distributed.width * distributed.height));
     for (int x = 0; x < distributed.width; ++x) {
         if (const float* pixel = distributed_image.pixel(x, 0)) {
             for (std::size_t channel = 0U; channel < 3U; ++channel) {
@@ -494,7 +572,7 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     pvt::RenderConfig ranged = scaled;
     ranged.width = 16;
     ranged.height = 16;
-    ranged.starting_colors.mode = pvt::StartingColorMode::ChannelLoops;
+    ranged.starting_colors.mode = pvt::StartingColorMode::HorizontalRainbow;
     ranged.starting_colors.red_minimum = 0.25;
     ranged.starting_colors.red_maximum = 0.25;
     ranged.starting_colors.green_minimum = 0.2;
@@ -527,60 +605,70 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         maximum_blue = std::max(maximum_blue,
                                 ranged_image.pixels[offset + 2U]);
     }
-    CHECK(std::fabs(minimum_green - linear_test(0.2)) < 1.0e-6);
-    CHECK(std::fabs(maximum_green - linear_test(0.4)) < 1.0e-6);
-    CHECK(std::fabs(minimum_blue - linear_test(0.6)) < 1.0e-6);
-    CHECK(std::fabs(maximum_blue - linear_test(0.8)) < 1.0e-6);
+    CHECK(minimum_green >= linear_test(0.2) - 1.0e-6);
+    CHECK(maximum_green <= linear_test(0.4) + 1.0e-6);
+    CHECK(maximum_green > linear_test(0.395));
+    CHECK(minimum_blue >= linear_test(0.6) - 1.0e-6);
+    CHECK(maximum_blue <= linear_test(0.8) + 1.0e-6);
+    CHECK(maximum_blue > linear_test(0.795));
 
-    // Very large authored canvases choose their lattice from the authored
+    // Min/Max owns every choice in the Generated starting colors box,
+    // including Continuous hue. Collapsed RGB ranges make the expected source
+    // unambiguous while authored image/palette sources remain separate.
+    pvt::RenderConfig continuous_ranged = ranged;
+    continuous_ranged.starting_colors.mode =
+        pvt::StartingColorMode::ContinuousHue;
+    continuous_ranged.starting_colors.red_minimum = 0.15;
+    continuous_ranged.starting_colors.red_maximum = 0.15;
+    continuous_ranged.starting_colors.green_minimum = 0.35;
+    continuous_ranged.starting_colors.green_maximum = 0.35;
+    continuous_ranged.starting_colors.blue_minimum = 0.75;
+    continuous_ranged.starting_colors.blue_maximum = 0.75;
+    pvt::Image continuous_ranged_image;
+    CHECK(pvt::render_frame_at_phase(
+        continuous_ranged, 0.0, continuous_ranged_image, &error));
+    for (std::size_t offset = 0U;
+         offset < continuous_ranged_image.pixels.size(); offset += 4U) {
+        CHECK(std::fabs(continuous_ranged_image.pixels[offset]
+                        - linear_test(0.15)) < 1.0e-6);
+        CHECK(std::fabs(continuous_ranged_image.pixels[offset + 1U]
+                        - linear_test(0.35)) < 1.0e-6);
+        CHECK(std::fabs(continuous_ranged_image.pixels[offset + 2U]
+                        - linear_test(0.75)) < 1.0e-6);
+    }
+
+    // Very large authored canvases compute rainbow progress from the authored
     // dimensions without allocating that full image for a reduced preview.
-    // 24000^2 RGB blocks require ceil(cuberoot(576000000)) == 833 levels
-    // per channel; this locks the upper-size example without a 9+ GiB test.
     pvt::RenderConfig large_reference = scaled;
     large_reference.width = 64;
     large_reference.height = 64;
     large_reference.starting_colors.mode =
-        pvt::StartingColorMode::ChannelLoops;
+        pvt::StartingColorMode::VerticalRainbow;
     large_reference.starting_colors.reference_width = 24000;
     large_reference.starting_colors.reference_height = 24000;
     large_reference.starting_colors.reference_block_size = 1;
     pvt::Image large_preview;
     CHECK(pvt::render_frame_at_phase(
         large_reference, 0.0, large_preview, &error));
-    const int sample_x = large_reference.width - 1;
-    const int sample_y = large_reference.height - 1;
-    const std::uint64_t reference_x =
-        static_cast<std::uint64_t>(sample_x) * 24000U
-        / static_cast<std::uint64_t>(large_reference.width);
-    const std::uint64_t reference_y =
-        static_cast<std::uint64_t>(sample_y) * 24000U
-        / static_cast<std::uint64_t>(large_reference.height);
-    std::uint64_t large_index = dispersed_generated_index_for_test(
-        reference_y * 24000U + reference_x, 24000U * 24000U);
-    constexpr std::uint64_t large_levels = 833U;
-    const std::uint64_t expected_blue = large_index % large_levels;
-    large_index /= large_levels;
-    const std::uint64_t expected_green = large_index % large_levels;
-    large_index /= large_levels;
-    const std::uint64_t expected_large_red = large_index % large_levels;
-    const float* large_pixel = large_preview.pixel(sample_x, sample_y);
-    CHECK(large_pixel != nullptr);
-    if (large_pixel != nullptr) {
-        CHECK(std::fabs(
-                  large_pixel[0]
-                  - linear_test(static_cast<double>(expected_large_red)
-                                / static_cast<double>(large_levels - 1U)))
-              < 1.0e-6);
-        CHECK(std::fabs(
-                  large_pixel[1]
-                  - linear_test(static_cast<double>(expected_green)
-                                / static_cast<double>(large_levels - 1U)))
-              < 1.0e-6);
-        CHECK(std::fabs(
-                  large_pixel[2]
-                  - linear_test(static_cast<double>(expected_blue)
-                                / static_cast<double>(large_levels - 1U)))
-              < 1.0e-6);
+    std::set<std::array<float, 3U>> large_preview_colors;
+    for (std::size_t offset = 0U; offset < large_preview.pixels.size();
+         offset += 4U) {
+        large_preview_colors.insert({large_preview.pixels[offset],
+                                     large_preview.pixels[offset + 1U],
+                                     large_preview.pixels[offset + 2U]});
+    }
+    CHECK(large_preview_colors.size()
+          == static_cast<std::size_t>(large_reference.width
+                                      * large_reference.height));
+    CHECK(large_preview.pixel(0, 0) != nullptr);
+    CHECK(large_preview.pixel(large_reference.width - 1,
+                              large_reference.height - 1) != nullptr);
+    if (const float* first = large_preview.pixel(0, 0)) {
+        if (const float* last = large_preview.pixel(
+                large_reference.width - 1,
+                large_reference.height - 1)) {
+            CHECK(!std::equal(first, first + 3, last));
+        }
     }
 
     // A reduced preview samples the same full-resolution lattice coordinates
@@ -605,11 +693,11 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         }
     }
 
-    // Non-legacy source ordering must not bypass the procedural color signal.
+    // Generated source ordering must not bypass the procedural color signal.
     exhaustive.width = 32;
     exhaustive.height = 16;
     exhaustive.starting_colors.include_alpha = false;
-    exhaustive.starting_colors.mode = pvt::StartingColorMode::Interleaved;
+    exhaustive.starting_colors.mode = pvt::StartingColorMode::VerticalRainbow;
     exhaustive.spiral_enabled = false;
     exhaustive.wall_reflection_enabled = false;
     pvt::Image procedural_off;
@@ -2232,7 +2320,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.effects.back().area_radius = 0.24;
     original.alpha.enabled = true;
     original.alpha.use_source_alpha = false;
-    original.starting_colors.mode = pvt::StartingColorMode::Subtractive;
+    original.starting_colors.mode = pvt::StartingColorMode::Random;
     original.starting_colors.include_alpha = true;
     original.starting_colors.red_steps = 11;
     original.starting_colors.green_steps = 12;
@@ -2385,7 +2473,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
     CHECK(!loaded.alpha.use_source_alpha);
-    CHECK(loaded.starting_colors.mode == pvt::StartingColorMode::Subtractive);
+    CHECK(loaded.starting_colors.mode == pvt::StartingColorMode::Random);
     CHECK(loaded.starting_colors.include_alpha);
     CHECK(loaded.starting_colors.red_steps == 11);
     CHECK(loaded.starting_colors.green_steps == 12);

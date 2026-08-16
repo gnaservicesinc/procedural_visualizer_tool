@@ -97,6 +97,17 @@ float linear_to_srgb(float value) {
                : 1.055f * pow(value, 1.0f / 2.4f) - 0.055f;
 }
 
+float4 apply_generated_rgb_range(constant FrameConstants& frame,
+                                 float4 color) {
+    const float4 unit = float4(
+        linear_to_srgb(color.r), linear_to_srgb(color.g),
+        linear_to_srgb(color.b), color.a);
+    const float4 ranged = mix(frame.starting_minimum,
+                              frame.starting_maximum, unit);
+    return float4(srgb_to_linear(ranged.r), srgb_to_linear(ranged.g),
+                  srgb_to_linear(ranged.b), color.a);
+}
+
 float4 hsl_to_linear(float hue_degrees, float saturation, float lightness) {
     float hue = fmod(hue_degrees, 360.0f);
     if (hue < 0.0f) hue += 360.0f;
@@ -224,6 +235,55 @@ float4 nearest_palette(float4 input, const device float4* palette,
     return closest;
 }
 
+ulong diagonal_traversal_index(ulong x, ulong y, ulong width, ulong height) {
+    const ulong diagonal = x + y;
+    const ulong short_side = min(width, height);
+    const ulong long_side = max(width, height);
+    ulong prefix = 0ul;
+    if (diagonal < short_side) {
+        prefix = diagonal * (diagonal + 1ul) / 2ul;
+    } else if (diagonal < long_side) {
+        prefix = short_side * (short_side + 1ul) / 2ul
+                 + (diagonal - short_side) * short_side;
+    } else {
+        const ulong remaining = width + height - 1ul - diagonal;
+        prefix = width * height - remaining * (remaining + 1ul) / 2ul;
+    }
+    const ulong minimum_x = diagonal >= height
+        ? diagonal - (height - 1ul) : 0ul;
+    const ulong maximum_x = min(width - 1ul, diagonal);
+    const ulong offset = (diagonal & 1ul) == 0ul
+        ? x - minimum_x : maximum_x - x;
+    return prefix + offset;
+}
+
+ulong spiral_traversal_index(ulong x, ulong y, ulong width, ulong height) {
+    const ulong layer = min(
+        min(x, y), min(width - 1ul - x, height - 1ul - y));
+    const ulong ring_width = width - 2ul * layer;
+    const ulong ring_height = height - 2ul * layer;
+    const ulong prefix = width * height - ring_width * ring_height;
+    const ulong local_x = x - layer;
+    const ulong local_y = y - layer;
+    ulong offset = 0ul;
+    if (ring_height == 1ul) {
+        offset = local_x;
+    } else if (ring_width == 1ul) {
+        offset = local_y;
+    } else if (local_y == 0ul) {
+        offset = local_x;
+    } else if (local_x == ring_width - 1ul) {
+        offset = ring_width - 1ul + local_y;
+    } else if (local_y == ring_height - 1ul) {
+        offset = ring_width - 1ul + ring_height - 1ul
+                 + ring_width - 1ul - local_x;
+    } else {
+        offset = 2ul * (ring_width - 1ul) + ring_height - 1ul
+                 + ring_height - 1ul - local_y;
+    }
+    return prefix + offset;
+}
+
 ulong generated_starting_index(constant FrameConstants& frame,
                                uint block_x, uint block_y) {
     const ulong reference_width = ulong(frame.starting_reference.x);
@@ -239,73 +299,70 @@ ulong generated_starting_index(constant FrameConstants& frame,
             / ulong(frame.dimensions_counts.y));
     const ulong blocks_across =
         (reference_width + reference_block - 1ul) / reference_block;
-    return (reference_y / reference_block) * blocks_across
-           + reference_x / reference_block;
+    const ulong blocks_down =
+        (reference_height + reference_block - 1ul) / reference_block;
+    const ulong x = reference_x / reference_block;
+    const ulong y = reference_y / reference_block;
+    const uint mode = frame.starting_flags.x;
+    if (mode == 1u) return x * blocks_down + y;
+    if (mode == 3u) {
+        return diagonal_traversal_index(x, y, blocks_across, blocks_down);
+    }
+    if (mode == 4u) {
+        return spiral_traversal_index(x, y, blocks_across, blocks_down);
+    }
+    return y * blocks_across + x;
 }
 
 float4 generated_starting_color(constant FrameConstants& frame,
                                 ulong index) {
     const ulong color_count = (ulong(frame.quant_values.w) << 32u)
                               | ulong(frame.quant_values.z);
-    if (color_count > 1ul) {
-        const uint bits = frame.quant_values.y;
-        const ulong mask = (1ul << bits) - 1ul;
-        const uint shift1 = max(1u, bits / 2u);
-        const uint shift2 = max(1u, bits / 3u);
-        const uint shift3 = max(1u, (bits * 2u) / 3u);
-        do {
-            index = (index + 0x9e3779b97f4a7c15ul) & mask;
-            index ^= index >> shift1;
-            index = (index * 0xbf58476d1ce4e5b9ul) & mask;
-            index ^= index >> shift2;
-            index = (index * 0x94d049bb133111ebul) & mask;
-            index ^= index >> shift3;
-            index &= mask;
-        } while (index >= color_count);
-    } else {
-        index = 0ul;
+    const uint mode = frame.starting_flags.x;
+    // Ordered modes retain their coherent whole-render walks. Mode 5 is the
+    // explicit repeatable Random traversal and alone applies the bijection.
+    if (mode == 5u) {
+        if (color_count > 1ul) {
+            const uint bits = frame.quant_values.y;
+            const ulong mask = (1ul << bits) - 1ul;
+            const uint shift1 = max(1u, bits / 2u);
+            const uint shift2 = max(1u, bits / 3u);
+            const uint shift3 = max(1u, (bits * 2u) / 3u);
+            do {
+                index = (index + 0x9e3779b97f4a7c15ul) & mask;
+                index ^= index >> shift1;
+                index = (index * 0xbf58476d1ce4e5b9ul) & mask;
+                index ^= index >> shift2;
+                index = (index * 0x94d049bb133111ebul) & mask;
+                index ^= index >> shift3;
+                index &= mask;
+            } while (index >= color_count);
+        } else {
+            index = 0ul;
+        }
     }
     const ulong levels = max(1ul, ulong(frame.starting_reference.w));
     const ulong alpha_levels = frame.starting_flags.y != 0u ? levels : 1ul;
     ulong remaining = index;
-    ulong alpha_index = remaining % alpha_levels;
-    remaining /= alpha_levels;
     ulong blue_index = remaining % levels;
     remaining /= levels;
     ulong green_index = remaining % levels;
     remaining /= levels;
     ulong red_index = remaining % levels;
-
-    const uint mode = frame.starting_flags.x;
-    if (mode == 2u) {
-        remaining = index;
-        red_index = remaining % levels;
-        remaining /= levels;
-        green_index = remaining % levels;
-        remaining /= levels;
-        blue_index = remaining % levels;
-        remaining /= levels;
-        alpha_index = remaining % alpha_levels;
-    } else if (mode == 3u || mode == 4u) {
-        const ulong source_red = red_index;
-        const ulong source_green = green_index;
-        const ulong source_blue = blue_index;
-        const ulong source_alpha = alpha_index;
-        green_index = (source_green + source_red) % levels;
-        blue_index = (source_blue + source_green + source_red) % levels;
-        alpha_index = (source_alpha + source_blue + source_green
-                       + source_red) % alpha_levels;
-        if (mode == 4u) {
-            red_index = levels - 1ul - red_index;
-            green_index = levels - 1ul - green_index;
-            blue_index = levels - 1ul - blue_index;
-            alpha_index = alpha_levels - 1ul - alpha_index;
-        }
+    remaining /= levels;
+    const ulong alpha_index = remaining % alpha_levels;
+    if ((green_index & 1ul) != 0ul) {
+        blue_index = levels - 1ul - blue_index;
     }
-
+    if ((red_index & 1ul) != 0ul) {
+        green_index = levels - 1ul - green_index;
+    }
+    if ((alpha_index & 1ul) != 0ul) {
+        red_index = levels - 1ul - red_index;
+    }
     const float denominator = levels > 1ul ? float(levels - 1ul) : 1.0f;
     const float alpha_denominator = alpha_levels > 1ul
-                                        ? float(alpha_levels - 1ul) : 1.0f;
+        ? float(alpha_levels - 1ul) : 1.0f;
     const float4 unit = float4(
         float(red_index) / denominator,
         float(green_index) / denominator,
@@ -416,12 +473,13 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     float4 base;
     if (frame.counts_flags.y == 0u && frame.starting_flags.x == 0u) {
         base = hsl_to_linear(hue, frame.pattern1.y, lightness);
+        base = apply_generated_rgb_range(frame, base);
         base = rotate_linear_hue(base, frame.pattern1.z);
         if (frame.starting_flags.y != 0u) {
-            const uint alpha_steps = max(1u, frame.starting_reference.w);
-            const uint alpha_index = uint(starting_index % ulong(alpha_steps));
-            const float position = alpha_steps > 1u
-                ? float(alpha_index) / float(alpha_steps - 1u) : 0.0f;
+            const ulong color_count = (ulong(frame.quant_values.w) << 32u)
+                                      | ulong(frame.quant_values.z);
+            const float position = color_count > 1ul
+                ? float(starting_index) / float(color_count - 1ul) : 0.0f;
             base.a = mix(frame.starting_minimum.a,
                          frame.starting_maximum.a, position);
         }

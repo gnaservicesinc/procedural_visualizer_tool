@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.2.4**. The version is read from `VERSION` by every
+Current product version: **1.2.5**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -233,14 +233,22 @@ sudo apt install procedural-visualizer-tool
   source colors in linear light without changing alpha; lighting and effects
   may create other colors afterward. Presets never silently change
   whether the starting palette is enabled.
-- Generated starting-color orderings use float32 working channels and choose
-  their per-channel lattice size from the full-resolution output block count.
-  The resulting RGB or RGBA capacity is always at least the number of blocks:
-  512×512 at block size 1 uses 64 levels per RGB channel, 1920×1080 uses 128,
-  and 24000×24000 uses 833. The removed `Values` controls are retained only as
-  ignored legacy file fields; Min/Max constrain the authored range without
-  reducing processing precision. Preview sampling retains the full-resolution
-  lattice coordinates, so resizing the live preview cannot rearrange colors.
+- Generated starting colors begin with **Continuous hue** or one of four
+  whole-render patterns: **Horizontal rainbow**, **Vertical rainbow**,
+  **Diagonal rainbow**, or **Spiral rainbow**. Every ordered pattern walks the
+  same automatically sized RGB/RGBA lattice without repetition, using a
+  continuous boustrophedon color path so adjacent positions form broad color
+  fields rather than shuffled static. **Random** is the separate repeatable
+  color-static choice. The selected output dimensions and block size automatically choose
+  enough per-channel working values for every full-resolution block, whether
+  the canvas is 512×512, 1920×1080, 24K, or another supported size.
+  The removed `Values` controls survive only as ignored compatibility records.
+  Every mode inside the Generated starting colors box—including Continuous
+  hue and Random—obeys RGB/alpha Min/Max without reducing the renderer's
+  float32 processing precision. Authored palettes and embedded images remain
+  separate sources and are not remapped by those generated-color limits.
+  Preview sampling retains full-resolution coordinates, so resizing the live
+  preview cannot rearrange colors and preview/export placement stays identical.
 - An optional embedded 8/16-bit PNG starting image per layer, with Stretch,
   Contain, Cover, and Tile fitting. The decoder converts directly to the
   float32 linear working image without an 8-bit intermediate. It replaces

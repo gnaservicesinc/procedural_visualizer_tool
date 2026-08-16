@@ -748,13 +748,16 @@ constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
     {"zoom", BlurType::Zoom},
 }};
 
-constexpr std::array<std::pair<std::string_view, StartingColorMode>, 5U>
+constexpr std::array<std::pair<std::string_view, StartingColorMode>, 6U>
     kStartingColorModes{{
-        {"legacy_hue", StartingColorMode::LegacyHue},
-        {"channel_loops", StartingColorMode::ChannelLoops},
-        {"interleaved", StartingColorMode::Interleaved},
-        {"additive", StartingColorMode::Additive},
-        {"subtractive", StartingColorMode::Subtractive},
+        // Retain the existing token so older PVT versions can still read newly
+        // saved Continuous hue projects. "Legacy" is not a product-facing name.
+        {"legacy_hue", StartingColorMode::ContinuousHue},
+        {"channel_loops", StartingColorMode::HorizontalRainbow},
+        {"interleaved", StartingColorMode::VerticalRainbow},
+        {"additive", StartingColorMode::DiagonalRainbow},
+        {"subtractive", StartingColorMode::SpiralRainbow},
+        {"random", StartingColorMode::Random},
     }};
 
 constexpr std::array<std::pair<std::string_view, LayerClockScale>, 5U>

@@ -109,14 +109,21 @@ enum class StartingImageFit : std::uint8_t {
     Tile
 };
 
-// Controls the spatial ordering of generated source colors when no authored
-// palette is active. LegacyHue preserves projects created before format 10.
+// Controls the spatial traversal of generated source colors when no authored
+// palette is active. The LegacyHue alias preserves source compatibility while
+// the product-facing name remains simply Continuous hue.
 enum class StartingColorMode : std::uint8_t {
-    LegacyHue = 0,
-    ChannelLoops,
-    Interleaved,
-    Additive,
-    Subtractive
+    ContinuousHue = 0,
+    HorizontalRainbow,
+    VerticalRainbow,
+    DiagonalRainbow,
+    SpiralRainbow,
+    Random,
+    LegacyHue = ContinuousHue,
+    ChannelLoops = HorizontalRainbow,
+    Interleaved = VerticalRainbow,
+    Additive = DiagonalRainbow,
+    Subtractive = SpiralRainbow
 };
 
 enum class PathHandleMode : std::uint8_t {
@@ -608,10 +615,10 @@ struct AlphaConfig {
 };
 
 struct StartingColorConfig {
-    StartingColorMode mode = StartingColorMode::LegacyHue;
+    StartingColorMode mode = StartingColorMode::ContinuousHue;
     bool include_alpha = false;
-    // Deprecated layer-format-8 controls. Non-legacy generated modes use
-    // deterministic working-precision float channels and do not quantize to
+    // Deprecated layer-format-8 controls. Generated rainbow modes use
+    // deterministic working-precision float colors and do not quantize to
     // these values. They remain serialized only for lossless older-file round trips.
     int red_steps = 256;
     int green_steps = 256;

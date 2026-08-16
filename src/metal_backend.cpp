@@ -390,17 +390,6 @@ void encode_grid(MTL::CommandBuffer* command_buffer,
     encoder->endEncoding();
 }
 
-bool generated_capacity_reaches(std::uint64_t levels,
-                                unsigned int dimensions,
-                                std::uint64_t required) {
-    std::uint64_t capacity = 1U;
-    for (unsigned int dimension = 0U; dimension < dimensions; ++dimension) {
-        if (capacity >= (required + levels - 1U) / levels) return true;
-        capacity *= levels;
-    }
-    return capacity >= required;
-}
-
 std::uint64_t generated_block_count(const RenderConfig& config) {
     const StartingColorConfig& starting = config.starting_colors;
     const std::uint64_t reference_width = static_cast<std::uint64_t>(
@@ -414,11 +403,21 @@ std::uint64_t generated_block_count(const RenderConfig& config) {
            * ((reference_height + reference_block - 1U) / reference_block);
 }
 
-std::uint64_t generated_channel_levels(const RenderConfig& config) {
-    const StartingColorConfig& starting = config.starting_colors;
-    const std::uint64_t block_count = generated_block_count(config);
+bool generated_capacity_reaches(std::uint64_t levels,
+                                unsigned int dimensions,
+                                std::uint64_t required) {
+    std::uint64_t capacity = 1U;
+    for (unsigned int dimension = 0U; dimension < dimensions; ++dimension) {
+        if (capacity >= (required + levels - 1U) / levels) return true;
+        capacity *= levels;
+    }
+    return capacity >= required;
+}
+
+std::uint64_t generated_channel_levels(std::uint64_t block_count,
+                                       bool include_alpha) {
     if (block_count <= 1U) return 1U;
-    const unsigned int dimensions = starting.include_alpha ? 4U : 3U;
+    const unsigned int dimensions = include_alpha ? 4U : 3U;
     std::uint64_t low = 1U;
     std::uint64_t high = 2U;
     while (!generated_capacity_reaches(high, dimensions, block_count)) {
@@ -464,6 +463,8 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         config.quantization.enabled ? 1U : 0U,
         static_cast<std::uint32_t>(config.quantization.mode)};
     const std::uint64_t generated_count = generated_block_count(config);
+    const std::uint64_t generated_levels = generated_channel_levels(
+        generated_count, config.starting_colors.include_alpha);
     unsigned int generated_bits = 0U;
     for (std::uint64_t highest = generated_count - 1U;
          highest != 0U; highest >>= 1U) {
@@ -528,7 +529,7 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<std::uint32_t>(
             starting.reference_block_size > 0
                 ? starting.reference_block_size : config.block_size),
-        static_cast<std::uint32_t>(generated_channel_levels(config))};
+        static_cast<std::uint32_t>(generated_levels)};
     result.starting_minimum = {
         static_cast<float>(starting.red_minimum),
         static_cast<float>(starting.green_minimum),
