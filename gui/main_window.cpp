@@ -41,6 +41,10 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMenu>
@@ -48,6 +52,7 @@
 #include <QPushButton>
 #include <QPlainTextEdit>
 #include <QProgressBar>
+#include <QProcess>
 #include <QRandomGenerator>
 #include <QScrollArea>
 #include <QSaveFile>
@@ -68,6 +73,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QDateTime>
 #include <QToolBar>
 #include <QUrl>
 #include <QUndoCommand>
@@ -82,6 +88,7 @@
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <random>
 #include <string_view>
 #include <type_traits>
 #include <unordered_set>
@@ -109,6 +116,90 @@ QString custom_new_project_defaults_path() {
     return root.isEmpty()
                ? QString{}
                : QDir(root).filePath(QStringLiteral("new-project-default.zip"));
+}
+
+QString shell_single_quote(QString value) {
+    value.replace(QLatin1Char('\''), QStringLiteral("'\"'\"'"));
+    return QLatin1Char('\'') + value + QLatin1Char('\'');
+}
+
+QString ffconcat_single_quote(QString value) {
+    value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    value.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
+    return QLatin1Char('\'') + value + QLatin1Char('\'');
+}
+
+bool write_video_concat_script(const QString& script_path,
+                               const QStringList& chunks,
+                               const QString& selected_movie_path,
+                               QString* error) {
+    if (chunks.size() < 2) {
+        if (error != nullptr) *error = QObject::tr("A concat script needs at least two chunks.");
+        return false;
+    }
+    const QFileInfo selected(selected_movie_path);
+    const QString extension = selected.suffix();
+    const QString default_name = selected.completeBaseName()
+        + QStringLiteral("-reassembled")
+        + (extension.isEmpty() ? QString{} : QLatin1Char('.') + extension);
+    const QString directory_name = selected.fileName();
+    QString script;
+    script += QStringLiteral("#!/usr/bin/env bash\nset -euo pipefail\n\n");
+    script += QStringLiteral(
+        "if (( $# > 1 )); then\n"
+        "  echo 'Usage: concat-script [output-file-or-directory]' >&2\n"
+        "  exit 2\n"
+        "fi\n"
+        "if ! command -v ffmpeg >/dev/null 2>&1; then\n"
+        "  echo 'ffmpeg was not found on PATH.' >&2\n"
+        "  exit 127\n"
+        "fi\n\n");
+    script += QStringLiteral("output=%1\n").arg(shell_single_quote(default_name));
+    script += QStringLiteral(
+        "if (( $# == 1 )); then\n"
+        "  if [[ -d \"$1\" ]]; then\n");
+    script += QStringLiteral("    output=\"$1\"/%1\n")
+                  .arg(shell_single_quote(directory_name));
+    script += QStringLiteral(
+        "  else\n"
+        "    output=$1\n"
+        "  fi\n"
+        "fi\n\n"
+        "input_file_list=$(mktemp \"${TMPDIR:-/tmp}/pvt-concat.XXXXXX\")\n"
+        "trap 'rm -f \"$input_file_list\"' EXIT\n"
+        "cat >\"$input_file_list\" <<'PVT_FFMPEG_CONCAT'\n"
+        "ffconcat version 1.0\n");
+    for (const QString& chunk : chunks) {
+        script += QStringLiteral("file %1\n").arg(
+            ffconcat_single_quote(QFileInfo(chunk).absoluteFilePath()));
+    }
+    script += QStringLiteral(
+        "PVT_FFMPEG_CONCAT\n\n"
+        "ffmpeg -f concat -safe 0 -i \"$input_file_list\" -c copy \"$output\"\n");
+
+    QSaveFile output(script_path);
+    if (!output.open(QIODevice::WriteOnly)) {
+        if (error != nullptr) {
+            *error = QObject::tr("Could not create concat script %1: %2")
+                         .arg(script_path, output.errorString());
+        }
+        return false;
+    }
+    const QByteArray bytes = script.toUtf8();
+    if (output.write(bytes) != bytes.size() || !output.commit()) {
+        if (error != nullptr) {
+            *error = QObject::tr("Could not atomically write concat script %1: %2")
+                         .arg(script_path, output.errorString());
+        }
+        return false;
+    }
+    QFile::setPermissions(
+        script_path,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+            | QFileDevice::ExeOwner | QFileDevice::ReadGroup
+            | QFileDevice::ExeGroup | QFileDevice::ReadOther
+            | QFileDevice::ExeOther);
+    return true;
 }
 
 #ifndef PVT_PROGRAM_VERSION
@@ -692,6 +783,20 @@ QString friendly_diff_value(const std::string& value) {
 }
 
 bool configuration_requires_alpha(const pvt::RenderConfig& config) {
+    if (config.alpha.use_source_alpha) {
+        if (config.starting_image.enabled) return true;
+        if (config.palette.enabled
+            && std::any_of(config.palette.colors.begin(), config.palette.colors.end(),
+                           [](const pvt::PaletteColor& color) {
+                               return color.alpha < 1.0;
+                           })) {
+            return true;
+        }
+        if (!config.palette.enabled && config.starting_colors.include_alpha
+            && config.starting_colors.alpha_minimum < 1.0) {
+            return true;
+        }
+    }
     if (config.surface.enabled && config.surface.mapping != pvt::SurfaceMapping::Plane
         && config.surface.curvature > 0.0) {
         return true;
@@ -705,7 +810,13 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
         return true;
     }
     return std::any_of(config.effects.begin(), config.effects.end(), [](const auto& effect) {
-        return effect.enabled && effect.intensity > 0.0 && effect.magnitude > 0.0
+        const bool active_blur = effect.type == pvt::EffectType::Blur
+                                 && effect.radius_pixels > 0.0
+                                 && effect.blur_maximum > 0.0;
+        const bool active_coordinate = effect.intensity > 0.0
+                                       && effect.magnitude > 0.0
+                                       && effect.type != pvt::EffectType::Blur;
+        return effect.enabled && (active_blur || active_coordinate)
                && effect.type != pvt::EffectType::Glow
                && effect.type != pvt::EffectType::BlockScale
                && effect.type != pvt::EffectType::ParticleField
@@ -733,7 +844,8 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
         layer.render.displacement *= pixel_scale;
         for (auto& effect : layer.render.effects) {
             if (effect.type == pvt::EffectType::Glow
-                || effect.type == pvt::EffectType::ParticleField) {
+                || effect.type == pvt::EffectType::ParticleField
+                || effect.type == pvt::EffectType::Blur) {
                 effect.radius_pixels *= pixel_scale;
             }
         }
@@ -841,6 +953,43 @@ int random_integer(QRandomGenerator& random, int minimum, int maximum) {
 
 bool random_chance(QRandomGenerator& random, double probability) {
     return random.generateDouble() < probability;
+}
+
+bool alias_project_attachment(pvt::ProjectDocument& document,
+                              const std::string& source_reference,
+                              const std::string& target_reference,
+                              QString* error) {
+    if (error != nullptr) error->clear();
+    const auto source = std::find_if(
+        document.attachments.begin(), document.attachments.end(),
+        [&source_reference](const pvt::ProjectAttachment& attachment) {
+            return attachment.reference_id == source_reference;
+        });
+    if (source == document.attachments.end()) {
+        if (error != nullptr) *error = QObject::tr("The reusable asset is unavailable.");
+        return false;
+    }
+    pvt::ProjectAttachment alias = *source;
+    alias.reference_id = target_reference;
+    const auto target = std::find_if(
+        document.attachments.begin(), document.attachments.end(),
+        [&target_reference](const pvt::ProjectAttachment& attachment) {
+            return attachment.reference_id == target_reference;
+        });
+    if (target == document.attachments.end()) {
+        if (document.attachments.size()
+            >= pvt::kMaximumProjectAttachmentReferences) {
+            if (error != nullptr) {
+                *error = QObject::tr("The project attachment-reference limit has been reached.");
+            }
+            return false;
+        }
+        document.attachments.push_back(std::move(alias));
+    } else {
+        *target = std::move(alias);
+    }
+    document.dirty = true;
+    return true;
 }
 
 bool layer_visible_in_project(const pvt::ProjectConfig& project,
@@ -1063,6 +1212,21 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.radius_pixels = random_real(random, 1.0, 8.0);
             effect.threshold = random_real(random, 0.25, 0.9);
             effect.soft_knee = random_real(random, 0.15, 0.8);
+            break;
+        case pvt::EffectType::Blur:
+            effect.blur_type = static_cast<pvt::BlurType>(
+                random_integer(random, 0, 4));
+            effect.intensity = random_real(random, 0.2, 0.9);
+            effect.radius_pixels = random_real(random, 2.0, 48.0);
+            effect.blur_passes = random_integer(random, 1, 3);
+            effect.blur_samples = 2 * random_integer(random, 2, 16) + 1;
+            effect.blur_minimum = random_real(random, 0.0, 0.35);
+            effect.blur_maximum = random_real(
+                random, (std::max)(effect.blur_minimum, 0.45), 1.0);
+            effect.blur_pulses_per_cycle = random_integer(random, 1, 6);
+            effect.center_x = random_real(random, 0.2, 0.8);
+            effect.center_y = random_real(random, 0.2, 0.8);
+            effect.angle_degrees = random_real(random, -180.0, 180.0);
             break;
     }
 }
@@ -1353,6 +1517,9 @@ MainWindow::MainWindow(QWidget* parent)
                             ? tr("The active project was not changed.\n\n%1")
                                   .arg(result.error)
                             : result.error);
+                }
+                if (adopted && result.operation == ProjectIoOperation::Save) {
+                    addRecentProject(result.path);
                 }
                 if (close_after_project_io_) {
                     close_after_project_io_ = false;
@@ -2202,7 +2369,7 @@ QWidget* MainWindow::createEffectPage() {
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
                             pvt::EffectType::Glow, pvt::EffectType::BlockScale,
-                            pvt::EffectType::ParticleField}) {
+                            pvt::EffectType::ParticleField, pvt::EffectType::Blur}) {
         add_enum_item(add_effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
     }
     auto* add = new QPushButton(tr("Add"));
@@ -2227,14 +2394,14 @@ QWidget* MainWindow::createEffectPage() {
     effect_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
     effect_name_->setValidator(new Utf8TextValidator(TextRule::Name, effect_name_));
     effect_enabled_ = new QCheckBox(tr("Enabled"));
-    effect_sync_ = new QCheckBox(tr("Use synchronized clock"));
+    effect_sync_ = new QCheckBox(tr("Follow shared synchronized/swung clock"));
     effect_audio_response_ = new QComboBox;
     populate_audio_response_combo(effect_audio_response_);
     effect_type_ = new QComboBox;
     for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
                             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
                             pvt::EffectType::Glow, pvt::EffectType::BlockScale,
-                            pvt::EffectType::ParticleField}) {
+                            pvt::EffectType::ParticleField, pvt::EffectType::Blur}) {
         add_enum_item(effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
     }
     effect_space_ = new QComboBox;
@@ -2262,6 +2429,18 @@ QWidget* MainWindow::createEffectPage() {
     effect_knee_ = real_editor(0.0, 1.0);
     effect_area_radius_ = real_editor(0.0, 10.0, 4, 0.01);
     effect_area_radius_->setSpecialValueText(tr("Whole layer (0)"));
+    effect_blur_type_ = new QComboBox;
+    for (const auto type : {pvt::BlurType::Gaussian, pvt::BlurType::Box,
+                            pvt::BlurType::Directional, pvt::BlurType::Radial,
+                            pvt::BlurType::Zoom}) {
+        add_enum_item(effect_blur_type_,
+                      QString::fromUtf8(pvt::blur_type_name(type)), type);
+    }
+    effect_blur_passes_ = integer_editor(1, 16);
+    effect_blur_samples_ = integer_editor(2, 129);
+    effect_blur_minimum_ = real_editor(0.0, 1.0, 4, 0.01);
+    effect_blur_maximum_ = real_editor(0.0, 1.0, 4, 0.01);
+    effect_blur_pulses_ = integer_editor(1, 1000);
     effect_form_->addRow(tr("Name"), effect_name_);
     effect_form_->addRow(effect_enabled_);
     effect_form_->addRow(effect_sync_);
@@ -2282,18 +2461,36 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Glow threshold"), effect_threshold_);
     effect_form_->addRow(tr("Glow soft knee"), effect_knee_);
     effect_form_->addRow(tr("Local area radius"), effect_area_radius_);
+    effect_form_->addRow(tr("Blur algorithm"), effect_blur_type_);
+    effect_form_->addRow(tr("Blur passes"), effect_blur_passes_);
+    effect_form_->addRow(tr("Samples per pass"), effect_blur_samples_);
+    effect_form_->addRow(tr("Minimum blur mix"), effect_blur_minimum_);
+    effect_form_->addRow(tr("Maximum blur mix"), effect_blur_maximum_);
+    effect_form_->addRow(tr("Modulations per cycle"), effect_blur_pulses_);
     effect_name_->setToolTip(
         tr("A descriptive layer-local name used in the stack and semantic version diffs."));
     effect_enabled_->setToolTip(
         tr("Bypasses this effect without deleting it or changing its authored parameters."));
     effect_sync_->setToolTip(
-        tr("Uses the active synchronized/swung clock. Clear it for an independent seamless effect clock."));
+        tr("On: follows the shared project/layer clock after swing and music timing. Off: uses a smooth independent linear loop. Both choices animate according to Cycles per loop."));
     effect_audio_response_->setToolTip(
         tr("For synchronized effects, Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Missing/null project data is Default."));
     effect_type_->setToolTip(
         tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
     effect_space_->setToolTip(
         tr("Texture edits artwork before wrapping; Mapped object edits the transformed surface and silhouette afterward."));
+    effect_blur_type_->setToolTip(
+        tr("Gaussian and Box use separable passes; Directional follows the authored angle; Radial rotates samples around the center; Zoom pulls samples toward the center."));
+    effect_blur_passes_->setToolTip(
+        tr("Repeats the complete blur. More passes create a broader, smoother result and require more GPU or CPU work."));
+    effect_blur_samples_->setToolTip(
+        tr("Samples used in each pass. Higher values improve smoothness at the cost of render time."));
+    effect_blur_minimum_->setToolTip(
+        tr("Lowest wet/dry mix reached on the effect's selected clock. Set equal to the maximum for constant blur."));
+    effect_blur_maximum_->setToolTip(
+        tr("Highest wet/dry mix reached on the effect's selected clock. Set equal to the minimum for constant blur."));
+    effect_blur_pulses_->setToolTip(
+        tr("Number of complete minimum-to-maximum-to-minimum blur modulations per effect cycle."));
     effect_cycles_->setToolTip(
         tr("Signed motion cycles across the project loop; whole values preserve the seam."));
     effect_phase_->setToolTip(
@@ -2401,11 +2598,78 @@ QWidget* MainWindow::createLayerSettingsPage() {
     }
     source_form->addRow(tr("Embedded PNG"), source_row);
     source_form->addRow(tr("Fit"), starting_image_fit_);
+    starting_image_palette_dither_ = new QCheckBox(
+        tr("Dither when quantizing this image to the starting palette"));
+    starting_image_palette_dither_method_ = new QComboBox;
+    for (const auto method : {pvt::DitherMethod::BlueNoise,
+                              pvt::DitherMethod::OrderedBayer,
+                              pvt::DitherMethod::FloydSteinberg}) {
+        add_enum_item(starting_image_palette_dither_method_,
+                      QString::fromUtf8(pvt::dither_method_name(method)), method);
+    }
+    source_form->addRow(starting_image_palette_dither_);
+    source_form->addRow(tr("Source quantization dither"),
+                        starting_image_palette_dither_method_);
     starting_image_group_->setToolTip(tr(
-        "Replaces procedural base generation and the starting palette for this "
-        "layer. Texture effects, surfaces, transforms, mapped effects, and "
-        "quantization still apply."));
+        "The fitted in-memory PNG controls where source colors appear. When a "
+        "starting palette is enabled, the image is quantized to that palette "
+        "before effects; the two options are intentionally composable."));
     layout->addWidget(starting_image_group_);
+
+    auto* starting_colors_group = new QGroupBox(tr("Generated starting colors"));
+    auto* starting_colors_layout = new QVBoxLayout(starting_colors_group);
+    auto* starting_colors_form = new QFormLayout;
+    starting_color_mode_ = new QComboBox;
+    for (const auto mode : {pvt::StartingColorMode::LegacyHue,
+                            pvt::StartingColorMode::ChannelLoops,
+                            pvt::StartingColorMode::Interleaved,
+                            pvt::StartingColorMode::Additive,
+                            pvt::StartingColorMode::Subtractive}) {
+        add_enum_item(starting_color_mode_,
+                      QString::fromUtf8(pvt::starting_color_mode_name(mode)), mode);
+    }
+    starting_color_include_alpha_ = new QCheckBox(
+        tr("Include alpha as a generated color dimension"));
+    starting_color_include_alpha_->setToolTip(
+        tr("When no starting palette is active, generated RGBA tuples may differ "
+           "by alpha as well as RGB. Equal tuples are still represented only once."));
+    starting_colors_form->addRow(tr("Spatial ordering"), starting_color_mode_);
+    starting_colors_form->addRow(starting_color_include_alpha_);
+    starting_colors_layout->addLayout(starting_colors_form);
+
+    auto* channels = new QGridLayout;
+    channels->addWidget(new QLabel(tr("Channel")), 0, 0);
+    channels->addWidget(new QLabel(tr("Minimum")), 0, 1);
+    channels->addWidget(new QLabel(tr("Maximum")), 0, 2);
+    channels->addWidget(new QLabel(tr("Values")), 0, 3);
+    const auto add_channel = [channels](int row, const QString& name,
+                                        QDoubleSpinBox*& minimum,
+                                        QDoubleSpinBox*& maximum,
+                                        QSpinBox*& steps) {
+        minimum = real_editor(0.0, 1.0, 4, 0.01);
+        maximum = real_editor(0.0, 1.0, 4, 0.01);
+        steps = integer_editor(1, 65536);
+        channels->addWidget(new QLabel(name), row, 0);
+        channels->addWidget(minimum, row, 1);
+        channels->addWidget(maximum, row, 2);
+        channels->addWidget(steps, row, 3);
+    };
+    add_channel(1, tr("Red"), starting_red_minimum_, starting_red_maximum_,
+                starting_red_steps_);
+    add_channel(2, tr("Green"), starting_green_minimum_, starting_green_maximum_,
+                starting_green_steps_);
+    add_channel(3, tr("Blue"), starting_blue_minimum_, starting_blue_maximum_,
+                starting_blue_steps_);
+    add_channel(4, tr("Alpha"), starting_alpha_minimum_, starting_alpha_maximum_,
+                starting_alpha_steps_);
+    starting_colors_layout->addLayout(channels);
+    auto* starting_colors_help = new QLabel(tr(
+        "Used when the authored starting palette is off. Channel loops vary one "
+        "channel at a time; Interleaved advances all channels at different "
+        "rates; Additive rises from the minima; Subtractive falls from the maxima."));
+    starting_colors_help->setWordWrap(true);
+    starting_colors_layout->addWidget(starting_colors_help);
+    layout->addWidget(starting_colors_group);
 
     auto* pattern_group = new QGroupBox(tr("Procedural features"));
     auto* pattern = new QFormLayout(pattern_group);
@@ -2529,12 +2793,21 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* add_color = new QPushButton(tr("Add color…"));
     auto* edit_color = new QPushButton(tr("Edit color…"));
     auto* remove_color = new QPushButton(tr("Remove color"));
+    auto* random_palette = new QPushButton(tr("Generate random…"));
+    auto* save_palette = new QPushButton(tr("Save…"));
+    auto* load_palette = new QPushButton(tr("Load…"));
     palette_buttons->addWidget(add_color);
     palette_buttons->addWidget(edit_color);
     palette_buttons->addWidget(remove_color);
     palette_layout->addLayout(palette_buttons);
+    auto* palette_library_buttons = new QHBoxLayout;
+    palette_library_buttons->addWidget(random_palette);
+    palette_library_buttons->addWidget(save_palette);
+    palette_library_buttons->addWidget(load_palette);
+    palette_library_buttons->addStretch();
+    palette_layout->addLayout(palette_library_buttons);
     auto* palette_help = new QLabel(
-        tr("Colors are authored in sRGB and embedded in this layer. The renderer "
+        tr("Colors are authored as sRGBA and embedded in this layer. The renderer "
            "selects the procedural starting colors from this palette. Lighting and "
            "effects may create other colors afterward. Use Post-effects "
            "color quantization below when you want to deliberately reduce final colors."));
@@ -2605,6 +2878,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     alpha_frequency_ = real_editor(0.0, 1000.0);
     alpha_cycles_ = integer_editor(-1000, 1000);
     alpha_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    alpha_use_source_ = new QCheckBox(
+        tr("Use alpha stored in starting colors and PNG pixels"));
+    alpha_use_source_->setToolTip(tr(
+        "This does not change the layer opacity. Turning it off ignores source "
+        "alpha non-destructively; the authored values remain available when re-enabled."));
+    alpha->addRow(alpha_use_source_);
     alpha->addRow(alpha_enabled_);
     alpha->addRow(tr("Minimum"), alpha_minimum_);
     alpha->addRow(tr("Maximum"), alpha_maximum_);
@@ -2617,6 +2896,58 @@ QWidget* MainWindow::createLayerSettingsPage() {
     scroll->setWidget(contents);
 
     connect(surface_obj_browse_, &QPushButton::clicked, this, [this] {
+        std::vector<const pvt::LayerConfig*> reusable;
+        QStringList labels;
+        for (const auto& layer : project_.layers) {
+            if (layer.uuid == active_layer_uuid_ || layer.render.surface.obj_sha256.empty()) {
+                continue;
+            }
+            reusable.push_back(&layer);
+            labels.push_back(tr("Project layer: %1 — %2")
+                                 .arg(QString::fromStdString(layer.name),
+                                      QString::fromStdString(layer.render.surface.obj_basename)));
+        }
+        if (!reusable.empty()) {
+            labels.push_back(tr("Load a different OBJ from disk…"));
+            bool accepted = false;
+            const QString selection = QInputDialog::getItem(
+                this, tr("Choose custom OBJ asset"), tr("Matching project assets"),
+                labels, 0, false, &accepted);
+            if (!accepted) return;
+            const qsizetype selected = labels.indexOf(selection);
+            if (selected >= 0
+                && static_cast<std::size_t>(selected) < reusable.size()) {
+                if (document_ == nullptr) return;
+                auto before = captureActiveState();
+                const auto& source = *reusable[static_cast<std::size_t>(selected)];
+                QString alias_error;
+                const std::string target_reference =
+                    pvt::surface_obj_attachment_id(active_layer_uuid_);
+                if (!alias_project_attachment(
+                        *document_, pvt::surface_obj_attachment_id(source.uuid),
+                        target_reference, &alias_error)) {
+                    QMessageBox::critical(this, tr("Could not reuse OBJ"), alias_error);
+                    return;
+                }
+                config_.surface.obj_sha256 = source.render.surface.obj_sha256;
+                config_.surface.obj_basename = source.render.surface.obj_basename;
+                config_.surface.obj_path =
+                    pvt::project_attachment_path(*document_, target_reference);
+                config_.surface.mapping = pvt::SurfaceMapping::CustomObj;
+                config_.surface.enabled = true;
+                syncActiveRender();
+                syncProjectGlobals();
+                document_->project = project_;
+                loadGlobalEditors();
+                schedulePreview();
+                recordActiveStateChange(tr("Reuse embedded custom OBJ"),
+                                        std::move(before));
+                status_->setText(tr("Reused %1 without duplicating its bytes.")
+                                     .arg(QString::fromStdString(
+                                         config_.surface.obj_basename)));
+                return;
+            }
+        }
         QString preferred;
         if (!surface_obj_path_->text().isEmpty()) {
             const QString absolute = QDir::isAbsolutePath(surface_obj_path_->text())
@@ -2630,15 +2961,86 @@ QWidget* MainWindow::createLayerSettingsPage() {
             tr("Wavefront OBJ (*.obj);;All files (*)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
+            if (!config_.surface.obj_sha256.empty()
+                && QMessageBox::question(
+                       this, tr("Replace embedded OBJ?"),
+                       tr("Replace the active layer's current internal OBJ binding with %1?")
+                           .arg(QFileInfo(selected).fileName()),
+                       QMessageBox::Yes | QMessageBox::No,
+                       QMessageBox::Yes) != QMessageBox::Yes) {
+                return;
+            }
             (void)setSurfaceObjSource(selected);
         }
     });
     connect(starting_image_browse_, &QPushButton::clicked, this, [this] {
+        std::vector<const pvt::LayerConfig*> reusable;
+        QStringList labels;
+        for (const auto& layer : project_.layers) {
+            if (layer.uuid == active_layer_uuid_
+                || layer.render.starting_image.sha256.empty()) {
+                continue;
+            }
+            reusable.push_back(&layer);
+            labels.push_back(tr("Project layer: %1 — %2")
+                                 .arg(QString::fromStdString(layer.name),
+                                      QString::fromStdString(
+                                          layer.render.starting_image.basename)));
+        }
+        if (!reusable.empty()) {
+            labels.push_back(tr("Load a different PNG from disk…"));
+            bool accepted = false;
+            const QString selection = QInputDialog::getItem(
+                this, tr("Choose starting image asset"),
+                tr("Matching project assets"), labels, 0, false, &accepted);
+            if (!accepted) return;
+            const qsizetype selected = labels.indexOf(selection);
+            if (selected >= 0
+                && static_cast<std::size_t>(selected) < reusable.size()) {
+                if (document_ == nullptr) return;
+                auto before = captureActiveState();
+                const auto& source = *reusable[static_cast<std::size_t>(selected)];
+                QString alias_error;
+                const std::string target_reference =
+                    pvt::starting_image_attachment_id(active_layer_uuid_);
+                if (!alias_project_attachment(
+                        *document_, pvt::starting_image_attachment_id(source.uuid),
+                        target_reference, &alias_error)) {
+                    QMessageBox::critical(this, tr("Could not reuse PNG"), alias_error);
+                    return;
+                }
+                config_.starting_image.enabled = true;
+                config_.starting_image.sha256 = source.render.starting_image.sha256;
+                config_.starting_image.basename = source.render.starting_image.basename;
+                config_.starting_image.path =
+                    pvt::project_attachment_path(*document_, target_reference);
+                syncActiveRender();
+                syncProjectGlobals();
+                document_->project = project_;
+                loadGlobalEditors();
+                schedulePreview();
+                recordActiveStateChange(tr("Reuse embedded starting image"),
+                                        std::move(before));
+                status_->setText(tr("Reused %1 without duplicating its bytes.")
+                                     .arg(QString::fromStdString(
+                                         config_.starting_image.basename)));
+                return;
+            }
+        }
         const QString selected = QFileDialog::getOpenFileName(
             this, tr("Choose starting image"), usableDialogDirectory(),
             tr("PNG image (*.png)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
+            if (!config_.starting_image.sha256.empty()
+                && QMessageBox::question(
+                       this, tr("Replace embedded starting image?"),
+                       tr("Replace the active layer's current internal PNG binding with %1?")
+                           .arg(QFileInfo(selected).fileName()),
+                       QMessageBox::Yes | QMessageBox::No,
+                       QMessageBox::Yes) != QMessageBox::Yes) {
+                return;
+            }
             (void)setStartingImageSource(selected);
         }
     });
@@ -2655,6 +3057,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
             this, &MainWindow::editSelectedPaletteColor);
     connect(remove_color, &QPushButton::clicked,
             this, &MainWindow::removeSelectedPaletteColor);
+    connect(random_palette, &QPushButton::clicked,
+            this, &MainWindow::generateRandomPalette);
+    connect(save_palette, &QPushButton::clicked,
+            this, &MainWindow::savePaletteToLibrary);
+    connect(load_palette, &QPushButton::clicked,
+            this, &MainWindow::loadPaletteFromLibraryOrLayer);
     connect(palette_colors_, &QListWidget::itemDoubleClicked,
             this, [this](QListWidgetItem*) { editSelectedPaletteColor(); });
 
@@ -3569,8 +3977,12 @@ void MainWindow::createToolbar() {
     open_action_->setShortcut(QKeySequence::Open);
     save_action_->setShortcut(QKeySequence::Save);
     save_as_action_->setShortcut(QKeySequence::SaveAs);
-    file_menu->addActions({new_action_, open_action_, open_folder_action_,
-                           save_action_, save_as_action_});
+    file_menu->addActions({new_action_, open_action_, open_folder_action_});
+    recent_projects_menu_ = file_menu->addMenu(tr("Open Recent"));
+    recent_projects_menu_->setObjectName(QStringLiteral("recentProjectsMenu"));
+    refreshRecentProjectsMenu();
+    file_menu->addSeparator();
+    file_menu->addActions({save_action_, save_as_action_});
     file_menu->addSeparator();
     toolbar->addAction(new_action_);
     toolbar->addAction(open_action_);
@@ -4328,16 +4740,24 @@ void MainWindow::connectEditors() {
             [this] { applyEffectEditor(effect_audio_response_); });
     connect(effect_type_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_type_); });
+    connect(effect_blur_type_, &QComboBox::currentIndexChanged, this,
+            [this] { applyEffectEditor(effect_blur_type_); });
     connect(effect_space_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_space_); });
     connect(effect_edge_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_edge_); });
     connect(effect_cycles_, &QSpinBox::valueChanged, this,
             [this] { applyEffectEditor(effect_cycles_); });
+    for (auto* editor : {effect_blur_passes_, effect_blur_samples_,
+                         effect_blur_pulses_}) {
+        connect(editor, &QSpinBox::valueChanged, this,
+                [this, editor] { applyEffectEditor(editor); });
+    }
     for (auto* editor : {effect_phase_, effect_intensity_, effect_magnitude_,
                          effect_frequency_, effect_secondary_, effect_center_x_,
                          effect_center_y_, effect_angle_, effect_radius_, effect_threshold_,
-                         effect_knee_, effect_area_radius_}) {
+                         effect_knee_, effect_area_radius_, effect_blur_minimum_,
+                         effect_blur_maximum_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applyEffectEditor(editor); });
     }
@@ -4463,7 +4883,9 @@ void MainWindow::connectEditors() {
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
-                         motion_cycles_y_, motion_rotations_}) {
+                         motion_cycles_y_, motion_rotations_, starting_red_steps_,
+                         starting_green_steps_, starting_blue_steps_,
+                         starting_alpha_steps_}) {
         connect(editor, &QSpinBox::valueChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -4473,7 +4895,11 @@ void MainWindow::connectEditors() {
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
                          surface_phase_, alpha_phase_, motion_center_x_, motion_center_y_,
                          motion_travel_x_, motion_travel_y_, motion_phase_,
-                         motion_scale_pulse_}) {
+                         motion_scale_pulse_, starting_red_minimum_,
+                         starting_red_maximum_, starting_green_minimum_,
+                         starting_green_maximum_, starting_blue_minimum_,
+                         starting_blue_maximum_, starting_alpha_minimum_,
+                         starting_alpha_maximum_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -4481,7 +4907,8 @@ void MainWindow::connectEditors() {
                          wall_enabled_, surface_enabled_, quantization_enabled_,
                          alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
                          transform_flip_horizontal_, transform_flip_vertical_,
-                         palette_enabled_}) {
+                         palette_enabled_, starting_image_palette_dither_,
+                         starting_color_include_alpha_, alpha_use_source_}) {
         connect(editor, &QCheckBox::toggled, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -4492,7 +4919,8 @@ void MainWindow::connectEditors() {
     connect(starting_image_enabled_, &QCheckBox::toggled, this,
             [this] { applyGlobalEditor(starting_image_enabled_); });
     for (auto* editor : {surface_mapping_, quantization_mode_, bit_depth_, dither_method_,
-                         transform_mirror_, motion_path_, starting_image_fit_}) {
+                         transform_mirror_, motion_path_, starting_image_fit_,
+                         starting_image_palette_dither_method_, starting_color_mode_}) {
         connect(editor, &QComboBox::currentIndexChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -5876,8 +6304,104 @@ bool MainWindow::documentReplacementAllowed(QString* error) {
     return false;
 }
 
+void MainWindow::addRecentProject(const QString& path) {
+    if (path.isEmpty()) return;
+    const QString absolute_path = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    if (absolute_path.isEmpty()) return;
+    QSettings settings;
+    QJsonArray entries;
+    const QJsonDocument saved = QJsonDocument::fromJson(
+        settings.value(QStringLiteral("recentProjects/entries")).toByteArray());
+    if (saved.isArray()) entries = saved.array();
+    for (qsizetype index = entries.size() - 1; index >= 0; --index) {
+        if (QDir::cleanPath(entries.at(index).toObject()
+                                .value(QStringLiteral("path")).toString())
+                == absolute_path) {
+            entries.removeAt(index);
+        }
+    }
+    QJsonObject entry;
+    entry.insert(QStringLiteral("name"), QString::fromStdString(project_.name));
+    entry.insert(QStringLiteral("path"), absolute_path);
+    entries.prepend(entry);
+    while (entries.size() > 100) entries.removeLast();
+    settings.setValue(QStringLiteral("recentProjects/entries"),
+                      QJsonDocument(entries).toJson(QJsonDocument::Compact));
+    refreshRecentProjectsMenu();
+}
+
+void MainWindow::refreshRecentProjectsMenu() {
+    if (recent_projects_menu_ == nullptr) return;
+    recent_projects_menu_->clear();
+    if (recent_project_limit_ <= 0) {
+        auto* disabled = recent_projects_menu_->addAction(tr("Recent projects disabled"));
+        disabled->setEnabled(false);
+        return;
+    }
+    QSettings settings;
+    const QJsonDocument saved = QJsonDocument::fromJson(
+        settings.value(QStringLiteral("recentProjects/entries")).toByteArray());
+    const QJsonArray entries = saved.isArray() ? saved.array() : QJsonArray{};
+    int shown = 0;
+    for (const QJsonValue& value : entries) {
+        if (shown >= recent_project_limit_) break;
+        const QJsonObject entry = value.toObject();
+        const QString path = QDir::cleanPath(
+            entry.value(QStringLiteral("path")).toString());
+        if (path.isEmpty() || !QDir::isAbsolutePath(path)) continue;
+        QString name = entry.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty()) name = QFileInfo(path).completeBaseName();
+        auto* action = recent_projects_menu_->addAction(
+            tr("%1 — %2").arg(name, QDir::toNativeSeparators(path)));
+        action->setToolTip(path);
+        connect(action, &QAction::triggered, this, [this, path] {
+            if (!QFileInfo::exists(path)) {
+                QMessageBox::warning(
+                    this, tr("Recent project is unavailable"),
+                    tr("The project no longer exists at:\n%1\n\nIts recent entry will be removed.")
+                        .arg(path));
+                QSettings settings;
+                QJsonArray retained;
+                const QJsonDocument saved = QJsonDocument::fromJson(
+                    settings.value(QStringLiteral("recentProjects/entries")).toByteArray());
+                for (const QJsonValue& value : saved.array()) {
+                    if (QDir::cleanPath(value.toObject()
+                                            .value(QStringLiteral("path")).toString())
+                        != path) {
+                        retained.append(value);
+                    }
+                }
+                settings.setValue(
+                    QStringLiteral("recentProjects/entries"),
+                    QJsonDocument(retained).toJson(QJsonDocument::Compact));
+                refreshRecentProjectsMenu();
+                return;
+            }
+            if (!documentReplacementAllowed()) return;
+            if (!confirmDiscardChanges(
+                    [this, path] { startProjectLoad(path); })) return;
+            startProjectLoad(path);
+        });
+        ++shown;
+    }
+    if (shown == 0) {
+        auto* empty = recent_projects_menu_->addAction(tr("No recent projects"));
+        empty->setEnabled(false);
+    }
+    recent_projects_menu_->addSeparator();
+    auto* clear = recent_projects_menu_->addAction(tr("Clear Recent Projects"));
+    clear->setEnabled(!entries.isEmpty());
+    connect(clear, &QAction::triggered, this, [this] {
+        QSettings().remove(QStringLiteral("recentProjects/entries"));
+        refreshRecentProjectsMenu();
+    });
+}
+
 void MainWindow::restoreUserSettings() {
     QSettings settings;
+    recent_project_limit_ = (std::clamp)(
+        settings.value(QStringLiteral("preferences/recentProjectLimit"), 10).toInt(),
+        0, 100);
     const int saved_backend = settings.value(
         QStringLiteral("preferences/renderBackend"),
         static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
@@ -5910,6 +6434,7 @@ void MainWindow::restoreUserSettings() {
             restoreLayersDock(!was_hidden);
         }
     }
+    refreshRecentProjectsMenu();
 }
 
 void MainWindow::saveUserSettings() {
@@ -5923,6 +6448,8 @@ void MainWindow::saveUserSettings() {
     }
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(render_backend_));
+    settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
+                      recent_project_limit_);
     if (audio_volume_ != nullptr) {
         settings.setValue(QStringLiteral("preferences/previewAudioVolume"),
                           audio_volume_->value());
@@ -5933,17 +6460,21 @@ void MainWindow::showApplicationSettings() {
     if (undo_stack_ == nullptr) return;
     const int current_undo_limit = undo_stack_->undoLimit();
     const pvt::RenderBackend current_backend = render_backend_;
+    const int current_recent_limit = recent_project_limit_;
     ApplicationSettingsDialog dialog(current_undo_limit, current_backend,
+                                     current_recent_limit,
                                      hasCustomNewProjectDefaults(), this);
     configure_readable_layouts(&dialog);
     if (dialog.exec() != QDialog::Accepted) return;
 
     const int requested_undo_limit = dialog.undoLimit();
     const pvt::RenderBackend requested_backend = dialog.renderBackend();
+    const int requested_recent_limit = dialog.recentProjectLimit();
     const auto defaults_action = dialog.newProjectDefaultsAction();
     const bool undo_limit_changed = requested_undo_limit != current_undo_limit;
     const bool backend_changed = requested_backend != current_backend;
-    if (!undo_limit_changed && !backend_changed
+    const bool recent_limit_changed = requested_recent_limit != current_recent_limit;
+    if (!undo_limit_changed && !backend_changed && !recent_limit_changed
         && defaults_action
                == ApplicationSettingsDialog::NewProjectDefaultsAction::Keep) {
         return;
@@ -5971,12 +6502,18 @@ void MainWindow::showApplicationSettings() {
         }
         schedulePreview();
     }
+    if (recent_limit_changed) {
+        recent_project_limit_ = requested_recent_limit;
+        refreshRecentProjectsMenu();
+    }
 
     QSettings settings;
     settings.setValue(QStringLiteral("preferences/undoLimit"),
                       requested_undo_limit);
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(requested_backend));
+    settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
+                      requested_recent_limit);
     settings.sync();
 
     QString defaults_message;
@@ -6010,10 +6547,11 @@ void MainWindow::showApplicationSettings() {
                               defaults_error);
     }
     status_->setText(
-        tr("Application settings saved — %1 undo steps, %2 rendering.%3")
+        tr("Application settings saved — %1 undo steps, %2 rendering, %3 recent projects.%4")
             .arg(requested_undo_limit)
             .arg(QString::fromUtf8(
                 pvt::render_backend_name(requested_backend)))
+            .arg(requested_recent_limit)
             .arg(defaults_message));
 }
 
@@ -6875,10 +7413,14 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_glow = type == pvt::EffectType::Glow;
     const bool is_block_scale = type == pvt::EffectType::BlockScale;
     const bool is_particles = type == pvt::EffectType::ParticleField;
-    const bool coordinate_effect = !is_glow && !is_block_scale && !is_particles;
+    const bool is_blur = type == pvt::EffectType::Blur;
+    const bool coordinate_effect = !is_glow && !is_block_scale && !is_particles && !is_blur;
     const bool has_center = !is_block_scale;
+    const auto blur_type = static_cast<pvt::BlurType>(
+        effect_blur_type_->currentData().toInt());
 
-    effect_form_->setRowVisible(effect_edge_, coordinate_effect);
+    effect_form_->setRowVisible(effect_edge_, coordinate_effect || is_blur);
+    effect_form_->setRowVisible(effect_intensity_, !is_blur);
     effect_form_->setRowVisible(effect_magnitude_,
                                 coordinate_effect || is_block_scale || is_particles);
     effect_form_->setRowVisible(effect_frequency_,
@@ -6886,11 +7428,18 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_secondary_, !is_zoom);
     effect_form_->setRowVisible(effect_center_x_, has_center);
     effect_form_->setRowVisible(effect_center_y_, has_center);
-    effect_form_->setRowVisible(effect_angle_, is_shake || is_flag || is_particles);
-    effect_form_->setRowVisible(effect_radius_, is_glow || is_particles);
+    effect_form_->setRowVisible(effect_angle_, is_shake || is_flag || is_particles
+                                                   || (is_blur && blur_type == pvt::BlurType::Directional));
+    effect_form_->setRowVisible(effect_radius_, is_glow || is_particles || is_blur);
     effect_form_->setRowVisible(effect_threshold_, is_glow || is_particles);
     effect_form_->setRowVisible(effect_knee_, is_glow || is_particles);
     effect_form_->setRowVisible(effect_area_radius_, !is_block_scale);
+    effect_form_->setRowVisible(effect_blur_type_, is_blur);
+    effect_form_->setRowVisible(effect_blur_passes_, is_blur);
+    effect_form_->setRowVisible(effect_blur_samples_, is_blur);
+    effect_form_->setRowVisible(effect_blur_minimum_, is_blur);
+    effect_form_->setRowVisible(effect_blur_maximum_, is_blur);
+    effect_form_->setRowVisible(effect_blur_pulses_, is_blur);
 
     effect_radius_->setRange(
         is_particles ? 0.01 : 0.0,
@@ -6901,7 +7450,9 @@ void MainWindow::updateEffectEditorVisibility() {
         tr("Controls samples that move beyond the source image boundary."));
     effect_center_x_->setToolTip(tr("Normalized horizontal center; 0 is left and 1 is right."));
     effect_center_y_->setToolTip(tr("Normalized vertical center; 0 is top and 1 is bottom."));
-    effect_radius_->setToolTip(tr("Glow blur radius in full-resolution output pixels."));
+    effect_radius_->setToolTip(
+        is_blur ? tr("Blur radius in full-resolution output pixels.")
+                : tr("Glow blur radius in full-resolution output pixels."));
     effect_area_radius_->setToolTip(
         tr("Fraction of the shorter canvas edge. Zero affects the whole layer; "
            "positive values create a feathered draggable circle."));
@@ -6984,6 +7535,16 @@ void MainWindow::updateEffectEditorVisibility() {
         set_form_label(effect_form_, effect_secondary_, tr("Pulse depth"));
         effect_intensity_->setToolTip(tr("Brightness added by the blurred highlight layer."));
         effect_secondary_->setToolTip(tr("How strongly the synchronized clock pulses glow intensity."));
+    } else if (is_blur) {
+        set_form_label(effect_form_, effect_radius_, tr("Blur radius (pixels)"));
+        set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
+        set_form_label(effect_form_, effect_angle_, tr("Direction angle (degrees)"));
+        effect_center_x_->setToolTip(
+            tr("Center for Radial and Zoom blur, and for an optional local-area mask."));
+        effect_center_y_->setToolTip(
+            tr("Center for Radial and Zoom blur, and for an optional local-area mask."));
+        effect_angle_->setToolTip(tr("Sampling direction for Directional blur."));
     } else if (is_block_scale) {
         set_form_label(effect_form_, effect_intensity_, tr("Pixel-block mix"));
         set_form_label(effect_form_, effect_magnitude_, tr("Minimum size multiplier"));
@@ -7035,7 +7596,9 @@ void MainWindow::loadSelectedEffect() {
              effect_phase_, effect_edge_, effect_intensity_, effect_magnitude_,
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
              effect_angle_, effect_radius_, effect_threshold_, effect_knee_,
-             effect_area_radius_}) {
+             effect_area_radius_, effect_blur_type_, effect_blur_passes_,
+             effect_blur_samples_, effect_blur_minimum_, effect_blur_maximum_,
+             effect_blur_pulses_}) {
         widget->setEnabled(enabled);
     }
     if (index) {
@@ -7067,6 +7630,12 @@ void MainWindow::loadSelectedEffect() {
         effect_threshold_->setValue(effect.threshold);
         effect_knee_->setValue(effect.soft_knee);
         effect_area_radius_->setValue(effect.area_radius);
+        select_enum(effect_blur_type_, effect.blur_type);
+        effect_blur_passes_->setValue(effect.blur_passes);
+        effect_blur_samples_->setValue(effect.blur_samples);
+        effect_blur_minimum_->setValue(effect.blur_minimum);
+        effect_blur_maximum_->setValue(effect.blur_maximum);
+        effect_blur_pulses_->setValue(effect.blur_pulses_per_cycle);
     }
     updateEffectEditorVisibility();
     populating_ = false;
@@ -7177,6 +7746,12 @@ void MainWindow::loadGlobalEditors() {
     starting_image_path_->setText(
         QString::fromStdString(config_.starting_image.basename));
     select_enum(starting_image_fit_, config_.starting_image.fit);
+    starting_image_palette_dither_->setChecked(
+        config_.starting_image.palette_dither_enabled);
+    select_enum(starting_image_palette_dither_method_,
+                config_.starting_image.palette_dither_method);
+    starting_image_palette_dither_method_->setEnabled(
+        config_.starting_image.palette_dither_enabled);
     surface_enabled_->setChecked(config_.surface.enabled);
     select_enum(surface_mapping_, config_.surface.mapping);
     surface_obj_path_->setText(QString::fromStdString(config_.surface.obj_path));
@@ -7201,11 +7776,27 @@ void MainWindow::loadGlobalEditors() {
     palette_enabled_->setChecked(config_.palette.enabled);
     palette_name_->setText(QString::fromStdString(config_.palette.name));
     refreshPaletteEditor();
+    select_enum(starting_color_mode_, config_.starting_colors.mode);
+    starting_color_include_alpha_->setChecked(
+        config_.starting_colors.include_alpha);
+    starting_red_steps_->setValue(config_.starting_colors.red_steps);
+    starting_green_steps_->setValue(config_.starting_colors.green_steps);
+    starting_blue_steps_->setValue(config_.starting_colors.blue_steps);
+    starting_alpha_steps_->setValue(config_.starting_colors.alpha_steps);
+    starting_red_minimum_->setValue(config_.starting_colors.red_minimum);
+    starting_red_maximum_->setValue(config_.starting_colors.red_maximum);
+    starting_green_minimum_->setValue(config_.starting_colors.green_minimum);
+    starting_green_maximum_->setValue(config_.starting_colors.green_maximum);
+    starting_blue_minimum_->setValue(config_.starting_colors.blue_minimum);
+    starting_blue_maximum_->setValue(config_.starting_colors.blue_maximum);
+    starting_alpha_minimum_->setValue(config_.starting_colors.alpha_minimum);
+    starting_alpha_maximum_->setValue(config_.starting_colors.alpha_maximum);
     quantization_enabled_->setChecked(config_.quantization.enabled);
     quantization_levels_->setValue(config_.quantization.levels);
     quantization_mix_->setValue(config_.quantization.mix);
     select_enum(quantization_mode_, config_.quantization.mode);
     alpha_enabled_->setChecked(config_.alpha.enabled);
+    alpha_use_source_->setChecked(config_.alpha.use_source_alpha);
     alpha_minimum_->setValue(config_.alpha.minimum);
     alpha_maximum_->setValue(config_.alpha.maximum);
     alpha_frequency_->setValue(config_.alpha.spatial_frequency);
@@ -7244,14 +7835,15 @@ void MainWindow::refreshPaletteEditor() {
         const pvt::PaletteColor& value = config_.palette.colors[index];
         const QColor color = QColor::fromRgbF(
             static_cast<float>(value.red), static_cast<float>(value.green),
-            static_cast<float>(value.blue));
+            static_cast<float>(value.blue), static_cast<float>(value.alpha));
         auto* item = new QListWidgetItem(
-            tr("%1. %2   RGB(%3, %4, %5)")
+            tr("%1. %2   RGBA(%3, %4, %5, %6)")
                 .arg(static_cast<qulonglong>(index + 1U))
-                .arg(color.name(QColor::HexRgb).toUpper())
+                .arg(color.name(QColor::HexArgb).toUpper())
                 .arg(value.red, 0, 'f', 3)
                 .arg(value.green, 0, 'f', 3)
-                .arg(value.blue, 0, 'f', 3),
+                .arg(value.blue, 0, 'f', 3)
+                .arg(value.alpha, 0, 'f', 3),
             palette_colors_);
         item->setBackground(color);
         const double luminance = 0.2126 * value.red + 0.7152 * value.green
@@ -7278,6 +7870,383 @@ void MainWindow::applyPalettePreset(std::size_t index) {
     recordActiveStateChange(tr("Use palette preset"), std::move(before));
 }
 
+void MainWindow::savePaletteToLibrary() {
+    if (config_.palette.colors.empty()) {
+        QMessageBox::information(this, tr("Nothing to save"),
+                                 tr("Add at least one palette color first."));
+        return;
+    }
+    bool accepted = false;
+    const QString name = QInputDialog::getText(
+        this, tr("Save palette"), tr("Library name"), QLineEdit::Normal,
+        QString::fromStdString(config_.palette.name), &accepted).trimmed();
+    if (!accepted) return;
+    if (!valid_text(name, TextRule::Name)) {
+        QMessageBox::warning(this, tr("Invalid palette name"),
+                             tr("Enter a non-empty palette name without control characters."));
+        return;
+    }
+
+    QSettings settings;
+    QJsonArray entries;
+    const QJsonDocument existing = QJsonDocument::fromJson(
+        settings.value(QStringLiteral("paletteLibrary/entries")).toByteArray());
+    if (existing.isArray()) entries = existing.array();
+    for (qsizetype index = entries.size() - 1; index >= 0; --index) {
+        if (entries.at(index).toObject().value(QStringLiteral("name")).toString()
+                .compare(name, Qt::CaseInsensitive) == 0) {
+            const auto answer = QMessageBox::question(
+                this, tr("Replace saved palette?"),
+                tr("A palette named “%1” already exists. Replace it?").arg(name));
+            if (answer != QMessageBox::Yes) return;
+            entries.removeAt(index);
+        }
+    }
+
+    QJsonObject entry;
+    entry.insert(QStringLiteral("schema"), 1);
+    entry.insert(QStringLiteral("name"), name);
+    QJsonArray colors;
+    for (const auto& color : config_.palette.colors) {
+        colors.append(QJsonArray{color.red, color.green, color.blue, color.alpha});
+    }
+    entry.insert(QStringLiteral("colors"), colors);
+    entries.append(entry);
+    settings.setValue(QStringLiteral("paletteLibrary/entries"),
+                      QJsonDocument(entries).toJson(QJsonDocument::Compact));
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        QMessageBox::critical(this, tr("Could not save palette"),
+                              tr("The local palette library could not be written."));
+        return;
+    }
+    status_->setText(tr("Saved “%1” to the local palette library.").arg(name));
+}
+
+void MainWindow::loadPaletteFromLibraryOrLayer() {
+    struct Choice {
+        QString label;
+        pvt::PaletteConfig palette;
+    };
+    std::vector<Choice> choices;
+    for (const auto& layer : project_.layers) {
+        if (layer.uuid == active_layer_uuid_ || layer.render.palette.colors.empty()) {
+            continue;
+        }
+        choices.push_back({
+            tr("Project layer: %1 — %2")
+                .arg(QString::fromStdString(layer.name),
+                     QString::fromStdString(layer.render.palette.name)),
+            layer.render.palette});
+    }
+
+    const QJsonDocument saved = QJsonDocument::fromJson(
+        QSettings().value(QStringLiteral("paletteLibrary/entries")).toByteArray());
+    if (saved.isArray()) {
+        for (const QJsonValue& value : saved.array()) {
+            const QJsonObject entry = value.toObject();
+            const QString name = entry.value(QStringLiteral("name")).toString().trimmed();
+            const QJsonArray colors = entry.value(QStringLiteral("colors")).toArray();
+            if (name.isEmpty() || colors.isEmpty()
+                || colors.size() > static_cast<qsizetype>(pvt::kMaximumPaletteColors)) {
+                continue;
+            }
+            pvt::PaletteConfig palette;
+            palette.enabled = true;
+            palette.name = name.toStdString();
+            bool valid = true;
+            for (const QJsonValue& color_value : colors) {
+                const QJsonArray rgba = color_value.toArray();
+                if (rgba.size() != 4) {
+                    valid = false;
+                    break;
+                }
+                pvt::PaletteColor color{
+                    rgba.at(0).toDouble(-1.0), rgba.at(1).toDouble(-1.0),
+                    rgba.at(2).toDouble(-1.0), rgba.at(3).toDouble(-1.0)};
+                if (color.red < 0.0 || color.red > 1.0
+                    || color.green < 0.0 || color.green > 1.0
+                    || color.blue < 0.0 || color.blue > 1.0
+                    || color.alpha < 0.0 || color.alpha > 1.0) {
+                    valid = false;
+                    break;
+                }
+                palette.colors.push_back(color);
+            }
+            if (valid) {
+                choices.push_back({tr("Saved palette: %1").arg(name),
+                                   std::move(palette)});
+            }
+        }
+    }
+
+    if (choices.empty()) {
+        QMessageBox::information(
+            this, tr("No reusable palettes"),
+            tr("No other layer or locally saved palette is available yet."));
+        return;
+    }
+    QStringList labels;
+    for (const auto& choice : choices) labels.push_back(choice.label);
+    bool accepted = false;
+    const QString selected = QInputDialog::getItem(
+        this, tr("Load starting palette"), tr("Palette"), labels, 0, false,
+        &accepted);
+    if (!accepted) return;
+    const qsizetype index = labels.indexOf(selected);
+    if (index < 0 || static_cast<std::size_t>(index) >= choices.size()) return;
+    auto before = captureActiveState();
+    config_.palette = choices[static_cast<std::size_t>(index)].palette;
+    config_.palette.enabled = true;
+    syncActiveRender();
+    loadGlobalEditors();
+    schedulePreview();
+    recordActiveStateChange(tr("Load reusable palette"), std::move(before));
+    status_->setText(tr("Loaded %1.").arg(selected));
+}
+
+void MainWindow::generateRandomPalette() {
+    QSettings settings;
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Generate constrained random palette"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout;
+    auto* count = integer_editor(1, 65536);
+    count->setValue(settings.value(QStringLiteral("paletteRandom/count"), 8).toInt());
+    auto* seed_method = new QComboBox;
+    seed_method->addItem(tr("Manual deterministic seed"), 0);
+    seed_method->addItem(tr("Very poor: fixed seed 1"), 1);
+    seed_method->addItem(tr("Poor: wall-clock seconds"), 2);
+    seed_method->addItem(tr("Fast pseudorandom seed"), 3);
+    seed_method->addItem(tr("Secure operating-system entropy"), 4);
+    seed_method->setCurrentIndex((std::clamp)(
+        settings.value(QStringLiteral("paletteRandom/seedMethod"), 4).toInt(), 0, 4));
+    auto* seed = new QLineEdit(
+        settings.value(QStringLiteral("paletteRandom/manualSeed"),
+                       QStringLiteral("1")).toString());
+    seed->setPlaceholderText(tr("Unsigned 64-bit integer"));
+    auto* warmup = integer_editor(0, 1000000);
+    warmup->setValue(settings.value(QStringLiteral("paletteRandom/warmup"), 0).toInt());
+    warmup->setToolTip(tr(
+        "Discards this many generator outputs before palette creation. Each draw is "
+        "already uniform; this is exposed for experimentation and reproducibility."));
+    auto* aesthetic = new QCheckBox(tr("Use aesthetic relationship rules"));
+    aesthetic->setChecked(settings.value(
+        QStringLiteral("paletteRandom/aesthetic"), true).toBool());
+    auto* rules_button = new QPushButton(tr("Choose relationship rules…"));
+    form->addRow(tr("Number of colors"), count);
+    form->addRow(tr("Seed source"), seed_method);
+    form->addRow(tr("Manual seed"), seed);
+    form->addRow(tr("Generator warm-up draws"), warmup);
+    form->addRow(aesthetic);
+    form->addRow(rules_button);
+    layout->addLayout(form);
+
+    auto* channel_grid = new QGridLayout;
+    channel_grid->addWidget(new QLabel(tr("Channel")), 0, 0);
+    channel_grid->addWidget(new QLabel(tr("Minimum")), 0, 1);
+    channel_grid->addWidget(new QLabel(tr("Maximum")), 0, 2);
+    std::array<QDoubleSpinBox*, 4> minimums{};
+    std::array<QDoubleSpinBox*, 4> maximums{};
+    const std::array<QString, 4> channel_names = {
+        tr("Red"), tr("Green"), tr("Blue"), tr("Alpha")};
+    for (int channel = 0; channel < 4; ++channel) {
+        minimums[static_cast<std::size_t>(channel)] =
+            real_editor(0.0, 1.0, 4, 0.01);
+        maximums[static_cast<std::size_t>(channel)] =
+            real_editor(0.0, 1.0, 4, 0.01);
+        minimums[static_cast<std::size_t>(channel)]->setValue(
+            settings.value(QStringLiteral("paletteRandom/min%1").arg(channel),
+                           channel == 3 ? 1.0 : 0.0).toDouble());
+        maximums[static_cast<std::size_t>(channel)]->setValue(
+            settings.value(QStringLiteral("paletteRandom/max%1").arg(channel),
+                           1.0).toDouble());
+        channel_grid->addWidget(new QLabel(channel_names[static_cast<std::size_t>(channel)]),
+                                channel + 1, 0);
+        channel_grid->addWidget(minimums[static_cast<std::size_t>(channel)],
+                                channel + 1, 1);
+        channel_grid->addWidget(maximums[static_cast<std::size_t>(channel)],
+                                channel + 1, 2);
+    }
+    layout->addLayout(channel_grid);
+
+    std::array<bool, 5> rules = {
+        settings.value(QStringLiteral("paletteRandom/ruleMonochrome"), true).toBool(),
+        settings.value(QStringLiteral("paletteRandom/ruleComplementary"), true).toBool(),
+        settings.value(QStringLiteral("paletteRandom/ruleAnalogous"), true).toBool(),
+        settings.value(QStringLiteral("paletteRandom/ruleContrast"), true).toBool(),
+        settings.value(QStringLiteral("paletteRandom/ruleAlpha"), true).toBool()};
+    connect(rules_button, &QPushButton::clicked, &dialog, [&dialog, &rules] {
+        QDialog rules_dialog(&dialog);
+        rules_dialog.setWindowTitle(QObject::tr("Aesthetic relationship rules"));
+        auto* rules_layout = new QVBoxLayout(&rules_dialog);
+        const std::array<QString, 5> labels = {
+            QObject::tr("Monochrome RGB shades with a small complementary accent"),
+            QObject::tr("Complementary RGB hue pairs"),
+            QObject::tr("Analogous RGB hues within a narrow neighborhood"),
+            QObject::tr("Alternating light and dark RGB luminance"),
+            QObject::tr("Even alpha cadence from the allowed minimum to maximum")};
+        std::array<QCheckBox*, 5> boxes{};
+        for (std::size_t index = 0; index < boxes.size(); ++index) {
+            boxes[index] = new QCheckBox(labels[index]);
+            boxes[index]->setChecked(rules[index]);
+            rules_layout->addWidget(boxes[index]);
+        }
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        QObject::connect(buttons, &QDialogButtonBox::accepted,
+                         &rules_dialog, &QDialog::accept);
+        QObject::connect(buttons, &QDialogButtonBox::rejected,
+                         &rules_dialog, &QDialog::reject);
+        rules_layout->addWidget(buttons);
+        if (rules_dialog.exec() == QDialog::Accepted) {
+            for (std::size_t index = 0; index < boxes.size(); ++index) {
+                rules[index] = boxes[index]->isChecked();
+            }
+        }
+    });
+    const auto update_seed_state = [seed_method, seed] {
+        seed->setEnabled(seed_method->currentData().toInt() == 0);
+    };
+    connect(seed_method, &QComboBox::currentIndexChanged, &dialog,
+            update_seed_state);
+    update_seed_state();
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Generate"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    std::array<double, 4> mins{};
+    std::array<double, 4> maxes{};
+    for (std::size_t channel = 0; channel < mins.size(); ++channel) {
+        mins[channel] = minimums[channel]->value();
+        maxes[channel] = maximums[channel]->value();
+        if (mins[channel] > maxes[channel]) {
+            QMessageBox::warning(this, tr("Invalid channel range"),
+                                 tr("Every channel minimum must be no greater than its maximum."));
+            return;
+        }
+    }
+
+    bool seed_ok = false;
+    quint64 selected_seed = seed->text().trimmed().toULongLong(&seed_ok, 0);
+    const int method = seed_method->currentData().toInt();
+    if (method == 0 && !seed_ok) {
+        QMessageBox::warning(this, tr("Invalid seed"),
+                             tr("The manual seed must be an unsigned 64-bit integer."));
+        return;
+    }
+    if (method == 1) selected_seed = 1;
+    if (method == 2) selected_seed = static_cast<quint64>(QDateTime::currentSecsSinceEpoch());
+    if (method == 3) selected_seed = QRandomGenerator::global()->generate64();
+    if (method == 4) selected_seed = QRandomGenerator::system()->generate64();
+
+    settings.setValue(QStringLiteral("paletteRandom/count"), count->value());
+    settings.setValue(QStringLiteral("paletteRandom/seedMethod"), method);
+    settings.setValue(QStringLiteral("paletteRandom/manualSeed"), seed->text().trimmed());
+    settings.setValue(QStringLiteral("paletteRandom/warmup"), warmup->value());
+    settings.setValue(QStringLiteral("paletteRandom/aesthetic"), aesthetic->isChecked());
+    settings.setValue(QStringLiteral("paletteRandom/ruleMonochrome"), rules[0]);
+    settings.setValue(QStringLiteral("paletteRandom/ruleComplementary"), rules[1]);
+    settings.setValue(QStringLiteral("paletteRandom/ruleAnalogous"), rules[2]);
+    settings.setValue(QStringLiteral("paletteRandom/ruleContrast"), rules[3]);
+    settings.setValue(QStringLiteral("paletteRandom/ruleAlpha"), rules[4]);
+    for (int channel = 0; channel < 4; ++channel) {
+        settings.setValue(QStringLiteral("paletteRandom/min%1").arg(channel),
+                          mins[static_cast<std::size_t>(channel)]);
+        settings.setValue(QStringLiteral("paletteRandom/max%1").arg(channel),
+                          maxes[static_cast<std::size_t>(channel)]);
+    }
+
+    std::mt19937_64 random(selected_seed);
+    random.discard(static_cast<unsigned long long>(warmup->value()));
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    const auto ranged = [&unit, &random](double minimum, double maximum) {
+        return minimum + (maximum - minimum) * unit(random);
+    };
+    std::vector<int> enabled_rules;
+    if (aesthetic->isChecked()) {
+        for (int index = 0; index < static_cast<int>(rules.size()); ++index) {
+            if (rules[static_cast<std::size_t>(index)]) enabled_rules.push_back(index);
+        }
+    }
+    int selected_rule = -1;
+    if (!enabled_rules.empty()) {
+        std::uniform_int_distribution<std::size_t> choose(
+            0, enabled_rules.size() - 1U);
+        selected_rule = enabled_rules[choose(random)];
+    }
+
+    const double base_hue = unit(random);
+    const auto clamp_channel = [&mins, &maxes](double value, std::size_t channel) {
+        return (std::clamp)(value, mins[channel], maxes[channel]);
+    };
+    pvt::PaletteConfig palette;
+    palette.enabled = true;
+    palette.name = tr("Random %1").arg(selected_seed).toStdString();
+    palette.colors.reserve(static_cast<std::size_t>(count->value()));
+    for (int index = 0; index < count->value(); ++index) {
+        double red = ranged(mins[0], maxes[0]);
+        double green = ranged(mins[1], maxes[1]);
+        double blue = ranged(mins[2], maxes[2]);
+        double alpha = ranged(mins[3], maxes[3]);
+        if (selected_rule >= 0 && selected_rule <= 3) {
+            double hue = base_hue;
+            double saturation = ranged(0.45, 0.95);
+            double value = ranged(0.25, 1.0);
+            if (selected_rule == 0) {
+                const int accent_count = (std::max)(1, count->value() / 5);
+                if (index >= count->value() - accent_count) {
+                    hue = std::fmod(base_hue + 0.5, 1.0);
+                }
+                value = 0.18 + 0.78 * (static_cast<double>(index + 1)
+                                      / static_cast<double>(count->value()));
+            } else if (selected_rule == 1) {
+                hue = std::fmod(base_hue + (index % 2 == 0 ? 0.0 : 0.5), 1.0);
+            } else if (selected_rule == 2) {
+                hue = std::fmod(base_hue - 1.0 / 12.0
+                                    + (1.0 / 6.0) * unit(random) + 1.0,
+                                1.0);
+            } else if (selected_rule == 3) {
+                value = index % 2 == 0 ? ranged(0.12, 0.38)
+                                       : ranged(0.72, 1.0);
+                hue = unit(random);
+            }
+            const QColor related = QColor::fromHsvF(
+                static_cast<float>(hue), static_cast<float>(saturation),
+                static_cast<float>(value));
+            red = clamp_channel(related.redF(), 0);
+            green = clamp_channel(related.greenF(), 1);
+            blue = clamp_channel(related.blueF(), 2);
+        }
+        if (selected_rule == 4) {
+            alpha = count->value() == 1
+                        ? mins[3]
+                        : mins[3] + (maxes[3] - mins[3])
+                                      * static_cast<double>(index)
+                                      / static_cast<double>(count->value() - 1);
+        }
+        palette.colors.push_back({red, green, blue, alpha});
+    }
+
+    auto before = captureActiveState();
+    config_.palette = std::move(palette);
+    syncActiveRender();
+    loadGlobalEditors();
+    schedulePreview();
+    recordActiveStateChange(tr("Generate random palette"), std::move(before));
+    status_->setText(tr("Generated %1 colors with seed %2%3.")
+                         .arg(count->value())
+                         .arg(selected_seed)
+                         .arg(selected_rule >= 0
+                                  ? tr(" and one selected relationship rule")
+                                  : QString()));
+}
+
 void MainWindow::addPaletteColor() {
     if (config_.palette.colors.size() >= pvt::kMaximumPaletteColors) {
         QMessageBox::warning(
@@ -7290,13 +8259,14 @@ void MainWindow::addPaletteColor() {
                                : QColor::fromRgbF(
                                      static_cast<float>(config_.palette.colors.back().red),
                                      static_cast<float>(config_.palette.colors.back().green),
-                                     static_cast<float>(config_.palette.colors.back().blue));
+                                     static_cast<float>(config_.palette.colors.back().blue),
+                                     static_cast<float>(config_.palette.colors.back().alpha));
     const QColor chosen = QColorDialog::getColor(
-        initial, this, tr("Add palette color"));
+        initial, this, tr("Add palette color"), QColorDialog::ShowAlphaChannel);
     if (!chosen.isValid()) return;
     auto before = captureActiveState();
     config_.palette.colors.push_back(
-        {chosen.redF(), chosen.greenF(), chosen.blueF()});
+        {chosen.redF(), chosen.greenF(), chosen.blueF(), chosen.alphaF()});
     syncActiveRender();
     refreshPaletteEditor();
     palette_colors_->setCurrentRow(
@@ -7314,12 +8284,13 @@ void MainWindow::editSelectedPaletteColor() {
     const QColor chosen = QColorDialog::getColor(
         QColor::fromRgbF(static_cast<float>(current.red),
                          static_cast<float>(current.green),
-                         static_cast<float>(current.blue)),
-        this, tr("Edit palette color"));
+                         static_cast<float>(current.blue),
+                         static_cast<float>(current.alpha)),
+        this, tr("Edit palette color"), QColorDialog::ShowAlphaChannel);
     if (!chosen.isValid()) return;
     auto before = captureActiveState();
     config_.palette.colors[static_cast<std::size_t>(row)] =
-        {chosen.redF(), chosen.greenF(), chosen.blueF()};
+        {chosen.redF(), chosen.greenF(), chosen.blueF(), chosen.alphaF()};
     syncActiveRender();
     refreshPaletteEditor();
     palette_colors_->setCurrentRow(row);
@@ -7781,6 +8752,15 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             }
             loadSelectedEffect();
         }
+    } else if (changed_editor == effect_blur_type_) {
+        effect.blur_type = static_cast<pvt::BlurType>(
+            effect_blur_type_->currentData().toInt());
+        if (effect.blur_type == pvt::BlurType::Gaussian
+            && effect.blur_samples % 2 == 0) {
+            effect.blur_samples = (std::min)(129, effect.blur_samples + 1);
+            const QSignalBlocker blocker(effect_blur_samples_);
+            effect_blur_samples_->setValue(effect.blur_samples);
+        }
     } else if (changed_editor == effect_cycles_) {
         effect.cycles_per_loop = effect_cycles_->value();
     } else if (changed_editor == effect_phase_) {
@@ -7813,6 +8793,32 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.soft_knee = effect_knee_->value();
     } else if (changed_editor == effect_area_radius_) {
         effect.area_radius = effect_area_radius_->value();
+    } else if (changed_editor == effect_blur_passes_) {
+        effect.blur_passes = effect_blur_passes_->value();
+    } else if (changed_editor == effect_blur_samples_) {
+        int samples = effect_blur_samples_->value();
+        if (effect.blur_type == pvt::BlurType::Gaussian && samples % 2 == 0) {
+            samples = (std::min)(129, samples + 1);
+            const QSignalBlocker blocker(effect_blur_samples_);
+            effect_blur_samples_->setValue(samples);
+        }
+        effect.blur_samples = samples;
+    } else if (changed_editor == effect_blur_minimum_) {
+        effect.blur_minimum = effect_blur_minimum_->value();
+        if (effect.blur_maximum < effect.blur_minimum) {
+            effect.blur_maximum = effect.blur_minimum;
+            const QSignalBlocker blocker(effect_blur_maximum_);
+            effect_blur_maximum_->setValue(effect.blur_maximum);
+        }
+    } else if (changed_editor == effect_blur_maximum_) {
+        effect.blur_maximum = effect_blur_maximum_->value();
+        if (effect.blur_minimum > effect.blur_maximum) {
+            effect.blur_minimum = effect.blur_maximum;
+            const QSignalBlocker blocker(effect_blur_minimum_);
+            effect_blur_minimum_->setValue(effect.blur_minimum);
+        }
+    } else if (changed_editor == effect_blur_pulses_) {
+        effect.blur_pulses_per_cycle = effect_blur_pulses_->value();
     } else {
         return;
     }
@@ -7895,6 +8901,15 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == starting_image_fit_) {
         config_.starting_image.fit = static_cast<pvt::StartingImageFit>(
             starting_image_fit_->currentData().toInt());
+    } else if (changed_editor == starting_image_palette_dither_) {
+        config_.starting_image.palette_dither_enabled =
+            starting_image_palette_dither_->isChecked();
+        starting_image_palette_dither_method_->setEnabled(
+            config_.starting_image.palette_dither_enabled);
+    } else if (changed_editor == starting_image_palette_dither_method_) {
+        config_.starting_image.palette_dither_method =
+            static_cast<pvt::DitherMethod>(
+                starting_image_palette_dither_method_->currentData().toInt());
     } else if (changed_editor == transform_flip_horizontal_) {
         config_.transform.flip_horizontal =
             transform_flip_horizontal_->isChecked();
@@ -7948,6 +8963,84 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == palette_name_) {
         if (!palette_name_->hasAcceptableInput()) return;
         config_.palette.name = palette_name_->text().toStdString();
+    } else if (changed_editor == starting_color_mode_) {
+        config_.starting_colors.mode = static_cast<pvt::StartingColorMode>(
+            starting_color_mode_->currentData().toInt());
+    } else if (changed_editor == starting_color_include_alpha_) {
+        config_.starting_colors.include_alpha =
+            starting_color_include_alpha_->isChecked();
+    } else if (changed_editor == starting_red_steps_) {
+        config_.starting_colors.red_steps = starting_red_steps_->value();
+    } else if (changed_editor == starting_green_steps_) {
+        config_.starting_colors.green_steps = starting_green_steps_->value();
+    } else if (changed_editor == starting_blue_steps_) {
+        config_.starting_colors.blue_steps = starting_blue_steps_->value();
+    } else if (changed_editor == starting_alpha_steps_) {
+        config_.starting_colors.alpha_steps = starting_alpha_steps_->value();
+    } else if (changed_editor == starting_red_minimum_) {
+        config_.starting_colors.red_minimum = starting_red_minimum_->value();
+        if (config_.starting_colors.red_maximum
+            < config_.starting_colors.red_minimum) {
+            config_.starting_colors.red_maximum = config_.starting_colors.red_minimum;
+            const QSignalBlocker blocker(starting_red_maximum_);
+            starting_red_maximum_->setValue(config_.starting_colors.red_maximum);
+        }
+    } else if (changed_editor == starting_red_maximum_) {
+        config_.starting_colors.red_maximum = starting_red_maximum_->value();
+        if (config_.starting_colors.red_minimum
+            > config_.starting_colors.red_maximum) {
+            config_.starting_colors.red_minimum = config_.starting_colors.red_maximum;
+            const QSignalBlocker blocker(starting_red_minimum_);
+            starting_red_minimum_->setValue(config_.starting_colors.red_minimum);
+        }
+    } else if (changed_editor == starting_green_minimum_) {
+        config_.starting_colors.green_minimum = starting_green_minimum_->value();
+        if (config_.starting_colors.green_maximum
+            < config_.starting_colors.green_minimum) {
+            config_.starting_colors.green_maximum = config_.starting_colors.green_minimum;
+            const QSignalBlocker blocker(starting_green_maximum_);
+            starting_green_maximum_->setValue(config_.starting_colors.green_maximum);
+        }
+    } else if (changed_editor == starting_green_maximum_) {
+        config_.starting_colors.green_maximum = starting_green_maximum_->value();
+        if (config_.starting_colors.green_minimum
+            > config_.starting_colors.green_maximum) {
+            config_.starting_colors.green_minimum = config_.starting_colors.green_maximum;
+            const QSignalBlocker blocker(starting_green_minimum_);
+            starting_green_minimum_->setValue(config_.starting_colors.green_minimum);
+        }
+    } else if (changed_editor == starting_blue_minimum_) {
+        config_.starting_colors.blue_minimum = starting_blue_minimum_->value();
+        if (config_.starting_colors.blue_maximum
+            < config_.starting_colors.blue_minimum) {
+            config_.starting_colors.blue_maximum = config_.starting_colors.blue_minimum;
+            const QSignalBlocker blocker(starting_blue_maximum_);
+            starting_blue_maximum_->setValue(config_.starting_colors.blue_maximum);
+        }
+    } else if (changed_editor == starting_blue_maximum_) {
+        config_.starting_colors.blue_maximum = starting_blue_maximum_->value();
+        if (config_.starting_colors.blue_minimum
+            > config_.starting_colors.blue_maximum) {
+            config_.starting_colors.blue_minimum = config_.starting_colors.blue_maximum;
+            const QSignalBlocker blocker(starting_blue_minimum_);
+            starting_blue_minimum_->setValue(config_.starting_colors.blue_minimum);
+        }
+    } else if (changed_editor == starting_alpha_minimum_) {
+        config_.starting_colors.alpha_minimum = starting_alpha_minimum_->value();
+        if (config_.starting_colors.alpha_maximum
+            < config_.starting_colors.alpha_minimum) {
+            config_.starting_colors.alpha_maximum = config_.starting_colors.alpha_minimum;
+            const QSignalBlocker blocker(starting_alpha_maximum_);
+            starting_alpha_maximum_->setValue(config_.starting_colors.alpha_maximum);
+        }
+    } else if (changed_editor == starting_alpha_maximum_) {
+        config_.starting_colors.alpha_maximum = starting_alpha_maximum_->value();
+        if (config_.starting_colors.alpha_minimum
+            > config_.starting_colors.alpha_maximum) {
+            config_.starting_colors.alpha_minimum = config_.starting_colors.alpha_maximum;
+            const QSignalBlocker blocker(starting_alpha_minimum_);
+            starting_alpha_minimum_->setValue(config_.starting_colors.alpha_minimum);
+        }
     } else if (changed_editor == surface_enabled_) {
         config_.surface.enabled = surface_enabled_->isChecked();
     } else if (changed_editor == surface_mapping_) {
@@ -7972,6 +9065,8 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             static_cast<pvt::QuantizationMode>(quantization_mode_->currentData().toInt());
     } else if (changed_editor == alpha_enabled_) {
         config_.alpha.enabled = alpha_enabled_->isChecked();
+    } else if (changed_editor == alpha_use_source_) {
+        config_.alpha.use_source_alpha = alpha_use_source_->isChecked();
     } else if (changed_editor == alpha_minimum_) {
         config_.alpha.minimum = alpha_minimum_->value();
     } else if (changed_editor == alpha_maximum_) {
@@ -8044,6 +9139,8 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     dither_enabled_->setEnabled(config_.output.bit_depth != 32);
     dither_method_->setEnabled(config_.output.bit_depth != 32
                                && config_.output.dither_enabled);
+    starting_image_palette_dither_method_->setEnabled(
+        config_.starting_image.palette_dither_enabled);
     png_compression_->setEnabled(config_.output.bit_depth != 32);
     if (changed_editor == frames_ || changed_editor == fps_) {
         updateTimelineState();
@@ -8262,10 +9359,11 @@ void MainWindow::randomizeStackComposition() {
         config_.swings.front().enabled = true;
     }
 
-    std::array<pvt::EffectType, 7> effect_types = {
+    std::array<pvt::EffectType, 8> effect_types = {
         pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
         pvt::EffectType::Shake, pvt::EffectType::FlagWave, pvt::EffectType::Glow,
-        pvt::EffectType::BlockScale, pvt::EffectType::ParticleField};
+        pvt::EffectType::BlockScale, pvt::EffectType::ParticleField,
+        pvt::EffectType::Blur};
     constexpr int kMaximumRandomEffects = 6;
     const int effect_count = random_integer(random, 1, kMaximumRandomEffects);
     bool has_enabled_effect = false;
@@ -8362,10 +9460,70 @@ QString MainWindow::currentMusicSourcePath(bool layer_clock) const {
 
 void MainWindow::chooseMusicSource() {
     if (music_analysis_active_) return;
+    std::vector<const pvt::LayerConfig*> reusable;
+    QStringList labels;
+    for (const auto& layer : project_.layers) {
+        if (layer.render.layer_clock.clock.music.source_sha256.empty()) continue;
+        reusable.push_back(&layer);
+        labels.push_back(tr("Layer clock: %1 — %2")
+                             .arg(QString::fromStdString(layer.name),
+                                  QString::fromStdString(
+                                      layer.render.layer_clock.clock.music.source_basename)));
+    }
+    if (!reusable.empty()) {
+        labels.push_back(tr("Analyze a different audio file from disk…"));
+        bool accepted = false;
+        const QString selection = QInputDialog::getItem(
+            this, tr("Choose project music asset"), tr("Matching project assets"),
+            labels, 0, false, &accepted);
+        if (!accepted) return;
+        const qsizetype selected = labels.indexOf(selection);
+        if (selected >= 0
+            && static_cast<std::size_t>(selected) < reusable.size()) {
+            if (document_ == nullptr) return;
+            auto before = captureActiveState();
+            const auto& source = *reusable[static_cast<std::size_t>(selected)];
+            QString alias_error;
+            if (!alias_project_attachment(
+                    *document_, pvt::layer_music_attachment_id(source.uuid),
+                    pvt::kMusicSourceAttachmentId, &alias_error)) {
+                QMessageBox::critical(this, tr("Could not reuse audio"), alias_error);
+                return;
+            }
+            const bool first_source = config_.clock.music.source_sha256.empty();
+            config_.clock.music = source.render.layer_clock.clock.music;
+            config_.clock.mode = pvt::ClockMode::Music;
+            config_.clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
+            if (first_source) config_.audio_reactive_defaults.enabled = true;
+            syncActiveRender();
+            syncProjectGlobals();
+            document_->project = project_;
+            document_->dirty = true;
+            recordActiveStateChange(tr("Reuse embedded project music"),
+                                    std::move(before));
+            loadGlobalEditors();
+            updateTimelineState();
+            updateExportAvailability();
+            if (playback_timer_->isActive()) startProjectAudioPlayback();
+            status_->setText(tr("Reused %1 without reanalysis or duplicate bytes.")
+                                 .arg(QString::fromStdString(
+                                     config_.clock.music.source_basename)));
+            return;
+        }
+    }
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Choose music source"), usableDialogDirectory(),
         tr("Supported audio (*.wav *.wave *.flac *.mp3);;WAV audio (*.wav *.wave);;FLAC audio (*.flac);;MP3 audio (*.mp3);;All files (*)"));
     if (path.isEmpty()) return;
+    if (!config_.clock.music.source_sha256.empty()
+        && QMessageBox::question(
+               this, tr("Replace project music asset?"),
+               tr("Analyze %1 and replace the current internal project-music binding?")
+                   .arg(QFileInfo(path).fileName()),
+               QMessageBox::Yes | QMessageBox::No,
+               QMessageBox::Yes) != QMessageBox::Yes) {
+        return;
+    }
     rememberDialogLocation(path);
     (void)startMusicAnalysis(path, MusicAnalysisAction::Choose);
 }
@@ -8394,10 +9552,88 @@ void MainWindow::reanalyzeMusicSource() {
 
 void MainWindow::chooseLayerMusicSource() {
     if (music_analysis_active_) return;
+    struct ReusableMusic {
+        QString label;
+        std::string reference_id;
+        const pvt::MusicAnalysis* analysis = nullptr;
+    };
+    std::vector<ReusableMusic> reusable;
+    if (!project_.canvas.clock.music.source_sha256.empty()) {
+        reusable.push_back({
+            tr("Project clock — %1").arg(QString::fromStdString(
+                project_.canvas.clock.music.source_basename)),
+            pvt::kMusicSourceAttachmentId, &project_.canvas.clock.music});
+    }
+    for (const auto& layer : project_.layers) {
+        if (layer.uuid == active_layer_uuid_
+            || layer.render.layer_clock.clock.music.source_sha256.empty()) {
+            continue;
+        }
+        reusable.push_back({
+            tr("Layer clock: %1 — %2")
+                .arg(QString::fromStdString(layer.name),
+                     QString::fromStdString(
+                         layer.render.layer_clock.clock.music.source_basename)),
+            pvt::layer_music_attachment_id(layer.uuid),
+            &layer.render.layer_clock.clock.music});
+    }
+    if (!reusable.empty()) {
+        QStringList labels;
+        for (const auto& source : reusable) labels.push_back(source.label);
+        labels.push_back(tr("Analyze a different audio file from disk…"));
+        bool accepted = false;
+        const QString selection = QInputDialog::getItem(
+            this, tr("Choose active-layer music asset"),
+            tr("Matching project assets"), labels, 0, false, &accepted);
+        if (!accepted) return;
+        const qsizetype selected = labels.indexOf(selection);
+        if (selected >= 0
+            && static_cast<std::size_t>(selected) < reusable.size()) {
+            if (document_ == nullptr) return;
+            auto before = captureActiveState();
+            const auto& source = reusable[static_cast<std::size_t>(selected)];
+            QString alias_error;
+            if (!alias_project_attachment(
+                    *document_, source.reference_id,
+                    pvt::layer_music_attachment_id(active_layer_uuid_),
+                    &alias_error)) {
+                QMessageBox::critical(this, tr("Could not reuse audio"), alias_error);
+                return;
+            }
+            config_.layer_clock.clock.music = *source.analysis;
+            config_.layer_clock.clock.mode = pvt::ClockMode::Music;
+            config_.layer_clock.clock.music_swing_policy =
+                pvt::MusicSwingPolicy::KeepAll;
+            config_.layer_clock.enabled = true;
+            syncActiveRender();
+            syncProjectGlobals();
+            document_->project = project_;
+            document_->dirty = true;
+            recordActiveStateChange(tr("Reuse embedded active-layer music"),
+                                    std::move(before));
+            loadGlobalEditors();
+            updateTimelineState();
+            updateExportAvailability();
+            if (playback_timer_->isActive()) startProjectAudioPlayback();
+            status_->setText(tr("Reused %1 without reanalysis or duplicate bytes.")
+                                 .arg(QString::fromStdString(
+                                     config_.layer_clock.clock.music.source_basename)));
+            return;
+        }
+    }
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Choose active-layer music source"), usableDialogDirectory(),
         tr("Supported audio (*.wav *.wave *.flac *.mp3);;WAV audio (*.wav *.wave);;FLAC audio (*.flac);;MP3 audio (*.mp3);;All files (*)"));
     if (path.isEmpty()) return;
+    if (!config_.layer_clock.clock.music.source_sha256.empty()
+        && QMessageBox::question(
+               this, tr("Replace active-layer music asset?"),
+               tr("Analyze %1 and replace the active layer's internal audio binding?")
+                   .arg(QFileInfo(path).fileName()),
+               QMessageBox::Yes | QMessageBox::No,
+               QMessageBox::Yes) != QMessageBox::Yes) {
+        return;
+    }
     rememberDialogLocation(path);
     (void)startMusicAnalysis(path, MusicAnalysisAction::Choose, true);
 }
@@ -9121,17 +10357,78 @@ bool MainWindow::startVideoExport() {
     if (path.isEmpty()) return false;
     if (QFileInfo(path).suffix().isEmpty()) path.append(QStringLiteral(".mov"));
     rememberDialogLocation(path);
-    const QFileInfo destination(path);
-    if (destination.exists() || destination.isSymLink()) {
-        if (destination.isDir()) {
-            QMessageBox::critical(this, tr("Invalid video destination"),
-                                  tr("The selected video destination is a directory."));
+    const int total_frames = effectiveFrameCount();
+    if (total_frames < 1) return false;
+    int chunk_size = total_frames;
+    if (options.chunk_mode == pvt::video::ChunkMode::FrameCount) {
+        chunk_size = options.chunk_frames;
+    } else if (options.chunk_mode
+               == pvt::video::ChunkMode::MaximumSeconds) {
+        chunk_size = std::max(
+            1, static_cast<int>(std::floor(
+                   options.chunk_maximum_seconds * project_.canvas.fps
+                   + 1.0e-9)));
+    }
+    chunk_size = std::clamp(chunk_size, 1, total_frames);
+    const bool chunked = options.chunk_mode
+                             != pvt::video::ChunkMode::SingleMovie
+                         && chunk_size < total_frames;
+    QStringList output_paths;
+    QString concat_script_path;
+    if (chunked) {
+        const QFileInfo requested(path);
+        const QDir directory = requested.dir();
+        const QString suffix = requested.suffix();
+        const QString stem = requested.completeBaseName();
+        const int chunk_count = (total_frames + chunk_size - 1) / chunk_size;
+        const int digits = std::max(
+            4, static_cast<int>(QString::number(chunk_count).size()));
+        for (int index = 0; index < chunk_count; ++index) {
+            output_paths.push_back(directory.filePath(
+                QStringLiteral("%1.part-%2.%3")
+                    .arg(stem)
+                    .arg(index + 1, digits, 10, QLatin1Char('0'))
+                    .arg(suffix)));
+        }
+        concat_script_path = directory.filePath(
+            stem + QStringLiteral("-concat.sh"));
+    } else {
+        output_paths.push_back(path);
+    }
+
+    QStringList collisions;
+    for (const QString& output_path : output_paths) {
+        const QFileInfo information(output_path);
+        if (information.isDir()) {
+            QMessageBox::critical(
+                this, tr("Invalid video destination"),
+                tr("A video output path is a directory: %1").arg(output_path));
             return false;
         }
+        if (information.exists() || information.isSymLink()) {
+            collisions.push_back(output_path);
+        }
+    }
+    if (!concat_script_path.isEmpty()) {
+        const QFileInfo script_info(concat_script_path);
+        if (script_info.isDir()) {
+            QMessageBox::critical(
+                this, tr("Invalid concat-script destination"),
+                tr("The concat-script path is a directory: %1")
+                    .arg(concat_script_path));
+            return false;
+        }
+        if (script_info.exists() || script_info.isSymLink()) {
+            collisions.push_back(concat_script_path);
+        }
+    }
+    if (!collisions.isEmpty()) {
         const auto replace = QMessageBox::warning(
-            this, tr("Replace existing video?"),
-            tr("A file already exists at %1. It will remain untouched unless the "
-               "complete new movie is ready. Replace it then?").arg(path),
+            this, chunked ? tr("Replace existing chunk outputs?")
+                          : tr("Replace existing video?"),
+            tr("%1 selected output file(s) already exist. Each movie remains "
+               "untouched unless its complete replacement is ready. Replace them?")
+                .arg(collisions.size()),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (replace != QMessageBox::Yes) return false;
         options.overwrite_existing = true;
@@ -9156,6 +10453,8 @@ bool MainWindow::startVideoExport() {
         auto project = project_;
         export_watcher_->setFuture(QtConcurrent::run(
             [this, project = std::move(project), path,
+             output_paths = std::move(output_paths), concat_script_path,
+             chunk_size, total_frames,
              options = std::move(options), audible_tracks]() mutable {
                 ExportResult result;
                 pvt::video::Report report;
@@ -9191,26 +10490,82 @@ bool MainWindow::startVideoExport() {
                             }
                         }
                     }
-                    result.ok = export_error.empty()
-                        && pvt::video::export_project(
-                        project, path.toStdString(), options,
-                        [this](int completed, int total) {
-                            const int stride = std::max(1, total / 200);
-                            if (completed == 0 || completed == total
-                                || completed % stride == 0) {
-                                QMetaObject::invokeMethod(
-                                    this, [this, completed, total] {
-                                        if (!export_active_) return;
-                                        status_->setText(
-                                            tr("Exporting video frame %1/%2…")
-                                                .arg(completed).arg(total));
-                                        export_progress_->setValue(
-                                            total > 0 ? completed * 1000 / total : 0);
-                                    }, Qt::QueuedConnection);
+                    result.ok = export_error.empty();
+                    for (int chunk_index = 0;
+                         result.ok && chunk_index < output_paths.size();
+                         ++chunk_index) {
+                        pvt::video::Options segment = options;
+                        const int first = output_paths.size() == 1
+                            ? 0 : chunk_index * chunk_size;
+                        const int count = output_paths.size() == 1
+                            ? total_frames
+                            : std::min(chunk_size, total_frames - first);
+                        segment.first_frame = first;
+                        segment.frame_count = count;
+                        pvt::video::Report segment_report;
+                        result.ok = pvt::video::export_project(
+                            project, output_paths[chunk_index].toStdString(),
+                            segment,
+                            [this, first, total_frames, chunk_index,
+                             chunk_count = output_paths.size()](int completed,
+                                                                 int) {
+                                const int global_completed = first + completed;
+                                const int stride = std::max(1, total_frames / 200);
+                                if (completed == 0
+                                    || global_completed == total_frames
+                                    || global_completed % stride == 0) {
+                                    QMetaObject::invokeMethod(
+                                        this,
+                                        [this, global_completed, total_frames,
+                                         chunk_index, chunk_count] {
+                                            if (!export_active_) return;
+                                            status_->setText(
+                                                tr("Exporting video frame %1/%2 (chunk %3/%4)…")
+                                                    .arg(global_completed)
+                                                    .arg(total_frames)
+                                                    .arg(chunk_index + 1)
+                                                    .arg(chunk_count));
+                                            export_progress_->setValue(
+                                                global_completed * 1000
+                                                / total_frames);
+                                        },
+                                        Qt::QueuedConnection);
+                                }
+                                return !cancel_export_.load();
+                            },
+                            &cancel_export_, &segment_report, &export_error);
+                        if (result.ok) {
+                            if (chunk_index == 0) {
+                                report = segment_report;
+                            } else {
+                                report.render_workers = std::max(
+                                    report.render_workers,
+                                    segment_report.render_workers);
+                                report.included_audio = report.included_audio
+                                                        || segment_report.included_audio;
+                                report.hardware_available =
+                                    report.hardware_available
+                                    || segment_report.hardware_available;
+                                report.hardware_required =
+                                    report.hardware_required
+                                    || segment_report.hardware_required;
                             }
-                            return !cancel_export_.load();
-                        },
-                        &cancel_export_, &report, &export_error);
+                        } else if (output_paths.size() > 1) {
+                            export_error = "Video chunk "
+                                + std::to_string(chunk_index + 1) + " of "
+                                + std::to_string(output_paths.size())
+                                + " failed: " + export_error;
+                        }
+                    }
+                    if (result.ok && output_paths.size() > 1) {
+                        QString script_error;
+                        result.ok = write_video_concat_script(
+                            concat_script_path, output_paths, path,
+                            &script_error);
+                        if (!result.ok) {
+                            export_error = script_error.toStdString();
+                        }
+                    }
                 } catch (const std::exception& exception) {
                     export_error = std::string("Video export failed: ")
                                    + exception.what();
@@ -9233,9 +10588,12 @@ bool MainWindow::startVideoExport() {
                                                   ? tr(", hardware encoder available/preferred")
                                                   : tr(", software fallback allowed")));
                     }
-                    result.success_message =
-                        tr("The native QuickTime movie was exported to %1.\n\n%2")
-                            .arg(path, details);
+                    result.success_message = output_paths.size() > 1
+                        ? tr("Exported %1 native QuickTime chunks and wrote the executable concat script:\n%2\n\nRun it directly for the default relative output, or pass an output file or directory as its one optional argument.\n\n%3")
+                              .arg(output_paths.size())
+                              .arg(concat_script_path, details)
+                        : tr("The native QuickTime movie was exported to %1.\n\n%2")
+                              .arg(path, details);
                 }
                 return result;
             }));
@@ -9309,6 +10667,8 @@ bool MainWindow::adoptLoadedProject(pvt::ProjectDocument loaded,
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
+    addRecentProject(current_project_path_.isEmpty()
+                         ? imported_legacy_path_ : current_project_path_);
     return true;
 }
 
@@ -9449,6 +10809,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     {
         ApplicationSettingsDialog settings_dialog(
             expected_undo_limit, expected_backend,
+            recent_project_limit_,
             hasCustomNewProjectDefaults(), this);
         configure_readable_layouts(&settings_dialog);
         const auto* tabs = settings_dialog.findChild<QTabWidget*>(
@@ -9457,14 +10818,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("undoLimitPreference"));
         const auto* backend = settings_dialog.findChild<QComboBox*>(
             QStringLiteral("renderBackendPreference"));
+        const auto* recent_limit = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("recentProjectLimitPreference"));
         const auto* save_defaults = settings_dialog.findChild<QPushButton*>(
             QStringLiteral("saveCurrentProjectDefaults"));
         const auto* restore_defaults = settings_dialog.findChild<QPushButton*>(
             QStringLiteral("restoreBuiltInDefaults"));
         if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
+            || recent_limit == nullptr
             || backend == nullptr || backend->count() != 3
             || save_defaults == nullptr || restore_defaults == nullptr
             || settings_dialog.undoLimit() != expected_undo_limit
+            || settings_dialog.recentProjectLimit() != recent_project_limit_
             || settings_dialog.renderBackend() != expected_backend) {
             if (error != nullptr) {
                 *error = tr("The extensible Application Settings dialog is incomplete or malformed.");
@@ -9602,6 +10967,20 @@ bool MainWindow::runSmokeChecks(QString* error) {
     expected.ghost_lag_degrees = 5.729612345678;
     expected.output.png_compression_level = 9;
     expected.output.write_alpha = true;
+    expected.alpha.use_source_alpha = false;
+    expected.starting_colors.mode = pvt::StartingColorMode::Additive;
+    expected.starting_colors.include_alpha = true;
+    expected.starting_colors.red_steps = 17;
+    expected.starting_colors.green_steps = 19;
+    expected.starting_colors.blue_steps = 23;
+    expected.starting_colors.alpha_steps = 29;
+    expected.starting_colors.red_minimum = 0.125;
+    expected.starting_colors.red_maximum = 0.875;
+    expected.starting_colors.alpha_minimum = 0.25;
+    expected.starting_colors.alpha_maximum = 0.75;
+    expected.starting_image.palette_dither_enabled = true;
+    expected.starting_image.palette_dither_method =
+        pvt::DitherMethod::FloydSteinberg;
     if (!expected.waves.empty()) {
         expected.waves.front().x_percent = 29.166712345678;
     }
@@ -9628,6 +11007,54 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    {
+        const QString script_path = directory.filePath(
+            QStringLiteral("video concat smoke.sh"));
+        const QString movie_path = directory.filePath(
+            QStringLiteral("final movie.mov"));
+        const QStringList chunks = {
+            directory.filePath(QStringLiteral("part one.mov")),
+            directory.filePath(QStringLiteral("part 'two'.mov"))};
+        QString script_error;
+        if (!write_video_concat_script(
+                script_path, chunks, movie_path, &script_error)) {
+            if (error != nullptr) {
+                *error = tr("The video concat script could not be generated: %1")
+                             .arg(script_error);
+            }
+            return false;
+        }
+        QFile script(script_path);
+        if (!script.open(QIODevice::ReadOnly)) {
+            if (error != nullptr) *error = tr("The generated concat script could not be read.");
+            return false;
+        }
+        const QString contents = QString::fromUtf8(script.readAll());
+        const QFileDevice::Permissions permissions = QFile::permissions(script_path);
+        const bool absolute_inputs = contents.contains(
+            QDir::toNativeSeparators(directory.path()));
+        const bool expected_command = contents.contains(
+            QStringLiteral("ffmpeg -f concat -safe 0 -i \"$input_file_list\" -c copy \"$output\""));
+        const bool relative_default = contents.contains(
+            QStringLiteral("output='final movie-reassembled.mov'"));
+        const bool argument_override = contents.contains(
+            QStringLiteral("if [[ -d \"$1\" ]]"))
+            && contents.contains(QStringLiteral("output=$1"));
+        QProcess syntax;
+        syntax.start(QStringLiteral("/bin/bash"),
+                     {QStringLiteral("-n"), script_path});
+        const bool valid_syntax = syntax.waitForFinished(10000)
+                                  && syntax.exitStatus() == QProcess::NormalExit
+                                  && syntax.exitCode() == 0;
+        if (!absolute_inputs || !expected_command || !relative_default
+            || !argument_override || !valid_syntax
+            || !(permissions & QFileDevice::ExeOwner)) {
+            if (error != nullptr) {
+                *error = tr("The generated concat script is not portable, executable, or syntactically valid.");
+            }
+            return false;
+        }
+    }
     const auto original_project = project_;
     const std::optional<pvt::ProjectDocument> original_document =
         document_ != nullptr
@@ -9644,6 +11071,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const QString original_legacy_path = imported_legacy_path_;
     const QString original_dialog_directory = last_dialog_directory_;
     const QString original_status = status_ != nullptr ? status_->text() : QString();
+    QSettings smoke_settings;
+    const QString recent_entries_key = QStringLiteral("recentProjects/entries");
+    const bool had_recent_entries = smoke_settings.contains(recent_entries_key);
+    const QVariant original_recent_entries = smoke_settings.value(recent_entries_key);
     ScopeExit restore_state([this, original_project, original_document,
                              original_active_uuid, original_solo_uuid,
                              original_solo_group_uuid,
@@ -9651,7 +11082,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
                              original_baseline_dirty, original_undo_dirty,
                              original_dither_preference, original_project_path,
                              original_legacy_path, original_dialog_directory,
-                             original_status] {
+                             original_status, recent_entries_key,
+                             had_recent_entries, original_recent_entries] {
         preview_test_delay_ms_ = 0;
         independent_copy_test_path_.clear();
         if (playback_timer_ != nullptr) playback_timer_->stop();
@@ -9682,6 +11114,13 @@ bool MainWindow::runSmokeChecks(QString* error) {
         refreshAll();
         refreshVersionsPage();
         updateWindowTitle();
+        QSettings settings;
+        if (had_recent_entries) {
+            settings.setValue(recent_entries_key, original_recent_entries);
+        } else {
+            settings.remove(recent_entries_key);
+        }
+        refreshRecentProjectsMenu();
         if (status_ != nullptr) status_->setText(original_status);
         schedulePreview();
     });
@@ -9703,7 +11142,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || wave_sync_->text() != tr("Use synchronized clock")
         || wave_form_ == nullptr
         || effect_sync_ == nullptr
-        || effect_sync_->text() != tr("Use synchronized clock")
+        || effect_sync_->text() != tr("Follow shared synchronized/swung clock")
+        || effect_type_->findData(static_cast<int>(pvt::EffectType::Blur)) < 0
+        || effect_blur_type_ == nullptr || effect_blur_type_->count() != 5
+        || effect_blur_passes_ == nullptr || effect_blur_samples_ == nullptr
+        || effect_blur_minimum_ == nullptr || effect_blur_maximum_ == nullptr
+        || effect_blur_pulses_ == nullptr
+        || starting_color_mode_ == nullptr
+        || starting_color_include_alpha_ == nullptr
+        || alpha_use_source_ == nullptr
         || wave_audio_response_ == nullptr
         || effect_audio_response_ == nullptr
         || wave_audio_response_->count() < 13
@@ -9751,8 +11198,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
     preview_particle.radius_pixels = 40.0;
     auto preview_glow = pvt::default_effect(pvt::EffectType::Glow);
     preview_glow.radius_pixels = 20.0;
+    auto preview_blur = pvt::default_effect(pvt::EffectType::Blur);
+    preview_blur.radius_pixels = 12.0;
     preview_scale_probe.layers.front().render.effects = {
-        preview_particle, preview_glow};
+        preview_particle, preview_glow, preview_blur};
     scale_project_for_preview(preview_scale_probe);
     if (preview_scale_probe.canvas.width != 720
         || preview_scale_probe.canvas.height != 405
@@ -9768,12 +11217,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    if (std::abs(preview_scale_probe.layers.front().render.effects[2U]
+                     .radius_pixels - 2.25) > 1.0e-12) {
+        if (error != nullptr) {
+            *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
+        }
+        return false;
+    }
 
     const int particle_type = effect_type_->findData(
         static_cast<int>(pvt::EffectType::ParticleField));
     const int glow_type = effect_type_->findData(
         static_cast<int>(pvt::EffectType::Glow));
-    bool effect_ranges_valid = particle_type >= 0 && glow_type >= 0;
+    const int blur_type = effect_type_->findData(
+        static_cast<int>(pvt::EffectType::Blur));
+    bool effect_ranges_valid = particle_type >= 0 && glow_type >= 0
+                               && blur_type >= 0;
     if (effect_ranges_valid) {
         const QSignalBlocker type_blocker(effect_type_);
         const QSignalBlocker intensity_blocker(effect_intensity_);
@@ -9793,6 +11252,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
         effect_ranges_valid = effect_ranges_valid
                               && effect_radius_->minimum() == 0.0
                               && effect_threshold_->maximum() == 64.0;
+        effect_type_->setCurrentIndex(blur_type);
+        updateEffectEditorVisibility();
+        effect_ranges_valid = effect_ranges_valid
+                              && effect_radius_->minimum() == 0.0
+                              && effect_blur_passes_->minimum() == 1
+                              && effect_blur_passes_->maximum() == 16
+                              && effect_blur_samples_->minimum() == 2
+                              && effect_blur_samples_->maximum() == 129;
         double block_scale_maximum = 1.5;
         synchronize_block_scale_maximum_editor(
             effect_frequency_, 2.0, block_scale_maximum);
@@ -10247,6 +11714,27 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || palette_name_->text().toStdString() != expected.palette.name
         || palette_colors_->count()
                != static_cast<int>(expected.palette.colors.size())
+        || alpha_use_source_->isChecked()
+        || !starting_color_include_alpha_->isChecked()
+        || static_cast<pvt::StartingColorMode>(
+               starting_color_mode_->currentData().toInt())
+               != expected.starting_colors.mode
+        || starting_red_steps_->value() != expected.starting_colors.red_steps
+        || starting_green_steps_->value() != expected.starting_colors.green_steps
+        || starting_blue_steps_->value() != expected.starting_colors.blue_steps
+        || starting_alpha_steps_->value() != expected.starting_colors.alpha_steps
+        || starting_red_minimum_->value()
+               != expected.starting_colors.red_minimum
+        || starting_red_maximum_->value()
+               != expected.starting_colors.red_maximum
+        || starting_alpha_minimum_->value()
+               != expected.starting_colors.alpha_minimum
+        || starting_alpha_maximum_->value()
+               != expected.starting_colors.alpha_maximum
+        || !starting_image_palette_dither_->isChecked()
+        || static_cast<pvt::DitherMethod>(
+               starting_image_palette_dither_method_->currentData().toInt())
+               != expected.starting_image.palette_dither_method
         || !transform_flip_vertical_->isChecked()
         || static_cast<pvt::MirrorMode>(transform_mirror_->currentData().toInt())
                != expected.transform.mirror

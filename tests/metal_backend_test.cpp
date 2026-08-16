@@ -142,6 +142,53 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
                 "base/palette/alpha/transform/quantization");
 
+    pvt::RenderConfig blur = parity_config();
+    blur.width = 79;
+    blur.height = 53;
+    blur.quantization.enabled = false;
+    blur.transform = {};
+    blur.effects.clear();
+    auto blur_effect = pvt::default_effect(pvt::EffectType::Blur);
+    blur_effect.id = 1001U;
+    blur_effect.enabled = true;
+    blur_effect.synchronized = true;
+    blur_effect.cycles_per_loop = 2;
+    blur_effect.phase_degrees = 13.0;
+    blur_effect.blur_minimum = 0.19;
+    blur_effect.blur_maximum = 0.81;
+    blur_effect.blur_pulses_per_cycle = 3;
+    blur_effect.blur_passes = 2;
+    blur_effect.blur_samples = 7;
+    blur_effect.radius_pixels = 5.5;
+    blur_effect.angle_degrees = 31.0;
+    blur_effect.center_x = 0.41;
+    blur_effect.center_y = 0.63;
+    blur_effect.area_radius = 0.72;
+    blur_effect.edge_mode = pvt::EdgeMode::Alpha;
+    blur.effects.push_back(blur_effect);
+    for (const pvt::BlurType type : {
+             pvt::BlurType::Gaussian, pvt::BlurType::Box,
+             pvt::BlurType::Directional, pvt::BlurType::Radial,
+             pvt::BlurType::Zoom}) {
+        blur.effects.front().blur_type = type;
+        CHECK(pvt::render_frame_at_phase(blur, 0.37, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(blur, 0.37, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("configurable ")
+                                  + pvt::blur_type_name(type) + " blur";
+        check_close(cpu, gpu, 0.004, 0.00012, 0.004, 0.00012,
+                    label.c_str());
+    }
+    blur.effects.front().synchronized = false;
+    blur.effects.front().blur_type = pvt::BlurType::Gaussian;
+    CHECK(pvt::render_frame_at_phase(blur, 0.37, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(blur, 0.37, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.004, 0.00012, 0.004, 0.00012,
+                "independent-clock modulated blur");
+
     // Starting PNGs are decoded once on the host, then fitted and processed
     // by Metal. Every fit mode must retain the reference renderer's linear
     // RGBA sampling, including contain transparency and tiled edges.
@@ -161,6 +208,7 @@ void test_backend_contract() {
     source_image.wall_reflection_enabled = false;
     source_image.transform = {};
     source_image.quantization.enabled = false;
+    source_image.palette.enabled = false;
     for (const pvt::StartingImageFit fit : {
              pvt::StartingImageFit::Stretch,
              pvt::StartingImageFit::Contain,
@@ -176,6 +224,24 @@ void test_backend_contract() {
         check_close(cpu, gpu, 0.003, 0.00008, 0.003, 0.00008,
                     label.c_str());
     }
+
+    // Image placement and starting palettes are now composable. The advanced
+    // source quantizer deliberately uses reference-CPU fallback until its
+    // dither and RGBA selection semantics have a matching Metal kernel.
+    source_image.palette = pvt::default_palette(1U);
+    source_image.palette.enabled = true;
+    source_image.starting_image.palette_dither_enabled = true;
+    pvt::Image hybrid;
+    CHECK(pvt::render_frame_at_phase(source_image, 0.31, hybrid_options,
+                                     hybrid, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(source_image, 0.31, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(cpu.pixels == hybrid.pixels);
+    CHECK(!pvt::render_frame_at_phase(source_image, 0.31, gpu_options,
+                                      gpu, nullptr, &error));
+    CHECK(error.find("image-to-starting-palette") != std::string::npos);
+    source_image.palette.enabled = false;
+    source_image.starting_image.palette_dither_enabled = false;
 
     // Built-in placement, rotation, and scale are a downstream image stage.
     // Exercise them with a starting source so strict GPU rendering covers the

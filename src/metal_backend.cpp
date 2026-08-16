@@ -77,6 +77,7 @@ struct alignas(16) GpuEffect {
     Float4 primary;
     Float4 placement;
     Float4 glow_area;
+    UInt4 blur;
 };
 
 struct alignas(16) GpuSurface {
@@ -100,7 +101,7 @@ static_assert(sizeof(Float4) == 16U);
 static_assert(sizeof(GpuFrameConstants) == 192U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
-static_assert(sizeof(GpuEffect) == 64U);
+static_assert(sizeof(GpuEffect) == 80U);
 static_assert(sizeof(GpuSurface) == 32U);
 static_assert(sizeof(GpuSourceImage) == 32U);
 static_assert(sizeof(GpuMotion) == 32U);
@@ -152,6 +153,8 @@ enum class Pipeline : std::size_t {
     GlowHorizontal,
     GlowVertical,
     GlowCombine,
+    BlurSample,
+    BlurCombine,
     Transform,
     Motion,
     Quantize,
@@ -168,6 +171,8 @@ constexpr const char* kPipelineNames[] = {
     "glow_blur_horizontal",
     "glow_blur_vertical",
     "glow_combine",
+    "configurable_blur",
+    "blur_combine",
     "transform_image",
     "layer_motion",
     "quantize_image"};
@@ -492,6 +497,9 @@ GpuEffect make_effect(const PreparedEffect& effect) {
                         static_cast<float>(effect.threshold),
                         static_cast<float>(effect.soft_knee),
                         static_cast<float>(effect.area_radius)};
+    result.blur = {static_cast<std::uint32_t>(effect.blur_type),
+                   static_cast<std::uint32_t>(effect.blur_samples),
+                   static_cast<std::uint32_t>(effect.blur_passes), 0U};
     return result;
 }
 
@@ -667,6 +675,23 @@ bool metal_backend_supports(const RenderConfig& config,
         }
         return false;
     }
+    const bool advanced_source_colors =
+        config.starting_colors.mode != StartingColorMode::LegacyHue
+        || config.starting_colors.include_alpha
+        || (!config.alpha.use_source_alpha && config.starting_image.enabled)
+        || (config.starting_image.enabled && config.palette.enabled)
+        || (config.alpha.use_source_alpha && config.palette.enabled
+            && std::any_of(config.palette.colors.begin(),
+                           config.palette.colors.end(),
+                           [](const PaletteColor& color) {
+                               return color.alpha < 1.0;
+                           }));
+    if (advanced_source_colors) {
+        if (reason != nullptr) {
+            *reason = "Generated source-color ordering, source alpha, and image-to-starting-palette quantization currently use the reference CPU path; use CPU + GPU for automatic per-layer fallback.";
+        }
+        return false;
+    }
     if (reason != nullptr) reason->clear();
     return true;
 }
@@ -794,9 +819,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         encode_grid(command_buffer,
                     context.pipeline(Pipeline::SourceImage), pixel_grid,
                     [&](MTL::ComputeCommandEncoder* encoder) {
-                        encoder->setBytes(&source, sizeof(source), 0U);
-                        encoder->setBuffer(starting_image_buffer.get(), 0U, 1U);
-                        encoder->setBuffer(current, 0U, 2U);
+                        encoder->setBytes(&constants, sizeof(constants), 0U);
+                        encoder->setBytes(&source, sizeof(source), 1U);
+                        encoder->setBuffer(starting_image_buffer.get(), 0U, 2U);
+                        encoder->setBuffer(current, 0U, 3U);
                     });
     } else {
         encode_grid(command_buffer, context.pipeline(Pipeline::Base), block_grid,
@@ -812,7 +838,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     const auto encode_effect_stage = [&](EffectSpace stage) {
         for (const PreparedEffect& prepared_effect : prepared.effects) {
             if (prepared_effect.space != stage) continue;
-            const GpuEffect effect = make_effect(prepared_effect);
+            GpuEffect effect = make_effect(prepared_effect);
             if (prepared_effect.type == EffectType::Glow) {
                 encode_grid(command_buffer,
                             context.pipeline(Pipeline::GlowExtract), pixel_grid,
@@ -846,6 +872,52 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                                 encoder->setBuffer(current, 0U, 2U);
                                 encoder->setBuffer(scratch, 0U, 3U);
                             });
+            } else if (prepared_effect.type == EffectType::Blur) {
+                MTL::Buffer* blur_source = current;
+                MTL::Buffer* blur_destination = scratch;
+                MTL::Buffer* blurred = nullptr;
+                const bool separable = prepared_effect.blur_type
+                                           == BlurType::Gaussian
+                                       || prepared_effect.blur_type
+                                              == BlurType::Box;
+                for (int pass = 0; pass < prepared_effect.blur_passes; ++pass) {
+                    effect.blur.w = separable ? 1U : 0U;
+                    encode_grid(
+                        command_buffer, context.pipeline(Pipeline::BlurSample),
+                        pixel_grid,
+                        [&](MTL::ComputeCommandEncoder* encoder) {
+                            encoder->setBytes(&constants, sizeof(constants), 0U);
+                            encoder->setBytes(&effect, sizeof(effect), 1U);
+                            encoder->setBuffer(blur_source, 0U, 2U);
+                            encoder->setBuffer(blur_destination, 0U, 3U);
+                        });
+                    blur_source = blur_destination;
+                    blur_destination = blur_destination == scratch ? aux : scratch;
+                    if (separable) {
+                        effect.blur.w = 0U;
+                        encode_grid(
+                            command_buffer,
+                            context.pipeline(Pipeline::BlurSample), pixel_grid,
+                            [&](MTL::ComputeCommandEncoder* encoder) {
+                                encoder->setBytes(&constants, sizeof(constants), 0U);
+                                encoder->setBytes(&effect, sizeof(effect), 1U);
+                                encoder->setBuffer(blur_source, 0U, 2U);
+                                encoder->setBuffer(blur_destination, 0U, 3U);
+                            });
+                        blur_source = blur_destination;
+                        blur_destination = blur_destination == scratch ? aux : scratch;
+                    }
+                    blurred = blur_source;
+                }
+                encode_grid(
+                    command_buffer, context.pipeline(Pipeline::BlurCombine),
+                    pixel_grid,
+                    [&](MTL::ComputeCommandEncoder* encoder) {
+                        encoder->setBytes(&constants, sizeof(constants), 0U);
+                        encoder->setBytes(&effect, sizeof(effect), 1U);
+                        encoder->setBuffer(current, 0U, 2U);
+                        encoder->setBuffer(blurred, 0U, 3U);
+                    });
             } else if (prepared_effect.type == EffectType::BlockScale) {
                 // Dispatching the maximum possible block grid is safe: the
                 // kernel derives the animated block size and rejects excess IDs.

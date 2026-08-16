@@ -164,6 +164,24 @@ int main() {
             std::cerr << "Lossless movie is empty.\n";
             return 1;
         }
+        options.first_frame = 1;
+        options.frame_count = 1;
+        int segment_progress = -1;
+        const fs::path segment = directory / "segment.mov";
+        if (!pvt::video::export_project(
+                project, segment.string(), options,
+                [&segment_progress](int completed, int total) {
+                    if (total != 1 || completed < segment_progress) return false;
+                    segment_progress = completed;
+                    return true;
+                }, &cancel, &report, &error)
+            || segment_progress != 1 || !report.included_audio
+            || !inspect_movie(segment, true, error)) {
+            std::cerr << "Ranged video/audio export failed: " << error << '\n';
+            return 1;
+        }
+        options.first_frame = 0;
+        options.frame_count = 0;
         if (pvt::video::export_project(project, lossless.string(), options, {},
                                        &cancel, nullptr, &error)
             || read_file(lossless) != original) {

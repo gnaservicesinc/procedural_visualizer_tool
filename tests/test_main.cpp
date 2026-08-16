@@ -178,6 +178,53 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     if (const float* pixel = stretched.pixel(15, 15)) {
         CHECK(pixel[3] < 0.5F);
     }
+    image_config.alpha.use_source_alpha = false;
+    pvt::Image ignored_source_alpha;
+    CHECK(pvt::render_frame_at_phase(
+        image_config, 0.0, ignored_source_alpha, &error));
+    if (const float* pixel = ignored_source_alpha.pixel(15, 15)) {
+        CHECK(pixel[3] == 1.0F);
+    }
+    image_config.alpha.use_source_alpha = true;
+
+    // A starting image and a starting palette are composable: image pixels
+    // choose spatial placement, then source quantization supplies authored
+    // RGBA values before effects. Source alpha can be ignored without erasing
+    // the palette values.
+    image_config.palette.enabled = true;
+    image_config.palette.name = "RGBA source palette";
+    image_config.palette.colors = {
+        {1.0, 0.0, 0.0, 0.25}, {0.0, 0.0, 1.0, 0.75}};
+    image_config.starting_image.palette_dither_enabled = false;
+    pvt::Image image_paletted;
+    CHECK(pvt::render_frame_at_phase(
+        image_config, 0.0, image_paletted, &error));
+    if (const float* pixel = image_paletted.pixel(0, 0)) {
+        const bool red = pixel[0] > 0.99F && pixel[1] < 0.01F
+                         && pixel[2] < 0.01F
+                         && std::fabs(pixel[3] - 0.25F) < 0.0001F;
+        const bool blue = pixel[0] < 0.01F && pixel[1] < 0.01F
+                          && pixel[2] > 0.99F
+                          && std::fabs(pixel[3] - 0.75F) < 0.0001F;
+        CHECK(red || blue);
+    }
+    image_config.alpha.use_source_alpha = false;
+    CHECK(pvt::render_frame_at_phase(
+        image_config, 0.0, ignored_source_alpha, &error));
+    if (const float* pixel = ignored_source_alpha.pixel(0, 0)) {
+        CHECK(pixel[3] == 1.0F);
+    }
+    image_config.alpha.use_source_alpha = true;
+    image_config.starting_image.palette_dither_enabled = true;
+    for (const auto method : {pvt::DitherMethod::BlueNoise,
+                              pvt::DitherMethod::OrderedBayer,
+                              pvt::DitherMethod::FloydSteinberg}) {
+        image_config.starting_image.palette_dither_method = method;
+        CHECK(pvt::render_frame_at_phase(
+            image_config, 0.0, image_paletted, &error));
+    }
+    image_config.palette = {};
+    image_config.starting_image.palette_dither_enabled = false;
     image_config.starting_image.fit = pvt::StartingImageFit::Tile;
     pvt::Image tiled;
     const bool tiled_ok =
@@ -189,6 +236,47 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         const float* repeated = tiled.pixel(2, 0);
         CHECK(std::equal(first, first + 4, repeated));
     }
+
+    pvt::RenderConfig generated = image_config;
+    generated.starting_image = {};
+    generated.starting_colors.mode = pvt::StartingColorMode::ChannelLoops;
+    generated.starting_colors.red_steps = 2;
+    generated.starting_colors.green_steps = 3;
+    generated.starting_colors.blue_steps = 4;
+    generated.starting_colors.alpha_steps = 2;
+    generated.starting_colors.alpha_minimum = 0.25;
+    generated.starting_colors.alpha_maximum = 0.25;
+    generated.starting_colors.include_alpha = false;
+    pvt::Image generated_rgb;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, generated_rgb, &error));
+    CHECK(generated_rgb.pixel(0, 0) != nullptr);
+    if (const float* pixel = generated_rgb.pixel(0, 0)) CHECK(pixel[3] == 1.0F);
+    generated.starting_colors.include_alpha = true;
+    pvt::Image generated_rgba;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, generated_rgba, &error));
+    if (const float* pixel = generated_rgba.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[3] - 0.25F) < 0.0001F);
+    }
+    generated.alpha.use_source_alpha = false;
+    CHECK(pvt::render_frame_at_phase(
+        generated, 0.0, ignored_source_alpha, &error));
+    if (const float* pixel = ignored_source_alpha.pixel(0, 0)) {
+        CHECK(pixel[3] == 1.0F);
+    }
+    generated.alpha.use_source_alpha = true;
+    generated.starting_colors.include_alpha = false;
+    generated.starting_colors.mode = pvt::StartingColorMode::Interleaved;
+    pvt::Image interleaved;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, interleaved, &error));
+    CHECK(mean_absolute_difference(generated_rgb, interleaved) > 0.0001);
+    generated.starting_colors.mode = pvt::StartingColorMode::Additive;
+    pvt::Image additive;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, additive, &error));
+    CHECK(mean_absolute_difference(interleaved, additive) > 0.0001);
+    generated.starting_colors.mode = pvt::StartingColorMode::Subtractive;
+    pvt::Image subtractive;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, subtractive, &error));
+    CHECK(mean_absolute_difference(additive, subtractive) > 0.0001);
 
     pvt::RenderConfig path_config = pvt::default_config();
     make_small(path_config);
@@ -1021,6 +1109,71 @@ void test_direction_alpha_and_surfaces(const fs::path& source_root) {
     }
 }
 
+void test_configurable_blur_effects() {
+    pvt::RenderConfig config = pvt::default_config();
+    make_small(config);
+    config.width = 47;
+    config.height = 31;
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.hue_cycles = 0;
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.quantization.enabled = false;
+    auto blur = pvt::default_effect(pvt::EffectType::Blur);
+    blur.id = pvt::allocate_id(config);
+    blur.enabled = true;
+    blur.synchronized = false;
+    blur.cycles_per_loop = 1;
+    blur.radius_pixels = 5.0;
+    blur.blur_passes = 2;
+    blur.blur_samples = 7;
+    blur.blur_minimum = 0.0;
+    blur.blur_maximum = 1.0;
+    blur.blur_pulses_per_cycle = 1;
+    blur.edge_mode = pvt::EdgeMode::Alpha;
+    blur.center_x = 0.43;
+    blur.center_y = 0.57;
+    blur.angle_degrees = 27.0;
+    config.effects.push_back(blur);
+
+    std::string error;
+    pvt::Image unblurred;
+    pvt::Image modulated;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, unblurred, &error));
+    CHECK(pvt::render_frame_at_phase(config, 0.5, modulated, &error));
+    CHECK(mean_absolute_difference(unblurred, modulated) > 0.0001);
+    bool made_transparent_edge = false;
+    for (std::size_t offset = 3U; offset < modulated.pixels.size(); offset += 4U) {
+        made_transparent_edge = made_transparent_edge
+                                || modulated.pixels[offset] < 0.999F;
+    }
+    CHECK(made_transparent_edge);
+
+    for (const auto type : {pvt::BlurType::Gaussian, pvt::BlurType::Box,
+                            pvt::BlurType::Directional, pvt::BlurType::Radial,
+                            pvt::BlurType::Zoom}) {
+        config.effects.front().blur_type = type;
+        CHECK(pvt::render_frame_at_phase(config, 0.37, modulated, &error));
+    }
+
+    // Equal bounds are the explicit constant-blur control. Clock routing
+    // remains meaningful for other effect parameters, but cannot change this
+    // constant mix.
+    config.effects.front().blur_type = pvt::BlurType::Gaussian;
+    config.effects.front().blur_minimum = 0.6;
+    config.effects.front().blur_maximum = 0.6;
+    pvt::Image constant_start;
+    pvt::Image constant_middle;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, constant_start, &error));
+    CHECK(pvt::render_frame_at_phase(config, 0.43, constant_middle, &error));
+    CHECK(constant_start.pixels == constant_middle.pixels);
+}
+
 void test_partial_alpha_glow_composition() {
     auto config = pvt::default_config();
     make_small(config);
@@ -1708,6 +1861,20 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.effects.back().center_y = 0.61;
     original.effects.back().area_radius = 0.24;
     original.alpha.enabled = true;
+    original.alpha.use_source_alpha = false;
+    original.starting_colors.mode = pvt::StartingColorMode::Subtractive;
+    original.starting_colors.include_alpha = true;
+    original.starting_colors.red_steps = 11;
+    original.starting_colors.green_steps = 12;
+    original.starting_colors.blue_steps = 13;
+    original.starting_colors.alpha_steps = 14;
+    original.starting_colors.red_minimum = 0.1;
+    original.starting_colors.red_maximum = 0.9;
+    original.starting_colors.alpha_minimum = 0.2;
+    original.starting_colors.alpha_maximum = 0.8;
+    original.starting_image.palette_dither_enabled = true;
+    original.starting_image.palette_dither_method =
+        pvt::DitherMethod::OrderedBayer;
     original.quantization.enabled = true;
     original.quantization.mode = pvt::QuantizationMode::Hue;
     original.surface.enabled = true;
@@ -1715,6 +1882,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.surface.obj_path = "mesh folder/test.obj";
     original.palette = pvt::default_palette(2U);
     original.palette.enabled = false;
+    original.palette.colors.front().alpha = 0.37;
     original.transform.flip_horizontal = true;
     original.transform.mirror = pvt::MirrorMode::BottomToTop;
     original.output.bit_depth = 16;
@@ -1846,6 +2014,20 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
+    CHECK(!loaded.alpha.use_source_alpha);
+    CHECK(loaded.starting_colors.mode == pvt::StartingColorMode::Subtractive);
+    CHECK(loaded.starting_colors.include_alpha);
+    CHECK(loaded.starting_colors.red_steps == 11);
+    CHECK(loaded.starting_colors.green_steps == 12);
+    CHECK(loaded.starting_colors.blue_steps == 13);
+    CHECK(loaded.starting_colors.alpha_steps == 14);
+    CHECK(loaded.starting_colors.red_minimum == 0.1);
+    CHECK(loaded.starting_colors.red_maximum == 0.9);
+    CHECK(loaded.starting_colors.alpha_minimum == 0.2);
+    CHECK(loaded.starting_colors.alpha_maximum == 0.8);
+    CHECK(loaded.starting_image.palette_dither_enabled);
+    CHECK(loaded.starting_image.palette_dither_method
+          == pvt::DitherMethod::OrderedBayer);
     CHECK(!loaded.palette.enabled);
     CHECK(loaded.palette.name == original.palette.name);
     CHECK(loaded.palette.colors.size() == original.palette.colors.size());
@@ -1857,6 +2039,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
                   == original.palette.colors[index].green);
             CHECK(loaded.palette.colors[index].blue
                   == original.palette.colors[index].blue);
+            CHECK(loaded.palette.colors[index].alpha
+                  == original.palette.colors[index].alpha);
         }
     }
     CHECK(loaded.transform.flip_horizontal);
@@ -1945,9 +2129,25 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_nine_bytes = read_bytes(first);
-    CHECK(std::string(version_nine_bytes.begin(), version_nine_bytes.end())
-              .rfind("PVT_SETUP\t9\n", 0U) == 0U);
+    const auto version_ten_bytes = read_bytes(first);
+    CHECK(std::string(version_ten_bytes.begin(), version_ten_bytes.end())
+              .rfind("PVT_SETUP\t10\n", 0U) == 0U);
+    std::string version_nine(version_ten_bytes.begin(),
+                             version_ten_bytes.end());
+    version_nine.replace(0U, std::string("PVT_SETUP\t10").size(),
+                         "PVT_SETUP\t9");
+    erase_records_with_prefix(version_nine, "starting_colors.");
+    erase_record(version_nine, "alpha.use_source_alpha");
+    erase_record(version_nine, "source_image.palette_dither_enabled");
+    erase_record(version_nine, "source_image.palette_dither_method");
+    erase_records_with_fragment(version_nine, ".blur_");
+    for (std::size_t index = 0U; index < original.palette.colors.size(); ++index) {
+        erase_record(version_nine, "palette.colors." + std::to_string(index)
+                                      + ".alpha");
+    }
+    CHECK(version_nine.rfind("PVT_SETUP\t9\n", 0U) == 0U);
+    const std::vector<char> version_nine_bytes(version_nine.begin(),
+                                                version_nine.end());
 
     // Format 8's three-state values keep their original meanings when loaded
     // into the richer format-9 source selector.
@@ -2839,6 +3039,7 @@ int main(int argc, char** argv) {
     test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
     test_direction_alpha_and_surfaces(source_root);
+    test_configurable_blur_effects();
     test_partial_alpha_glow_composition();
     test_particle_straight_alpha_emission();
     test_block_scale_and_default_glow_visibility();

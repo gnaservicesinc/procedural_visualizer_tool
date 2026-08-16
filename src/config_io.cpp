@@ -67,7 +67,8 @@ namespace {
 // inheritance and nullable per-wave/per-effect force/ignore routing. Version 9
 // extends those same selectors with explicit audio-feature overrides. Older
 // versions remain accepted with neutral defaults for every field introduced
-// later.
+// later. Version 10 adds source RGBA, generated source-color ordering,
+// image-to-palette dithering, and configurable blur fields.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -79,8 +80,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 9U,
-              "config_io.cpp implements setup format version 9");
+static_assert(kSetupFormatVersion == 10U,
+              "config_io.cpp implements setup format version 10");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -92,11 +93,12 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool render_record_key(std::string_view key) {
-    constexpr std::array<std::string_view, 14U> prefixes{{
+    constexpr std::array<std::string_view, 15U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
+        "starting_colors.",
     }};
     return std::any_of(prefixes.begin(), prefixes.end(),
                        [key](std::string_view prefix) {
@@ -163,6 +165,24 @@ bool setup_v8_record(std::string_view key) {
            || ((starts_with(key, "waves.")
                 || starts_with(key, "effects."))
                && suffix(".audio_response"));
+}
+
+bool setup_v10_record(std::string_view key) {
+    const auto suffix = [key](std::string_view value) {
+        return key.size() >= value.size()
+               && key.compare(key.size() - value.size(), value.size(), value)
+                      == 0;
+    };
+    return starts_with(key, "starting_colors.")
+           || key == "alpha.use_source_alpha"
+           || key == "source_image.palette_dither_enabled"
+           || key == "source_image.palette_dither_method"
+           || (starts_with(key, "palette.colors.") && suffix(".alpha"))
+           || (starts_with(key, "effects.")
+               && (suffix(".blur_type") || suffix(".blur_passes")
+                   || suffix(".blur_samples") || suffix(".blur_minimum")
+                   || suffix(".blur_maximum")
+                   || suffix(".blur_pulses_per_cycle")));
 }
 
 void clear_error(std::string* error) {
@@ -699,7 +719,7 @@ constexpr std::array<std::pair<std::string_view, EdgeMode>, 4U> kEdgeModes{{
     {"reflect", EdgeMode::Reflect},
 }};
 
-constexpr std::array<std::pair<std::string_view, EffectType>, 7U> kEffectTypes{{
+constexpr std::array<std::pair<std::string_view, EffectType>, 7U> kEffectTypesV9{{
     {"endless_zoom", EffectType::EndlessZoom},
     {"ripple", EffectType::Ripple},
     {"shake", EffectType::Shake},
@@ -708,6 +728,34 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 7U> kEffectTypes{{
     {"block_scale", EffectType::BlockScale},
     {"particle_field", EffectType::ParticleField},
 }};
+
+constexpr std::array<std::pair<std::string_view, EffectType>, 8U> kEffectTypes{{
+    {"endless_zoom", EffectType::EndlessZoom},
+    {"ripple", EffectType::Ripple},
+    {"shake", EffectType::Shake},
+    {"flag_wave", EffectType::FlagWave},
+    {"glow", EffectType::Glow},
+    {"block_scale", EffectType::BlockScale},
+    {"particle_field", EffectType::ParticleField},
+    {"blur", EffectType::Blur},
+}};
+
+constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
+    {"gaussian", BlurType::Gaussian},
+    {"box", BlurType::Box},
+    {"directional", BlurType::Directional},
+    {"radial", BlurType::Radial},
+    {"zoom", BlurType::Zoom},
+}};
+
+constexpr std::array<std::pair<std::string_view, StartingColorMode>, 5U>
+    kStartingColorModes{{
+        {"legacy_hue", StartingColorMode::LegacyHue},
+        {"channel_loops", StartingColorMode::ChannelLoops},
+        {"interleaved", StartingColorMode::Interleaved},
+        {"additive", StartingColorMode::Additive},
+        {"subtractive", StartingColorMode::Subtractive},
+    }};
 
 constexpr std::array<std::pair<std::string_view, LayerClockScale>, 5U>
     kLayerClockScales{{
@@ -1357,6 +1405,19 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("effects", index, "threshold"), effect.threshold);
         builder.add_double(indexed_key("effects", index, "soft_knee"), effect.soft_knee);
         builder.add_double(indexed_key("effects", index, "area_radius"), effect.area_radius);
+        builder.add_enum(indexed_key("effects", index, "blur_type"),
+                         effect.blur_type, kBlurTypes);
+        builder.add_integer(indexed_key("effects", index, "blur_passes"),
+                            effect.blur_passes);
+        builder.add_integer(indexed_key("effects", index, "blur_samples"),
+                            effect.blur_samples);
+        builder.add_double(indexed_key("effects", index, "blur_minimum"),
+                           effect.blur_minimum);
+        builder.add_double(indexed_key("effects", index, "blur_maximum"),
+                           effect.blur_maximum);
+        builder.add_integer(
+            indexed_key("effects", index, "blur_pulses_per_cycle"),
+            effect.blur_pulses_per_cycle);
         add_path_binding_records(
             builder, indexed_key("effects", index, "path") + ".", effect.path);
     }
@@ -1390,6 +1451,36 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("alpha.spatial_frequency", config.alpha.spatial_frequency);
     builder.add_integer("alpha.cycles_per_loop", config.alpha.cycles_per_loop);
     builder.add_double("alpha.phase_degrees", config.alpha.phase_degrees);
+    builder.add_bool("alpha.use_source_alpha", config.alpha.use_source_alpha);
+
+    builder.add_enum("starting_colors.mode", config.starting_colors.mode,
+                     kStartingColorModes);
+    builder.add_bool("starting_colors.include_alpha",
+                     config.starting_colors.include_alpha);
+    builder.add_integer("starting_colors.red_steps",
+                        config.starting_colors.red_steps);
+    builder.add_integer("starting_colors.green_steps",
+                        config.starting_colors.green_steps);
+    builder.add_integer("starting_colors.blue_steps",
+                        config.starting_colors.blue_steps);
+    builder.add_integer("starting_colors.alpha_steps",
+                        config.starting_colors.alpha_steps);
+    builder.add_double("starting_colors.red_minimum",
+                       config.starting_colors.red_minimum);
+    builder.add_double("starting_colors.red_maximum",
+                       config.starting_colors.red_maximum);
+    builder.add_double("starting_colors.green_minimum",
+                       config.starting_colors.green_minimum);
+    builder.add_double("starting_colors.green_maximum",
+                       config.starting_colors.green_maximum);
+    builder.add_double("starting_colors.blue_minimum",
+                       config.starting_colors.blue_minimum);
+    builder.add_double("starting_colors.blue_maximum",
+                       config.starting_colors.blue_maximum);
+    builder.add_double("starting_colors.alpha_minimum",
+                       config.starting_colors.alpha_minimum);
+    builder.add_double("starting_colors.alpha_maximum",
+                       config.starting_colors.alpha_maximum);
 
     builder.add_bool("quantization.enabled", config.quantization.enabled);
     builder.add_integer("quantization.levels", config.quantization.levels);
@@ -1412,6 +1503,11 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("source_image.path", config.starting_image.path);
     builder.add_string("source_image.sha256", config.starting_image.sha256);
     builder.add_string("source_image.basename", config.starting_image.basename);
+    builder.add_bool("source_image.palette_dither_enabled",
+                     config.starting_image.palette_dither_enabled);
+    builder.add_enum("source_image.palette_dither_method",
+                     config.starting_image.palette_dither_method,
+                     kDitherMethods);
 
     builder.add_bool("palette.enabled", config.palette.enabled);
     builder.add_string("palette.name", config.palette.name);
@@ -1421,6 +1517,7 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("palette.colors", index, "red"), color.red);
         builder.add_double(indexed_key("palette.colors", index, "green"), color.green);
         builder.add_double(indexed_key("palette.colors", index, "blue"), color.blue);
+        builder.add_double(indexed_key("palette.colors", index, "alpha"), color.alpha);
     }
 
     builder.add_bool("transform.flip_horizontal", config.transform.flip_horizontal);
@@ -1734,6 +1831,15 @@ bool deserialize_setup(Records& records,
             }
         }
     }
+    if (setup_version >= 10U
+        && (!consume_bool(records, "source_image.palette_dither_enabled",
+                          candidate.starting_image.palette_dither_enabled,
+                          error)
+            || !consume_enum(records, "source_image.palette_dither_method",
+                             candidate.starting_image.palette_dither_method,
+                             kDitherMethods, error))) {
+        return false;
+    }
 
     if (setup_version >= 5U) {
         MusicAnalysis& music = candidate.clock.music;
@@ -2011,8 +2117,16 @@ bool deserialize_setup(Records& records,
     for (std::size_t index = 0; index < effect_count; ++index) {
         EffectConfig& effect = candidate.effects[index];
         if (!consume_integer(records, indexed_key("effects", index, "id"), effect.id, error)
-            || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)
-            || !consume_enum(records, indexed_key("effects", index, "type"), effect.type, kEffectTypes, error)) {
+            || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)) {
+            return false;
+        }
+        if (setup_version >= 10U) {
+            if (!consume_enum(records, indexed_key("effects", index, "type"),
+                              effect.type, kEffectTypes, error)) {
+                return false;
+            }
+        } else if (!consume_enum(records, indexed_key("effects", index, "type"),
+                                 effect.type, kEffectTypesV9, error)) {
             return false;
         }
         if (setup_version >= 4U
@@ -2050,6 +2164,27 @@ bool deserialize_setup(Records& records,
         if (setup_version >= 4U
             && !consume_double(records, indexed_key("effects", index, "area_radius"),
                                effect.area_radius, error)) {
+            return false;
+        }
+        if (setup_version >= 10U
+            && (!consume_enum(records, indexed_key("effects", index, "blur_type"),
+                              effect.blur_type, kBlurTypes, error)
+                || !consume_integer(records,
+                                    indexed_key("effects", index, "blur_passes"),
+                                    effect.blur_passes, error)
+                || !consume_integer(records,
+                                    indexed_key("effects", index, "blur_samples"),
+                                    effect.blur_samples, error)
+                || !consume_double(records,
+                                   indexed_key("effects", index, "blur_minimum"),
+                                   effect.blur_minimum, error)
+                || !consume_double(records,
+                                   indexed_key("effects", index, "blur_maximum"),
+                                   effect.blur_maximum, error)
+                || !consume_integer(
+                    records,
+                    indexed_key("effects", index, "blur_pulses_per_cycle"),
+                    effect.blur_pulses_per_cycle, error))) {
             return false;
         }
         if (setup_version >= 7U
@@ -2120,6 +2255,41 @@ bool deserialize_setup(Records& records,
         || !consume_double(records, "surface.lighting", candidate.surface.lighting, error)) {
         return false;
     }
+    if (setup_version >= 10U) {
+        StartingColorConfig& starting = candidate.starting_colors;
+        if (!consume_bool(records, "alpha.use_source_alpha",
+                          candidate.alpha.use_source_alpha, error)
+            || !consume_enum(records, "starting_colors.mode", starting.mode,
+                             kStartingColorModes, error)
+            || !consume_bool(records, "starting_colors.include_alpha",
+                             starting.include_alpha, error)
+            || !consume_integer(records, "starting_colors.red_steps",
+                                starting.red_steps, error)
+            || !consume_integer(records, "starting_colors.green_steps",
+                                starting.green_steps, error)
+            || !consume_integer(records, "starting_colors.blue_steps",
+                                starting.blue_steps, error)
+            || !consume_integer(records, "starting_colors.alpha_steps",
+                                starting.alpha_steps, error)
+            || !consume_double(records, "starting_colors.red_minimum",
+                               starting.red_minimum, error)
+            || !consume_double(records, "starting_colors.red_maximum",
+                               starting.red_maximum, error)
+            || !consume_double(records, "starting_colors.green_minimum",
+                               starting.green_minimum, error)
+            || !consume_double(records, "starting_colors.green_maximum",
+                               starting.green_maximum, error)
+            || !consume_double(records, "starting_colors.blue_minimum",
+                               starting.blue_minimum, error)
+            || !consume_double(records, "starting_colors.blue_maximum",
+                               starting.blue_maximum, error)
+            || !consume_double(records, "starting_colors.alpha_minimum",
+                               starting.alpha_minimum, error)
+            || !consume_double(records, "starting_colors.alpha_maximum",
+                               starting.alpha_maximum, error)) {
+            return false;
+        }
+    }
     if (setup_version >= 2U
         && !consume_string(records, "surface.obj_path",
                            candidate.surface.obj_path, error)) {
@@ -2157,6 +2327,12 @@ bool deserialize_setup(Records& records,
                                    color.green, error)
                 || !consume_double(records, indexed_key("palette.colors", index, "blue"),
                                    color.blue, error)) {
+                return false;
+            }
+            if (setup_version >= 10U
+                && !consume_double(
+                    records, indexed_key("palette.colors", index, "alpha"),
+                    color.alpha, error)) {
                 return false;
             }
         }
@@ -2375,7 +2551,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 5U && setup_v5_record(key))
              || (setup_version < 6U && setup_v6_record(key))
              || (setup_version < 7U && setup_v7_record(key))
-             || (setup_version < 8U && setup_v8_record(key)));
+             || (setup_version < 8U && setup_v8_record(key))
+             || (setup_version < 10U && setup_v10_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -2489,12 +2666,13 @@ RecoveryAttempt decode_with_record_repair(
 }
 
 std::string recovery_group(std::string_view key) {
-    constexpr std::array<std::string_view, 20U> groups{{
+    constexpr std::array<std::string_view, 21U> groups{{
         "paths.", "timing.music.", "timing.clock.", "canvas.",
         "output.", "waves.", "swings.", "effects.", "layer_clock.",
         "palette.", "surface.", "source_image.", "motion.", "alpha.",
         "quantization.", "transform.", "audio_reactive.", "appearance.",
         "rhythm.", "audio_response_defaults.",
+        "starting_colors.",
     }};
     for (const std::string_view group : groups) {
         if (starts_with(key, group)) return std::string(group);

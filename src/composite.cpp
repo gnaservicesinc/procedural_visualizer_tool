@@ -214,14 +214,20 @@ bool cancelled(const std::atomic_bool* cancel) {
 }
 
 bool effect_can_create_transparency(const EffectConfig& effect) {
-    if (!effect.enabled || effect.intensity <= 0.0
+    if (!effect.enabled
+        || (effect.type == EffectType::Blur
+                ? effect.radius_pixels <= 0.0
+                  || (effect.intensity <= 0.0 && effect.blur_maximum <= 0.0)
+                : effect.intensity <= 0.0)
         || effect.type == EffectType::Glow
         || effect.type == EffectType::BlockScale
         || effect.type == EffectType::ParticleField
         || effect.edge_mode != EdgeMode::Alpha) {
         return false;
     }
-    return effect.magnitude > 0.0;
+    return effect.type == EffectType::Blur
+               ? effect.radius_pixels > 0.0
+               : effect.magnitude > 0.0;
 }
 
 bool render_data_can_create_transparency(const RenderData& render) {

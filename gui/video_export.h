@@ -28,6 +28,12 @@ enum class HevcQuality {
     HighQuality
 };
 
+enum class ChunkMode {
+    SingleMovie,
+    FrameCount,
+    MaximumSeconds
+};
+
 struct Capabilities {
     bool available = false;
     bool png_lossless = false;
@@ -55,6 +61,14 @@ struct Options {
     // selects host concurrency and the shared 2 GiB sequence memory budget.
     std::size_t worker_count = 0;
     std::size_t memory_budget_bytes = 0;
+    // A zero frame_count exports from first_frame through the end. Each
+    // segment renders global frame indices so procedural phase never restarts,
+    // while movie presentation timestamps begin at zero for concat safety.
+    int first_frame = 0;
+    int frame_count = 0;
+    ChunkMode chunk_mode = ChunkMode::SingleMovie;
+    int chunk_frames = 240;
+    double chunk_maximum_seconds = 10.0;
     pvt::FrameRenderOptions frame;
 };
 

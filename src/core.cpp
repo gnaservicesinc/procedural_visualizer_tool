@@ -159,6 +159,19 @@ bool valid_enum(EffectType value) {
         case EffectType::Glow:
         case EffectType::BlockScale:
         case EffectType::ParticleField:
+        case EffectType::Blur:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(BlurType value) {
+    switch (value) {
+        case BlurType::Gaussian:
+        case BlurType::Box:
+        case BlurType::Directional:
+        case BlurType::Radial:
+        case BlurType::Zoom:
             return true;
     }
     return false;
@@ -225,6 +238,18 @@ bool valid_enum(StartingImageFit value) {
         case StartingImageFit::Contain:
         case StartingImageFit::Cover:
         case StartingImageFit::Tile:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(StartingColorMode value) {
+    switch (value) {
+        case StartingColorMode::LegacyHue:
+        case StartingColorMode::ChannelLoops:
+        case StartingColorMode::Interleaved:
+        case StartingColorMode::Additive:
+        case StartingColorMode::Subtractive:
             return true;
     }
     return false;
@@ -956,9 +981,13 @@ bool valid_audio_reactive(const AudioReactiveConfig& audio) {
 }
 
 bool effect_has_render_work(const EffectConfig& effect) {
-    if (!effect.enabled || effect.intensity <= 0.0) {
+    if (!effect.enabled) {
         return false;
     }
+    if (effect.type == EffectType::Blur) {
+        return effect.blur_maximum > 0.0 && effect.radius_pixels > 0.0;
+    }
+    if (effect.intensity <= 0.0) return false;
     switch (effect.type) {
         case EffectType::Glow:
             return effect.radius_pixels > 0.0;
@@ -966,6 +995,8 @@ bool effect_has_render_work(const EffectConfig& effect) {
             return effect.magnitude > 0.0 && effect.frequency > 0.0;
         case EffectType::ParticleField:
             return effect.frequency >= 1.0 && effect.radius_pixels > 0.0;
+        case EffectType::Blur:
+            return false;
         case EffectType::EndlessZoom:
         case EffectType::Ripple:
         case EffectType::Shake:
@@ -1552,6 +1583,18 @@ const char* effect_type_name(EffectType value) {
         case EffectType::Glow: return "Glow";
         case EffectType::BlockScale: return "Block scale";
         case EffectType::ParticleField: return "Particle field";
+        case EffectType::Blur: return "Blur";
+    }
+    return "Unknown";
+}
+
+const char* blur_type_name(BlurType value) {
+    switch (value) {
+        case BlurType::Gaussian: return "Gaussian";
+        case BlurType::Box: return "Box";
+        case BlurType::Directional: return "Directional";
+        case BlurType::Radial: return "Radial / spin";
+        case BlurType::Zoom: return "Zoom";
     }
     return "Unknown";
 }
@@ -1623,6 +1666,17 @@ const char* starting_image_fit_name(StartingImageFit value) {
         case StartingImageFit::Contain: return "Contain";
         case StartingImageFit::Cover: return "Cover";
         case StartingImageFit::Tile: return "Tile";
+    }
+    return "Unknown";
+}
+
+const char* starting_color_mode_name(StartingColorMode value) {
+    switch (value) {
+        case StartingColorMode::LegacyHue: return "Continuous hue (legacy)";
+        case StartingColorMode::ChannelLoops: return "Loop one channel at a time";
+        case StartingColorMode::Interleaved: return "Interleave channel values";
+        case StartingColorMode::Additive: return "Add values up";
+        case StartingColorMode::Subtractive: return "Subtract values down";
     }
     return "Unknown";
 }
@@ -1756,6 +1810,16 @@ EffectConfig default_effect(EffectType type) {
             effect.radius_pixels = 3.5;
             effect.threshold = 0.55; // core brightness
             effect.soft_knee = 0.55; // glow softness
+            break;
+        case EffectType::Blur:
+            effect.intensity = 0.65;
+            effect.radius_pixels = 12.0;
+            effect.blur_type = BlurType::Gaussian;
+            effect.blur_passes = 1;
+            effect.blur_samples = 9;
+            effect.blur_minimum = 0.0;
+            effect.blur_maximum = 0.85;
+            effect.blur_pulses_per_cycle = 1;
             break;
     }
     return effect;
@@ -2213,6 +2277,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
 
     bool has_enabled_effect = false;
     bool has_enabled_glow = false;
+    bool has_enabled_blur = false;
     bool has_transparent_edge_effect = false;
     // Base generation is bounded near unit range. Track a deliberately
     // conservative upper bound for sequential additive glow amplification so
@@ -2227,6 +2292,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !valid_enum(effect.space)
             || !valid_enum(effect.audio_response)
             || !valid_enum(effect.edge_mode)
+            || !valid_enum(effect.blur_type)
             || effect.cycles_per_loop < -1000 || effect.cycles_per_loop > 1000
             || !finite_in_range(effect.phase_degrees, -36000.0, 36000.0)
             || !finite_in_range(effect.intensity, 0.0, 100.0)
@@ -2245,6 +2311,13 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !finite_in_range(effect.threshold, 0.0, 64.0)
             || !finite_in_range(effect.soft_knee, 0.0, 1.0)
             || !finite_in_range(effect.area_radius, 0.0, 10.0)
+            || effect.blur_passes < 1 || effect.blur_passes > 16
+            || effect.blur_samples < 2 || effect.blur_samples > 129
+            || !finite_in_range(effect.blur_minimum, 0.0, 1.0)
+            || !finite_in_range(effect.blur_maximum, 0.0, 1.0)
+            || effect.blur_minimum > effect.blur_maximum
+            || effect.blur_pulses_per_cycle < 1
+            || effect.blur_pulses_per_cycle > 1000
             || !valid_path_binding(effect.path, config.motion_paths)) {
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
@@ -2273,13 +2346,22 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 + " requires a positive whole particle count fitting signed int, positive size, and "
                   "trail/core controls from 0 to 1.");
         }
+        if (effect.type == EffectType::Blur
+            && effect.blur_type == BlurType::Gaussian
+            && effect.blur_samples % 2 == 0) {
+            return invalid_result(
+                "Gaussian blur effect " + std::to_string(index + 1U)
+                + " requires an odd sample count so its kernel has a center tap.");
+        }
         const bool active_effect = effect_has_render_work(effect);
         const bool active_glow = active_effect && effect.type == EffectType::Glow;
+        const bool active_blur = active_effect && effect.type == EffectType::Blur;
         const bool active_particles = active_effect
                                       && effect.type
                                              == EffectType::ParticleField;
         has_enabled_effect = has_enabled_effect || active_effect;
         has_enabled_glow = has_enabled_glow || active_glow;
+        has_enabled_blur = has_enabled_blur || active_blur;
         has_transparent_edge_effect = has_transparent_edge_effect
                                       || (active_effect
                                           && effect_uses_edge_mode(effect.type)
@@ -2343,9 +2425,31 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     for (const PaletteColor& color : config.palette.colors) {
         if (!finite_in_range(color.red, 0.0, 1.0)
             || !finite_in_range(color.green, 0.0, 1.0)
-            || !finite_in_range(color.blue, 0.0, 1.0)) {
-            return invalid_result("Palette colors must contain finite RGB values from 0 to 1.");
+            || !finite_in_range(color.blue, 0.0, 1.0)
+            || !finite_in_range(color.alpha, 0.0, 1.0)) {
+            return invalid_result("Palette colors must contain finite RGBA values from 0 to 1.");
         }
+    }
+    const StartingColorConfig& starting = config.starting_colors;
+    if (!valid_enum(starting.mode)
+        || starting.red_steps < 1 || starting.red_steps > 65536
+        || starting.green_steps < 1 || starting.green_steps > 65536
+        || starting.blue_steps < 1 || starting.blue_steps > 65536
+        || starting.alpha_steps < 1 || starting.alpha_steps > 65536
+        || !finite_in_range(starting.red_minimum, 0.0, 1.0)
+        || !finite_in_range(starting.red_maximum, 0.0, 1.0)
+        || starting.red_minimum > starting.red_maximum
+        || !finite_in_range(starting.green_minimum, 0.0, 1.0)
+        || !finite_in_range(starting.green_maximum, 0.0, 1.0)
+        || starting.green_minimum > starting.green_maximum
+        || !finite_in_range(starting.blue_minimum, 0.0, 1.0)
+        || !finite_in_range(starting.blue_maximum, 0.0, 1.0)
+        || starting.blue_minimum > starting.blue_maximum
+        || !finite_in_range(starting.alpha_minimum, 0.0, 1.0)
+        || !finite_in_range(starting.alpha_maximum, 0.0, 1.0)
+        || starting.alpha_minimum > starting.alpha_maximum) {
+        return invalid_result(
+            "Generated starting-color ranges and step counts are invalid.");
     }
     if (!valid_enum(config.transform.mirror)) {
         return invalid_result("The layer transform contains an unknown mirror mode.");
@@ -2408,6 +2512,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             "A custom OBJ surface requires a valid runtime path or embedded attachment identity.");
     }
     if (!valid_enum(config.starting_image.fit)
+        || !valid_enum(config.starting_image.palette_dither_method)
         || (!config.starting_image.path.empty()
             && !valid_path_text(config.starting_image.path,
                                 kMaximumPathBytes, false))
@@ -2489,7 +2594,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || motion_has_render_work(config.motion)) {
         ++buffer_count;
     }
-    if (has_enabled_glow) {
+    if (has_enabled_glow || has_enabled_blur) {
         ++buffer_count;
     }
     std::size_t peak_bytes = 0;
@@ -2532,7 +2637,8 @@ void throw_if_cancelled(const std::atomic_bool* cancel) {
     }
 }
 
-std::vector<Color> prepare_starting_palette(const PaletteConfig& palette) {
+std::vector<Color> prepare_starting_palette(const PaletteConfig& palette,
+                                            bool use_source_alpha) {
     std::vector<Color> prepared;
     if (!palette.enabled) {
         return prepared;
@@ -2541,13 +2647,15 @@ std::vector<Color> prepare_starting_palette(const PaletteConfig& palette) {
     for (const PaletteColor& authored : palette.colors) {
         prepared.push_back({srgb_to_linear(authored.red),
                             srgb_to_linear(authored.green),
-                            srgb_to_linear(authored.blue), 1.0});
+                            srgb_to_linear(authored.blue),
+                            use_source_alpha ? authored.alpha : 1.0});
     }
     return prepared;
 }
 
 Color nearest_starting_color(const Color& input,
-                             const std::vector<Color>& palette) {
+                             const std::vector<Color>& palette,
+                             bool compare_alpha = false) {
     if (palette.empty()) {
         return input;
     }
@@ -2557,17 +2665,97 @@ Color nearest_starting_color(const Color& input,
         const double dr = input.r - candidate.r;
         const double dg = input.g - candidate.g;
         const double db = input.b - candidate.b;
+        const double da = input.a - candidate.a;
         // Linear-light luminance weights make starting-color selection better
         // match what the eye sees than an unweighted RGB cube.
         const double distance = 0.2126 * dr * dr
                                 + 0.7152 * dg * dg
-                                + 0.0722 * db * db;
+                                + 0.0722 * db * db
+                                + (compare_alpha ? da * da : 0.0);
         if (distance < closest_distance) {
             closest = &candidate;
             closest_distance = distance;
         }
     }
     return *closest;
+}
+
+double stepped_channel(std::size_t index, int steps,
+                       double minimum, double maximum) {
+    if (steps <= 1) return minimum;
+    const std::size_t bounded_steps = static_cast<std::size_t>(steps);
+    const double position = static_cast<double>(index % bounded_steps)
+                            / static_cast<double>(bounded_steps - 1U);
+    return mix_value(minimum, maximum, position);
+}
+
+Color generated_starting_color(const StartingColorConfig& config,
+                               std::size_t index,
+                               int block_x, int block_y) {
+    const std::size_t red_steps = static_cast<std::size_t>(config.red_steps);
+    const std::size_t green_steps = static_cast<std::size_t>(config.green_steps);
+    const std::size_t blue_steps = static_cast<std::size_t>(config.blue_steps);
+    std::size_t red_index = index;
+    std::size_t green_index = index / red_steps;
+    std::size_t blue_index = green_index / green_steps;
+    std::size_t alpha_index = blue_index / blue_steps;
+
+    switch (config.mode) {
+        case StartingColorMode::LegacyHue:
+        case StartingColorMode::ChannelLoops:
+            break;
+        case StartingColorMode::Interleaved: {
+            // Co-prime strides prevent adjacent blocks from walking every
+            // channel in lockstep while remaining deterministic and seamless.
+            const std::size_t spatial = index
+                + static_cast<std::size_t>(std::max(0, block_x)) * 3U
+                + static_cast<std::size_t>(std::max(0, block_y)) * 5U;
+            red_index = spatial;
+            green_index = spatial * 3U + 1U;
+            blue_index = spatial * 5U + 2U;
+            alpha_index = spatial * 7U + 3U;
+            break;
+        }
+        case StartingColorMode::Additive:
+        case StartingColorMode::Subtractive: {
+            const int maximum_steps = std::max(
+                std::max(config.red_steps, config.green_steps),
+                std::max(config.blue_steps,
+                         config.include_alpha ? config.alpha_steps : 1));
+            const std::size_t ramp = index
+                % static_cast<std::size_t>(maximum_steps);
+            const double direction = config.mode == StartingColorMode::Additive
+                                         ? static_cast<double>(ramp)
+                                         : static_cast<double>(maximum_steps - 1)
+                                               - static_cast<double>(ramp);
+            const double normalized = maximum_steps > 1
+                ? direction / static_cast<double>(maximum_steps - 1)
+                : 0.0;
+            const auto scaled_index = [normalized](int steps) {
+                return static_cast<std::size_t>(std::llround(
+                    normalized * static_cast<double>(steps - 1)));
+            };
+            red_index = scaled_index(config.red_steps);
+            green_index = scaled_index(config.green_steps);
+            blue_index = scaled_index(config.blue_steps);
+            alpha_index = scaled_index(config.alpha_steps);
+            break;
+        }
+    }
+
+    Color result;
+    result.r = srgb_to_linear(stepped_channel(
+        red_index, config.red_steps, config.red_minimum, config.red_maximum));
+    result.g = srgb_to_linear(stepped_channel(
+        green_index, config.green_steps,
+        config.green_minimum, config.green_maximum));
+    result.b = srgb_to_linear(stepped_channel(
+        blue_index, config.blue_steps, config.blue_minimum, config.blue_maximum));
+    result.a = config.include_alpha
+        ? stepped_channel(alpha_index, config.alpha_steps,
+                          config.alpha_minimum, config.alpha_maximum)
+        : 1.0;
+    return result;
 }
 
 double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
@@ -2610,7 +2798,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
 
     const double breath = 0.85 + 0.35 * std::sin(loop_phase);
     const std::vector<Color> starting_palette =
-        prepare_starting_palette(config.palette);
+        prepare_starting_palette(config.palette, config.alpha.use_source_alpha);
 
     std::size_t block_counter = 0U;
     for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
@@ -2620,6 +2808,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         for (std::int64_t block_x_wide = 0; block_x_wide < config.width;
              block_x_wide += config.block_size) {
             const int block_x = static_cast<int>(block_x_wide);
+            const std::size_t starting_color_index = block_counter;
             if ((block_counter++ & 63U) == 0U) {
                 throw_if_cancelled(cancel);
             }
@@ -2718,9 +2907,30 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             }
             lightness = clamp_value(lightness, 0.04, 0.68);
             Color base;
-            if (starting_palette.empty()) {
+            if (starting_palette.empty()
+                && config.starting_colors.mode
+                       == StartingColorMode::LegacyHue) {
                 base = hsl_to_linear_rgb(hue, config.saturation, lightness);
                 base = rotate_linear_hue(base, audio_hue_shift);
+                if (config.starting_colors.include_alpha) {
+                    base.a = stepped_channel(
+                        starting_color_index,
+                        config.starting_colors.alpha_steps,
+                        config.starting_colors.alpha_minimum,
+                        config.starting_colors.alpha_maximum);
+                }
+            } else if (starting_palette.empty()) {
+                base = generated_starting_color(
+                    config.starting_colors, starting_color_index,
+                    block_x / std::max(1, config.block_size),
+                    block_y / std::max(1, config.block_size));
+                base = rotate_linear_hue(base, audio_hue_shift);
+                if (config.lighting_enabled) {
+                    const double lighting_scale = lightness / 0.40;
+                    base.r *= lighting_scale;
+                    base.g *= lighting_scale;
+                    base.b *= lighting_scale;
+                }
             } else {
                 // Choose an authored source color before procedural slope
                 // lighting. Otherwise a one-color palette would accidentally
@@ -2750,10 +2960,145 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
                     Color output = base;
-                    output.a = alpha_at(config, x, y, loop_phase);
+                    const double source_alpha = config.alpha.use_source_alpha
+                                                    ? base.a
+                                                    : 1.0;
+                    output.a = source_alpha
+                               * alpha_at(config, x, y, loop_phase);
                     store_color(image, x, y, output);
                 }
             }
+        }
+    }
+}
+
+std::uint64_t source_dither_hash(std::uint64_t value) {
+    value ^= value >> 30U;
+    value *= 0xbf58476d1ce4e5b9ULL;
+    value ^= value >> 27U;
+    value *= 0x94d049bb133111ebULL;
+    return value ^ (value >> 31U);
+}
+
+double source_dither_noise(int x, int y, DitherMethod method) {
+    if (method == DitherMethod::OrderedBayer) {
+        constexpr std::array<int, 16> bayer = {
+            0, 8, 2, 10, 12, 4, 14, 6,
+            3, 11, 1, 9, 15, 7, 13, 5};
+        const std::size_t index = static_cast<std::size_t>((y & 3) * 4 + (x & 3));
+        return (static_cast<double>(bayer[index]) + 0.5) / 16.0 - 0.5;
+    }
+    const std::uint64_t coordinate =
+        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32U)
+        | static_cast<std::uint32_t>(y);
+    const std::uint64_t bits = source_dither_hash(coordinate ^ 0xa0761d6478bd642fULL);
+    return static_cast<double>(bits >> 11U)
+           * (1.0 / 9007199254740992.0) - 0.5;
+}
+
+void quantize_starting_image(Image& image,
+                             const std::vector<Color>& palette,
+                             bool compare_alpha, bool dither_enabled,
+                             DitherMethod dither_method,
+                             const std::atomic_bool* cancel) {
+    if (palette.empty()) return;
+    const double dither_amplitude = clamp_value(
+        0.5 / std::cbrt(static_cast<double>(palette.size())), 0.015, 0.18);
+    if (dither_enabled && dither_method == DitherMethod::FloydSteinberg) {
+        std::vector<Color> current_error(
+            static_cast<std::size_t>(image.width + 2));
+        std::vector<Color> next_error(
+            static_cast<std::size_t>(image.width + 2));
+        const auto add_error = [](Color& destination, const Color& value,
+                                  double weight) {
+            destination.r += value.r * weight;
+            destination.g += value.g * weight;
+            destination.b += value.b * weight;
+            destination.a += value.a * weight;
+        };
+        for (int y = 0; y < image.height; ++y) {
+            throw_if_cancelled(cancel);
+            const bool reverse = (y & 1) != 0;
+            for (int step = 0; step < image.width; ++step) {
+                const int x = reverse ? image.width - 1 - step : step;
+                const int slot = x + 1;
+                Color input = load_color(image, x, y);
+                if (compare_alpha && input.a <= 1.0e-12) {
+                    store_color(image, x, y, {});
+                    continue;
+                }
+                const Color& error = current_error[static_cast<std::size_t>(slot)];
+                input.r = clamp_value(input.r + error.r, 0.0, 1.0);
+                input.g = clamp_value(input.g + error.g, 0.0, 1.0);
+                input.b = clamp_value(input.b + error.b, 0.0, 1.0);
+                input.a = compare_alpha
+                    ? clamp_value(input.a + error.a, 0.0, 1.0) : 1.0;
+                const Color selected = nearest_starting_color(
+                    input, palette, compare_alpha);
+                store_color(image, x, y, selected);
+                const Color quantization_error = {
+                    input.r - selected.r, input.g - selected.g,
+                    input.b - selected.b,
+                    compare_alpha ? input.a - selected.a : 0.0};
+                const int forward = reverse ? -1 : 1;
+                add_error(current_error[static_cast<std::size_t>(slot + forward)],
+                          quantization_error, 7.0 / 16.0);
+                add_error(next_error[static_cast<std::size_t>(slot - forward)],
+                          quantization_error, 3.0 / 16.0);
+                add_error(next_error[static_cast<std::size_t>(slot)],
+                          quantization_error, 5.0 / 16.0);
+                add_error(next_error[static_cast<std::size_t>(slot + forward)],
+                          quantization_error, 1.0 / 16.0);
+            }
+            current_error.swap(next_error);
+            std::fill(next_error.begin(), next_error.end(), Color{});
+        }
+        return;
+    }
+
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            Color input = load_color(image, x, y);
+            if (compare_alpha && input.a <= 1.0e-12) {
+                store_color(image, x, y, {});
+                continue;
+            }
+            if (dither_enabled) {
+                const double noise = source_dither_noise(x, y, dither_method)
+                                     * dither_amplitude;
+                input.r = clamp_value(input.r + noise, 0.0, 1.0);
+                input.g = clamp_value(input.g + noise, 0.0, 1.0);
+                input.b = clamp_value(input.b + noise, 0.0, 1.0);
+                if (compare_alpha) {
+                    input.a = clamp_value(input.a + noise, 0.0, 1.0);
+                }
+            }
+            store_color(image, x, y,
+                        nearest_starting_color(input, palette, compare_alpha));
+        }
+    }
+}
+
+void apply_starting_image_controls(const RenderConfig& config,
+                                   double loop_phase, Image& image,
+                                   const std::atomic_bool* cancel) {
+    const bool use_source_alpha = config.alpha.use_source_alpha;
+    const std::vector<Color> palette = prepare_starting_palette(
+        config.palette, use_source_alpha);
+    if (!palette.empty()) {
+        quantize_starting_image(
+            image, palette, use_source_alpha,
+            config.starting_image.palette_dither_enabled,
+            config.starting_image.palette_dither_method, cancel);
+    }
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            Color color = load_color(image, x, y);
+            color.a = (use_source_alpha ? color.a : 1.0)
+                      * alpha_at(config, x, y, loop_phase);
+            store_color(image, x, y, color);
         }
     }
 }
@@ -2900,6 +3245,7 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                 case EffectType::Glow:
                 case EffectType::BlockScale:
                 case EffectType::ParticleField:
+                case EffectType::Blur:
                     sampled = load_color(source, x, y);
                     break;
             }
@@ -3173,6 +3519,132 @@ void blur_nine_tap(const Image& source, Image& destination,
                 accumulated.r = accumulated.g = accumulated.b = 0.0;
             }
             store_color(destination, x, y, accumulated);
+        }
+    }
+}
+
+void blur_sample_pass(const Image& source, Image& destination,
+                      const EffectConfig& effect, bool horizontal,
+                      const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
+    ensure_image(destination, source.width, source.height);
+    const int samples = effect.blur_samples;
+    const double center = 0.5 * static_cast<double>(samples - 1);
+    const double denominator = std::max(1.0, center);
+    const double angle = radians(effect.angle_degrees);
+    const double direction_x = std::cos(angle);
+    const double direction_y = std::sin(angle);
+    const double center_x = effect.center_x * static_cast<double>(source.width - 1);
+    const double center_y = effect.center_y * static_cast<double>(source.height - 1);
+    const double short_side = static_cast<double>(
+        std::max(1, std::min(source.width, source.height)));
+
+    for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < source.width; ++x) {
+            Color accumulated;
+            double total_weight = 0.0;
+            for (int tap = 0; tap < samples; ++tap) {
+                const double normalized = (static_cast<double>(tap) - center)
+                                          / denominator;
+                const double offset = normalized * effect.radius_pixels;
+                double sample_x = static_cast<double>(x);
+                double sample_y = static_cast<double>(y);
+                switch (effect.blur_type) {
+                    case BlurType::Gaussian:
+                    case BlurType::Box:
+                        if (horizontal) sample_x += offset;
+                        else sample_y += offset;
+                        break;
+                    case BlurType::Directional:
+                        sample_x += direction_x * offset;
+                        sample_y += direction_y * offset;
+                        break;
+                    case BlurType::Radial: {
+                        const double theta = offset / short_side;
+                        const double cosine = std::cos(theta);
+                        const double sine = std::sin(theta);
+                        const double relative_x = x - center_x;
+                        const double relative_y = y - center_y;
+                        sample_x = center_x + relative_x * cosine
+                                   - relative_y * sine;
+                        sample_y = center_y + relative_x * sine
+                                   + relative_y * cosine;
+                        break;
+                    }
+                    case BlurType::Zoom: {
+                        const double scale = std::max(
+                            0.01, 1.0 + offset / short_side);
+                        sample_x = center_x + (x - center_x) * scale;
+                        sample_y = center_y + (y - center_y) * scale;
+                        break;
+                    }
+                }
+                double weight = 1.0;
+                if (effect.blur_type == BlurType::Gaussian) {
+                    // Radius spans roughly three standard deviations in each
+                    // direction, retaining a stable kernel as sample count changes.
+                    weight = std::exp(-4.5 * normalized * normalized);
+                }
+                const Color sample = sample_bilinear(
+                    source, sample_x, sample_y, effect.edge_mode);
+                accumulated.r += sample.r * sample.a * weight;
+                accumulated.g += sample.g * sample.a * weight;
+                accumulated.b += sample.b * sample.a * weight;
+                accumulated.a += sample.a * weight;
+                total_weight += weight;
+            }
+            if (total_weight > 0.0) accumulated.a /= total_weight;
+            if (accumulated.a > 1.0e-12) {
+                const double premultiplied_denominator =
+                    accumulated.a * total_weight;
+                accumulated.r /= premultiplied_denominator;
+                accumulated.g /= premultiplied_denominator;
+                accumulated.b /= premultiplied_denominator;
+            } else {
+                accumulated.r = accumulated.g = accumulated.b = 0.0;
+            }
+            store_color(destination, x, y, accumulated);
+        }
+    }
+}
+
+void apply_blur(Image& image, Image& scratch, Image& auxiliary,
+                const EffectConfig& effect,
+                const std::atomic_bool* cancel) {
+    if (effect.intensity <= 1.0e-12 || effect.radius_pixels <= 1.0e-12) return;
+    const Image* source = &image;
+    Image* destination = &scratch;
+    const Image* blurred = nullptr;
+    for (int pass = 0; pass < effect.blur_passes; ++pass) {
+        if (effect.blur_type == BlurType::Gaussian
+            || effect.blur_type == BlurType::Box) {
+            blur_sample_pass(*source, *destination, effect, true, cancel);
+            source = destination;
+            destination = destination == &scratch ? &auxiliary : &scratch;
+            blur_sample_pass(*source, *destination, effect, false, cancel);
+            source = destination;
+            destination = destination == &scratch ? &auxiliary : &scratch;
+        } else {
+            blur_sample_pass(*source, *destination, effect, false, cancel);
+            source = destination;
+            destination = destination == &scratch ? &auxiliary : &scratch;
+        }
+        blurred = source;
+    }
+    if (blurred == nullptr) return;
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            const double area = circular_influence(
+                effect.center_x, effect.center_y, effect.area_radius,
+                static_cast<double>(x), static_cast<double>(y),
+                image.width, image.height);
+            const Color original = load_color(image, x, y);
+            const Color softened = load_color(*blurred, x, y);
+            store_color(image, x, y, blend_straight_alpha(
+                original, softened,
+                clamp_value(effect.intensity * area, 0.0, 1.0)));
         }
     }
 }
@@ -4038,6 +4510,10 @@ bool render_frame_at_timeline_sample_cancellable(
                     current, cancel, error)) {
                 return false;
             }
+            // Image placement and source-color generation are composable: the
+            // fitted PNG chooses where colors live, then the optional starting
+            // palette constrains those source colors before any effects.
+            apply_starting_image_controls(render, loop_phase, current, cancel);
         } else {
             generate_base_image(render, loop_phase, independent_loop_phase,
                                 motion_clock,
@@ -4051,6 +4527,15 @@ bool render_frame_at_timeline_sample_cancellable(
                     continue;
                 }
                 EffectConfig effect = authored_effect;
+                const double phase = effect_phase(
+                    render, effect, independent_loop_phase, motion_clock);
+                if (effect.type == EffectType::Blur) {
+                    const double pulse = 0.5 - 0.5 * std::cos(
+                        static_cast<double>(effect.blur_pulses_per_cycle)
+                        * phase);
+                    effect.intensity = mix_value(
+                        effect.blur_minimum, effect.blur_maximum, pulse);
+                }
                 const ResolvedAudioResponse response =
                     resolve_item_audio_response(
                         audio, effect.synchronized, effect.audio_response,
@@ -4063,10 +4548,10 @@ bool render_frame_at_timeline_sample_cancellable(
                                            response.source));
                 }
                 if (!effect_has_render_work(effect)) continue;
-                const double phase = effect_phase(
-                    render, effect, independent_loop_phase, motion_clock);
                 if (effect.type == EffectType::Glow) {
                     apply_glow(current, scratch, auxiliary, effect, phase, cancel);
+                } else if (effect.type == EffectType::Blur) {
+                    apply_blur(current, scratch, auxiliary, effect, cancel);
                 } else if (effect.type == EffectType::BlockScale) {
                     apply_block_scale(current, scratch, effect, phase,
                                       render.block_size, cancel);
@@ -4203,7 +4688,7 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
     }
 
     const std::vector<Color> palette =
-        prepare_starting_palette(config.palette);
+        prepare_starting_palette(config.palette, config.alpha.use_source_alpha);
     candidate.starting_palette.reserve(palette.size());
     for (const Color& color : palette) {
         candidate.starting_palette.push_back(
@@ -4213,6 +4698,14 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
     candidate.effects.reserve(config.effects.size());
     for (const EffectConfig& authored : config.effects) {
         EffectConfig effect = authored;
+        const double phase = effect_phase(
+            config, effect, candidate.independent_loop_phase, motion_clock);
+        if (effect.type == EffectType::Blur) {
+            const double pulse = 0.5 - 0.5 * std::cos(
+                static_cast<double>(effect.blur_pulses_per_cycle) * phase);
+            effect.intensity = mix_value(
+                effect.blur_minimum, effect.blur_maximum, pulse);
+        }
         const ResolvedAudioResponse response = resolve_item_audio_response(
             audio, effect.synchronized, effect.audio_response,
             audio.effects_enabled, audio.effect_source);
@@ -4227,12 +4720,12 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
         }
         candidate.effects.push_back(
             {effect.type, effect.space, effect.edge_mode,
-             effect_phase(config, effect, candidate.independent_loop_phase,
-                          motion_clock),
+             phase,
              effect.intensity, effect.magnitude, effect.frequency,
              effect.secondary, effect.center_x, effect.center_y,
              radians(effect.angle_degrees), effect.radius_pixels,
-             effect.threshold, effect.soft_knee, effect.area_radius});
+             effect.threshold, effect.soft_knee, effect.area_radius,
+             effect.blur_type, effect.blur_passes, effect.blur_samples});
     }
 
     prepared = std::move(candidate);

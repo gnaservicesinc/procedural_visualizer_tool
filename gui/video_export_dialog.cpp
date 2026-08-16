@@ -5,7 +5,11 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QVBoxLayout>
+
+#include <limits>
 
 namespace {
 
@@ -104,6 +108,32 @@ VideoExportDialog::VideoExportDialog(
     include_music_->setToolTip(
         tr("Data-only sources remain silent. Audible layer clips use the same fit, loop, and one-shot mapping as their visual clocks."));
     form->addRow(include_music_);
+
+    chunk_mode_ = new QComboBox(this);
+    chunk_mode_->setObjectName(QStringLiteral("videoChunkMode"));
+    add_choice(chunk_mode_, tr("One movie"),
+               pvt::video::ChunkMode::SingleMovie);
+    add_choice(chunk_mode_, tr("Split by frame count"),
+               pvt::video::ChunkMode::FrameCount);
+    add_choice(chunk_mode_, tr("Split by maximum duration"),
+               pvt::video::ChunkMode::MaximumSeconds);
+    form->addRow(tr("Output chunks"), chunk_mode_);
+
+    chunk_frames_ = new QSpinBox(this);
+    chunk_frames_->setObjectName(QStringLiteral("videoChunkFrames"));
+    chunk_frames_->setRange(1, (std::numeric_limits<int>::max)());
+    chunk_frames_->setValue(240);
+    chunk_frames_->setSuffix(tr(" frames"));
+    form->addRow(tr("Frames per chunk"), chunk_frames_);
+
+    chunk_seconds_ = new QDoubleSpinBox(this);
+    chunk_seconds_->setObjectName(QStringLiteral("videoChunkSeconds"));
+    chunk_seconds_->setRange(0.001,
+                             static_cast<double>((std::numeric_limits<int>::max)()));
+    chunk_seconds_->setDecimals(3);
+    chunk_seconds_->setValue(10.0);
+    chunk_seconds_->setSuffix(tr(" seconds"));
+    form->addRow(tr("Maximum chunk duration"), chunk_seconds_);
     root->addLayout(form);
 
     explanation_ = wrapped_label(QString{}, this);
@@ -121,6 +151,8 @@ VideoExportDialog::VideoExportDialog(
             this, [this] { updateChoiceState(); });
     connect(preserve_alpha_, &QCheckBox::toggled,
             this, [this] { updateChoiceState(); });
+    connect(chunk_mode_, &QComboBox::currentIndexChanged,
+            this, [this] { updateChoiceState(); });
     updateChoiceState();
 }
 
@@ -135,6 +167,12 @@ void VideoExportDialog::updateChoiceState() {
     const bool alpha_supported = !hevc || capabilities_.hevc_alpha;
     preserve_alpha_->setEnabled(project_has_alpha_ && alpha_supported);
     if (!alpha_supported) preserve_alpha_->setChecked(false);
+    const auto chunk_mode = static_cast<pvt::video::ChunkMode>(
+        chunk_mode_->currentData().toInt());
+    chunk_frames_->setEnabled(
+        chunk_mode == pvt::video::ChunkMode::FrameCount);
+    chunk_seconds_->setEnabled(
+        chunk_mode == pvt::video::ChunkMode::MaximumSeconds);
 
     if (lossless) {
         explanation_->setText(
@@ -167,5 +205,9 @@ pvt::video::Options VideoExportDialog::options() const {
         hevc_quality_->currentData().toInt());
     result.preserve_alpha = preserve_alpha_->isChecked();
     result.include_project_music = include_music_->isChecked();
+    result.chunk_mode = static_cast<pvt::video::ChunkMode>(
+        chunk_mode_->currentData().toInt());
+    result.chunk_frames = chunk_frames_->value();
+    result.chunk_maximum_seconds = chunk_seconds_->value();
     return result;
 }

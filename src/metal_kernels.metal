@@ -39,6 +39,7 @@ struct GpuEffect {
     float4 primary; // phase, intensity, magnitude, frequency
     float4 placement; // secondary, center x/y, angle radians
     float4 glow_area; // radius, threshold, soft knee, area radius
+    uint4 blur; // BlurType, samples, passes, horizontal-pass flag
 };
 
 struct GpuSurface {
@@ -411,9 +412,10 @@ float4 sample_starting_image(const device float4* image, float x, float y,
 }
 
 kernel void source_image_render(
-    constant GpuSourceImage& source [[buffer(0)]],
-    const device float4* image [[buffer(1)]],
-    device float4* output [[buffer(2)]],
+    constant FrameConstants& frame [[buffer(0)]],
+    constant GpuSourceImage& source [[buffer(1)]],
+    const device float4* image [[buffer(2)]],
+    device float4* output [[buffer(3)]],
     uint2 gid [[thread_position_in_grid]]) {
     const uint source_width = source.source.x;
     const uint source_height = source.source.y;
@@ -443,9 +445,24 @@ kernel void source_image_render(
                        / fit_scale
                    + 0.5f * float(source_height);
     }
-    output[gid.y * destination_width + gid.x] = sample_starting_image(
+    float4 color = sample_starting_image(
         image, source_x, source_y, source_width, source_height, tile,
         transparent_outside);
+    if (frame.counts_flags.z != 0u) {
+        const float width_scale = destination_width > 1u
+            ? float(gid.x) / float(destination_width - 1u) : 0.0f;
+        const float height_scale = destination_height > 1u
+            ? float(gid.y) / float(destination_height - 1u) : 0.0f;
+        const float spatial =
+            (width_scale + height_scale) * 0.7071067811865476f;
+        const float alpha_phase =
+            kTau * frame.pattern1.w * spatial
+            - float(frame.signed_values.x) * frame.phases.x
+            + frame.alpha_quant.z;
+        const float amount = 0.5f + 0.5f * sin(alpha_phase);
+        color.a *= mix(frame.alpha_quant.x, frame.alpha_quant.y, amount);
+    }
+    output[gid.y * destination_width + gid.x] = color;
 }
 
 kernel void layer_motion(constant FrameConstants& frame [[buffer(0)]],
@@ -991,6 +1008,86 @@ kernel void glow_blur_vertical(
     output[gid.y * frame.dimensions_counts.x + gid.x] = blur_pixel(
         source, int(gid.x), int(gid.y), frame.dimensions_counts.x,
         frame.dimensions_counts.y, effect.glow_area.x, false);
+}
+
+kernel void configurable_blur(
+    constant FrameConstants& frame [[buffer(0)]],
+    constant GpuEffect& effect [[buffer(1)]],
+    const device float4* source [[buffer(2)]],
+    device float4* output [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    if (gid.x >= width || gid.y >= height) return;
+    const uint blur_type = effect.blur.x;
+    const uint samples = effect.blur.y;
+    const bool horizontal = effect.blur.w != 0u;
+    const float center = 0.5f * float(samples - 1u);
+    const float denominator = max(1.0f, center);
+    const float direction_x = cos(effect.placement.w);
+    const float direction_y = sin(effect.placement.w);
+    const float center_x = effect.placement.y * float(width - 1u);
+    const float center_y = effect.placement.z * float(height - 1u);
+    const float short_side = float(max(1u, min(width, height)));
+    float3 premultiplied = float3(0.0f);
+    float alpha_sum = 0.0f;
+    float total_weight = 0.0f;
+    for (uint tap = 0u; tap < samples; ++tap) {
+        const float normalized = (float(tap) - center) / denominator;
+        const float offset = normalized * effect.glow_area.x;
+        float sample_x = float(gid.x);
+        float sample_y = float(gid.y);
+        if (blur_type <= 1u) {
+            if (horizontal) sample_x += offset;
+            else sample_y += offset;
+        } else if (blur_type == 2u) {
+            sample_x += direction_x * offset;
+            sample_y += direction_y * offset;
+        } else if (blur_type == 3u) {
+            const float theta = offset / short_side;
+            const float cosine = cos(theta);
+            const float sine = sin(theta);
+            const float relative_x = float(gid.x) - center_x;
+            const float relative_y = float(gid.y) - center_y;
+            sample_x = center_x + relative_x * cosine - relative_y * sine;
+            sample_y = center_y + relative_x * sine + relative_y * cosine;
+        } else {
+            const float scale = max(0.01f, 1.0f + offset / short_side);
+            sample_x = center_x + (float(gid.x) - center_x) * scale;
+            sample_y = center_y + (float(gid.y) - center_y) * scale;
+        }
+        const float weight = blur_type == 0u
+            ? exp(-4.5f * normalized * normalized) : 1.0f;
+        const float4 sample = sample_bilinear(
+            source, sample_x, sample_y, width, height, effect.kind.z);
+        premultiplied += sample.rgb * sample.a * weight;
+        alpha_sum += sample.a * weight;
+        total_weight += weight;
+    }
+    float4 result = float4(0.0f);
+    result.a = total_weight > 0.0f ? alpha_sum / total_weight : 0.0f;
+    result.rgb = alpha_sum > 1.0e-7f
+        ? premultiplied / alpha_sum : float3(0.0f);
+    output[gid.y * width + gid.x] = result;
+}
+
+kernel void blur_combine(
+    constant FrameConstants& frame [[buffer(0)]],
+    constant GpuEffect& effect [[buffer(1)]],
+    device float4* image [[buffer(2)]],
+    const device float4* blurred [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    if (gid.x >= width || gid.y >= height) return;
+    const uint offset = gid.y * width + gid.x;
+    const float area = circular_influence(
+        effect.placement.y, effect.placement.z, effect.glow_area.w,
+        float(gid.x), float(gid.y), width, height);
+    float4 result = mix(image[offset], blurred[offset],
+                        clamp_unit(effect.primary.y * area));
+    result.a = clamp_unit(result.a);
+    image[offset] = result;
 }
 
 kernel void glow_combine(constant FrameConstants& frame [[buffer(0)]],

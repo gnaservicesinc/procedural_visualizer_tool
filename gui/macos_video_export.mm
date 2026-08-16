@@ -663,7 +663,7 @@ struct AudioTrack {
     AVAssetWriterInput* input = nil;
 };
 
-bool prepare_audio_track(const std::string& path, CMTime duration,
+bool prepare_audio_track(const std::string& path, CMTime start, CMTime duration,
                          AVAssetWriter* writer, AudioTrack& audio,
                          std::string* error) {
     NSString* source = [NSString stringWithUTF8String:path.c_str()];
@@ -686,7 +686,7 @@ bool prepare_audio_track(const std::string& path, CMTime duration,
         return fail(error, ns_error(reader_error,
                                     "Could not create the project-music reader."));
     }
-    audio.reader.timeRange = CMTimeRangeMake(kCMTimeZero, duration);
+    audio.reader.timeRange = CMTimeRangeMake(start, duration);
     audio.output = [[AVAssetReaderTrackOutput alloc]
         initWithTrack:track outputSettings:nil];
     audio.output.alwaysCopiesSampleData = NO;
@@ -765,9 +765,19 @@ bool export_project(const pvt::ProjectConfig& project,
         const pvt::ValidationResult validation = pvt::validate(project);
         if (!validation.ok) return fail(error, validation.message);
         std::string frame_count_error;
-        const int total_frames = pvt::effective_frame_count(
+        const int full_frame_count = pvt::effective_frame_count(
             project.canvas, &frame_count_error);
-        if (total_frames < 1) return fail(error, frame_count_error);
+        if (full_frame_count < 1) return fail(error, frame_count_error);
+        if (options.first_frame < 0 || options.first_frame >= full_frame_count
+            || options.frame_count < 0
+            || (options.frame_count > 0
+                && options.frame_count
+                       > full_frame_count - options.first_frame)) {
+            return fail(error,
+                        "The requested video frame range is outside the project timeline.");
+        }
+        const int total_frames = options.frame_count > 0
+            ? options.frame_count : full_frame_count - options.first_frame;
         std::size_t render_worker_count = 0U;
         if (!select_video_worker_count(project, validation, options,
                                        total_frames, &render_worker_count,
@@ -830,6 +840,8 @@ bool export_project(const pvt::ProjectConfig& project,
             1.0 / project.canvas.fps, kMovieTimeScale);
         const CMTime movie_duration = CMTimeMultiply(
             frame_duration, static_cast<std::int32_t>(total_frames));
+        const CMTime audio_start = CMTimeMultiply(
+            frame_duration, static_cast<std::int32_t>(options.first_frame));
 
         AVAssetWriterInput* video_input = nil;
         AVAssetWriterInputPixelBufferAdaptor* adaptor = nil;
@@ -887,7 +899,8 @@ bool export_project(const pvt::ProjectConfig& project,
         const bool include_audio = options.include_project_music
                                    && !options.music_source_path.empty();
         if (include_audio
-            && !prepare_audio_track(options.music_source_path, movie_duration,
+            && !prepare_audio_track(options.music_source_path, audio_start,
+                                    movie_duration,
                                     writer, audio, error)) {
             if (png_format != nullptr) CFRelease(png_format);
             return false;
@@ -896,7 +909,7 @@ bool export_project(const pvt::ProjectConfig& project,
             if (png_format != nullptr) CFRelease(png_format);
             return fail(error, writer_error(writer, "Could not start movie writing."));
         }
-        [writer startSessionAtSourceTime:kCMTimeZero];
+        [writer startSessionAtSourceTime:audio_start];
 
         std::atomic_bool audio_failed{false};
         std::mutex audio_error_mutex;
@@ -932,7 +945,8 @@ bool export_project(const pvt::ProjectConfig& project,
                         CMSampleBufferRef sample =
                             [audio.output copyNextSampleBuffer];
                         if (sample == nullptr) break;
-                        const bool appended = [audio.input appendSampleBuffer:sample];
+                        const bool appended =
+                            [audio.input appendSampleBuffer:sample];
                         CFRelease(sample);
                         if (!appended) {
                             std::lock_guard<std::mutex> lock(audio_error_mutex);
@@ -1015,7 +1029,9 @@ bool export_project(const pvt::ProjectConfig& project,
                                         result.frame_index = frame;
                                         try {
                                             if (pvt::render_project_frame(
-                                                    project, frame, options.frame,
+                                                    project,
+                                                    options.first_frame + frame,
+                                                    options.frame,
                                                     image, &stop, &result.error)) {
                                                 result.ok = options.codec
                                                         == Codec::PngLossless
@@ -1131,7 +1147,8 @@ bool export_project(const pvt::ProjectConfig& project,
                 }
 
                 const CMTime presentation = CMTimeMultiply(
-                    frame_duration, static_cast<std::int32_t>(expected));
+                    frame_duration,
+                    static_cast<std::int32_t>(options.first_frame + expected));
                 if (options.codec == Codec::PngLossless) {
                     ok = append_png_frame(
                         video_input, writer, png_format, result.bytes,
@@ -1212,7 +1229,7 @@ bool export_project(const pvt::ProjectConfig& project,
             return fail(error, work_error.empty()
                                    ? "Video export was cancelled." : work_error);
         }
-        [writer endSessionAtSourceTime:movie_duration];
+        [writer endSessionAtSourceTime:CMTimeAdd(audio_start, movie_duration)];
         if (!finish_writer(writer, error)) return false;
         if (!install_temporary_movie(temporary, destination,
                                      options.overwrite_existing, error)) {

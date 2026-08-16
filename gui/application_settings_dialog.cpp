@@ -30,6 +30,7 @@ QLabel* explanatory_label(const QString& text, QWidget* parent) {
 
 ApplicationSettingsDialog::ApplicationSettingsDialog(
     int undoLimit, pvt::RenderBackend renderBackend,
+    int recentProjectLimit,
     bool hasCustomNewProjectDefaults, QWidget* parent)
     : QDialog(parent) {
     setObjectName(QStringLiteral("applicationSettingsDialog"));
@@ -68,6 +69,20 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
                "available memory is the practical limit."),
             history_group));
     general_layout->addWidget(history_group);
+
+    auto* recent_group = new QGroupBox(tr("Recent Projects"), general_page);
+    auto* recent_form = new QFormLayout(recent_group);
+    recent_project_limit_ = new QSpinBox(recent_group);
+    recent_project_limit_->setObjectName(QStringLiteral("recentProjectLimitPreference"));
+    recent_project_limit_->setRange(0, 100);
+    recent_project_limit_->setSpecialValueText(tr("Disabled"));
+    recent_project_limit_->setValue(std::clamp(recentProjectLimit, 0, 100));
+    recent_form->addRow(tr("Projects shown"), recent_project_limit_);
+    recent_form->addRow(explanatory_label(
+        tr("The File menu shows each project's name and full path. This is a local "
+           "application preference and is not stored inside projects."),
+        recent_group));
+    general_layout->addWidget(recent_group);
 
     auto* defaults_group = new QGroupBox(tr("New Projects"), general_page);
     auto* defaults_layout = new QVBoxLayout(defaults_group);
@@ -158,6 +173,10 @@ pvt::RenderBackend ApplicationSettingsDialog::renderBackend() const {
         return pvt::RenderBackend::CpuAndGpu;
     }
     return static_cast<pvt::RenderBackend>(value);
+}
+
+int ApplicationSettingsDialog::recentProjectLimit() const {
+    return recent_project_limit_->value();
 }
 
 ApplicationSettingsDialog::NewProjectDefaultsAction

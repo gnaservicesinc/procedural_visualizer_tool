@@ -421,17 +421,15 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This patch keeps the Versions tab synchronized when starting a new project. The prior bundle's rows, summary, semantic-diff selectors, and action targets are cleared immediately, and version comparison stays disabled until the active document has at least two saved versions. A completed background comparison from an older document cannot re-enable stale controls.
+          This feature release adds artist-configurable blur effects with Gaussian, box, directional, radial, and zoom algorithms. Metal renders every blur type on the GPU on supported Macs, while a premultiplied-alpha CPU implementation provides matching output and the portable fallback. Blur strength can remain constant or move between user-selected limits for an exact number of pulses per cycle, using either an independent evenly spaced clock or the shared synchronized/swung clock.
 
-          This release also makes large directory projects practical. Normal Open validates and materializes the selected snapshot instead of decoding every immutable historical snapshot; version content is decoded on demand for Open, Compare, Revert, or explicit full validation. Directory saves remain first-class and do not rebuild a ZIP archive.
+          Starting colors now support channel-loop, interleaved, additive, and subtractive layouts; optional alpha enumeration; constrained deterministic or entropy-seeded random generation; and selectable aesthetic relationship rules. RGBA palettes can be saved locally, reused across layers, or loaded from other layers without losing alpha values when layer color alpha is temporarily disabled.
 
-          Music-analysis decimal parsing now uses a lightweight locale-safe fast path, shared split analysis is decoded once, and unchanged saves use an in-memory semantic fingerprint to avoid repeatedly serializing enormous analysis tables. Persisted SHA-256 identities and integrity checks are unchanged. Embedded music, images, OBJ files, and other attachments keep exactly one physical copy per content identity, and shared analysis tables remain content-addressed across history.
+          Embedded PNG sources and starting palettes are now composable. The image controls where starting colors appear, with optional blue-noise, ordered Bayer, or Floyd-Steinberg quantization before effects run and optional post-effect quantization afterward. Project assets such as images, OBJ files, and music can be reused from another compatible field without duplicating their stored bytes.
 
-          GUI Open, Save, Save As, and version comparison now run as background transactions with visible busy state, guarded editing, and atomic completion, so slow storage does not freeze the interface. On the supplied 41 MiB, 20-version Potato Fire directory, local CLI measurements improved from about 5.3 to 1.05 seconds for Open, 11.6 to 1.77 seconds for an unchanged open/save cycle, and 13.2 to 3.38 seconds after a real change. Timings include process startup and are not cross-platform guarantees.
+          Movie export can split work by frame count or maximum duration while preserving one continuous project clock. PVT writes numbered movie chunks plus an executable, shell-safe concat script using the exact absolute chunk paths; the script supports a caller-selected output file or directory.
 
-          Save locks remain advisory and stale-writer-safe but are now transient. A successful save removes the exact still-locked sidecar identity before releasing the OS lock, and stale blank sidecars from a crash or older release are reused and cleaned automatically.
-
-          It also includes resilient project recovery with lossless unknown-field preservation, embedded PNG layer sources, reusable cubic motion paths, destination-out eraser blend modes, adaptive music-responsive editing and export, native macOS movie output, and versioned project bundles.
+          The editor also adds a configurable recent-projects menu with full paths, locally remembered history length, richer alpha controls, and expanded CLI/setup persistence for the new rendering options.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 

@@ -28,6 +28,7 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QMenu;
 class QProgressBar;
 class QPushButton;
 class QPlainTextEdit;
@@ -169,6 +170,9 @@ private:
     void updateEffectEditorVisibility();
     void refreshPaletteEditor();
     void applyPalettePreset(std::size_t index);
+    void savePaletteToLibrary();
+    void loadPaletteFromLibraryOrLayer();
+    void generateRandomPalette();
     void addPaletteColor();
     void editSelectedPaletteColor();
     void removeSelectedPaletteColor();
@@ -204,6 +208,8 @@ private:
     bool confirmDiscardChanges(std::function<void()> after_save = {});
     void restoreUserSettings();
     void saveUserSettings();
+    void addRecentProject(const QString& path);
+    void refreshRecentProjectsMenu();
     void showApplicationSettings();
     void showAboutDialog();
     void showMotionPathEditor();
@@ -337,6 +343,7 @@ private:
     bool close_after_export_ = false;
     bool playback_preview_advanced_ = false;
     pvt::RenderBackend render_backend_ = pvt::RenderBackend::CpuAndGpu;
+    int recent_project_limit_ = 10;
     int last_previewed_frame_ = -1;
     int preview_test_delay_ms_ = 0;
     QString independent_copy_test_path_;
@@ -408,6 +415,7 @@ private:
     QAction* settings_action_ = nullptr;
     QAction* about_action_ = nullptr;
     QAction* restore_layers_dock_action_ = nullptr;
+    QMenu* recent_projects_menu_ = nullptr;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;
@@ -564,6 +572,12 @@ private:
     QDoubleSpinBox* effect_threshold_ = nullptr;
     QDoubleSpinBox* effect_knee_ = nullptr;
     QDoubleSpinBox* effect_area_radius_ = nullptr;
+    QComboBox* effect_blur_type_ = nullptr;
+    QSpinBox* effect_blur_passes_ = nullptr;
+    QSpinBox* effect_blur_samples_ = nullptr;
+    QDoubleSpinBox* effect_blur_minimum_ = nullptr;
+    QDoubleSpinBox* effect_blur_maximum_ = nullptr;
+    QSpinBox* effect_blur_pulses_ = nullptr;
     QFormLayout* effect_form_ = nullptr;
 
     QSpinBox* width_ = nullptr;
@@ -599,6 +613,8 @@ private:
     QCheckBox* starting_image_enabled_ = nullptr;
     QLineEdit* starting_image_path_ = nullptr;
     QComboBox* starting_image_fit_ = nullptr;
+    QCheckBox* starting_image_palette_dither_ = nullptr;
+    QComboBox* starting_image_palette_dither_method_ = nullptr;
     QPushButton* starting_image_browse_ = nullptr;
     QPushButton* starting_image_clear_ = nullptr;
     QCheckBox* transform_flip_horizontal_ = nullptr;
@@ -620,11 +636,26 @@ private:
     QLineEdit* palette_name_ = nullptr;
     QComboBox* palette_preset_ = nullptr;
     QListWidget* palette_colors_ = nullptr;
+    QComboBox* starting_color_mode_ = nullptr;
+    QCheckBox* starting_color_include_alpha_ = nullptr;
+    QSpinBox* starting_red_steps_ = nullptr;
+    QSpinBox* starting_green_steps_ = nullptr;
+    QSpinBox* starting_blue_steps_ = nullptr;
+    QSpinBox* starting_alpha_steps_ = nullptr;
+    QDoubleSpinBox* starting_red_minimum_ = nullptr;
+    QDoubleSpinBox* starting_red_maximum_ = nullptr;
+    QDoubleSpinBox* starting_green_minimum_ = nullptr;
+    QDoubleSpinBox* starting_green_maximum_ = nullptr;
+    QDoubleSpinBox* starting_blue_minimum_ = nullptr;
+    QDoubleSpinBox* starting_blue_maximum_ = nullptr;
+    QDoubleSpinBox* starting_alpha_minimum_ = nullptr;
+    QDoubleSpinBox* starting_alpha_maximum_ = nullptr;
     QCheckBox* quantization_enabled_ = nullptr;
     QSpinBox* quantization_levels_ = nullptr;
     QDoubleSpinBox* quantization_mix_ = nullptr;
     QComboBox* quantization_mode_ = nullptr;
     QCheckBox* alpha_enabled_ = nullptr;
+    QCheckBox* alpha_use_source_ = nullptr;
     QDoubleSpinBox* alpha_minimum_ = nullptr;
     QDoubleSpinBox* alpha_maximum_ = nullptr;
     QDoubleSpinBox* alpha_frequency_ = nullptr;

@@ -663,7 +663,8 @@ EffectType choose_effect_type() {
                  {EffectType::FlagWave, "Flag wave"},
                  {EffectType::Glow, "Glow"},
                  {EffectType::BlockScale, "Block scale"},
-                 {EffectType::ParticleField, "Particle field"}});
+                 {EffectType::ParticleField, "Particle field"},
+                 {EffectType::Blur, "Blur"}});
     return type;
 }
 
@@ -782,6 +783,40 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
             effect.frequency = static_cast<double>(particles);
             return true;
         }
+        case EffectType::Blur:
+            if (!prompt_enum(
+                    "Blur type", effect.blur_type,
+                    {{pvt::BlurType::Gaussian, "Gaussian"},
+                     {pvt::BlurType::Box, "Box"},
+                     {pvt::BlurType::Directional, "Directional"},
+                     {pvt::BlurType::Radial, "Radial"},
+                     {pvt::BlurType::Zoom, "Zoom"}})
+                || !prompt_real("Static mix", effect.intensity, 0.0, 1.0)
+                || !prompt_real("Radius (pixels)", effect.radius_pixels, 0.0,
+                               static_cast<double>(
+                                   (std::numeric_limits<int>::max)()))
+                || !prompt_int("Passes", effect.blur_passes, 1, 16)
+                || !prompt_int("Samples", effect.blur_samples, 2, 129)
+                || !prompt_real("Direction angle (degrees)",
+                                effect.angle_degrees, -36000.0, 36000.0)
+                || !configure_edge_mode(effect.edge_mode)) {
+                return false;
+            }
+            if (effect.blur_type == pvt::BlurType::Gaussian
+                && effect.blur_samples % 2 == 0) {
+                ++effect.blur_samples;
+                std::cout << "Gaussian samples rounded up to the next odd value ("
+                          << effect.blur_samples << ").\n";
+                g_prompt_changed = true;
+            }
+            return !effect.synchronized
+                || (prompt_real("Minimum modulated mix",
+                                effect.blur_minimum, 0.0, 1.0)
+                    && prompt_real("Maximum modulated mix",
+                                   effect.blur_maximum,
+                                   effect.blur_minimum, 1.0)
+                    && prompt_int("Pulses per effect cycle",
+                                  effect.blur_pulses_per_cycle, 1, 1000));
     }
     return true;
 }

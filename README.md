@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.1.5**. The version is read from `VERSION` by every
+Current product version: **1.2.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 

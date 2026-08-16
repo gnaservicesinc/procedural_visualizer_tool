@@ -1,3 +1,13 @@
+procedural-visualizer-tool (1.2.0) stonking; urgency=medium
+
+  * Add GPU-accelerated Gaussian, box, directional, radial, and zoom blur.
+  * Add RGBA palette libraries, generated and constrained random palettes,
+    composable PNG quantization, and artist-configurable alpha handling.
+  * Add chunked movie export with safe FFmpeg reassembly scripts.
+  * Add recent projects and reuse of compatible in-project assets.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sun, 16 Aug 2026 02:11:47 -0400
+
 procedural-visualizer-tool (1.1.5) stonking; urgency=medium
 
   * Add the initial Debian and Ubuntu packaging.

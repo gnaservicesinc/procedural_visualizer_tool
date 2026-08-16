@@ -23,7 +23,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 9;
+constexpr std::uint32_t kSetupFormatVersion = 10;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -68,7 +68,16 @@ enum class EffectType : std::uint8_t {
     FlagWave,
     Glow,
     BlockScale,
-    ParticleField
+    ParticleField,
+    Blur
+};
+
+enum class BlurType : std::uint8_t {
+    Gaussian = 0,
+    Box,
+    Directional,
+    Radial,
+    Zoom
 };
 
 // Texture-space effects run before surface wrapping. Surface-space effects run
@@ -98,6 +107,16 @@ enum class StartingImageFit : std::uint8_t {
     Contain,
     Cover,
     Tile
+};
+
+// Controls the spatial ordering of generated source colors when no authored
+// palette is active. LegacyHue preserves projects created before format 10.
+enum class StartingColorMode : std::uint8_t {
+    LegacyHue = 0,
+    ChannelLoops,
+    Interleaved,
+    Additive,
+    Subtractive
 };
 
 enum class PathHandleMode : std::uint8_t {
@@ -508,17 +527,29 @@ struct EffectConfig {
     // Appended to preserve source compatibility for existing aggregate
     // initializers; omitted values inherit the effective routing profile.
     AudioResponseMode audio_response = AudioResponseMode::Default;
+
+    // Blur-specific controls. Synchronized blurs can pulse their mix between
+    // the authored bounds without rewriting `intensity`, which remains the
+    // unsynchronized/static mix and the compatibility value for older clients.
+    BlurType blur_type = BlurType::Gaussian;
+    int blur_passes = 1;
+    int blur_samples = 9;
+    double blur_minimum = 0.0;
+    double blur_maximum = 1.0;
+    int blur_pulses_per_cycle = 1;
 };
 
 // Palette component values are authored in display/sRGB space. When enabled,
 // the palette selects the procedural layer's starting colors in linear light.
 // Procedural slope lighting, Texture effects, surface lighting, mapped-object
 // effects, and explicit quantization run afterward and may create other colors.
-// Alpha is deliberately independent so palette changes never rewrite opacity.
+// Alpha is an authored source component. The layer's source-alpha switch can
+// ignore it non-destructively, and procedural alpha modulation multiplies it.
 struct PaletteColor {
     double red = 0.0;
     double green = 0.0;
     double blue = 0.0;
+    double alpha = 1.0;
 };
 
 struct PaletteConfig {
@@ -568,6 +599,27 @@ struct AlphaConfig {
     double spatial_frequency = 2.0;
     int cycles_per_loop = 1;
     double phase_degrees = 0.0;
+    // Ignores alpha carried by starting-palette colors and embedded PNG pixels
+    // when false. It does not change LayerConfig::opacity and authored alpha
+    // values remain available when this is re-enabled.
+    bool use_source_alpha = true;
+};
+
+struct StartingColorConfig {
+    StartingColorMode mode = StartingColorMode::LegacyHue;
+    bool include_alpha = false;
+    int red_steps = 8;
+    int green_steps = 8;
+    int blue_steps = 8;
+    int alpha_steps = 8;
+    double red_minimum = 0.0;
+    double red_maximum = 1.0;
+    double green_minimum = 0.0;
+    double green_maximum = 1.0;
+    double blue_minimum = 0.0;
+    double blue_maximum = 1.0;
+    double alpha_minimum = 0.0;
+    double alpha_maximum = 1.0;
 };
 
 struct QuantizationConfig {
@@ -597,15 +649,21 @@ struct SurfaceConfig {
     std::string obj_basename;
 };
 
-// An embedded starting image replaces procedural base generation and the
-// starting palette, then flows through Texture effects, surface mapping,
-// transforms, mapped-object effects, and quantization like any other source.
+// An embedded starting image replaces procedural spatial generation. When a
+// starting palette is enabled, the fitted image is source-quantized to it and
+// then flows through Texture effects, surface mapping, transforms,
+// mapped-object effects, and final quantization like any other source.
 struct StartingImageConfig {
     bool enabled = false;
     StartingImageFit fit = StartingImageFit::Cover;
     std::string path;
     std::string sha256;
     std::string basename;
+    // When an authored starting palette is enabled, the fitted in-memory image
+    // is quantized to that palette before effects. Dithering is optional and is
+    // distinct from final PNG export dithering.
+    bool palette_dither_enabled = false;
+    DitherMethod palette_dither_method = DitherMethod::BlueNoise;
 };
 
 struct ExportConfig {
@@ -680,6 +738,7 @@ struct RenderData {
     // This is appended for aggregate-initializer compatibility; default_layer()
     // changes it to false so project layers inherit the project-wide defaults.
     bool audio_reactive_override_enabled = true;
+    StartingColorConfig starting_colors;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -944,11 +1003,13 @@ PVT_API bool load_setup(const std::string& path,
                         std::string* error = nullptr);
 
 PVT_API const char* effect_type_name(EffectType value);
+PVT_API const char* blur_type_name(BlurType value);
 PVT_API const char* effect_space_name(EffectSpace value);
 PVT_API const char* edge_mode_name(EdgeMode value);
 PVT_API const char* dither_method_name(DitherMethod value);
 PVT_API const char* surface_mapping_name(SurfaceMapping value);
 PVT_API const char* starting_image_fit_name(StartingImageFit value);
+PVT_API const char* starting_color_mode_name(StartingColorMode value);
 PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
 PVT_API const char* mirror_mode_name(MirrorMode value);

@@ -294,7 +294,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t7\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t8\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -336,9 +336,31 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.waves.front().path.enabled);
     CHECK(current_round_trip.waves.front().path.path_id == 91U);
 
+    // Layer v7/setup v9 predates RGBA source generation and blur controls.
+    std::istringstream current_v8_input(current_layer);
+    std::ostringstream version_seven_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_v8_input, line)));
+    CHECK(line == "PVT_LAYER\t8");
+    version_seven_output << "PVT_LAYER\t7\n";
+    while (std::getline(current_v8_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v8_only = key.rfind("starting_colors.", 0U) == 0U
+                             || key == "alpha.use_source_alpha"
+                             || key == "source_image.palette_dither_enabled"
+                             || key == "source_image.palette_dither_method"
+                             || (key.rfind("palette.colors.", 0U) == 0U
+                                 && has_suffix(key, ".alpha"))
+                             || (key.rfind("effects.", 0U) == 0U
+                                 && key.find(".blur_") != std::string::npos);
+        if (!v8_only) version_seven_output << line << '\n';
+    }
+    const std::string version_seven = version_seven_output.str();
+
     // Layer v6/setup v8 used three-state force/ignore routing. Those values
     // retain their exact meaning in the richer current selector.
-    std::string version_six = current_layer;
+    std::string version_six = version_seven;
     version_six.replace(0U, std::string("PVT_LAYER\t7").size(),
                         "PVT_LAYER\t6");
     const auto replace_record_value = [](std::string& setup,
@@ -369,7 +391,6 @@ void test_layer_codec_backward_compatibility() {
     // authoritative, while per-item selectors receive the neutral Default.
     std::istringstream version_six_input(version_six);
     std::ostringstream version_five_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(version_six_input, line)));
     CHECK(line == "PVT_LAYER\t6");
     version_five_output << "PVT_LAYER\t5\n";

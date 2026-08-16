@@ -18,16 +18,19 @@ public:
     };
 
     ApplicationSettingsDialog(int undoLimit, pvt::RenderBackend renderBackend,
+                              int recentProjectLimit,
                               bool hasCustomNewProjectDefaults,
                               QWidget* parent = nullptr);
 
     int undoLimit() const;
     pvt::RenderBackend renderBackend() const;
+    int recentProjectLimit() const;
     NewProjectDefaultsAction newProjectDefaultsAction() const;
 
 private:
     QSpinBox* undo_limit_ = nullptr;
     QComboBox* render_backend_ = nullptr;
+    QSpinBox* recent_project_limit_ = nullptr;
     QLabel* defaults_status_ = nullptr;
     NewProjectDefaultsAction defaults_action_ =
         NewProjectDefaultsAction::Keep;

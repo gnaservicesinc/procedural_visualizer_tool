@@ -45,6 +45,9 @@ struct PreparedEffect {
     double threshold = 0.0;
     double soft_knee = 0.0;
     double area_radius = 0.0;
+    BlurType blur_type = BlurType::Gaussian;
+    int blur_passes = 1;
+    int blur_samples = 9;
 };
 
 struct PreparedFrame {

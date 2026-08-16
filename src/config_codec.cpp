@@ -99,11 +99,12 @@ bool document_version(const std::string& serialized,
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 14U> prefixes{{
+    constexpr std::array<std::string_view, 15U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
+        "starting_colors.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -178,16 +179,36 @@ bool is_setup_v8_key(std::string_view key) {
                && has_suffix(key, ".audio_response"));
 }
 
+bool is_setup_v10_key(std::string_view key) {
+    return starts_with(key, "starting_colors.")
+           || key == "alpha.use_source_alpha"
+           || key == "source_image.palette_dither_enabled"
+           || key == "source_image.palette_dither_method"
+           || (starts_with(key, "palette.colors.")
+               && has_suffix(key, ".alpha"))
+           || (starts_with(key, "effects.")
+               && (has_suffix(key, ".blur_type")
+                   || has_suffix(key, ".blur_passes")
+                   || has_suffix(key, ".blur_samples")
+                   || has_suffix(key, ".blur_minimum")
+                   || has_suffix(key, ".blur_maximum")
+                   || has_suffix(key, ".blur_pulses_per_cycle")));
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
     if (!document_version(serialized, "PVT_LAYER", layer_version)) return false;
+    if (layer_version == 0U || layer_version > kLayerConfigFormatVersion) {
+        return false;
+    }
     setup_version = layer_version == 1U ? 3U
                     : layer_version == 2U ? 4U
                     : layer_version == 3U ? 5U
                     : layer_version == 4U ? 6U
                     : layer_version == 5U ? 7U
-                    : layer_version == 6U ? 8U : 9U;
+                    : layer_version == 6U ? 8U
+                    : layer_version == 7U ? 9U : 10U;
     return true;
 }
 
@@ -195,6 +216,10 @@ bool supported_render_output_version(const std::string& serialized,
                                      std::uint32_t& output_version,
                                      std::uint32_t& setup_version) {
     if (!document_version(serialized, "PVT_RENDER_OUTPUT", output_version)) {
+        return false;
+    }
+    if (output_version == 0U
+        || output_version > kRenderOutputConfigFormatVersion) {
         return false;
     }
     setup_version = output_version == 1U ? 4U
@@ -427,6 +452,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 8U && is_setup_v8_key(key)) {
+            continue;
+        }
+        if (setup_version < 10U && is_setup_v10_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
