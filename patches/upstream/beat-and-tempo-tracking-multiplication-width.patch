@@ -1,0 +1,20 @@
+diff --git a/src/BTT.c b/src/BTT.c
+index 17f2aba..1e00cf0 100644
+--- a/src/BTT.c
++++ b/src/BTT.c
+@@ -663 +663 @@ void btt_beat_tracking               (BTT* self)
+-              t += self->beat_prediction_adjustment * stft_get_hop(self->spectral_flux_stft);
++              t += (long long)self->beat_prediction_adjustment * stft_get_hop(self->spectral_flux_stft);
+diff --git a/src/Filter.c b/src/Filter.c
+index 717ee90..2b76617 100644
+--- a/src/Filter.c
++++ b/src/Filter.c
+@@ -211 +211 @@ void filter_init_lowpass_coeffs(Filter* self)
+-          temp = sin(two_pi_f_t * i_minus_m_over_2);
++          temp = sin((double)two_pi_f_t * i_minus_m_over_2);
+@@ -241 +241 @@ void filter_init_highpass_coeffs(Filter* self)
+-          temp = sin(two_pi_f_t * i_minus_m_over_2);
++          temp = sin((double)two_pi_f_t * i_minus_m_over_2);
+@@ -268 +268 @@ void filter_init_bandpass_coeffs(Filter* self)
+-          temp = sin(two_pi_f_t * i_minus_m_over_2);
++          temp = sin((double)two_pi_f_t * i_minus_m_over_2);

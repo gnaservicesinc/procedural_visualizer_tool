@@ -959,7 +959,8 @@ double music_feature_value(const MusicFeatureSample& sample,
         // A pitch hue without tonal evidence is arbitrary (especially during
         // silence/noise), so palette routing fades it out by confidence.
         case MusicFeature::ChromaHue:
-            return sample.chroma_hue * sample.chroma_strength;
+            return static_cast<double>(sample.chroma_hue)
+                   * sample.chroma_strength;
         case MusicFeature::ChromaStrength: return sample.chroma_strength;
     }
     return 0.0;

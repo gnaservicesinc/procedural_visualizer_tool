@@ -660,7 +660,7 @@ void btt_beat_tracking               (BTT* self)
           if(self->beat_callback != NULL)
             {
               unsigned long long t = self->num_audio_samples_processed;
-              t += self->beat_prediction_adjustment * stft_get_hop(self->spectral_flux_stft);
+              t += (long long)self->beat_prediction_adjustment * stft_get_hop(self->spectral_flux_stft);
               t -= self->analysis_latency_beat_adjustment_fine;
               self->beat_callback (self->beat_callback_self, t);
             }
