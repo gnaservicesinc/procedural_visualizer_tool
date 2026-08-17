@@ -8,13 +8,14 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
-The 1.2.5 generated-color correction makes the selected pattern honest and
-artist-readable. **Continuous hue** is the default and carries no misleading
-qualifier. Horizontal, vertical, diagonal, and spiral rainbow choices now lay
-an automatically sized, nonrepeating RGB/RGBA lattice across the full render in
-distinct large repeatable fields instead of silently replacing every choice
-with color static. The deterministic bijective dispersion remains available only as the
-explicit **Random** mode.
+The 1.2.6 generated-color correction makes every ordered pattern read as a
+rainbow without throwing away source colors. **Continuous hue** remains the
+default. Horizontal, vertical, diagonal, true radial spiral, and square spiral
+choices now traverse the complete automatically sized RGB/RGBA lattice in
+hue-major order across the full render. The old rectangular-ring artwork is
+preserved as **Square spiral**, including migration of its saved token, while
+**Spiral** now produces the circular winding its name promises. Deterministic
+bijective color static remains available only as the explicit **Random** mode.
 
 Generated sources automatically size their float32 RGB/RGBA lattice from the
 full-resolution dimensions and block size, preserve Min/Max ranges for every
@@ -46,7 +47,7 @@ Saving preserves the user's selected tab, including background completion, and
 Cocoa smoke covers the regression. Effect synchronization is labeled simply
 `Synchronization`, without the misleading swing-clock wording.
 
-The public product version is now 1.2.5 and has one source of truth in
+The public product version is now 1.2.6 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
@@ -612,6 +613,17 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-16 1.2.6 generated-rainbow correction passed the complete
+Qt-enabled Release suite 21/21, including CPU and real-Metal coverage for all
+generated choices. Regression coverage proves exact Cartesian-set preservation,
+hue-sector ordering, distinct radial and square spiral geometry, old-token
+migration, channel Min/Max handling, 24K reference scaling, time stability,
+and preview/export coordinate parity. The supplied Test Fire project renders
+as an ordered broad rainbow through both CPU and strict GPU execution. The
+self-contained macOS distribution and final workflow-shaped archive passed
+version, self-test, native Cocoa smoke, deep strict signing, arm64 architecture,
+macOS deployment-target, single-root layout, ZIP integrity, and SHA-256 checks.
 
 The 2026-08-16 1.2.5 generated-rainbow correction passed the complete
 Qt-enabled Release suite 21/21, the independent C++20 suite 20/20, and the

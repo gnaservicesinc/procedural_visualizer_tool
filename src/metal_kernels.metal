@@ -130,6 +130,23 @@ float4 hsl_to_linear(float hue_degrees, float saturation, float lightness) {
                   srgb_to_linear(rgb.b), 1.0f);
 }
 
+float linear_hue_degrees(float4 color) {
+    const float3 rgb = float3(linear_to_srgb(color.r),
+                              linear_to_srgb(color.g),
+                              linear_to_srgb(color.b));
+    const float maximum = max(rgb.r, max(rgb.g, rgb.b));
+    const float minimum = min(rgb.r, min(rgb.g, rgb.b));
+    const float delta = maximum - minimum;
+    if (delta <= 1.0e-7f) return 0.0f;
+    if (maximum == rgb.r) {
+        return 60.0f * fmod((rgb.g - rgb.b) / delta + 6.0f, 6.0f);
+    }
+    if (maximum == rgb.g) {
+        return 60.0f * ((rgb.b - rgb.r) / delta + 2.0f);
+    }
+    return 60.0f * ((rgb.r - rgb.g) / delta + 4.0f);
+}
+
 float4 rotate_linear_hue(float4 color, float degrees) {
     if (fabs(degrees) <= 1.0e-7f) return color;
     float3 rgb = float3(linear_to_srgb(color.r), linear_to_srgb(color.g),
@@ -257,7 +274,8 @@ ulong diagonal_traversal_index(ulong x, ulong y, ulong width, ulong height) {
     return prefix + offset;
 }
 
-ulong spiral_traversal_index(ulong x, ulong y, ulong width, ulong height) {
+ulong square_spiral_traversal_index(ulong x, ulong y,
+                                    ulong width, ulong height) {
     const ulong layer = min(
         min(x, y), min(width - 1ul - x, height - 1ul - y));
     const ulong ring_width = width - 2ul * layer;
@@ -305,13 +323,69 @@ ulong generated_starting_index(constant FrameConstants& frame,
     const ulong y = reference_y / reference_block;
     const uint mode = frame.starting_flags.x;
     if (mode == 1u) return x * blocks_down + y;
-    if (mode == 3u) {
+    if (mode == 3u || mode == 4u) {
         return diagonal_traversal_index(x, y, blocks_across, blocks_down);
     }
-    if (mode == 4u) {
-        return spiral_traversal_index(x, y, blocks_across, blocks_down);
+    if (mode == 6u) {
+        return square_spiral_traversal_index(
+            x, y, blocks_across, blocks_down);
     }
     return y * blocks_across + x;
+}
+
+ulong hue_sector_prefix(ulong maximum) {
+    return (maximum - 1ul) * maximum * (maximum + 1ul) / 6ul;
+}
+
+ulong hue_minimum_prefix(ulong maximum, ulong minimum) {
+    return minimum * (2ul * maximum - minimum + 1ul) / 2ul;
+}
+
+ulong3 hue_ordered_rgb_indices(ulong index, ulong levels) {
+    if (levels <= 1ul) return ulong3(0ul);
+
+    const ulong rgb_capacity = levels * levels * levels;
+    index %= rgb_capacity;
+    const ulong non_gray_count = rgb_capacity - levels;
+    if (index >= non_gray_count) {
+        const ulong gray = index - non_gray_count;
+        return ulong3(gray);
+    }
+
+    const ulong sector_size = non_gray_count / 6ul;
+    const ulong sector = index / sector_size;
+    ulong local = index % sector_size;
+    if ((sector & 1ul) != 0ul) local = sector_size - 1ul - local;
+    ulong maximum_low = 1ul;
+    ulong maximum_high = levels;
+    while (maximum_low + 1ul < maximum_high) {
+        const ulong middle =
+            maximum_low + (maximum_high - maximum_low) / 2ul;
+        if (hue_sector_prefix(middle) <= local) maximum_low = middle;
+        else maximum_high = middle;
+    }
+    const ulong maximum = maximum_low;
+    const ulong within_maximum = local - hue_sector_prefix(maximum);
+    ulong minimum_low = 0ul;
+    ulong minimum_high = maximum;
+    while (minimum_low + 1ul < minimum_high) {
+        const ulong middle =
+            minimum_low + (minimum_high - minimum_low) / 2ul;
+        if (hue_minimum_prefix(maximum, middle) <= within_maximum) {
+            minimum_low = middle;
+        } else {
+            minimum_high = middle;
+        }
+    }
+    const ulong minimum = minimum_low;
+    const ulong offset = within_maximum
+                         - hue_minimum_prefix(maximum, minimum);
+    if (sector == 0ul) return ulong3(maximum, minimum + offset, minimum);
+    if (sector == 1ul) return ulong3(maximum - offset, maximum, minimum);
+    if (sector == 2ul) return ulong3(minimum, maximum, minimum + offset);
+    if (sector == 3ul) return ulong3(minimum, maximum - offset, maximum);
+    if (sector == 4ul) return ulong3(minimum + offset, minimum, maximum);
+    return ulong3(maximum, minimum, maximum - offset);
 }
 
 float4 generated_starting_color(constant FrameConstants& frame,
@@ -343,23 +417,14 @@ float4 generated_starting_color(constant FrameConstants& frame,
     }
     const ulong levels = max(1ul, ulong(frame.starting_reference.w));
     const ulong alpha_levels = frame.starting_flags.y != 0u ? levels : 1ul;
-    ulong remaining = index;
-    ulong blue_index = remaining % levels;
-    remaining /= levels;
-    ulong green_index = remaining % levels;
-    remaining /= levels;
-    ulong red_index = remaining % levels;
-    remaining /= levels;
-    const ulong alpha_index = remaining % alpha_levels;
-    if ((green_index & 1ul) != 0ul) {
-        blue_index = levels - 1ul - blue_index;
-    }
-    if ((red_index & 1ul) != 0ul) {
-        green_index = levels - 1ul - green_index;
-    }
-    if ((alpha_index & 1ul) != 0ul) {
-        red_index = levels - 1ul - red_index;
-    }
+    const ulong rgb_capacity = levels * levels * levels;
+    const ulong3 rgb = hue_ordered_rgb_indices(
+        index % rgb_capacity, levels);
+    const ulong red_index = rgb.x;
+    const ulong green_index = rgb.y;
+    const ulong blue_index = rgb.z;
+    const ulong alpha_index = frame.starting_flags.y != 0u
+        ? (index / rgb_capacity) % alpha_levels : 0ul;
     const float denominator = levels > 1ul ? float(levels - 1ul) : 1.0f;
     const float alpha_denominator = alpha_levels > 1ul
         ? float(alpha_levels - 1ul) : 1.0f;
@@ -371,8 +436,9 @@ float4 generated_starting_color(constant FrameConstants& frame,
             ? float(alpha_index) / alpha_denominator : 1.0f);
     const float4 ranged = mix(frame.starting_minimum,
                               frame.starting_maximum, unit);
-    return float4(srgb_to_linear(ranged.r), srgb_to_linear(ranged.g),
-                  srgb_to_linear(ranged.b),
+    const float3 source_rgb = mode == 4u ? unit.rgb : ranged.rgb;
+    return float4(srgb_to_linear(source_rgb.r), srgb_to_linear(source_rgb.g),
+                  srgb_to_linear(source_rgb.b),
                   frame.starting_flags.y != 0u ? ranged.a : 1.0f);
 }
 
@@ -431,6 +497,29 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     const float dy = displaced_y - frame.center_ghost.y;
     const float normalized_distance = length(float2(dx, dy)) / frame.phases.w;
     const float angle = atan2(dy, dx);
+    const ulong starting_reference_width =
+        ulong(frame.starting_reference.x);
+    const ulong starting_reference_height =
+        ulong(frame.starting_reference.y);
+    const ulong starting_reference_x = min(
+        starting_reference_width - 1ul,
+        ulong(block_x) * starting_reference_width / ulong(width));
+    const ulong starting_reference_y = min(
+        starting_reference_height - 1ul,
+        ulong(block_y) * starting_reference_height / ulong(height));
+    const float2 starting_delta = float2(
+        float(starting_reference_x)
+            - 0.5f * float(starting_reference_width - 1ul),
+        float(starting_reference_y)
+            - 0.5f * float(starting_reference_height - 1ul));
+    const float starting_short_side = float(min(
+        starting_reference_width, starting_reference_height));
+    const float starting_radius = length(starting_delta)
+        / max(1.0f, 0.5f * starting_short_side);
+    const float starting_angle = atan2(starting_delta.y, starting_delta.x);
+    const float starting_spiral_hue = frame.starting_flags.x == 4u
+        ? 360.0f * (3.0f * starting_radius + starting_angle / kTau)
+        : 0.0f;
     const float wall_distance = min(
         min(x, float(width - 1u - block_x)),
         min(y, float(height - 1u - block_y)));
@@ -485,6 +574,12 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
         }
     } else if (frame.counts_flags.y == 0u) {
         base = generated_starting_color(frame, starting_index);
+        const float starting_spiral_hue_shift = frame.starting_flags.x == 4u
+            ? starting_spiral_hue - linear_hue_degrees(base) : 0.0f;
+        if (frame.starting_flags.x == 4u) {
+            base = rotate_linear_hue(base, starting_spiral_hue_shift);
+            base = apply_generated_rgb_range(frame, base);
+        }
         base = rotate_linear_hue(
             base, combined * 260.0f + frame.pattern1.z);
         if (frame.base_flags.x != 0u) {

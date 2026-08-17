@@ -324,15 +324,26 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     pvt::Image spiral;
     CHECK(pvt::render_frame_at_phase(generated, 0.0, spiral, &error));
     CHECK(mean_absolute_difference(diagonal, spiral) > 0.0001);
+    generated.starting_colors.mode =
+        pvt::StartingColorMode::SquareSpiralRainbow;
+    pvt::Image square_spiral;
+    CHECK(pvt::render_frame_at_phase(
+        generated, 0.0, square_spiral, &error));
+    CHECK(mean_absolute_difference(spiral, square_spiral) > 0.0001);
     generated.starting_colors.mode = pvt::StartingColorMode::Random;
     pvt::Image random;
     CHECK(pvt::render_frame_at_phase(generated, 0.0, random, &error));
-    CHECK(mean_absolute_difference(spiral, random) > 0.0001);
+    CHECK(mean_absolute_difference(square_spiral, random) > 0.0001);
 
     CHECK(std::string(pvt::starting_color_mode_name(
               pvt::StartingColorMode::ContinuousHue)) == "Continuous hue");
     CHECK(std::string(pvt::starting_color_mode_name(
               pvt::StartingColorMode::Random)) == "Random");
+    CHECK(std::string(pvt::starting_color_mode_name(
+              pvt::StartingColorMode::SpiralRainbow)) == "Spiral rainbow");
+    CHECK(std::string(pvt::starting_color_mode_name(
+              pvt::StartingColorMode::SquareSpiralRainbow))
+          == "Square spiral rainbow");
 
     // Every traversal assigns a distinct position in one complete rainbow to
     // each full-resolution block. The 4x4 fixture must therefore contain all
@@ -359,6 +370,7 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
                             pvt::StartingColorMode::VerticalRainbow,
                             pvt::StartingColorMode::DiagonalRainbow,
                             pvt::StartingColorMode::SpiralRainbow,
+                            pvt::StartingColorMode::SquareSpiralRainbow,
                             pvt::StartingColorMode::Random}) {
         exhaustive.starting_colors.mode = mode;
         pvt::Image combinations;
@@ -381,8 +393,8 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
               && dominant_channels[2]);
     }
 
-    // Non-square grids exercise the diagonal and rectangular spiral rank
-    // formulas. Every spatial pattern must remain a bijection there too.
+    // Non-square grids exercise the diagonal and square-spiral rank formulas.
+    // Every spatial pattern must remain one-to-one there too.
     pvt::RenderConfig rectangular = exhaustive;
     rectangular.width = 20;
     rectangular.height = 16;
@@ -392,6 +404,7 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
                             pvt::StartingColorMode::VerticalRainbow,
                             pvt::StartingColorMode::DiagonalRainbow,
                             pvt::StartingColorMode::SpiralRainbow,
+                            pvt::StartingColorMode::SquareSpiralRainbow,
                             pvt::StartingColorMode::Random}) {
         rectangular.starting_colors.mode = mode;
         pvt::Image pattern;
@@ -451,19 +464,61 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(scaled_colors.size()
           == static_cast<std::size_t>(scaled.width * scaled.height));
 
-    // The ordered traversal is an invertible rainbow weave rather than color
-    // static. Its first lattice run starts at black, immediately changes every
-    // RGB channel, spans each channel broadly, and covers red-, green-, and
-    // blue-dominant regions without repeating a tuple.
-    const float* walk_first = scaled_start.pixel(0, 0);
-    const float* walk_second = scaled_start.pixel(1, 0);
-    CHECK(walk_first != nullptr && walk_second != nullptr);
-    if (walk_first != nullptr && walk_second != nullptr) {
-        CHECK(walk_first[0] < 0.001F && walk_first[1] < 0.001F
-              && walk_first[2] < 0.001F);
-        CHECK(walk_second[0] == walk_first[0]
-              && walk_second[1] == walk_first[1]
-              && walk_second[2] > walk_first[2]);
+    pvt::RenderConfig radial_spiral = scaled;
+    radial_spiral.starting_colors.mode =
+        pvt::StartingColorMode::SpiralRainbow;
+    pvt::Image radial_spiral_start;
+    pvt::Image radial_spiral_later;
+    CHECK(pvt::render_frame_at_phase(
+        radial_spiral, 0.0, radial_spiral_start, &error));
+    CHECK(pvt::render_frame_at_phase(
+        radial_spiral, 0.713, radial_spiral_later, &error));
+    CHECK(radial_spiral_start.pixels == radial_spiral_later.pixels);
+    std::set<std::array<float, 3U>> radial_spiral_colors;
+    for (std::size_t offset = 0U;
+         offset < radial_spiral_start.pixels.size(); offset += 4U) {
+        radial_spiral_colors.insert({radial_spiral_start.pixels[offset],
+                                     radial_spiral_start.pixels[offset + 1U],
+                                     radial_spiral_start.pixels[offset + 2U]});
+    }
+    CHECK(radial_spiral_colors.size()
+          == static_cast<std::size_t>(radial_spiral.width
+                                      * radial_spiral.height));
+
+    // The ordered traversal is hue-major rather than a blue-fast RGB scan.
+    // Samples from its six equally sized non-gray sectors must progress around
+    // red, yellow, green, cyan, blue, and magenta while preserving every tuple.
+    std::uint64_t generated_levels = 1U;
+    const std::uint64_t scaled_count = static_cast<std::uint64_t>(
+        scaled.width) * static_cast<std::uint64_t>(scaled.height);
+    while (generated_levels * generated_levels * generated_levels
+           < scaled_count) {
+        ++generated_levels;
+    }
+    const std::uint64_t hue_sector_size =
+        (generated_levels * generated_levels * generated_levels
+         - generated_levels) / 6U;
+    const std::array<std::array<int, 3U>, 6U> channel_order{{
+        {{0, 1, 2}}, {{1, 0, 2}}, {{1, 2, 0}},
+        {{2, 1, 0}}, {{2, 0, 1}}, {{0, 2, 1}},
+    }};
+    for (std::size_t sector = 0U; sector < channel_order.size(); ++sector) {
+        const std::uint64_t sample_index =
+            static_cast<std::uint64_t>(sector) * hue_sector_size
+            + hue_sector_size / 2U;
+        CHECK(sample_index < scaled_count);
+        if (sample_index >= scaled_count) continue;
+        const std::uint64_t scaled_width =
+            static_cast<std::uint64_t>(scaled.width);
+        const float* sample = scaled_start.pixel(
+            static_cast<int>(sample_index % scaled_width),
+            static_cast<int>(sample_index / scaled_width));
+        CHECK(sample != nullptr);
+        if (sample == nullptr) continue;
+        const auto& order = channel_order[sector];
+        CHECK(sample[order[0]] >= sample[order[1]]);
+        CHECK(sample[order[1]] >= sample[order[2]]);
+        CHECK(sample[order[0]] > sample[order[2]]);
     }
     std::array<float, 3U> ordered_minimum{1.0F, 1.0F, 1.0F};
     std::array<float, 3U> ordered_maximum{};
@@ -612,6 +667,23 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(maximum_blue <= linear_test(0.8) + 1.0e-6);
     CHECK(maximum_blue > linear_test(0.795));
 
+    ranged.starting_colors.mode = pvt::StartingColorMode::SpiralRainbow;
+    pvt::Image ranged_spiral;
+    CHECK(pvt::render_frame_at_phase(
+        ranged, 0.0, ranged_spiral, &error));
+    for (std::size_t offset = 0U; offset < ranged_spiral.pixels.size();
+         offset += 4U) {
+        CHECK(std::fabs(ranged_spiral.pixels[offset] - expected_red) < 1.0e-6F);
+        CHECK(ranged_spiral.pixels[offset + 1U]
+              >= linear_test(0.2) - 1.0e-6);
+        CHECK(ranged_spiral.pixels[offset + 1U]
+              <= linear_test(0.4) + 1.0e-6);
+        CHECK(ranged_spiral.pixels[offset + 2U]
+              >= linear_test(0.6) - 1.0e-6);
+        CHECK(ranged_spiral.pixels[offset + 2U]
+              <= linear_test(0.8) + 1.0e-6);
+    }
+
     // Min/Max owns every choice in the Generated starting colors box,
     // including Continuous hue. Collapsed RGB ranges make the expected source
     // unambiguous while authored image/palette sources remain separate.
@@ -670,6 +742,14 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
             CHECK(!std::equal(first, first + 3, last));
         }
     }
+    large_reference.starting_colors.mode =
+        pvt::StartingColorMode::SpiralRainbow;
+    pvt::Image large_spiral_preview;
+    CHECK(pvt::render_frame_at_phase(
+        large_reference, 0.0, large_spiral_preview, &error));
+    CHECK(large_spiral_preview.pixel(0, 0) != nullptr);
+    CHECK(large_spiral_preview.pixel(large_reference.width - 1,
+                                     large_reference.height - 1) != nullptr);
 
     // A reduced preview samples the same full-resolution lattice coordinates
     // as export. This prevents a preview resize from rearranging source colors.
@@ -685,6 +765,21 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         for (int x = 0; x < preview.width; ++x) {
             const float* preview_pixel = preview_image.pixel(x, y);
             const float* export_pixel = scaled_start.pixel(x * 2, y * 2);
+            CHECK(preview_pixel != nullptr && export_pixel != nullptr);
+            if (preview_pixel != nullptr && export_pixel != nullptr) {
+                CHECK(std::equal(preview_pixel, preview_pixel + 4,
+                                 export_pixel));
+            }
+        }
+    }
+    preview.starting_colors.mode = pvt::StartingColorMode::SpiralRainbow;
+    pvt::Image spiral_preview;
+    CHECK(pvt::render_frame_at_phase(
+        preview, 0.0, spiral_preview, &error));
+    for (int y = 0; y < preview.height; ++y) {
+        for (int x = 0; x < preview.width; ++x) {
+            const float* preview_pixel = spiral_preview.pixel(x, y);
+            const float* export_pixel = radial_spiral_start.pixel(x * 2, y * 2);
             CHECK(preview_pixel != nullptr && export_pixel != nullptr);
             if (preview_pixel != nullptr && export_pixel != nullptr) {
                 CHECK(std::equal(preview_pixel, preview_pixel + 4,
@@ -2483,6 +2578,50 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.starting_colors.red_maximum == 0.9);
     CHECK(loaded.starting_colors.alpha_minimum == 0.2);
     CHECK(loaded.starting_colors.alpha_maximum == 0.8);
+
+    // New radial spirals serialize under their own token. The former
+    // `subtractive` token migrates to the explicitly named square spiral so
+    // projects authored before 1.2.6 retain their rectangular-ring artwork.
+    auto spiral_setup = original;
+    spiral_setup.starting_colors.mode = pvt::StartingColorMode::SpiralRainbow;
+    const fs::path spiral_path = directory / "spiral.pvt";
+    CHECK(pvt::save_setup(spiral_setup, spiral_path.string(), &error));
+    const auto spiral_bytes = read_bytes(spiral_path);
+    const std::string spiral_text(spiral_bytes.begin(), spiral_bytes.end());
+    CHECK(spiral_text.find("starting_colors.mode\tspiral\n")
+          != std::string::npos);
+    auto loaded_spiral = pvt::default_config();
+    CHECK(pvt::load_setup(spiral_path.string(), loaded_spiral, &error));
+    CHECK(loaded_spiral.starting_colors.mode
+          == pvt::StartingColorMode::SpiralRainbow);
+
+    auto square_setup = original;
+    square_setup.starting_colors.mode =
+        pvt::StartingColorMode::SquareSpiralRainbow;
+    const fs::path square_path = directory / "square-spiral.pvt";
+    CHECK(pvt::save_setup(square_setup, square_path.string(), &error));
+    const auto square_bytes = read_bytes(square_path);
+    std::string legacy_square(square_bytes.begin(), square_bytes.end());
+    const std::string square_token =
+        "starting_colors.mode\tsquare_spiral\n";
+    const std::size_t square_position = legacy_square.find(square_token);
+    CHECK(square_position != std::string::npos);
+    if (square_position != std::string::npos) {
+        legacy_square.replace(square_position, square_token.size(),
+                              "starting_colors.mode\tsubtractive\n");
+    }
+    const fs::path legacy_square_path = directory / "legacy-square.pvt";
+    {
+        std::ofstream output(legacy_square_path, std::ios::binary);
+        output.write(legacy_square.data(),
+                     static_cast<std::streamsize>(legacy_square.size()));
+        CHECK(output.good());
+    }
+    auto loaded_square = pvt::default_config();
+    CHECK(pvt::load_setup(
+        legacy_square_path.string(), loaded_square, &error));
+    CHECK(loaded_square.starting_colors.mode
+          == pvt::StartingColorMode::SquareSpiralRainbow);
     CHECK(loaded.starting_image.palette_dither_enabled);
     CHECK(loaded.starting_image.palette_dither_method
           == pvt::DitherMethod::OrderedBayer);

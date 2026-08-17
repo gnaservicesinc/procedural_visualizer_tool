@@ -223,6 +223,7 @@ void test_backend_contract() {
              pvt::StartingColorMode::VerticalRainbow,
              pvt::StartingColorMode::DiagonalRainbow,
              pvt::StartingColorMode::SpiralRainbow,
+             pvt::StartingColorMode::SquareSpiralRainbow,
              pvt::StartingColorMode::Random}) {
         generated.starting_colors.mode = mode;
         CHECK(pvt::render_frame_at_phase(generated, 0.31, cpu_options,

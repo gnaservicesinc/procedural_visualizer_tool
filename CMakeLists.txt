@@ -386,7 +386,13 @@ if(PVT_BUILD_CLI)
     endif()
     if(APPLE)
         set_target_properties(pvt_render_cli PROPERTIES
-            INSTALL_RPATH "@executable_path/${pvt_cli_install_library_path}")
+            # Current Apple SDKs may encode the system C++ runtime as
+            # @rpath/libc++.1.dylib. Keep /usr/lib in both the build and
+            # installed search paths so the standalone and embedded CLI do
+            # not depend on a developer-shell DYLD override.
+            BUILD_RPATH "/usr/lib"
+            INSTALL_RPATH
+                "@executable_path/${pvt_cli_install_library_path};/usr/lib")
     elseif(UNIX)
         set_target_properties(pvt_render_cli PROPERTIES
             INSTALL_RPATH "\$ORIGIN/${pvt_cli_install_library_path}")
@@ -462,6 +468,7 @@ if(PVT_BUILD_QT_GUI)
     if(APPLE)
         set_target_properties(ProceduralVisualizerToolGui PROPERTIES
             OUTPUT_NAME "Procedural Visualizer Tool"
+            BUILD_RPATH "/usr/lib"
             MACOSX_BUNDLE_BUNDLE_NAME "Procedural Visualizer Tool"
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.gnaservices.proceduralvisualizertool"
             MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"

@@ -421,9 +421,9 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          Generated starting colors now expose their selected whole-render pattern instead of forcing every choice through a color-static permutation. Continuous hue is named plainly. Horizontal, vertical, diagonal, and spiral rainbow walks produce distinct large repeatable fields, while deterministic one-to-one dispersion remains available only as the explicit Random option.
+          Ordered generated starting colors now traverse the complete automatically sized RGB/RGBA lattice in hue-major order, so the unmodified source reads as a broad rainbow instead of an RGB-digit scan. Continuous hue remains the default, deterministic one-to-one color static remains the explicit Random option, and every source block is retained whenever the selected ranges and output representation permit it.
 
-          Every ordered pattern walks an automatically sized RGB/RGBA lattice without repetition, scales from the authored dimensions and block size, and uses the same integer placement on CPU and Metal. Reduced preview, current-frame export, and sequence export continue to sample the same full-resolution source coordinates.
+          Spiral rainbow now draws a true circular radial winding. The previous nested rectangular-ring design remains available as Square spiral rainbow, and projects saved with its older token migrate without changing their appearance. Horizontal, vertical, diagonal, radial spiral, and square spiral patterns use the same reference-scaled placement on CPU and Metal, including reduced previews and 24K authored canvases.
 
           Generated values remain float32 through effects and compositing, every choice in the Generated starting colors box honors every channel Min/Max range, and values are quantized only by the selected output format. Authored palettes and starting images remain separate sources. PNG input remains explicitly 8/16-bit and FLOAT EXR remains available for 32-bit output.
 

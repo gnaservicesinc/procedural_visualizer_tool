@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.2.5**. The version is read from `VERSION` by every
+Current product version: **1.2.6**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -233,13 +233,16 @@ sudo apt install procedural-visualizer-tool
   source colors in linear light without changing alpha; lighting and effects
   may create other colors afterward. Presets never silently change
   whether the starting palette is enabled.
-- Generated starting colors begin with **Continuous hue** or one of four
+- Generated starting colors begin with **Continuous hue** or one of five
   whole-render patterns: **Horizontal rainbow**, **Vertical rainbow**,
-  **Diagonal rainbow**, or **Spiral rainbow**. Every ordered pattern walks the
-  same automatically sized RGB/RGBA lattice without repetition, using a
-  continuous boustrophedon color path so adjacent positions form broad color
-  fields rather than shuffled static. **Random** is the separate repeatable
-  color-static choice. The selected output dimensions and block size automatically choose
+  **Diagonal rainbow**, **Spiral rainbow**, or **Square spiral rainbow**.
+  Every ordered pattern walks the same automatically sized RGB/RGBA lattice
+  without repetition. The lattice is enumerated hue-first around six exact RGB
+  gamut sectors, with brightness and saturation variations retained inside
+  each sector, so the complete source-color set reads as a large rainbow
+  instead of fine RGB-channel static. Spiral applies a circular radial winding;
+  Square spiral preserves the nested rectangular-ring pattern. **Random** is
+  the separate repeatable color-static choice. The selected output dimensions and block size automatically choose
   enough per-channel working values for every full-resolution block, whether
   the canvas is 512×512, 1920×1080, 24K, or another supported size.
   The removed `Values` controls survive only as ignored compatibility records.

@@ -2627,6 +2627,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                             pvt::StartingColorMode::VerticalRainbow,
                             pvt::StartingColorMode::DiagonalRainbow,
                             pvt::StartingColorMode::SpiralRainbow,
+                            pvt::StartingColorMode::SquareSpiralRainbow,
                             pvt::StartingColorMode::Random}) {
         add_enum_item(starting_color_mode_,
                       QString::fromUtf8(pvt::starting_color_mode_name(mode)), mode);
@@ -2636,7 +2637,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     starting_color_include_alpha_->setToolTip(
         tr("When no starting palette is active, generated RGBA tuples may differ "
            "by alpha as well as RGB. Equal tuples are still represented only once."));
-    starting_colors_form->addRow(tr("Rainbow pattern"), starting_color_mode_);
+    starting_colors_form->addRow(tr("Pattern"), starting_color_mode_);
     starting_colors_form->addRow(starting_color_include_alpha_);
     starting_colors_layout->addLayout(starting_colors_form);
 
@@ -11151,6 +11152,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || effect_blur_passes_ == nullptr || effect_blur_samples_ == nullptr
         || effect_blur_minimum_ == nullptr || effect_blur_maximum_ == nullptr
         || starting_color_mode_ == nullptr
+        || starting_color_mode_->findData(
+               static_cast<int>(pvt::StartingColorMode::SpiralRainbow)) < 0
+        || starting_color_mode_->findData(
+               static_cast<int>(pvt::StartingColorMode::SquareSpiralRainbow)) < 0
         || starting_color_include_alpha_ == nullptr
         || alpha_use_source_ == nullptr
         || wave_audio_response_ == nullptr

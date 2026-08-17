@@ -748,7 +748,7 @@ constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
     {"zoom", BlurType::Zoom},
 }};
 
-constexpr std::array<std::pair<std::string_view, StartingColorMode>, 6U>
+constexpr std::array<std::pair<std::string_view, StartingColorMode>, 8U>
     kStartingColorModes{{
         // Retain the existing token so older PVT versions can still read newly
         // saved Continuous hue projects. "Legacy" is not a product-facing name.
@@ -756,7 +756,11 @@ constexpr std::array<std::pair<std::string_view, StartingColorMode>, 6U>
         {"channel_loops", StartingColorMode::HorizontalRainbow},
         {"interleaved", StartingColorMode::VerticalRainbow},
         {"additive", StartingColorMode::DiagonalRainbow},
-        {"subtractive", StartingColorMode::SpiralRainbow},
+        {"spiral", StartingColorMode::SpiralRainbow},
+        {"square_spiral", StartingColorMode::SquareSpiralRainbow},
+        // Version 1.2.5 and earlier used this token for the rectangular-ring
+        // traversal that is now product-facing as Square spiral rainbow.
+        {"subtractive", StartingColorMode::SquareSpiralRainbow},
         {"random", StartingColorMode::Random},
     }};
 

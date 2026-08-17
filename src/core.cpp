@@ -251,6 +251,7 @@ bool valid_enum(StartingColorMode value) {
         case StartingColorMode::DiagonalRainbow:
         case StartingColorMode::SpiralRainbow:
         case StartingColorMode::Random:
+        case StartingColorMode::SquareSpiralRainbow:
             return true;
     }
     return false;
@@ -1107,6 +1108,21 @@ Color apply_generated_rgb_range(const StartingColorConfig& config,
     return color;
 }
 
+double linear_hue_degrees(const Color& color) {
+    const double red = linear_to_srgb_for_hue(color.r);
+    const double green = linear_to_srgb_for_hue(color.g);
+    const double blue = linear_to_srgb_for_hue(color.b);
+    const double maximum = std::max(red, std::max(green, blue));
+    const double minimum = std::min(red, std::min(green, blue));
+    const double delta = maximum - minimum;
+    if (delta <= 1.0e-12) return 0.0;
+    if (maximum == red) {
+        return 60.0 * std::fmod((green - blue) / delta + 6.0, 6.0);
+    }
+    if (maximum == green) return 60.0 * ((blue - red) / delta + 2.0);
+    return 60.0 * ((red - green) / delta + 4.0);
+}
+
 Color rotate_linear_hue(Color color, double degrees) {
     if (std::abs(degrees) <= 1.0e-12) return color;
     const double red = linear_to_srgb_for_hue(color.r);
@@ -1697,6 +1713,8 @@ const char* starting_color_mode_name(StartingColorMode value) {
         case StartingColorMode::DiagonalRainbow: return "Diagonal rainbow";
         case StartingColorMode::SpiralRainbow: return "Spiral rainbow";
         case StartingColorMode::Random: return "Random";
+        case StartingColorMode::SquareSpiralRainbow:
+            return "Square spiral rainbow";
     }
     return "Unknown";
 }
@@ -2781,9 +2799,9 @@ std::uint64_t diagonal_traversal_index(std::uint64_t x, std::uint64_t y,
     return prefix + offset;
 }
 
-std::uint64_t spiral_traversal_index(std::uint64_t x, std::uint64_t y,
-                                     std::uint64_t width,
-                                     std::uint64_t height) {
+std::uint64_t square_spiral_traversal_index(std::uint64_t x, std::uint64_t y,
+                                            std::uint64_t width,
+                                            std::uint64_t height) {
     const std::uint64_t layer = std::min(
         std::min(x, y), std::min(width - 1U - x, height - 1U - y));
     const std::uint64_t ring_width = width - 2U * layer;
@@ -2838,10 +2856,11 @@ std::uint64_t generated_starting_color_index(
         case StartingColorMode::HorizontalRainbow:
             return x * blocks_down + y;
         case StartingColorMode::DiagonalRainbow:
+        case StartingColorMode::SpiralRainbow:
             return diagonal_traversal_index(
                 x, y, blocks_across, blocks_down);
-        case StartingColorMode::SpiralRainbow:
-            return spiral_traversal_index(
+        case StartingColorMode::SquareSpiralRainbow:
+            return square_spiral_traversal_index(
                 x, y, blocks_across, blocks_down);
         case StartingColorMode::ContinuousHue:
         case StartingColorMode::VerticalRainbow:
@@ -2883,43 +2902,117 @@ std::uint64_t dispersed_generated_index(std::uint64_t index,
     return index;
 }
 
+std::uint64_t hue_sector_prefix(std::uint64_t maximum) {
+    // The RGB tuples whose maximum channel is below `maximum` occupy this
+    // many positions in each of the six hue sectors. maximum is always >= 1.
+    return (maximum - 1U) * maximum * (maximum + 1U) / 6U;
+}
+
+std::array<std::uint64_t, 3U> hue_ordered_rgb_indices(
+    std::uint64_t index, std::uint64_t levels) {
+    if (levels <= 1U) return {0U, 0U, 0U};
+
+    const std::uint64_t rgb_capacity = levels * levels * levels;
+    index %= rgb_capacity;
+    const std::uint64_t non_gray_count = rgb_capacity - levels;
+    if (index >= non_gray_count) {
+        const std::uint64_t gray = index - non_gray_count;
+        return {gray, gray, gray};
+    }
+
+    // Every non-gray RGB lattice point belongs to exactly one perimeter with
+    // a fixed minimum and maximum channel. Each perimeter contributes the
+    // same number of samples to red->yellow, yellow->green, green->cyan,
+    // cyan->blue, blue->magenta, and magenta->red. Enumerating the sector
+    // first therefore walks the full gamut in visible rainbow order while
+    // retaining every Cartesian RGB tuple exactly once.
+    const std::uint64_t sector_size = non_gray_count / 6U;
+    const std::uint64_t sector = index / sector_size;
+    std::uint64_t local = index % sector_size;
+    if ((sector & 1U) != 0U) local = sector_size - 1U - local;
+
+    std::uint64_t maximum_low = 1U;
+    std::uint64_t maximum_high = levels;
+    while (maximum_low + 1U < maximum_high) {
+        const std::uint64_t middle =
+            maximum_low + (maximum_high - maximum_low) / 2U;
+        if (hue_sector_prefix(middle) <= local) {
+            maximum_low = middle;
+        } else {
+            maximum_high = middle;
+        }
+    }
+    const std::uint64_t maximum = maximum_low;
+    const std::uint64_t within_maximum =
+        local - hue_sector_prefix(maximum);
+
+    const auto minimum_prefix = [maximum](std::uint64_t minimum) {
+        return minimum * (2U * maximum - minimum + 1U) / 2U;
+    };
+    std::uint64_t minimum_low = 0U;
+    std::uint64_t minimum_high = maximum;
+    while (minimum_low + 1U < minimum_high) {
+        const std::uint64_t middle =
+            minimum_low + (minimum_high - minimum_low) / 2U;
+        if (minimum_prefix(middle) <= within_maximum) {
+            minimum_low = middle;
+        } else {
+            minimum_high = middle;
+        }
+    }
+    const std::uint64_t minimum = minimum_low;
+    const std::uint64_t offset =
+        within_maximum - minimum_prefix(minimum);
+
+    switch (sector) {
+        case 0U: return {maximum, minimum + offset, minimum};
+        case 1U: return {maximum - offset, maximum, minimum};
+        case 2U: return {minimum, maximum, minimum + offset};
+        case 3U: return {minimum, maximum - offset, maximum};
+        case 4U: return {minimum + offset, minimum, maximum};
+        default: return {maximum, minimum, maximum - offset};
+    }
+}
+
 Color generated_starting_color(const StartingColorConfig& config,
                                std::uint64_t index,
                                std::uint64_t levels,
                                std::uint64_t color_count) {
-    // The ordered modes take a nonrepeating walk through an automatically
-    // sized Cartesian RGB/RGBA lattice. This boustrophedon path changes only
-    // one channel by one working-precision step at each boundary, producing
-    // broad continuous color fields. Random alone shuffles the same tuples.
+    // The ordered modes take a hue-major, nonrepeating walk through an
+    // automatically sized Cartesian RGB/RGBA lattice. Random alone shuffles
+    // the same tuples; no mode reduces the generated source-color set.
     if (config.mode == StartingColorMode::Random) {
         index = dispersed_generated_index(index, color_count);
     }
     const std::uint64_t alpha_levels = config.include_alpha ? levels : 1U;
-    std::uint64_t remaining = index;
-    std::uint64_t blue_index = remaining % levels;
-    remaining /= levels;
-    std::uint64_t green_index = remaining % levels;
-    remaining /= levels;
-    std::uint64_t red_index = remaining % levels;
-    remaining /= levels;
-    const std::uint64_t alpha_index = remaining % alpha_levels;
-    if ((green_index & 1U) != 0U) blue_index = levels - 1U - blue_index;
-    if ((red_index & 1U) != 0U) green_index = levels - 1U - green_index;
-    if ((alpha_index & 1U) != 0U) red_index = levels - 1U - red_index;
+    const std::uint64_t rgb_capacity = levels * levels * levels;
+    const std::array<std::uint64_t, 3U> rgb =
+        hue_ordered_rgb_indices(index % rgb_capacity, levels);
+    const std::uint64_t red_index = rgb[0];
+    const std::uint64_t green_index = rgb[1];
+    const std::uint64_t blue_index = rgb[2];
+    const std::uint64_t alpha_index = config.include_alpha
+        ? (index / rgb_capacity) % alpha_levels : 0U;
     const double denominator = levels > 1U
         ? static_cast<double>(levels - 1U) : 1.0;
     const double alpha_denominator = alpha_levels > 1U
         ? static_cast<double>(alpha_levels - 1U) : 1.0;
+    const double red_position = static_cast<double>(red_index) / denominator;
+    const double green_position =
+        static_cast<double>(green_index) / denominator;
+    const double blue_position = static_cast<double>(blue_index) / denominator;
+    const bool range_after_spatial_hue =
+        config.mode == StartingColorMode::SpiralRainbow;
     Color result;
     result.r = srgb_to_linear(mix_value(
-        config.red_minimum, config.red_maximum,
-        static_cast<double>(red_index) / denominator));
+        range_after_spatial_hue ? 0.0 : config.red_minimum,
+        range_after_spatial_hue ? 1.0 : config.red_maximum, red_position));
     result.g = srgb_to_linear(mix_value(
-        config.green_minimum, config.green_maximum,
-        static_cast<double>(green_index) / denominator));
+        range_after_spatial_hue ? 0.0 : config.green_minimum,
+        range_after_spatial_hue ? 1.0 : config.green_maximum, green_position));
     result.b = srgb_to_linear(mix_value(
-        config.blue_minimum, config.blue_maximum,
-        static_cast<double>(blue_index) / denominator));
+        range_after_spatial_hue ? 0.0 : config.blue_minimum,
+        range_after_spatial_hue ? 1.0 : config.blue_maximum, blue_position));
     result.a = config.include_alpha
         ? mix_value(config.alpha_minimum, config.alpha_maximum,
                     static_cast<double>(alpha_index) / alpha_denominator)
@@ -3035,6 +3128,41 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             const double dy = displaced_y - center_y;
             const double normalized_distance = std::hypot(dx, dy) / short_side;
             const double angle = std::atan2(dy, dx);
+            const StartingColorConfig& starting = config.starting_colors;
+            const std::uint64_t starting_reference_width =
+                static_cast<std::uint64_t>(
+                    starting.reference_width > 0
+                        ? starting.reference_width : config.width);
+            const std::uint64_t starting_reference_height =
+                static_cast<std::uint64_t>(
+                    starting.reference_height > 0
+                        ? starting.reference_height : config.height);
+            const std::uint64_t starting_reference_x = std::min(
+                starting_reference_width - 1U,
+                static_cast<std::uint64_t>(block_x)
+                    * starting_reference_width
+                    / static_cast<std::uint64_t>(config.width));
+            const std::uint64_t starting_reference_y = std::min(
+                starting_reference_height - 1U,
+                static_cast<std::uint64_t>(block_y)
+                    * starting_reference_height
+                    / static_cast<std::uint64_t>(config.height));
+            const double starting_short_side = static_cast<double>(std::min(
+                starting_reference_width, starting_reference_height));
+            const double starting_dx =
+                static_cast<double>(starting_reference_x)
+                - 0.5 * static_cast<double>(starting_reference_width - 1U);
+            const double starting_dy =
+                static_cast<double>(starting_reference_y)
+                - 0.5 * static_cast<double>(starting_reference_height - 1U);
+            const double starting_radius = std::hypot(starting_dx, starting_dy)
+                / std::max(1.0, 0.5 * starting_short_side);
+            const double starting_angle = std::atan2(starting_dy, starting_dx);
+            const double starting_spiral_hue =
+                config.starting_colors.mode == StartingColorMode::SpiralRainbow
+                    ? 360.0 * (3.0 * starting_radius
+                               + starting_angle / kTau)
+                    : 0.0;
             const double wall_distance = std::min(
                 std::min(static_cast<double>(block_x),
                          static_cast<double>(config.width - 1 - block_x)),
@@ -3104,6 +3232,20 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 // Generated modes define the complete source-color set and
                 // its placement. Procedural spiral/wall/hue controls then
                 // transform those source colors instead of being bypassed.
+                const double starting_spiral_hue_shift =
+                    config.starting_colors.mode
+                            == StartingColorMode::SpiralRainbow
+                        ? starting_spiral_hue - linear_hue_degrees(base)
+                        : 0.0;
+                if (config.starting_colors.mode
+                        == StartingColorMode::SpiralRainbow) {
+                    base = rotate_linear_hue(base, starting_spiral_hue_shift);
+                    // These controls belong to Generated starting colors, so
+                    // constrain the completed radial source pattern before
+                    // independent procedural/audio transformations run.
+                    base = apply_generated_rgb_range(
+                        config.starting_colors, base);
+                }
                 base = rotate_linear_hue(
                     base, generated_hue_shift + audio_hue_shift);
                 if (config.lighting_enabled) {

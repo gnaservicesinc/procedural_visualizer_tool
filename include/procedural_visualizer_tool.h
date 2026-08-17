@@ -119,11 +119,12 @@ enum class StartingColorMode : std::uint8_t {
     DiagonalRainbow,
     SpiralRainbow,
     Random,
+    SquareSpiralRainbow,
     LegacyHue = ContinuousHue,
     ChannelLoops = HorizontalRainbow,
     Interleaved = VerticalRainbow,
     Additive = DiagonalRainbow,
-    Subtractive = SpiralRainbow
+    Subtractive = SquareSpiralRainbow
 };
 
 enum class PathHandleMode : std::uint8_t {
