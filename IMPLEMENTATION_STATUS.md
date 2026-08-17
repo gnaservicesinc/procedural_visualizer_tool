@@ -1,12 +1,40 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-16
+Last updated: 2026-08-17
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
 ## Outcome of this pass
+
+Version 2.0.0 is a renderer-correctness and shared-library ABI boundary. Layer
+Starting phase is now independent of cycle count; reusable-path Reverse changes
+travel without negating the authored start; follow-tangent direction survives
+the Metal preparation path; and CPU/Metal agree on static rotation, reusable
+motion, and exact identity cases. Numeric generated-color values remain pinned
+so older compiled callers still map value 4 to the legacy square spiral, while
+the public SONAME advances to 2 because by-value configuration structs grew
+during 1.x.
+
+RGB/RGBA validation now follows the final visible stack rather than individual
+controls in isolation. It includes authored palette/generated alpha, honors the
+source-alpha switch, recognizes reusable paths and starting rotation, models
+erasers in paint order, and avoids forcing alpha for zero-travel motion, neutral
+scale pulses, inactive blur, opaque-decoded images, or guaranteed zero-alpha
+erasers. The GUI and CLI use the same reachability decisions and no longer
+silently force one-way RGBA settings when adding or duplicating opaque layers.
+
+Extreme valid meters are stored as compact pulse runs instead of allocating
+billions of objects. Signed 64-bit beat offsets are reduced without losing their
+low microseconds, including tiny cycles and negative boundary corrections.
+Project-only copies reject detached embedded-image identities; CLI editing now
+round-trips palette alpha, generated RGBA controls, source-alpha policy, and
+starting rotation. GUI background completions retain their originating document
+metadata, replacement stops playback and refreshes derived state, and the Cocoa
+smoke exits without an unattended dirty-document prompt.
+
+The following 1.2.6 section is retained as the preceding release record.
 
 The 1.2.6 generated-color correction makes every ordered pattern read as a
 rainbow without throwing away source colors. **Continuous hue** remains the
@@ -47,11 +75,13 @@ Saving preserves the user's selected tab, including background completion, and
 Cocoa smoke covers the regression. Effect synchronization is labeled simply
 `Synchronization`, without the misleading swing-clock wording.
 
-The public product version is now 1.2.6 and has one source of truth in
+The public product version is now 2.0.0 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
-tagging, building, or publishing a release.
+tagging, building, or publishing a release. The installed shared-library SONAME
+and Debian runtime package advance to ABI 2; saved setup and bundle formats
+remain loadable.
 
 The 1.1.5 correctness patch keeps the Versions page synchronized with document
 replacement. Starting a new project clears the prior bundle's rows, summary,
@@ -613,6 +643,18 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-17 2.0.0 correctness and ABI release passed the complete
+Qt-enabled Release suite 21/21, including native Metal parity and Cocoa GUI
+smoke coverage. The independent C++20 suite passed 20/20, and the
+AddressSanitizer plus UndefinedBehaviorSanitizer suite passed 20/20 with leak
+detection disabled on the macOS beta host. A shared-library install exposed
+`@rpath/libProceduralVisualizerTool.2.dylib` at compatibility/current version
+2.0.0, and an independent installed-package consumer linked and ran against it.
+The self-contained macOS application passed embedded CLI version/self-test,
+native Cocoa smoke, deep strict signing, arm64 architecture, dependency and
+RPATH inspection, single-root archive layout, ZIP integrity, extraction,
+checksum, and extracted-runtime checks without a library-path override.
 
 The 2026-08-16 1.2.6 generated-rainbow correction passed the complete
 Qt-enabled Release suite 21/21, including CPU and real-Metal coverage for all

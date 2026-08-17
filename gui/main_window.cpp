@@ -782,6 +782,9 @@ QString friendly_diff_value(const std::string& value) {
     return compact.size() < raw.size() ? compact : raw;
 }
 
+bool layer_visible_in_project(const pvt::ProjectConfig& project,
+                              const pvt::LayerConfig& layer);
+
 bool configuration_requires_alpha(const pvt::RenderConfig& config) {
     if (config.alpha.use_source_alpha) {
         if (config.starting_image.enabled) return true;
@@ -801,13 +804,24 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
         && config.surface.curvature > 0.0) {
         return true;
     }
-    if (config.motion.enabled
-        && (config.motion.path != pvt::LayerMotionPath::None
+    if (config.motion.enabled) {
+        const bool built_in_path_has_work =
+            config.motion.path != pvt::LayerMotionPath::None
+            && (std::fabs(config.motion.travel_x) > 1.0e-12
+                || std::fabs(config.motion.travel_y) > 1.0e-12);
+        const bool scale_has_work =
+            config.motion.scale_pulse > 1.0e-12
+            && (config.motion.cycles_y != 0
+                || std::fmod(config.motion.phase_degrees, 180.0) != 0.0);
+        if (built_in_path_has_work
+            || config.motion.custom_path.enabled
             || std::fabs(config.motion.center_x - 0.5) > 1.0e-12
             || std::fabs(config.motion.center_y - 0.5) > 1.0e-12
             || config.motion.rotations_per_loop != 0
-            || config.motion.scale_pulse > 1.0e-12)) {
-        return true;
+            || std::fmod(config.motion.rotation_offset_degrees, 360.0) != 0.0
+            || scale_has_work) {
+            return true;
+        }
     }
     return std::any_of(config.effects.begin(), config.effects.end(), [](const auto& effect) {
         const bool active_blur = effect.type == pvt::EffectType::Blur
@@ -822,6 +836,58 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
                && effect.type != pvt::EffectType::ParticleField
                && effect.edge_mode == pvt::EdgeMode::Alpha;
     });
+}
+
+bool visible_stack_requires_alpha(
+    const pvt::ProjectConfig& project,
+    const pvt::RenderConfig* active_configuration = nullptr,
+    std::string_view active_layer_uuid = {}) {
+    bool guaranteed_opaque = false;
+    for (const auto& layer : project.layers) {
+        if (!layer_visible_in_project(project, layer) || layer.opacity <= 0.0) {
+            continue;
+        }
+        const pvt::RenderConfig materialized =
+            active_configuration != nullptr && layer.uuid == active_layer_uuid
+                ? *active_configuration
+                : pvt::apply_global_config(
+                      project.canvas, project.output, layer.render);
+        const bool erases_lower_layers =
+            layer.blend_mode == pvt::BlendMode::Erase
+            || layer.blend_mode == pvt::BlendMode::ColorEraseTones
+            || layer.blend_mode == pvt::BlendMode::ColorEraseBrightness;
+        if (erases_lower_layers) {
+            const bool particle_can_synthesize_coverage = std::any_of(
+                materialized.effects.begin(), materialized.effects.end(),
+                [](const pvt::EffectConfig& effect) {
+                    return effect.enabled
+                           && effect.type == pvt::EffectType::ParticleField
+                           && effect.intensity > 0.0
+                           && effect.frequency >= 1.0
+                           && effect.radius_pixels > 0.0;
+                });
+            const bool source_is_guaranteed_transparent =
+                materialized.alpha.enabled
+                && materialized.alpha.maximum == 0.0
+                && !particle_can_synthesize_coverage;
+            if (!source_is_guaranteed_transparent) {
+                // Destination-out can remove coverage established by every
+                // lower layer. A later ordinary opaque layer may establish it.
+                guaranteed_opaque = false;
+            }
+            continue;
+        }
+        const bool procedural_transparency = materialized.alpha.enabled
+            && (materialized.alpha.minimum < 1.0
+                || materialized.alpha.maximum < 1.0);
+        const bool source_guaranteed_opaque = layer.opacity >= 1.0
+            && !procedural_transparency
+            && !configuration_requires_alpha(materialized);
+        // Source-over and destination-over have the same coverage union. Once
+        // either ordinary operand covers the full canvas, their result does too.
+        guaranteed_opaque = guaranteed_opaque || source_guaranteed_opaque;
+    }
+    return !guaranteed_opaque;
 }
 
 void scale_project_for_preview(pvt::ProjectConfig& project) {
@@ -1417,7 +1483,19 @@ MainWindow::MainWindow(QWidget* parent)
         timeline_->setValue(next);
     });
     connect(preview_watcher_, &QFutureWatcher<PreviewResult>::finished, this, [this] {
-        const PreviewResult result = preview_watcher_->result();
+        PreviewResult result;
+        try {
+            result = preview_watcher_->result();
+        } catch (const std::exception& exception) {
+            result.error = tr("Unexpected preview error: %1")
+                               .arg(QString::fromUtf8(exception.what()));
+            result.generation = preview_task_generation_;
+            result.document_revision = preview_task_document_revision_;
+        } catch (...) {
+            result.error = tr("Preview failed because of an unexpected error.");
+            result.generation = preview_task_generation_;
+            result.document_revision = preview_task_document_revision_;
+        }
         if (result.document_revision == document_revision_
             && (result.generation == preview_generation_ || playback_timer_->isActive())) {
             if (result.error.isEmpty()) {
@@ -1445,7 +1523,15 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this, [this] {
-        const ExportResult result = export_watcher_->result();
+        ExportResult result;
+        try {
+            result = export_watcher_->result();
+        } catch (const std::exception& exception) {
+            result.error = tr("Unexpected export error: %1")
+                               .arg(QString::fromUtf8(exception.what()));
+        } catch (...) {
+            result.error = tr("Export failed because of an unexpected error.");
+        }
         const bool automated_smoke = QCoreApplication::arguments().contains(
             QStringLiteral("--smoke-test"));
         // Clear the active guard before recomputing action availability. An
@@ -1476,8 +1562,32 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(music_analysis_watcher_,
             &QFutureWatcher<MusicAnalysisResult>::finished, this, [this] {
+                MusicAnalysisResult result;
+                try {
+                    result = music_analysis_watcher_->result();
+                } catch (const std::exception& exception) {
+                    result.error = tr("Unexpected music-analysis error: %1")
+                                       .arg(QString::fromUtf8(exception.what()));
+                    result.layer_clock = music_analysis_layer_clock_;
+                    result.layer_uuid = music_analysis_task_layer_uuid_;
+                    result.generation = music_analysis_task_generation_;
+                    result.document_revision =
+                        music_analysis_task_document_revision_;
+                    result.cancelled = music_analysis_cancel_ != nullptr
+                        && music_analysis_cancel_->load(std::memory_order_relaxed);
+                } catch (...) {
+                    result.error = tr(
+                        "Music analysis failed because of an unexpected error.");
+                    result.layer_clock = music_analysis_layer_clock_;
+                    result.layer_uuid = music_analysis_task_layer_uuid_;
+                    result.generation = music_analysis_task_generation_;
+                    result.document_revision =
+                        music_analysis_task_document_revision_;
+                    result.cancelled = music_analysis_cancel_ != nullptr
+                        && music_analysis_cancel_->load(std::memory_order_relaxed);
+                }
                 music_analysis_active_ = false;
-                finishMusicAnalysis(music_analysis_watcher_->result());
+                finishMusicAnalysis(result);
                 updateMusicTransactionGuards();
                 updateSynchronizationState();
                 updateExportAvailability();
@@ -1492,7 +1602,20 @@ MainWindow::MainWindow(QWidget* parent)
             });
     connect(project_io_watcher_, &QFutureWatcher<ProjectIoResult>::finished,
             this, [this] {
-                ProjectIoResult result = project_io_watcher_->result();
+                ProjectIoResult result;
+                try {
+                    result = project_io_watcher_->result();
+                } catch (const std::exception& exception) {
+                    result.operation = project_io_operation_;
+                    result.path = project_io_path_;
+                    result.error = tr("Unexpected project-file error: %1")
+                                       .arg(QString::fromUtf8(exception.what()));
+                } catch (...) {
+                    result.operation = project_io_operation_;
+                    result.path = project_io_path_;
+                    result.error = tr(
+                        "The project file operation failed because of an unexpected error.");
+                }
                 bool adopted = false;
                 if (result.ok && result.document != nullptr) {
                     if (result.operation == ProjectIoOperation::Load) {
@@ -1540,7 +1663,24 @@ MainWindow::MainWindow(QWidget* parent)
             });
     connect(version_diff_watcher_, &QFutureWatcher<VersionDiffResult>::finished,
             this, [this] {
-                const VersionDiffResult result = version_diff_watcher_->result();
+                VersionDiffResult result;
+                try {
+                    result = version_diff_watcher_->result();
+                } catch (const std::exception& exception) {
+                    result.error = tr("Unexpected version-comparison error: %1")
+                                       .arg(QString::fromUtf8(exception.what()));
+                    result.before = version_diff_task_before_;
+                    result.after = version_diff_task_after_;
+                    result.document_revision =
+                        version_diff_task_document_revision_;
+                } catch (...) {
+                    result.error = tr(
+                        "Version comparison failed because of an unexpected error.");
+                    result.before = version_diff_task_before_;
+                    result.after = version_diff_task_after_;
+                    result.document_revision =
+                        version_diff_task_document_revision_;
+                }
                 if (version_compare_ != nullptr) {
                     // The document may have been replaced while the snapshot
                     // comparison was running. Do not let completion from the
@@ -2745,8 +2885,16 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     motion_phase_->setSuffix(QChar(0x00b0));
     motion_rotations_ = integer_editor(-1000, 1000);
+    motion_rotation_offset_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    motion_rotation_offset_->setSuffix(QChar(0x00b0));
+    motion_rotation_offset_->setToolTip(tr(
+        "Static rotation applied before per-loop rotation. This can turn a still layer without adding animation."));
     motion_scale_pulse_ = real_editor(0.0, 0.95, 4, 0.01);
     motion_paths_edit_ = new QPushButton(tr("Edit reusable paths and bindings…"));
+    motion_paths_edit_->setObjectName(QStringLiteral("motionPathsEditorButton"));
+    motion_paths_edit_->setToolTip(tr(
+        "Project-wide paths can drive this layer, individual waves, or effect centers. "
+        "They remain editable while whole-layer motion is disabled."));
     motion->addRow(tr("Closed path"), motion_path_);
     motion->addRow(tr("Path center X"), motion_center_x_);
     motion->addRow(tr("Path center Y"), motion_center_y_);
@@ -2756,12 +2904,23 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion->addRow(tr("Vertical cycles"), motion_cycles_y_);
     motion->addRow(tr("Starting phase"), motion_phase_);
     motion->addRow(tr("Rotations per loop"), motion_rotations_);
+    motion->addRow(tr("Starting rotation"), motion_rotation_offset_);
     motion->addRow(tr("Scale pulse"), motion_scale_pulse_);
-    motion->addRow(motion_paths_edit_);
     motion_group_->setToolTip(
         tr("A lightweight path animator. Integer cycles, rotations, and scale "
            "pulses close exactly at the project loop seam."));
     layout->addWidget(motion_group_);
+
+    auto* reusable_paths_group = new QGroupBox(tr("Reusable motion paths"));
+    auto* reusable_paths_layout = new QVBoxLayout(reusable_paths_group);
+    auto* reusable_paths_help = new QLabel(tr(
+        "Edit shared closed cubic paths and bind them to the whole layer, a wave, "
+        "or an effect center. This library is independent of the whole-layer "
+        "motion switch above."));
+    reusable_paths_help->setWordWrap(true);
+    reusable_paths_layout->addWidget(reusable_paths_help);
+    reusable_paths_layout->addWidget(motion_paths_edit_, 0, Qt::AlignLeft);
+    layout->addWidget(reusable_paths_group);
 
     auto* palette_group = new QGroupBox(tr("Starting palette"));
     auto* palette_layout = new QVBoxLayout(palette_group);
@@ -3379,22 +3538,46 @@ void MainWindow::startVersionDiff() {
         version_diff_->setPlainText(tr("The same version is selected on both sides."));
         return;
     }
-    auto snapshot = std::make_shared<pvt::ProjectDocument>(*document_);
     const std::uint64_t revision = document_revision_;
-    version_compare_->setEnabled(false);
-    version_diff_->setPlainText(tr("Comparing versions in the background…"));
-    version_diff_watcher_->setFuture(QtConcurrent::run(
-        [snapshot = std::move(snapshot), before, after, revision] {
-            VersionDiffResult result;
-            result.before = before;
-            result.after = after;
-            result.document_revision = revision;
-            std::string error;
-            result.ok = pvt::diff_project_versions(
-                *snapshot, before, after, result.differences, &error);
-            result.error = QString::fromStdString(error);
-            return result;
-        }));
+    try {
+        auto snapshot = std::make_shared<pvt::ProjectDocument>(*document_);
+        version_diff_task_before_ = before;
+        version_diff_task_after_ = after;
+        version_diff_task_document_revision_ = revision;
+        version_compare_->setEnabled(false);
+        version_diff_->setPlainText(tr("Comparing versions in the background…"));
+        version_diff_watcher_->setFuture(QtConcurrent::run(
+            [snapshot = std::move(snapshot), before, after, revision] {
+                VersionDiffResult result;
+                result.before = before;
+                result.after = after;
+                result.document_revision = revision;
+                try {
+                    std::string error;
+                    result.ok = pvt::diff_project_versions(
+                        *snapshot, before, after, result.differences, &error);
+                    result.error = QString::fromStdString(error);
+                } catch (const std::exception& exception) {
+                    result.error = tr("Unexpected version-comparison error: %1")
+                                       .arg(QString::fromUtf8(exception.what()));
+                } catch (...) {
+                    result.error = tr(
+                        "Version comparison failed because of an unexpected error.");
+                }
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        version_compare_->setEnabled(version_before_->count() >= 2
+                                     && version_after_->count() >= 2);
+        version_diff_->setPlainText(
+            tr("Could not start version comparison: %1")
+                .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        version_compare_->setEnabled(version_before_->count() >= 2
+                                     && version_after_->count() >= 2);
+        version_diff_->setPlainText(
+            tr("Could not start the background version comparison."));
+    }
 }
 
 void MainWindow::makeSelectedVersionCurrent() {
@@ -3416,6 +3599,7 @@ void MainWindow::makeSelectedVersionCurrent() {
         }
     };
     if (!confirmDiscardChanges(resume)) return;
+    stopPlayback();
     cancelMusicAnalysis();
     pvt::BundleSaveReport report;
     std::string error;
@@ -3439,6 +3623,7 @@ void MainWindow::makeSelectedVersionCurrent() {
     refreshLayerList();
     refreshAll();
     refreshVersionsPage();
+    updateWindowTitle();
     schedulePreview();
 }
 
@@ -3464,6 +3649,7 @@ void MainWindow::revertSelectedVersion() {
         tr("Create a new version copied from version %1 and make it current?").arg(version),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
     if (choice != QMessageBox::Yes) return;
+    stopPlayback();
     cancelMusicAnalysis();
     pvt::BundleSaveReport report;
     std::string error;
@@ -3487,6 +3673,7 @@ void MainWindow::revertSelectedVersion() {
     refreshLayerList();
     refreshAll();
     refreshVersionsPage();
+    updateWindowTitle();
     schedulePreview();
 }
 
@@ -3702,13 +3889,30 @@ void MainWindow::createLayerDock() {
         const auto before = layer->blend_mode;
         if (before == after) return;
         const std::string uuid = layer->uuid;
+        const auto before_output = project_.output;
         layer->blend_mode = after;
+        ensureAlphaForTransparency();
+        syncProjectGlobals();
+        const auto after_output = project_.output;
         recordUndo(tr("Change layer blend"),
-                   [this, uuid, before] { if (auto* value = findLayer(uuid)) value->blend_mode = before; refreshLayerList(); noteDocumentChange(); schedulePreview(); },
-                   [this, uuid, after] { if (auto* value = findLayer(uuid)) value->blend_mode = after; refreshLayerList(); noteDocumentChange(); schedulePreview(); });
+                   [this, uuid, before, before_output] {
+                       if (auto* value = findLayer(uuid)) value->blend_mode = before;
+                       project_.output = before_output;
+                       loadActiveConfiguration();
+                       refreshLayerList();
+                       refreshAll();
+                       noteDocumentChange();
+                   },
+                   [this, uuid, after, after_output] {
+                       if (auto* value = findLayer(uuid)) value->blend_mode = after;
+                       project_.output = after_output;
+                       loadActiveConfiguration();
+                       refreshLayerList();
+                       refreshAll();
+                       noteDocumentChange();
+                   });
         noteDocumentChange();
         refreshLayerList();
-        schedulePreview();
     });
     connect(layer_alpha_mode_, &QComboBox::currentIndexChanged, this, [this] {
         if (populating_) return;
@@ -4328,6 +4532,7 @@ void MainWindow::showMotionPathEditor() {
 
     bool refreshing_geometry = false;
     bool refreshing_binding = false;
+    bool alpha_enabled_for_path_edit = false;
 
     const auto current_path = [&]() -> pvt::CubicMotionPath* {
         const int index = path_selector->currentIndex();
@@ -4643,6 +4848,15 @@ void MainWindow::showMotionPathEditor() {
                 return layer.uuid == active_layer_uuid_;
             });
         if (active != edited_project.layers.end()) active->render = render;
+        if (!edited_project.output.write_alpha
+            && visible_stack_requires_alpha(edited_project)) {
+            // The dialog is the only editor for whole-layer reusable-path
+            // bindings. Establish the output invariant before validation so
+            // enabling a path cannot trap the user behind an "invalid RGB"
+            // error with no reachable way to accept the corrective change.
+            edited_project.output.write_alpha = true;
+            alpha_enabled_for_path_edit = true;
+        }
         const pvt::ValidationResult validation = pvt::validate(edited_project);
         if (!validation.ok) {
             QMessageBox::warning(&dialog, tr("Invalid path configuration"),
@@ -4659,11 +4873,15 @@ void MainWindow::showMotionPathEditor() {
     loadActiveConfiguration();
     if (document_ != nullptr) document_->project = project_;
     loadLayerEditors();
+    loadGlobalEditors();
     preview_->setConfiguration(config_);
     schedulePreview();
     recordProjectStateChange(tr("Edit reusable motion paths"), before,
                              before_active_uuid);
-    status_->setText(tr("Updated reusable motion paths and active-layer bindings."));
+    status_->setText(
+        alpha_enabled_for_path_edit
+            ? tr("Updated reusable motion paths and active-layer bindings. Final alpha output was enabled because the edited stack can be transparent.")
+            : tr("Updated reusable motion paths and active-layer bindings."));
 }
 
 void MainWindow::connectEditors() {
@@ -4903,7 +5121,8 @@ void MainWindow::connectEditors() {
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
                          surface_phase_, alpha_phase_, motion_center_x_, motion_center_y_,
                          motion_travel_x_, motion_travel_y_, motion_phase_,
-                         motion_scale_pulse_, starting_red_minimum_,
+                         motion_rotation_offset_, motion_scale_pulse_,
+                         starting_red_minimum_,
                          starting_red_maximum_, starting_green_minimum_,
                          starting_green_maximum_, starting_blue_minimum_,
                          starting_blue_maximum_, starting_alpha_minimum_,
@@ -5390,7 +5609,6 @@ void MainWindow::addLayer() {
     active_layer_uuid_ = layer.uuid;
     selected_group_uuid_.reset();
     project_.layers.push_back(std::move(layer));
-    project_.output.write_alpha = true;
     loadActiveConfiguration();
     refreshLayerList();
     refreshAll();
@@ -5533,7 +5751,6 @@ void MainWindow::duplicateLayer() {
     project_.layers.insert(project_.layers.begin()
                                + static_cast<std::ptrdiff_t>(source_index + 1U),
                            std::move(layer));
-    project_.output.write_alpha = true;
     loadActiveConfiguration();
     refreshLayerList();
     refreshAll();
@@ -5995,7 +6212,6 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
         config_.starting_image.path = attached.local_path;
         config_.starting_image.sha256 = attached.sha256;
         config_.starting_image.basename = attached.basename;
-        config_.output.write_alpha = true;
     }
 
     syncActiveRender();
@@ -6079,6 +6295,12 @@ void MainWindow::recordActiveStateChange(const QString& text,
                                          ActiveDocumentState before,
                                          const QString& merge_key) {
     if (restoring_undo_) return;
+    // Attachment pickers, reusable-path edits, and other compound controls can
+    // change transparency without passing through the individual alpha-aware
+    // editor branches. Keep the final-output invariant inside the transaction
+    // so Undo/Redo restores the matching output choice as well.
+    ensureAlphaForTransparency();
+    syncProjectGlobals();
     const std::string uuid = active_layer_uuid_;
     ActiveDocumentState after = captureActiveState();
     if (render_data_equal(before.render, after.render,
@@ -6156,6 +6378,11 @@ void MainWindow::recordProjectStateChange(const QString& text,
                                           ProjectDocumentState before,
                                           const std::string& before_active_uuid) {
     if (restoring_undo_) return;
+    // Layer removal and layer/group reordering can expose an eraser above the
+    // last full-coverage layer. Re-evaluate after every structural transaction
+    // rather than relying only on scalar editor callbacks.
+    ensureAlphaForTransparency();
+    syncProjectGlobals();
     ProjectDocumentState after = captureProjectState();
     if (project_config_equal(before.project, after.project)
         && attachments_equal(before.attachments, after.attachments)
@@ -7780,6 +8007,8 @@ void MainWindow::loadGlobalEditors() {
     motion_cycles_y_->setValue(config_.motion.cycles_y);
     motion_phase_->setValue(config_.motion.phase_degrees);
     motion_rotations_->setValue(config_.motion.rotations_per_loop);
+    motion_rotation_offset_->setValue(
+        config_.motion.rotation_offset_degrees);
     motion_scale_pulse_->setValue(config_.motion.scale_pulse);
     palette_enabled_->setChecked(config_.palette.enabled);
     palette_name_->setText(QString::fromStdString(config_.palette.name));
@@ -8899,7 +9128,6 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             return;
         }
         config_.starting_image.enabled = starting_image_enabled_->isChecked();
-        if (config_.starting_image.enabled) config_.output.write_alpha = true;
     } else if (changed_editor == starting_image_fit_) {
         config_.starting_image.fit = static_cast<pvt::StartingImageFit>(
             starting_image_fit_->currentData().toInt());
@@ -8947,6 +9175,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.motion.phase_degrees = motion_phase_->value();
     } else if (changed_editor == motion_rotations_) {
         config_.motion.rotations_per_loop = motion_rotations_->value();
+    } else if (changed_editor == motion_rotation_offset_) {
+        config_.motion.rotation_offset_degrees =
+            motion_rotation_offset_->value();
     } else if (changed_editor == motion_scale_pulse_) {
         config_.motion.scale_pulse = motion_scale_pulse_->value();
     } else if (changed_editor == palette_enabled_) {
@@ -9157,21 +9388,8 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
 }
 
 void MainWindow::ensureAlphaForTransparency() {
-    bool guaranteed_opaque = false;
-    for (const auto& layer : project_.layers) {
-        if (!layer_visible_in_project(project_, layer)
-            || layer.opacity <= 0.0) continue;
-        const pvt::RenderConfig materialized = layer.uuid == active_layer_uuid_
-            ? config_
-            : pvt::apply_global_config(project_.canvas, project_.output, layer.render);
-        const bool procedural_transparency = materialized.alpha.enabled
-            && (materialized.alpha.minimum < 1.0 || materialized.alpha.maximum < 1.0);
-        const bool source_guaranteed_opaque = layer.opacity >= 1.0
-            && !procedural_transparency
-            && !configuration_requires_alpha(materialized);
-        guaranteed_opaque = guaranteed_opaque || source_guaranteed_opaque;
-    }
-    const bool project_requests_alpha = !guaranteed_opaque;
+    const bool project_requests_alpha = visible_stack_requires_alpha(
+        project_, &config_, active_layer_uuid_);
     if (project_requests_alpha && !config_.output.write_alpha) {
         config_.output.write_alpha = true;
         const QSignalBlocker blocker(write_alpha_);
@@ -9668,6 +9886,9 @@ bool MainWindow::startMusicAnalysis(const QString& source_path,
     const std::uint64_t generation = ++music_analysis_generation_;
     const std::uint64_t revision = document_revision_;
     const std::string layer_uuid = active_layer_uuid_;
+    music_analysis_task_generation_ = generation;
+    music_analysis_task_document_revision_ = revision;
+    music_analysis_task_layer_uuid_ = layer_uuid;
     const std::string attachment_id = layer_clock
         ? pvt::layer_music_attachment_id(layer_uuid)
         : std::string(pvt::kMusicSourceAttachmentId);
@@ -10032,6 +10253,8 @@ void MainWindow::startPreview() {
         const int frame = timeline_->value();
         const std::uint64_t generation = preview_generation_;
         const std::uint64_t revision = document_revision_;
+        preview_task_generation_ = generation;
+        preview_task_document_revision_ = revision;
         const pvt::FrameRenderOptions render_options = frameRenderOptions();
         auto cancel = std::make_shared<std::atomic_bool>(false);
         preview_cancel_ = cancel;
@@ -10685,25 +10908,49 @@ void MainWindow::startProjectLoad(const QString& path) {
     rememberDialogLocation(path);
     cancelMusicAnalysis();
     stopPlayback();
+    project_io_operation_ = ProjectIoOperation::Load;
+    project_io_path_ = path;
     setProjectIoActive(true, tr("Loading %1 in the background…").arg(path));
-    project_io_watcher_->setFuture(QtConcurrent::run([path] {
-        ProjectIoResult result;
-        result.operation = ProjectIoOperation::Load;
-        result.path = path;
-        result.document = std::make_shared<pvt::ProjectDocument>();
-        std::string error;
-        const QFileInfo source_info(path);
-        const bool legacy = source_info.isFile()
-                            && source_info.suffix().compare(
-                                   QStringLiteral("pvt"), Qt::CaseInsensitive) == 0;
-        result.ok = legacy
-                        ? pvt::import_legacy_setup(
-                              path.toStdString(), *result.document, &error)
-                        : pvt::load_project_document(
-                              path.toStdString(), *result.document, &error);
-        result.error = QString::fromStdString(error);
-        return result;
-    }));
+    try {
+        project_io_watcher_->setFuture(QtConcurrent::run([path] {
+            ProjectIoResult result;
+            result.operation = ProjectIoOperation::Load;
+            result.path = path;
+            try {
+                result.document = std::make_shared<pvt::ProjectDocument>();
+                std::string error;
+                const QFileInfo source_info(path);
+                const bool legacy = source_info.isFile()
+                                    && source_info.suffix().compare(
+                                           QStringLiteral("pvt"),
+                                           Qt::CaseInsensitive) == 0;
+                result.ok = legacy
+                                ? pvt::import_legacy_setup(
+                                      path.toStdString(), *result.document, &error)
+                                : pvt::load_project_document(
+                                      path.toStdString(), *result.document, &error);
+                result.error = QString::fromStdString(error);
+            } catch (const std::exception& exception) {
+                result.error = tr("Unexpected project-load error: %1")
+                                   .arg(QString::fromUtf8(exception.what()));
+            } catch (...) {
+                result.error = tr(
+                    "Project loading failed because of an unexpected error.");
+            }
+            return result;
+        }));
+    } catch (const std::exception& exception) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Load failed"),
+            tr("The background project-load task could not start: %1")
+                .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Load failed"),
+            tr("The background project-load task could not be created."));
+    }
 }
 
 bool MainWindow::runSmokeChecks(QString* error) {
@@ -10831,6 +11078,132 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
     }
+    if (motion_group_ == nullptr || motion_paths_edit_ == nullptr
+        || motion_group_->isAncestorOf(motion_paths_edit_)) {
+        if (error != nullptr) {
+            *error = tr("Reusable paths are trapped inside the whole-layer motion prerequisite.");
+        }
+        return false;
+    }
+    {
+        const bool original_motion_enabled = motion_group_->isChecked();
+        const QSignalBlocker blocker(motion_group_);
+        motion_group_->setChecked(false);
+        const bool path_editor_reachable = motion_paths_edit_->isEnabled();
+        motion_group_->setChecked(original_motion_enabled);
+        if (!path_editor_reachable) {
+            if (error != nullptr) {
+                *error = tr("Reusable paths cannot be edited while whole-layer motion is disabled.");
+            }
+            return false;
+        }
+    }
+    pvt::RenderConfig alpha_probe = pvt::default_config();
+    alpha_probe.starting_image.enabled = true;
+    alpha_probe.alpha.use_source_alpha = false;
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("An opaque-decoded starting image unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    alpha_probe.alpha.use_source_alpha = true;
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A source-alpha starting image did not request alpha output.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
+    alpha_probe.motion.enabled = true;
+    alpha_probe.motion.path = pvt::LayerMotionPath::Orbit;
+    alpha_probe.motion.travel_x = 0.0;
+    alpha_probe.motion.travel_y = 0.0;
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A zero-travel built-in motion path unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    alpha_probe.motion.path = pvt::LayerMotionPath::None;
+    alpha_probe.motion.scale_pulse = 0.5;
+    alpha_probe.motion.cycles_y = 0;
+    alpha_probe.motion.phase_degrees = 180.0;
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A constant neutral scale pulse unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
+    alpha_probe.motion.enabled = true;
+    alpha_probe.motion.custom_path.enabled = true;
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A reusable whole-layer path was not recognized as alpha-expanding motion.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
+    alpha_probe.motion.enabled = true;
+    alpha_probe.motion.rotation_offset_degrees = 15.0;
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A static whole-layer rotation was not recognized as alpha-expanding motion.");
+        }
+        return false;
+    }
+    pvt::ProjectConfig eraser_probe = pvt::default_project();
+    pvt::LayerConfig zero_alpha_eraser = pvt::default_layer(1U);
+    zero_alpha_eraser.blend_mode = pvt::BlendMode::Erase;
+    zero_alpha_eraser.render.alpha.enabled = true;
+    zero_alpha_eraser.render.alpha.minimum = 0.0;
+    zero_alpha_eraser.render.alpha.maximum = 0.0;
+    eraser_probe.layers.push_back(zero_alpha_eraser);
+    if (visible_stack_requires_alpha(eraser_probe)) {
+        if (error != nullptr) {
+            *error = tr("A guaranteed zero-alpha eraser unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    auto particle = pvt::default_effect(pvt::EffectType::ParticleField);
+    particle.enabled = true;
+    eraser_probe.layers.back().render.effects.push_back(particle);
+    if (!visible_stack_requires_alpha(eraser_probe)) {
+        if (error != nullptr) {
+            *error = tr("A particle-producing eraser failed to request alpha output.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
+    alpha_probe.surface.enabled = true;
+    alpha_probe.surface.mapping = pvt::SurfaceMapping::Plane;
+    alpha_probe.surface.rotations_per_loop = 1;
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("Reflected plane rotation unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    if (motion_rotation_offset_ == nullptr) {
+        if (error != nullptr) {
+            *error = tr("Layer motion is missing its starting-rotation editor.");
+        }
+        return false;
+    }
+    const double original_rotation_offset =
+        config_.motion.rotation_offset_degrees;
+    const double edited_rotation_offset =
+        std::fabs(original_rotation_offset - 17.5) > 1.0e-12 ? 17.5 : -17.5;
+    motion_rotation_offset_->setValue(edited_rotation_offset);
+    if (std::fabs(config_.motion.rotation_offset_degrees
+                  - edited_rotation_offset) > 1.0e-12) {
+        if (error != nullptr) {
+            *error = tr("The starting-rotation editor did not update layer motion.");
+        }
+        return false;
+    }
+    motion_rotation_offset_->setValue(original_rotation_offset);
     bool inspected_motion_path_editor = false;
     QTimer::singleShot(0, this, [this, &inspected_motion_path_editor] {
         if (auto* dialog = findChild<QDialog*>(
@@ -12324,18 +12697,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     clearUndoHistory(false);
     undo_stack_->setClean();
+    write_alpha_->setChecked(false);
     phrase_warp_->setValue(0.25);
     const std::string base_uuid = active_layer_uuid_;
     const double base_phrase_warp = config_.phrase_warp;
     addLayer();
     if (project_.layers.size() != 2U || active_layer_uuid_ != project_.layers.back().uuid
-        || !project_.output.write_alpha || !write_alpha_->isChecked()
+        || project_.output.write_alpha || write_alpha_->isChecked()
         || layer_list_->count() != 2
         || layer_list_->item(0)->data(Qt::UserRole).toString().toStdString()
                != project_.layers.back().uuid
         || config_.phrase_warp == base_phrase_warp) {
         if (error != nullptr) {
-            *error = tr("Adding a layer did not preserve paint order, isolation, or the one-way alpha default.");
+            *error = tr("Adding an opaque layer did not preserve paint order, isolation, or the valid RGB output choice.");
         }
         return false;
     }
@@ -12543,6 +12917,43 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
 
     selectLayer(top_uuid);
+    const int erase_blend = layer_blend_->findData(
+        static_cast<int>(pvt::BlendMode::Erase));
+    if (erase_blend < 0) {
+        if (error != nullptr) *error = tr("The Erase layer blend mode is missing.");
+        return false;
+    }
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    const std::uint64_t preview_before_eraser = preview_generation_;
+    layer_blend_->setCurrentIndex(erase_blend);
+    if (findLayer(top_uuid)->blend_mode != pvt::BlendMode::Erase
+        || !project_.output.write_alpha || !write_alpha_->isChecked()
+        || undo_stack_->count() != 1
+        || preview_generation_ <= preview_before_eraser) {
+        if (error != nullptr) {
+            *error = tr("An eraser above an opaque base did not enable RGBA as one previewed edit.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (findLayer(top_uuid)->blend_mode != pvt::BlendMode::Add
+        || project_.output.write_alpha || write_alpha_->isChecked()) {
+        if (error != nullptr) {
+            *error = tr("Undoing an eraser did not restore its matching RGB output state.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    if (findLayer(top_uuid)->blend_mode != pvt::BlendMode::Erase
+        || !project_.output.write_alpha || !write_alpha_->isChecked()) {
+        if (error != nullptr) {
+            *error = tr("Redoing an eraser did not restore its matching RGBA output state.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+
     layer_solo_->setChecked(true);
     const pvt::ProjectConfig solo_snapshot = previewProjectSnapshot();
     if (!solo_snapshot.output.write_alpha || !pvt::validate(solo_snapshot).ok
@@ -12725,6 +13136,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
 
     const auto first_version = document_->versions.front().number;
+    const std::string second_version_name = "Second Version Display Name";
+    applyProjectNameChange(saved_project_name, second_version_name);
     phrase_warp_->setValue(config_.phrase_warp < 1.8
                                ? config_.phrase_warp + 0.1
                                : config_.phrase_warp - 0.1);
@@ -12815,15 +13228,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
             }
         }
     });
+    if (!playback_timer_->isActive()) togglePlayback();
     makeSelectedVersionCurrent();
     while (project_io_watcher_->isRunning()) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
         QThread::msleep(1);
     }
     QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
-    if (document_->current_version != first_version || hasUnsavedChanges()) {
+    if (document_->current_version != first_version || hasUnsavedChanges()
+        || project_.name != saved_project_name
+        || project_name_->text().toStdString() != saved_project_name
+        || !windowTitle().startsWith(
+            QString::fromStdString(saved_project_name))
+        || playback_timer_->isActive()
+        || play_button_->text() != tr("Play")) {
         if (error != nullptr) {
-            *error = tr("Saving during Make Current lost the selected version or left dirty state.");
+            *error = tr("Make Current did not replace the saved name, title, playback, or clean version state.");
         }
         return false;
     }
@@ -12844,7 +13264,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
     revertSelectedVersion();
     if (document_->versions.size() != version_count_before_revert + 1U
         || document_->current_version <= second_version || hasUnsavedChanges()
-        || undo_stack_->count() != 0) {
+        || undo_stack_->count() != 0
+        || project_.name != second_version_name
+        || project_name_->text().toStdString() != second_version_name
+        || !windowTitle().startsWith(
+            QString::fromStdString(second_version_name))) {
         if (error != nullptr) {
             *error = tr("Revert did not create and cleanly select a new immutable version "
                         "(versions %1, expected %2; current %3, source %4; dirty %5; undo %6).")
@@ -12927,6 +13351,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     replaceWithNewProject();
     if (!document_->versions.empty() || !current_project_path_.isEmpty()
+        || hasUnsavedChanges() || undo_stack_->count() != 0
         || version_list_->count() != 0 || version_before_->count() != 0
         || version_after_->count() != 0 || version_before_->isEnabled()
         || version_after_->isEnabled() || version_compare_->isEnabled()
@@ -13356,6 +13781,8 @@ void MainWindow::startProjectSave(const QString& path) {
         return;
     }
     rememberDialogLocation(path);
+    project_io_operation_ = ProjectIoOperation::Save;
+    project_io_path_ = path;
     setProjectIoActive(true, tr("Saving %1 in the background…").arg(path));
     std::shared_ptr<pvt::ProjectDocument> staged;
     try {
@@ -13373,19 +13800,53 @@ void MainWindow::startProjectSave(const QString& path) {
             this, tr("Save failed"),
             tr("There was not enough memory to prepare the project for saving."));
         return;
+    } catch (const std::exception& exception) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Save failed"),
+            tr("The project could not be prepared for saving: %1")
+                .arg(QString::fromUtf8(exception.what())));
+        return;
+    } catch (...) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Save failed"),
+            tr("The project could not be prepared for background saving."));
+        return;
     }
-    project_io_watcher_->setFuture(QtConcurrent::run(
-        [staged = std::move(staged), path] {
-            ProjectIoResult result;
-            result.operation = ProjectIoOperation::Save;
-            result.path = path;
-            result.document = staged;
-            std::string error;
-            result.ok = pvt::save_project_document(
-                *staged, path.toStdString(), &result.save_report, &error);
-            result.error = QString::fromStdString(error);
-            return result;
-        }));
+    try {
+        project_io_watcher_->setFuture(QtConcurrent::run(
+            [staged = std::move(staged), path] {
+                ProjectIoResult result;
+                result.operation = ProjectIoOperation::Save;
+                result.path = path;
+                result.document = staged;
+                try {
+                    std::string error;
+                    result.ok = pvt::save_project_document(
+                        *staged, path.toStdString(), &result.save_report, &error);
+                    result.error = QString::fromStdString(error);
+                } catch (const std::exception& exception) {
+                    result.error = tr("Unexpected project-save error: %1")
+                                       .arg(QString::fromUtf8(exception.what()));
+                } catch (...) {
+                    result.error = tr(
+                        "Project saving failed because of an unexpected error.");
+                }
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Save failed"),
+            tr("The background project-save task could not start: %1")
+                .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Save failed"),
+            tr("The background project-save task could not be created."));
+    }
 }
 
 void MainWindow::finishProjectSave(pvt::ProjectDocument saved,

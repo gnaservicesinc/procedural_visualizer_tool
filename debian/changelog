@@ -1,3 +1,17 @@
+procedural-visualizer-tool (2.0.0) stonking; urgency=medium
+
+  * Correct layer motion phase, reverse-path, tangent-following, and CPU/Metal
+    parity semantics while preserving the legacy generated-color enum values.
+  * Make RGB/RGBA decisions match actual authored-image, palette, generated,
+    eraser-stack, custom-path, static-rotation, and identity-motion coverage.
+  * Keep extreme valid meters compact and retain signed 64-bit beat-offset
+    precision without attacker-controlled allocation amplification.
+  * Harden GUI background completion and document replacement, complete CLI
+    source controls, and reject detached embedded-image bundle identities.
+  * Advance the shared-library SONAME and Debian runtime package to ABI 2.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Mon, 17 Aug 2026 04:59:28 -0400
+
 procedural-visualizer-tool (1.2.6) stonking; urgency=medium
 
   * New upstream release.

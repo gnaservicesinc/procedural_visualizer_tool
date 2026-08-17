@@ -217,7 +217,7 @@ bool effect_can_create_transparency(const EffectConfig& effect) {
     if (!effect.enabled
         || (effect.type == EffectType::Blur
                 ? effect.radius_pixels <= 0.0
-                  || (effect.intensity <= 0.0 && effect.blur_maximum <= 0.0)
+                  || effect.blur_maximum <= 0.0
                 : effect.intensity <= 0.0)
         || effect.type == EffectType::Glow
         || effect.type == EffectType::BlockScale
@@ -230,9 +230,37 @@ bool effect_can_create_transparency(const EffectConfig& effect) {
                : effect.magnitude > 0.0;
 }
 
+bool effect_can_create_particle_coverage(const EffectConfig& effect) {
+    return effect.enabled && effect.type == EffectType::ParticleField
+           && effect.intensity > 0.0 && effect.frequency >= 1.0
+           && effect.radius_pixels > 0.0;
+}
+
+bool eraser_source_is_guaranteed_transparent(const RenderData& render) {
+    if (!render.alpha.enabled || render.alpha.maximum != 0.0) return false;
+    // Procedural alpha is applied before effects. Every effect and mapping
+    // preserves an all-zero alpha field except Particle Field, which authors
+    // new spark coverage independently of the source pixels.
+    return std::none_of(render.effects.begin(), render.effects.end(),
+                        effect_can_create_particle_coverage);
+}
+
 bool render_data_can_create_transparency(const RenderData& render) {
-    if (render.starting_image.enabled) {
-        return true;
+    if (render.alpha.use_source_alpha) {
+        if (render.starting_image.enabled) {
+            return true;
+        }
+        if (render.palette.enabled
+            && std::any_of(
+                render.palette.colors.begin(), render.palette.colors.end(),
+                [](const PaletteColor& color) { return color.alpha < 1.0; })) {
+            return true;
+        }
+        if (!render.palette.enabled
+            && render.starting_colors.include_alpha
+            && render.starting_colors.alpha_minimum < 1.0) {
+            return true;
+        }
     }
     if (render.alpha.enabled && render.alpha.minimum < 1.0) {
         return true;
@@ -242,12 +270,22 @@ bool render_data_can_create_transparency(const RenderData& render) {
         && render.surface.curvature > 0.0) {
         return true;
     }
+    const bool built_in_motion_path_has_work =
+        render.motion.path != LayerMotionPath::None
+        && (std::fabs(render.motion.travel_x) > 1.0e-12
+            || std::fabs(render.motion.travel_y) > 1.0e-12);
+    const bool motion_scale_has_work =
+        render.motion.scale_pulse > 1.0e-12
+        && (render.motion.cycles_y != 0
+            || std::fmod(render.motion.phase_degrees, 180.0) != 0.0);
     if (render.motion.enabled
-        && (render.motion.path != LayerMotionPath::None
+        && (built_in_motion_path_has_work
+            || render.motion.custom_path.enabled
             || std::fabs(render.motion.center_x - 0.5) > 1.0e-12
             || std::fabs(render.motion.center_y - 0.5) > 1.0e-12
             || render.motion.rotations_per_loop != 0
-            || render.motion.scale_pulse > 1.0e-12)) {
+            || std::fmod(render.motion.rotation_offset_degrees, 360.0) != 0.0
+            || motion_scale_has_work)) {
         return true;
     }
     return std::any_of(render.effects.begin(), render.effects.end(),
@@ -1065,9 +1103,12 @@ ValidationResult validate(const ProjectConfig& project) {
                     || layer.blend_mode == BlendMode::ColorEraseBrightness;
                 if (erases_lower_layers) {
                     // A destination-out layer can punch coverage back out of
-                    // an opaque lower stack. A later ordinary opaque layer may
-                    // establish full coverage again.
-                    enabled_stack_is_guaranteed_opaque = false;
+                    // an opaque lower stack. Procedural alpha fixed at zero is
+                    // an exact no-op unless Particle Field synthesizes coverage.
+                    // A later ordinary opaque layer may establish coverage again.
+                    if (!eraser_source_is_guaranteed_transparent(render)) {
+                        enabled_stack_is_guaranteed_opaque = false;
+                    }
                 } else {
                     has_contributing_layer = true;
                 }

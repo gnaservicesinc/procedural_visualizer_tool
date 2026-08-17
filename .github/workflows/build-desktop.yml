@@ -421,11 +421,13 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          Ordered generated starting colors now traverse the complete automatically sized RGB/RGBA lattice in hue-major order, so the unmodified source reads as a broad rainbow instead of an RGB-digit scan. Continuous hue remains the default, deterministic one-to-one color static remains the explicit Random option, and every source block is retained whenever the selected ranges and output representation permit it.
+          This correctness release repairs final-alpha decisions across authored images, RGBA palettes, generated alpha, eraser stacks, reusable motion paths, static rotation, and inactive identity motion. Opaque projects retain RGB when source alpha is explicitly ignored; genuinely transparent stacks are promoted to RGBA before export instead of failing late or silently losing coverage.
 
-          Spiral rainbow now draws a true circular radial winding. The previous nested rectangular-ring design remains available as Square spiral rainbow, and projects saved with its older token migrate without changing their appearance. Horizontal, vertical, diagonal, radial spiral, and square spiral patterns use the same reference-scaled placement on CPU and Metal, including reduced previews and 24K authored canvases.
+          Layer Starting phase is now independent of cycle count, reusable-path Reverse changes travel direction without negating the authored start, and tangent-following waves retain their direction on Metal. Existing projects still load, but projects that relied on the old cycles-times-phase error or reversed-phase jump can begin at a different placement under the corrected 2.0 semantics.
 
-          Generated values remain float32 through effects and compositing, every choice in the Generated starting colors box honors every channel Min/Max range, and values are quantized only by the selected output format. Authored palettes and starting images remain separate sources. PNG input remains explicitly 8/16-bit and FLOAT EXR remains available for 32-bit output.
+          Extreme valid meters remain compact instead of expanding billions of pulse records, and signed 64-bit beat offsets retain their low microseconds. Project copies reject detached embedded-image identities, the CLI exposes the complete RGBA/generated-source and starting-rotation controls, and background GUI failures and version replacement now leave coherent playback, title, and document state.
+
+          The installed C++ shared library now has SONAME 2. Applications linking the library must be recompiled because public by-value configuration types grew during the 1.x line. Saved setup and project bundle formats remain loadable; the major version records the corrected rendering semantics and ABI boundary rather than discarding project data.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 

@@ -30,8 +30,8 @@ struct FrameConstants {
 
 struct GpuWave {
     float4 geometry; // source x/y, effective amplitude, spatial frequency
-    float4 phase;    // phase radians, direction, unused, unused
-    int4 behavior;  // cycles, synchronized, unused, unused
+    float4 phase;    // phase radians, direction, resolved tangent, unused
+    int4 behavior;  // cycles, synchronized, follow tangent, unused
 };
 
 struct GpuSwing {
@@ -217,9 +217,11 @@ float wave_height(constant FrameConstants& frame,
         const float dy = (y - wave.geometry.y) / short_side;
         const float radial = length(float2(dx, dy));
         const float direction = wave.phase.y;
-        const float coordinate = direction < 0.5f
-            ? mix(radial, dx, 1.0f - 2.0f * direction)
-            : mix(radial, dy, 2.0f * direction - 1.0f);
+        const float coordinate = wave.behavior.z != 0
+            ? cos(wave.phase.z) * dx + sin(wave.phase.z) * dy
+            : (direction < 0.5f
+                   ? mix(radial, dx, 1.0f - 2.0f * direction)
+                   : mix(radial, dy, 2.0f * direction - 1.0f));
         const float clock = wave.behavior.y != 0
                                 ? motion_phase
                                 : frame.timelines.x;
@@ -323,10 +325,10 @@ ulong generated_starting_index(constant FrameConstants& frame,
     const ulong y = reference_y / reference_block;
     const uint mode = frame.starting_flags.x;
     if (mode == 1u) return x * blocks_down + y;
-    if (mode == 3u || mode == 4u) {
+    if (mode == 3u || mode == 6u) {
         return diagonal_traversal_index(x, y, blocks_across, blocks_down);
     }
-    if (mode == 6u) {
+    if (mode == 4u) {
         return square_spiral_traversal_index(
             x, y, blocks_across, blocks_down);
     }
@@ -436,7 +438,7 @@ float4 generated_starting_color(constant FrameConstants& frame,
             ? float(alpha_index) / alpha_denominator : 1.0f);
     const float4 ranged = mix(frame.starting_minimum,
                               frame.starting_maximum, unit);
-    const float3 source_rgb = mode == 4u ? unit.rgb : ranged.rgb;
+    const float3 source_rgb = mode == 6u ? unit.rgb : ranged.rgb;
     return float4(srgb_to_linear(source_rgb.r), srgb_to_linear(source_rgb.g),
                   srgb_to_linear(source_rgb.b),
                   frame.starting_flags.y != 0u ? ranged.a : 1.0f);
@@ -517,7 +519,7 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     const float starting_radius = length(starting_delta)
         / max(1.0f, 0.5f * starting_short_side);
     const float starting_angle = atan2(starting_delta.y, starting_delta.x);
-    const float starting_spiral_hue = frame.starting_flags.x == 4u
+    const float starting_spiral_hue = frame.starting_flags.x == 6u
         ? 360.0f * (3.0f * starting_radius + starting_angle / kTau)
         : 0.0f;
     const float wall_distance = min(
@@ -574,9 +576,9 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
         }
     } else if (frame.counts_flags.y == 0u) {
         base = generated_starting_color(frame, starting_index);
-        const float starting_spiral_hue_shift = frame.starting_flags.x == 4u
+        const float starting_spiral_hue_shift = frame.starting_flags.x == 6u
             ? starting_spiral_hue - linear_hue_degrees(base) : 0.0f;
-        if (frame.starting_flags.x == 4u) {
+        if (frame.starting_flags.x == 6u) {
             base = rotate_linear_hue(base, starting_spiral_hue_shift);
             base = apply_generated_rgb_range(frame, base);
         }

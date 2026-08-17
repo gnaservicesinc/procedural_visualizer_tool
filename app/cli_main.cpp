@@ -413,11 +413,30 @@ bool palettes_equal(const pvt::PaletteConfig& left,
     for (std::size_t index = 0U; index < left.colors.size(); ++index) {
         if (left.colors[index].red != right.colors[index].red
             || left.colors[index].green != right.colors[index].green
-            || left.colors[index].blue != right.colors[index].blue) {
+            || left.colors[index].blue != right.colors[index].blue
+            || left.colors[index].alpha != right.colors[index].alpha) {
             return false;
         }
     }
     return true;
+}
+
+bool motion_has_render_work(const pvt::LayerMotionConfig& motion) {
+    if (!motion.enabled) return false;
+    const bool built_in_path_has_work =
+        motion.path != pvt::LayerMotionPath::None
+        && (std::fabs(motion.travel_x) > 1.0e-12
+            || std::fabs(motion.travel_y) > 1.0e-12);
+    const bool scale_has_work =
+        motion.scale_pulse > 1.0e-12
+        && (motion.cycles_y != 0
+            || std::fmod(motion.phase_degrees, 180.0) != 0.0);
+    return built_in_path_has_work || motion.custom_path.enabled
+           || std::fabs(motion.center_x - 0.5) > 1.0e-12
+           || std::fabs(motion.center_y - 0.5) > 1.0e-12
+           || motion.rotations_per_loop != 0
+           || std::fmod(motion.rotation_offset_degrees, 360.0) != 0.0
+           || scale_has_work;
 }
 
 bool configure_palette(RenderConfig& config) {
@@ -427,8 +446,9 @@ bool configure_palette(RenderConfig& config) {
                   << (palette.enabled ? "used" : "not used") << ") --\n";
         for (std::size_t index = 0U; index < palette.colors.size(); ++index) {
             const auto& color = palette.colors[index];
-            std::cout << "  " << (index + 1U) << ") RGB " << color.red << ", "
-                      << color.green << ", " << color.blue << '\n';
+            std::cout << "  " << (index + 1U) << ") RGBA " << color.red << ", "
+                      << color.green << ", " << color.blue << ", "
+                      << color.alpha << '\n';
         }
         if (palette.colors.empty()) {
             std::cout << "  (no custom colors)\n";
@@ -505,6 +525,8 @@ bool configure_palette(RenderConfig& config) {
                 || !prompt_real("Green (sRGB)", config.palette.colors[index].green,
                                 0.0, 1.0)
                 || !prompt_real("Blue (sRGB)", config.palette.colors[index].blue,
+                                0.0, 1.0)
+                || !prompt_real("Alpha", config.palette.colors[index].alpha,
                                 0.0, 1.0)) {
                 return false;
             }
@@ -540,7 +562,8 @@ bool configure_palette(RenderConfig& config) {
             static_cast<std::size_t>(selected - 1)];
         if (!prompt_real("Red (sRGB)", color.red, 0.0, 1.0)
             || !prompt_real("Green (sRGB)", color.green, 0.0, 1.0)
-            || !prompt_real("Blue (sRGB)", color.blue, 0.0, 1.0)) {
+            || !prompt_real("Blue (sRGB)", color.blue, 0.0, 1.0)
+            || !prompt_real("Alpha", color.alpha, 0.0, 1.0)) {
             return false;
         }
     }
@@ -1214,6 +1237,36 @@ void configure_color(RenderConfig& config) {
         || !prompt_real("Ghost lag (degrees)", config.ghost_lag_degrees, -360.0, 360.0)
         || !prompt_int("Hue rotations per loop", config.hue_cycles, -100, 100)
         || !prompt_real("Color saturation", config.saturation, 0.0, 1.0)
+        || !prompt_enum(
+            "Generated starting-color pattern", config.starting_colors.mode,
+            {{pvt::StartingColorMode::ContinuousHue, "Continuous hue"},
+             {pvt::StartingColorMode::HorizontalRainbow,
+              "Horizontal rainbow"},
+             {pvt::StartingColorMode::VerticalRainbow, "Vertical rainbow"},
+             {pvt::StartingColorMode::DiagonalRainbow,
+              "Diagonal rainbow"},
+             {pvt::StartingColorMode::SpiralRainbow, "Spiral rainbow"},
+             {pvt::StartingColorMode::SquareSpiralRainbow,
+              "Square spiral rainbow"},
+             {pvt::StartingColorMode::Random, "Random"}})
+        || !prompt_bool("Generated colors include alpha",
+                        config.starting_colors.include_alpha)
+        || !prompt_real("Generated red minimum",
+                        config.starting_colors.red_minimum, 0.0, 1.0)
+        || !prompt_real("Generated red maximum",
+                        config.starting_colors.red_maximum, 0.0, 1.0)
+        || !prompt_real("Generated green minimum",
+                        config.starting_colors.green_minimum, 0.0, 1.0)
+        || !prompt_real("Generated green maximum",
+                        config.starting_colors.green_maximum, 0.0, 1.0)
+        || !prompt_real("Generated blue minimum",
+                        config.starting_colors.blue_minimum, 0.0, 1.0)
+        || !prompt_real("Generated blue maximum",
+                        config.starting_colors.blue_maximum, 0.0, 1.0)
+        || !prompt_real("Generated alpha minimum",
+                        config.starting_colors.alpha_minimum, 0.0, 1.0)
+        || !prompt_real("Generated alpha maximum",
+                        config.starting_colors.alpha_maximum, 0.0, 1.0)
         || !prompt_bool("Post-effects quantization enabled", config.quantization.enabled)
         || !prompt_int("Post-effects quantization levels", config.quantization.levels, 2, 65536)
         || !prompt_real("Post-effects quantization mix", config.quantization.mix, 0.0, 1.0)
@@ -1451,11 +1504,18 @@ void configure_surface(RenderConfig& config,
                             -36000.0, 36000.0)
             || !prompt_int("Layer rotations per loop",
                            config.motion.rotations_per_loop, -1000, 1000)
+            || !prompt_real("Layer starting rotation (degrees)",
+                            config.motion.rotation_offset_degrees,
+                            -36000.0, 36000.0)
             || !prompt_real("Scale pulse", config.motion.scale_pulse,
                             0.0, 0.95))) {
         return;
     }
-    if (config.motion.enabled) config.output.write_alpha = true;
+    if (motion_has_render_work(config.motion)) {
+        g_prompt_changed = g_prompt_changed || !config.output.write_alpha;
+        config.output.write_alpha = true;
+        std::cout << "Final RGBA output enabled because layer motion can expose the canvas exterior.\n";
+    }
     if (config.surface.enabled
         && config.surface.mapping != pvt::SurfaceMapping::Plane
         && config.surface.curvature > 0.0) {
@@ -1468,6 +1528,8 @@ void configure_surface(RenderConfig& config,
 void configure_alpha(RenderConfig& config) {
     std::cout << "\n-- Per-layer alpha modulation --\n"
               << "RGB remains present even where alpha is zero (straight/unassociated alpha).\n";
+    prompt_bool("Use alpha from starting images, palettes, and generated colors",
+                config.alpha.use_source_alpha);
     prompt_bool("Enable procedural alpha modulation", config.alpha.enabled);
     prompt_real("Minimum alpha", config.alpha.minimum, 0.0, 1.0);
     prompt_real("Maximum alpha", config.alpha.maximum, 0.0, 1.0);
@@ -1652,9 +1714,6 @@ void configure_project_and_layers(CliState& state) {
             layer.file_id = pvt::allocate_layer_file_id(project);
             project.layers.push_back(std::move(layer));
             state.active_layer = project.layers.size() - 1;
-            if (project.layers.size() > 1) {
-                project.output.write_alpha = true;
-            }
             state.document.dirty = true;
             continue;
         }
@@ -1783,7 +1842,6 @@ void configure_project_and_layers(CliState& state) {
                                       + static_cast<std::ptrdiff_t>(first_index + 1),
                                   std::move(copy));
             state.active_layer = first_index + 1;
-            project.output.write_alpha = true;
             state.document.dirty = true;
         } else if (action == 'd' || action == 'D') {
             if (command >> extra || count == 1) {
@@ -2308,7 +2366,7 @@ void print_help(const char* program) {
         << "  --backend cpu|cpu+gpu|gpu          Rendering policy (default cpu+gpu)\n"
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
         << "  (0 uses the bounded default of 2)\n"
-        << "  --obj FILE  (enable two-sided custom OBJ wrapping and final alpha)\n"
+        << "  --obj FILE  (enable two-sided custom OBJ wrapping)\n"
         << "  --starting-image PNG --image-fit stretch|contain|cover|tile\n"
         << "  --no-starting-image\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
@@ -2499,6 +2557,14 @@ bool resize_waves(RenderConfig& config, std::size_t count) {
 }
 
 int quick_self_test() {
+    pvt::PaletteConfig alpha_palette = pvt::default_palette(0U);
+    pvt::PaletteConfig opaque_palette = alpha_palette;
+    alpha_palette.colors.front().alpha = 0.25;
+    if (palettes_equal(alpha_palette, opaque_palette)) {
+        std::cerr << "Self-test failed: palette alpha was ignored.\n";
+        return EXIT_FAILURE;
+    }
+
     pvt::ProjectConfig project = pvt::default_project();
     project.canvas.width = 97;
     project.canvas.height = 65;
@@ -2747,7 +2813,6 @@ int main(int argc, char** argv) {
             layer.name = value;
             state.document.project.layers.push_back(std::move(layer));
             state.active_layer = state.document.project.layers.size() - 1;
-            state.document.project.output.write_alpha = true;
             state.document.dirty = true;
         } else if (option == "--blend") {
             pvt::BlendMode mode;
@@ -2962,19 +3027,21 @@ int main(int argc, char** argv) {
             }
             state.document = std::move(candidate);
             mutate_active([&](RenderConfig& config) {
+                const bool needs_alpha = config.surface.curvature > 0.0;
                 const bool changed = !config.surface.enabled
                                      || config.surface.mapping
                                             != pvt::SurfaceMapping::CustomObj
                                      || config.surface.obj_path != attached.local_path
                                      || config.surface.obj_sha256 != attached.sha256
                                      || config.surface.obj_basename != attached.basename
-                                     || !config.output.write_alpha;
+                                     || (needs_alpha
+                                         && !config.output.write_alpha);
                 config.surface.enabled = true;
                 config.surface.mapping = pvt::SurfaceMapping::CustomObj;
                 config.surface.obj_path = attached.local_path;
                 config.surface.obj_sha256 = attached.sha256;
                 config.surface.obj_basename = attached.basename;
-                config.output.write_alpha = true;
+                if (needs_alpha) config.output.write_alpha = true;
                 return changed;
             });
         } else if (option == "--starting-image"
@@ -2999,6 +3066,7 @@ int main(int argc, char** argv) {
             }
             state.document = std::move(candidate);
             mutate_active([&](RenderConfig& config) {
+                const bool needs_alpha = config.alpha.use_source_alpha;
                 const bool changed = !config.starting_image.enabled
                                      || config.starting_image.path
                                             != attached.local_path
@@ -3006,12 +3074,13 @@ int main(int argc, char** argv) {
                                             != attached.sha256
                                      || config.starting_image.basename
                                             != attached.basename
-                                     || !config.output.write_alpha;
+                                     || (needs_alpha
+                                         && !config.output.write_alpha);
                 config.starting_image.enabled = true;
                 config.starting_image.path = attached.local_path;
                 config.starting_image.sha256 = attached.sha256;
                 config.starting_image.basename = attached.basename;
-                config.output.write_alpha = true;
+                if (needs_alpha) config.output.write_alpha = true;
                 return changed;
             });
         } else if (option == "--image-fit") {

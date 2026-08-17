@@ -25,8 +25,10 @@ struct PreparedWave {
     double spatial_frequency = 0.0;
     double phase_radians = 0.0;
     double direction = 0.5;
+    double tangent_radians = 0.0;
     int cycles_per_loop = 0;
     bool synchronized = true;
+    bool follow_tangent = false;
 };
 
 struct PreparedEffect {

@@ -18,7 +18,14 @@ version=$1
 rewrite_file() {
     rewrite_source=$1
     rewrite_expression=$2
-    rewrite_temp=$(mktemp "${TMPDIR:-/tmp}/pvt-version.XXXXXX")
+    # Keep the replacement beside its source so mv remains an atomic rename,
+    # and seed it with the source metadata so mktemp's 0600 mode is not leaked
+    # into README/manpage/package inputs.
+    rewrite_temp=$(mktemp "${rewrite_source}.tmp.XXXXXX")
+    if ! cp -p "$rewrite_source" "$rewrite_temp"; then
+        rm -f "$rewrite_temp"
+        return 1
+    fi
     if ! sed -E "$rewrite_expression" "$rewrite_source" > "$rewrite_temp"; then
         rm -f "$rewrite_temp"
         return 1
@@ -26,7 +33,20 @@ rewrite_file() {
     mv "$rewrite_temp" "$rewrite_source"
 }
 
-printf '%s\n' "$version" > "$repository_dir/VERSION"
+if ! grep -F 'craftctl set version=' "$repository_dir/snapcraft.yaml" |
+        grep -Fq '$CRAFT_PART_SRC/VERSION'; then
+    echo "snapcraft.yaml must derive its package version from VERSION." >&2
+    exit 1
+fi
+
+version_file="$repository_dir/VERSION"
+version_temp=$(mktemp "${version_file}.tmp.XXXXXX")
+if ! cp -p "$version_file" "$version_temp"; then
+    rm -f "$version_temp"
+    exit 1
+fi
+printf '%s\n' "$version" > "$version_temp"
+mv "$version_temp" "$version_file"
 rewrite_file "$repository_dir/README.md" \
     "s/(Current product version: \\*\\*)[^*]+(\\*\\*)/\\1${version}\\2/"
 rewrite_file "$repository_dir/debian/pvt-render.1" \
@@ -41,21 +61,20 @@ if ! head -n 1 "$repository_dir/debian/changelog" |
     maintainer_email=${DEBEMAIL:-$(git -C "$repository_dir" config user.email || true)}
     : "${maintainer_name:=PVT Maintainers}"
     : "${maintainer_email:=noreply@example.com}"
-    changelog_temp=$(mktemp "${TMPDIR:-/tmp}/pvt-changelog.XXXXXX")
+    changelog_source="$repository_dir/debian/changelog"
+    changelog_temp=$(mktemp "${changelog_source}.tmp.XXXXXX")
+    if ! cp -p "$changelog_source" "$changelog_temp"; then
+        rm -f "$changelog_temp"
+        exit 1
+    fi
     {
         printf 'procedural-visualizer-tool (%s) stonking; urgency=medium\n\n' "$debian_version"
         printf '  * New upstream release.\n\n'
         printf ' -- %s <%s>  %s\n\n' \
             "$maintainer_name" "$maintainer_email" "$(LC_ALL=C date -R)"
-        cat "$repository_dir/debian/changelog"
+        cat "$changelog_source"
     } > "$changelog_temp"
-    mv "$changelog_temp" "$repository_dir/debian/changelog"
-fi
-
-if ! grep -F 'craftctl set version=' "$repository_dir/snapcraft.yaml" |
-        grep -Fq '$CRAFT_PART_SRC/VERSION'; then
-    echo "snapcraft.yaml must derive its package version from VERSION." >&2
-    exit 1
+    mv "$changelog_temp" "$changelog_source"
 fi
 
 echo "PVT version is now $version. README, Debian, and Snapcraft metadata are synchronized; reconfigure the build to apply it."

@@ -838,6 +838,100 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(start.pixels == seam.pixels);
     CHECK(mean_absolute_difference(start, middle) > 0.00001);
 
+    // Reverse changes traversal direction, not the separately authored
+    // starting phase. Follow-tangent orientation must face actual travel and
+    // survive preparation for strict GPU rendering.
+    path_config.waves.front().synchronized = false;
+    path_config.waves.front().path.phase_degrees = 90.0;
+    pvt::detail::PreparedFrame forward_path;
+    CHECK(pvt::detail::prepare_frame_for_backend_at_phase(
+        path_config, 0.0, forward_path, &error));
+    path_config.waves.front().path.reverse = true;
+    pvt::detail::PreparedFrame reverse_path;
+    CHECK(pvt::detail::prepare_frame_for_backend_at_phase(
+        path_config, 0.0, reverse_path, &error));
+    CHECK(forward_path.waves.size() == reverse_path.waves.size());
+    if (!forward_path.waves.empty() && !reverse_path.waves.empty()) {
+        const auto& forward = forward_path.waves.front();
+        const auto& reverse = reverse_path.waves.front();
+        CHECK(std::fabs(forward.source_x - reverse.source_x) < 1.0e-9);
+        CHECK(std::fabs(forward.source_y - reverse.source_y) < 1.0e-9);
+        CHECK(forward.follow_tangent && reverse.follow_tangent);
+        CHECK(std::fabs(std::cos(forward.tangent_radians)
+                        + std::cos(reverse.tangent_radians)) < 1.0e-9);
+        CHECK(std::fabs(std::sin(forward.tangent_radians)
+                        + std::sin(reverse.tangent_radians)) < 1.0e-9);
+    }
+
+    // A static authored rotation is render work even without a built-in path.
+    pvt::RenderConfig static_rotation = pvt::default_config();
+    make_small(static_rotation);
+    static_rotation.output.write_alpha = true;
+    static_rotation.motion.enabled = false;
+    pvt::Image unrotated;
+    pvt::Image rotated;
+    CHECK(pvt::render_frame_at_phase(
+        static_rotation, 0.0, unrotated, &error));
+    static_rotation.motion.enabled = true;
+    static_rotation.motion.path = pvt::LayerMotionPath::None;
+    static_rotation.motion.rotation_offset_degrees = 31.0;
+    CHECK(pvt::render_frame_at_phase(
+        static_rotation, 0.0, rotated, &error));
+    CHECK(mean_absolute_difference(unrotated, rotated) > 0.00001);
+
+    // A selected built-in path with no travel is an exact identity. Likewise,
+    // a zero-cycle scale pulse at a zero-crossing never changes scale.
+    pvt::RenderConfig identity_motion = pvt::default_config();
+    make_small(identity_motion);
+    identity_motion.motion.enabled = true;
+    identity_motion.motion.path = pvt::LayerMotionPath::Orbit;
+    identity_motion.motion.travel_x = 0.0;
+    identity_motion.motion.travel_y = 0.0;
+    CHECK(pvt::validate(identity_motion).ok);
+    pvt::Image identity_path;
+    CHECK(pvt::render_frame_at_phase(
+        identity_motion, 0.37, identity_path, &error));
+    identity_motion.motion.path = pvt::LayerMotionPath::None;
+    identity_motion.motion.scale_pulse = 0.5;
+    identity_motion.motion.cycles_y = 0;
+    identity_motion.motion.phase_degrees = 180.0;
+    CHECK(pvt::validate(identity_motion).ok);
+    pvt::Image identity_scale;
+    CHECK(pvt::render_frame_at_phase(
+        identity_motion, 0.37, identity_scale, &error));
+    identity_motion.motion.enabled = false;
+    pvt::Image identity_disabled;
+    CHECK(pvt::render_frame_at_phase(
+        identity_motion, 0.37, identity_disabled, &error));
+    CHECK(identity_path.pixels == identity_disabled.pixels);
+    CHECK(identity_scale.pixels == identity_disabled.pixels);
+
+    // Starting phase is independent of how many cycles are authored. Cycle
+    // count changes subsequent travel, not the layer's phase-zero placement.
+    pvt::RenderConfig phased_motion = pvt::default_config();
+    make_small(phased_motion);
+    phased_motion.output.write_alpha = true;
+    phased_motion.motion.enabled = true;
+    phased_motion.motion.path = pvt::LayerMotionPath::Orbit;
+    phased_motion.motion.phase_degrees = 90.0;
+    phased_motion.motion.cycles_x = 1;
+    pvt::Image one_cycle_start;
+    pvt::Image one_cycle_later;
+    pvt::Image two_cycle_start;
+    pvt::Image two_cycle_later;
+    CHECK(pvt::render_frame_at_phase(
+        phased_motion, 0.0, one_cycle_start, &error));
+    CHECK(pvt::render_frame_at_phase(
+        phased_motion, 0.125, one_cycle_later, &error));
+    phased_motion.motion.cycles_x = 2;
+    CHECK(pvt::render_frame_at_phase(
+        phased_motion, 0.0, two_cycle_start, &error));
+    CHECK(pvt::render_frame_at_phase(
+        phased_motion, 0.125, two_cycle_later, &error));
+    CHECK(one_cycle_start.pixels == two_cycle_start.pixels);
+    CHECK(mean_absolute_difference(one_cycle_later, two_cycle_later)
+          > 0.00001);
+
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(path_config, serialized, &error));
     pvt::RenderConfig loaded;
@@ -958,6 +1052,13 @@ void test_cancellable_single_layer_render() {
 }
 
 void test_defaults_and_dynamic_collections() {
+    CHECK(static_cast<std::uint8_t>(
+              pvt::StartingColorMode::SquareSpiralRainbow) == 4U);
+    CHECK(static_cast<std::uint8_t>(
+              pvt::StartingColorMode::Subtractive) == 4U);
+    CHECK(static_cast<std::uint8_t>(pvt::StartingColorMode::Random) == 5U);
+    CHECK(static_cast<std::uint8_t>(
+              pvt::StartingColorMode::SpiralRainbow) == 6U);
     auto config = pvt::default_config();
     make_small(config);
     CHECK(pvt::validate(config).ok);
@@ -1125,6 +1226,9 @@ void test_synchronized_clocks_and_music() {
     CHECK(meter_description.find("7 pulses") != std::string::npos);
     CHECK(pvt::describe_meter("3+2+3/8 | 5/4", meter_description, &error));
     CHECK(pvt::describe_meter("4/3 | 6/7", meter_description, &error));
+    CHECK(pvt::describe_meter("2147483647/4", meter_description, &error));
+    CHECK(meter_description.find("2147483647 pulses")
+          != std::string::npos);
     CHECK(!pvt::describe_meter("3++2/8", meter_description, &error));
     CHECK(!pvt::describe_meter("7/0", meter_description, &error));
     CHECK(!pvt::describe_meter("7/8 |", meter_description, &error));
@@ -1139,6 +1243,80 @@ void test_synchronized_clocks_and_music() {
     CHECK(pvt::render_frame(config, 6, next_pulse, &error));
     CHECK(held_zero.pixels == held_one.pixels);
     CHECK(held_zero.pixels != next_pulse.pixels);
+
+    // Very large valid pulse counts stay compact, and signed INT64 beat
+    // offsets must not lose the frame delta in a huge absolute pulse index.
+    config.clock.interpolation = pvt::ClockInterpolation::Linear;
+    config.clock.meter.expression = "2147483647/4";
+    config.clock.meter.bpm = 1000.0;
+    config.clock.meter.tempo_note_denominator = 1;
+    pvt::Image extreme_start;
+    pvt::Image extreme_next;
+    for (const std::int64_t offset : {
+             (std::numeric_limits<std::int64_t>::min)(),
+             (std::numeric_limits<std::int64_t>::max)()}) {
+        config.clock.beat_offset_microseconds = offset;
+        CHECK(pvt::validate(config).ok);
+        CHECK(pvt::render_frame(config, 0, extreme_start, &error));
+        CHECK(pvt::render_frame(config, 1, extreme_next, &error));
+        CHECK(error.empty());
+        CHECK(mean_absolute_difference(extreme_start, extreme_next)
+              > 0.00001);
+    }
+
+    // At the signed limit, offsets one microsecond apart must remain distinct
+    // even when the meter cycle itself is only three microseconds. The split
+    // integer reduction preserves that low-order authored timing information.
+    pvt::RenderConfig tiny_cycle = pvt::default_config();
+    make_small(tiny_cycle);
+    tiny_cycle.total_frames = 2;
+    tiny_cycle.fps = 239.0;
+    tiny_cycle.clock.mode = pvt::ClockMode::Meter;
+    tiny_cycle.clock.interpolation = pvt::ClockInterpolation::Hold;
+    tiny_cycle.clock.meter.expression = "1/20000";
+    tiny_cycle.clock.meter.bpm = 1000.0;
+    tiny_cycle.clock.meter.tempo_note_denominator = 1;
+    tiny_cycle.clock.beat_offset_microseconds =
+        (std::numeric_limits<std::int64_t>::max)() - 1;
+    pvt::detail::PreparedFrame tiny_even;
+    pvt::detail::PreparedFrame tiny_odd;
+    pvt::Image tiny_even_image;
+    pvt::Image tiny_odd_image;
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        tiny_cycle, 1, tiny_even, &error));
+    CHECK(pvt::render_frame(tiny_cycle, 1, tiny_even_image, &error));
+    tiny_cycle.clock.beat_offset_microseconds =
+        (std::numeric_limits<std::int64_t>::max)();
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        tiny_cycle, 1, tiny_odd, &error));
+    CHECK(pvt::render_frame(tiny_cycle, 1, tiny_odd_image, &error));
+    CHECK(std::fabs(tiny_even.loop_phase - tiny_odd.loop_phase) > 0.0001);
+    CHECK(mean_absolute_difference(tiny_even_image, tiny_odd_image)
+          > 0.0000001);
+
+    // This valid one-pulse clock lands infinitesimally below a cycle boundary:
+    // floating subtraction produces a negative local remainder. Correcting
+    // that remainder must also decrement the whole-cycle ordinal, preserving
+    // the exact linear-clock identity frame/total_frames.
+    pvt::RenderConfig boundary_clock = pvt::default_config();
+    make_small(boundary_clock);
+    constexpr int kBoundaryFrame = 1690074;
+    boundary_clock.total_frames = kBoundaryFrame + 2;
+    boundary_clock.fps = 1.631247438212073;
+    boundary_clock.clock.mode = pvt::ClockMode::Meter;
+    boundary_clock.clock.interpolation = pvt::ClockInterpolation::Linear;
+    boundary_clock.clock.meter.expression = "1/1";
+    boundary_clock.clock.meter.bpm = 315.5763844695659;
+    boundary_clock.clock.meter.tempo_note_denominator = 1;
+    pvt::detail::PreparedFrame boundary_prepared;
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        boundary_clock, kBoundaryFrame, boundary_prepared, &error));
+    const double expected_boundary_phase =
+        2.0 * 3.141592653589793238462643383279502884
+        * static_cast<double>(kBoundaryFrame)
+        / static_cast<double>(boundary_clock.total_frames);
+    CHECK(std::fabs(boundary_prepared.loop_phase - expected_boundary_phase)
+          < 1.0e-9);
 
     pvt::RenderConfig music = pvt::default_config();
     make_small(music);
@@ -2253,6 +2431,51 @@ void test_validation_limits() {
     config.output.png_compression_level = 10;
     CHECK(!pvt::validate(config).ok);
 
+    // RGB export must reject every active source of transparency, while
+    // explicitly ignoring source alpha must make image/palette alpha opaque.
+    config = pvt::default_config();
+    config.palette.enabled = true;
+    config.palette.colors.front().alpha = 0.5;
+    CHECK(!pvt::validate(config).ok);
+    config.alpha.use_source_alpha = false;
+    CHECK(pvt::validate(config).ok);
+
+    config = pvt::default_config();
+    config.starting_colors.include_alpha = true;
+    config.starting_colors.alpha_minimum = 0.25;
+    config.starting_colors.alpha_maximum = 0.75;
+    CHECK(!pvt::validate(config).ok);
+    config.alpha.use_source_alpha = false;
+    CHECK(pvt::validate(config).ok);
+
+    config = pvt::default_config();
+    config.starting_image.enabled = true;
+    config.starting_image.path = "source.png";
+    CHECK(!pvt::validate(config).ok);
+    config.alpha.use_source_alpha = false;
+    CHECK(pvt::validate(config).ok);
+
+    // Reusable placement and a static rotation can both expose the canvas and
+    // both require the motion work buffer even when path=None.
+    config = pvt::default_config();
+    config.motion_paths.push_back(
+        pvt::default_ellipse_path(500U, 600U, "Validation path"));
+    config.motion.enabled = true;
+    config.motion.custom_path.enabled = true;
+    config.motion.custom_path.path_id = 500U;
+    CHECK(!pvt::validate(config).ok);
+    config.output.write_alpha = true;
+    const auto custom_motion_result = pvt::validate(config);
+    CHECK(custom_motion_result.ok);
+
+    config = pvt::default_config();
+    config.motion.enabled = true;
+    config.motion.rotation_offset_degrees = 45.0;
+    CHECK(!pvt::validate(config).ok);
+    config.output.write_alpha = true;
+    const auto static_rotation_result = pvt::validate(config);
+    CHECK(static_rotation_result.ok);
+
     config = pvt::default_config();
     auto& block_scale = *std::find_if(
         config.effects.begin(), config.effects.end(), [](const auto& effect) {
@@ -2341,6 +2564,14 @@ void test_validation_limits() {
     config.effects[1].intensity = 0.0;
     config.motion.enabled = true;
     config.motion.path = pvt::LayerMotionPath::Orbit;
+    config.motion.travel_x = 0.0;
+    config.motion.travel_y = 0.0;
+    const auto identity_motion_result = pvt::validate(config);
+    CHECK(identity_motion_result.ok);
+    CHECK(identity_motion_result.estimated_peak_bytes
+          == neutral_effect_result.estimated_peak_bytes);
+    config.motion.travel_x = 0.15;
+    config.motion.travel_y = 0.15;
     const auto active_motion_result = pvt::validate(config);
     CHECK(active_motion_result.ok);
     CHECK(active_motion_result.estimated_peak_bytes
@@ -2836,6 +3067,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     dependent.motion.custom_path.enabled = true;
     dependent.motion.custom_path.path_id = 700U;
     dependent.motion.custom_path.follow_tangent = true;
+    dependent.output.write_alpha = true;
     std::string dependent_setup;
     CHECK(pvt::detail::serialize_setup_config(
         dependent, dependent_setup, &error));

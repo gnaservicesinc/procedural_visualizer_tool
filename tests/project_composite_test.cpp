@@ -427,6 +427,121 @@ void test_project_validation() {
     invalid.output.write_alpha = true;
     CHECK(pvt::validate(invalid).ok);
 
+    // Authored/generated source alpha participates in the rendered layer even
+    // when procedural alpha modulation itself is disabled. The source-alpha
+    // switch is the only setting that makes those authored values inert.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.palette.enabled = true;
+    invalid.layers[0U].render.palette.name = "Transparent source";
+    invalid.layers[0U].render.palette.colors = {
+        {0.25, 0.5, 0.75, 0.5}};
+    CHECK(!pvt::validate(invalid).ok);
+    invalid.layers[0U].render.alpha.use_source_alpha = false;
+    CHECK(pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.starting_colors.include_alpha = true;
+    invalid.layers[0U].render.starting_colors.alpha_minimum = 0.25;
+    invalid.layers[0U].render.starting_colors.alpha_maximum = 1.0;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid.layers[0U].render.alpha.use_source_alpha = false;
+    CHECK(pvt::validate(invalid).ok);
+    invalid.layers[0U].render.alpha.use_source_alpha = true;
+    invalid.output.write_alpha = true;
+    CHECK(pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.starting_image.enabled = true;
+    invalid.layers[0U].render.starting_image.sha256 = std::string(64U, 'a');
+    invalid.layers[0U].render.starting_image.basename = "source.png";
+    invalid.layers[0U].render.alpha.use_source_alpha = false;
+    CHECK(pvt::validate(invalid).ok);
+    invalid.layers[0U].render.alpha.use_source_alpha = true;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid.output.write_alpha = true;
+    CHECK(pvt::validate(invalid).ok);
+
+    // Built-in and reusable path placement, as well as a static rotation,
+    // can uncover canvas pixels even when the layer's source is opaque.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.canvas.motion_paths.push_back(
+        pvt::default_ellipse_path(91U, 101U, "Transparency path"));
+    auto& motion = invalid.layers[0U].render.motion;
+    motion.enabled = true;
+    motion.custom_path.enabled = true;
+    motion.custom_path.path_id = 91U;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid.output.write_alpha = true;
+    CHECK(pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.motion.enabled = true;
+    invalid.layers[0U].render.motion.rotation_offset_degrees = 15.0;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid.output.write_alpha = true;
+    CHECK(pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto& identity_motion = invalid.layers[0U].render.motion;
+    identity_motion.enabled = true;
+    identity_motion.path = pvt::LayerMotionPath::Orbit;
+    identity_motion.travel_x = 0.0;
+    identity_motion.travel_y = 0.0;
+    CHECK(pvt::validate(invalid).ok);
+    identity_motion.travel_x = 0.1;
+    CHECK(!pvt::validate(invalid).ok);
+    identity_motion.travel_x = 0.0;
+    identity_motion.path = pvt::LayerMotionPath::None;
+    identity_motion.scale_pulse = 0.5;
+    identity_motion.cycles_y = 0;
+    identity_motion.phase_degrees = 180.0;
+    CHECK(pvt::validate(invalid).ok);
+    identity_motion.phase_degrees = 90.0;
+    CHECK(!pvt::validate(invalid).ok);
+
+    // Blur intensity is retained compatibility data. Rendering derives the
+    // active mix from blur_minimum/blur_maximum, so a zero maximum must not
+    // make an otherwise opaque RGB stack look transparent to validation.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto inactive_blur = pvt::default_effect(pvt::EffectType::Blur);
+    inactive_blur.id = pvt::allocate_id(invalid.layers[0U].render);
+    inactive_blur.enabled = true;
+    inactive_blur.edge_mode = pvt::EdgeMode::Alpha;
+    inactive_blur.intensity = 1.0;
+    inactive_blur.blur_minimum = 0.0;
+    inactive_blur.blur_maximum = 0.0;
+    invalid.layers[0U].render.effects.push_back(inactive_blur);
+    CHECK(pvt::validate(invalid).ok);
+    invalid.layers[0U].render.effects.back().blur_maximum = 0.5;
+    CHECK(!pvt::validate(invalid).ok);
+
+    // An eraser whose procedural alpha is fixed at zero is destination-out by
+    // zero and cannot punch a hole. Particle Field is the one effect that can
+    // synthesize new coverage after that alpha stage.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto transparent_eraser = pvt::default_layer(1U);
+    transparent_eraser.blend_mode = pvt::BlendMode::Erase;
+    transparent_eraser.render.alpha.enabled = true;
+    transparent_eraser.render.alpha.minimum = 0.0;
+    transparent_eraser.render.alpha.maximum = 0.0;
+    invalid.layers.push_back(transparent_eraser);
+    CHECK(pvt::validate(invalid).ok);
+    auto coverage_particles =
+        pvt::default_effect(pvt::EffectType::ParticleField);
+    coverage_particles.id =
+        pvt::allocate_id(invalid.layers.back().render);
+    coverage_particles.enabled = true;
+    invalid.layers.back().render.effects.push_back(coverage_particles);
+    CHECK(!pvt::validate(invalid).ok);
+
     invalid = pvt::default_project();
     make_small(invalid);
     for (std::size_t index = 1U; index < 65U; ++index) {

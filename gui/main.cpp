@@ -54,9 +54,16 @@ int main(int argc, char** argv) {
                     application.exit(1);
                 }
             });
-            QTimer::singleShot(1000, &application, &QCoreApplication::quit);
+            // On macOS, quit() routes through native application termination,
+            // which closes the window and can display the unsaved-changes
+            // dialog after the smoke test deliberately exercises edits. Exit
+            // the test event loop directly so unattended CI cannot block on a
+            // modal prompt after all checks have already passed.
+            QTimer::singleShot(1000, &application,
+                               [&application] { application.exit(0); });
         } else {
-            QTimer::singleShot(500, &application, &QCoreApplication::quit);
+            QTimer::singleShot(500, &application,
+                               [&application] { application.exit(0); });
         }
         return application.exec();
     }

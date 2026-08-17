@@ -360,6 +360,36 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
                 "independent wave clock under shared hold");
 
+    // Reusable-path tangent following is resolved on the host but must remain
+    // the propagation axis after the prepared frame crosses into Metal.
+    pvt::RenderConfig path_wave = parity_config();
+    path_wave.quantization.enabled = false;
+    path_wave.transform = {};
+    path_wave.effects.clear();
+    path_wave.swings.clear();
+    path_wave.motion_paths.push_back(
+        pvt::default_ellipse_path(500U, 600U, "Metal tangent path"));
+    path_wave.waves.resize(1U);
+    path_wave.waves.front().synchronized = false;
+    path_wave.waves.front().direction = 0.5;
+    path_wave.waves.front().path.enabled = true;
+    path_wave.waves.front().path.path_id = 500U;
+    path_wave.waves.front().path.phase_degrees = 70.0;
+    path_wave.waves.front().path.follow_tangent = true;
+    CHECK(pvt::render_frame_at_phase(path_wave, 0.31, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(path_wave, 0.31, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
+                "reusable wave path tangent");
+    path_wave.waves.front().path.reverse = true;
+    CHECK(pvt::render_frame_at_phase(path_wave, 0.31, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(path_wave, 0.31, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
+                "reversed reusable wave path tangent");
+
     const std::vector<pvt::EffectType> effect_types = {
         pvt::EffectType::EndlessZoom,
         pvt::EffectType::Ripple,

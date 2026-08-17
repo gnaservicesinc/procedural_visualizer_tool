@@ -362,10 +362,20 @@ private:
     std::shared_ptr<std::atomic_bool> preview_cancel_;
     std::shared_ptr<std::atomic_bool> music_analysis_cancel_;
     std::atomic_bool cancel_export_{false};
+    std::uint64_t preview_task_generation_ = 0;
+    std::uint64_t preview_task_document_revision_ = 0;
     std::uint64_t music_analysis_generation_ = 0;
+    std::uint64_t music_analysis_task_generation_ = 0;
+    std::uint64_t music_analysis_task_document_revision_ = 0;
+    std::string music_analysis_task_layer_uuid_;
+    std::uint64_t version_diff_task_before_ = 0;
+    std::uint64_t version_diff_task_after_ = 0;
+    std::uint64_t version_diff_task_document_revision_ = 0;
     bool music_analysis_active_ = false;
     bool music_analysis_layer_clock_ = false;
     bool project_io_active_ = false;
+    ProjectIoOperation project_io_operation_ = ProjectIoOperation::Load;
+    QString project_io_path_;
     bool close_after_project_io_ = false;
     std::function<void()> project_io_success_continuation_;
     QString startup_working_directory_;
@@ -629,6 +639,7 @@ private:
     QSpinBox* motion_cycles_y_ = nullptr;
     QDoubleSpinBox* motion_phase_ = nullptr;
     QSpinBox* motion_rotations_ = nullptr;
+    QDoubleSpinBox* motion_rotation_offset_ = nullptr;
     QDoubleSpinBox* motion_scale_pulse_ = nullptr;
     QPushButton* motion_paths_edit_ = nullptr;
     QCheckBox* palette_enabled_ = nullptr;

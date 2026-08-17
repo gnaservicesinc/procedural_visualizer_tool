@@ -1133,6 +1133,23 @@ void test_independent_current_state_copy(const fs::path& directory) {
     CHECK(after_collision.project.uuid == independent.project.uuid);
     CHECK(after_collision.versions.size() == 1U);
 
+    // The ProjectConfig-only overload cannot retain embedded attachment bytes.
+    // Starting images must be rejected just like music and custom OBJ sources;
+    // callers with attachments must use the ProjectDocument overload.
+    pvt::ProjectConfig attachment_bearing = renamed_snapshot;
+    attachment_bearing.layers.front().render.starting_image.basename =
+        "source.png";
+    attachment_bearing.layers.front().render.starting_image.sha256 =
+        std::string(64U, 'a');
+    pvt::ProjectDocument attachment_untouched =
+        pvt::default_project_document();
+    const std::string attachment_untouched_uuid =
+        attachment_untouched.project.uuid;
+    CHECK(!pvt::make_independent_project_copy(
+        attachment_bearing, attachment_untouched, &error));
+    CHECK(error.find("Attachment-bearing snapshots") != std::string::npos);
+    CHECK(attachment_untouched.project.uuid == attachment_untouched_uuid);
+
     pvt::ProjectConfig invalid = renamed_snapshot;
     invalid.uuid.clear();
     pvt::ProjectDocument untouched = pvt::default_project_document();

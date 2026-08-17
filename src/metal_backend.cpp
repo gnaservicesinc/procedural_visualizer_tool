@@ -69,9 +69,9 @@ struct alignas(16) GpuFrameConstants {
 };
 
 struct alignas(16) GpuWave {
-    Float4 geometry;
-    Float4 phase;
-    Int4 behavior;
+    Float4 geometry; // source x/y, effective amplitude, spatial frequency
+    Float4 phase; // phase radians, direction, resolved tangent radians, unused
+    Int4 behavior; // cycles, synchronized, follow tangent, unused
 };
 
 struct alignas(16) GpuSwing {
@@ -553,9 +553,11 @@ std::vector<GpuWave> make_waves(const PreparedFrame& prepared) {
                         static_cast<float>(wave.amplitude),
                         static_cast<float>(wave.spatial_frequency)};
         gpu.phase = {static_cast<float>(wave.phase_radians),
-                     static_cast<float>(wave.direction), 0.0F, 0.0F};
+                     static_cast<float>(wave.direction),
+                     static_cast<float>(wave.tangent_radians), 0.0F};
         gpu.behavior = {wave.cycles_per_loop,
-                        wave.synchronized ? 1 : 0, 0, 0};
+                        wave.synchronized ? 1 : 0,
+                        wave.follow_tangent ? 1 : 0, 0};
         result.push_back(gpu);
     }
     return result;
@@ -813,39 +815,34 @@ GpuMotion make_motion(const RenderConfig& config,
                       const PreparedFrame& prepared) {
     constexpr double kPi = 3.141592653589793238462643383279502884;
     const LayerMotionConfig& motion = prepared.motion;
-    const double path_time = prepared.loop_phase
-                             + motion.phase_degrees * kPi / 180.0;
+    const double phase_offset = motion.phase_degrees * kPi / 180.0;
+    const double path_phase_x = static_cast<double>(motion.cycles_x)
+                                    * prepared.loop_phase
+                                + phase_offset;
+    const double path_phase_y = static_cast<double>(motion.cycles_y)
+                                    * prepared.loop_phase
+                                + phase_offset;
     double path_x = 0.0;
     double path_y = 0.0;
     switch (motion.path) {
         case LayerMotionPath::None:
             break;
         case LayerMotionPath::Orbit: {
-            const double orbit = static_cast<double>(motion.cycles_x)
-                                 * path_time;
-            path_x = std::cos(orbit);
-            path_y = std::sin(orbit);
+            path_x = std::cos(path_phase_x);
+            path_y = std::sin(path_phase_x);
             break;
         }
         case LayerMotionPath::FigureEight:
-            path_x = std::sin(static_cast<double>(motion.cycles_x)
-                              * path_time);
-            path_y = 0.5 * std::sin(static_cast<double>(motion.cycles_y)
-                                    * path_time);
+            path_x = std::sin(path_phase_x);
+            path_y = 0.5 * std::sin(path_phase_y);
             break;
         case LayerMotionPath::Bounce:
-            path_x = triangle_motion(static_cast<double>(motion.cycles_x)
-                                     * path_time);
-            path_y = triangle_motion(static_cast<double>(motion.cycles_y)
-                                         * path_time
-                                     + 0.5 * kPi);
+            path_x = triangle_motion(path_phase_x);
+            path_y = triangle_motion(path_phase_y + 0.5 * kPi);
             break;
         case LayerMotionPath::Lissajous:
-            path_x = std::sin(static_cast<double>(motion.cycles_x)
-                                  * path_time
-                              + 0.5 * kPi);
-            path_y = std::sin(static_cast<double>(motion.cycles_y)
-                              * path_time);
+            path_x = std::sin(path_phase_x + 0.5 * kPi);
+            path_y = std::sin(path_phase_y);
             break;
     }
     const double width = static_cast<double>(config.width);
@@ -859,8 +856,7 @@ GpuMotion make_motion(const RenderConfig& config,
                             + motion.rotation_offset_degrees * kPi / 180.0;
     const double scale = std::max(
         0.05, 1.0 + motion.scale_pulse
-                        * std::sin(static_cast<double>(motion.cycles_y)
-                                   * path_time));
+                        * std::sin(path_phase_y));
     GpuMotion result;
     result.source_target = {
         static_cast<float>(0.5 * (width - 1.0)),
@@ -889,11 +885,21 @@ bool transform_has_work(const LayerTransformConfig& transform) {
 
 bool motion_has_work(const LayerMotionConfig& motion) {
     if (!motion.enabled) return false;
-    return motion.path != LayerMotionPath::None
+    const bool built_in_path_has_work =
+        motion.path != LayerMotionPath::None
+        && (std::fabs(motion.travel_x) > 1.0e-12
+            || std::fabs(motion.travel_y) > 1.0e-12);
+    const bool scale_has_work =
+        motion.scale_pulse > 1.0e-12
+        && (motion.cycles_y != 0
+            || std::fmod(motion.phase_degrees, 180.0) != 0.0);
+    return built_in_path_has_work
+           || motion.custom_path.enabled
            || std::fabs(motion.center_x - 0.5) > 1.0e-12
            || std::fabs(motion.center_y - 0.5) > 1.0e-12
            || motion.rotations_per_loop != 0
-           || motion.scale_pulse > 1.0e-12;
+           || std::fmod(motion.rotation_offset_degrees, 360.0) != 0.0
+           || scale_has_work;
 }
 
 } // namespace

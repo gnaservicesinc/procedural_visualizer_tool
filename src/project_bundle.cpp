@@ -3724,7 +3724,8 @@ bool make_independent_project_copy(const ProjectConfig& project,
             !project.canvas.clock.music.source_sha256.empty()
             || std::any_of(project.layers.begin(), project.layers.end(),
                            [](const LayerConfig& layer) {
-                               return !layer.render.surface.obj_sha256.empty()
+                               return !layer.render.starting_image.sha256.empty()
+                                      || !layer.render.surface.obj_sha256.empty()
                                       || !layer.render.layer_clock.clock.music
                                               .source_sha256.empty();
                            });

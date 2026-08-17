@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **1.2.6**. The version is read from `VERSION` by every
+Current product version: **2.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,21 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 2.0 compatibility note
+
+Version 2.0 advances the shared-library SONAME to 2. Applications that link
+`libProceduralVisualizerTool` must be recompiled because public by-value
+configuration types grew during the 1.x line. Existing `.pvt` setups and ZIP or
+unpacked project bundles remain loadable; this is an ABI and rendering-semantics
+boundary, not a project-data reset.
+
+Two corrected motion rules can intentionally change phase-zero placement in
+existing artwork: layer Starting phase is now added independently after the
+cycle multiplier, and a reusable path's Reverse switch reverses travel without
+negating its separately authored starting phase. Projects that used non-unit
+motion cycles with a nonzero Starting phase, or Reverse with a nonzero binding
+phase, should be reviewed once after opening in 2.0.
 
 ## Requirements
 
@@ -186,12 +201,14 @@ sudo apt install procedural-visualizer-tool
   range/mix/quantization steps.
 - Per-layer closed motion presets: orbit, figure eight, bounce, and Lissajous,
   with center, horizontal/vertical travel, integer loop cycles, phase, rotation,
-  and optional scale pulsing. Projects can also own reusable closed
+  and optional scale pulsing. Starting phase is additive and independent of the
+  cycle counts. Projects can also own reusable closed
   cubic paths. The GUI edits stable nodes, explicit in/out handles, Corner,
   Auto Smooth, Smooth, and Symmetric policies, and creates four-node cubic
   ellipse approximations. Independent bindings drive the active layer, wave
   sources, or effect centers with sync/free clocks, integer cycles, phase,
   reverse, offsets, optional tangent following, and bounded arc-length sampling.
+  Reverse changes travel direction while retaining the authored starting phase.
 - Draggable numbered effect centers in the preview. A local area radius of zero
   preserves whole-layer behavior; a positive radius creates a smoothly
   feathered circle around the center for zoom, ripple, shake, flag wave, and
@@ -938,8 +955,8 @@ supported Qt kit. The same option runs Qt's deployment script on Windows; it
 does not download dependencies.
 
 To bump the public version, run `scripts/bump-version.sh MAJOR.MINOR.PATCH[-PRERELEASE]`,
-then reconfigure. The script intentionally changes only `VERSION`, keeping one
-source of truth and leaving release notes, tags, builds, and uploads explicit.
+then reconfigure. The script updates `VERSION` and its displayed/package metadata
+from that one value while leaving release notes, tags, builds, and uploads explicit.
 
 ## Direct CMake Qt build
 

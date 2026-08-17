@@ -413,9 +413,15 @@ struct MeterGroup {
     int denominator = 4;
 };
 
+struct MeterPulseRun {
+    MeterGroup group;
+    std::size_t repetitions = 1U;
+};
+
 struct ParsedMeter {
-    std::vector<std::vector<MeterGroup>> measures;
-    std::vector<MeterGroup> pulse_pattern;
+    std::size_t measure_count = 0U;
+    std::size_t pulse_count = 0U;
+    std::vector<MeterPulseRun> pulse_pattern;
     std::string canonical;
 };
 
@@ -433,7 +439,7 @@ bool parse_meter_integer(std::string_view text, std::size_t& position,
             static_cast<unsigned int>(text[position] - '0');
         if (parsed > (static_cast<unsigned int>(kMaximumMeterValue) - digit)
                          / 10U) {
-            message = "Meter values must be between 1 and 1024.";
+            message = "Meter values must be between 1 and INT_MAX.";
             return false;
         }
         parsed = parsed * 10U + digit;
@@ -465,7 +471,7 @@ bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
     std::size_t position = 0U;
     std::ostringstream canonical;
     while (true) {
-        if (parsed.measures.size() >= kMaximumMeterMeasures) {
+        if (parsed.measure_count >= kMaximumMeterMeasures) {
             message = "Meter expression contains more measures than the signed-int API can index.";
             return false;
         }
@@ -500,35 +506,33 @@ bool parse_meter_expression(std::string_view expression, ParsedMeter& parsed,
         }
         skip_meter_space(expression, position);
 
-        std::vector<MeterGroup> measure;
         if (numerators.size() == 1U) {
             // A plain 7/8 describes seven denominator-note pulses. Additive
             // spelling such as 3+2+2/8 deliberately preserves larger groups.
             if (static_cast<std::size_t>(numerators.front())
-                    > kMaximumMeterGroups - parsed.pulse_pattern.size()) {
+                    > kMaximumMeterGroups - parsed.pulse_count) {
                 message = "Meter expression expands beyond the signed-int pulse index limit.";
                 return false;
             }
-            measure.reserve(static_cast<std::size_t>(numerators.front()));
-            for (int index = 0; index < numerators.front(); ++index) {
-                measure.push_back({1, denominator});
-            }
+            const std::size_t repetitions =
+                static_cast<std::size_t>(numerators.front());
+            parsed.pulse_pattern.push_back({{1, denominator}, repetitions});
+            parsed.pulse_count += repetitions;
         } else {
             if (numerators.size()
-                > kMaximumMeterGroups - parsed.pulse_pattern.size()) {
+                > kMaximumMeterGroups - parsed.pulse_count) {
                 message = "Meter expression expands beyond the signed-int pulse index limit.";
                 return false;
             }
-            measure.reserve(numerators.size());
             for (const int group : numerators) {
-                measure.push_back({group, denominator});
+                parsed.pulse_pattern.push_back(
+                    {{group, denominator}, 1U});
             }
+            parsed.pulse_count += numerators.size();
         }
-        parsed.pulse_pattern.insert(parsed.pulse_pattern.end(),
-                                    measure.begin(), measure.end());
-        parsed.measures.push_back(std::move(measure));
+        ++parsed.measure_count;
 
-        if (parsed.measures.size() > 1U) {
+        if (parsed.measure_count > 1U) {
             canonical << " | ";
         }
         for (std::size_t index = 0U; index < numerators.size(); ++index) {
@@ -700,29 +704,93 @@ double apply_clock_transform(double phase, const ClockConfig& clock) {
     return wrap_unit(direction + clock.phase_offset_degrees / 360.0);
 }
 
-double meter_position_at(const std::vector<double>& pulse_seconds,
-                         double cycle_seconds, double time_seconds) {
-    if (pulse_seconds.empty() || !(cycle_seconds > 0.0)) return 0.0;
-    const double cycles = std::floor(time_seconds / cycle_seconds);
+struct TimedMeterPulseRun {
+    double seconds = 0.0;
+    std::size_t repetitions = 1U;
+};
+
+double meter_position_at(const std::vector<TimedMeterPulseRun>& pulse_runs,
+                         std::size_t pulse_count, double cycle_seconds,
+                         double time_seconds) {
+    if (pulse_runs.empty() || pulse_count == 0U
+        || !(cycle_seconds > 0.0)) {
+        return 0.0;
+    }
+    double cycles = std::floor(time_seconds / cycle_seconds);
     double within = time_seconds - cycles * cycle_seconds;
     // Floating remainder at a negative exact boundary can equal cycle_seconds.
     if (within >= cycle_seconds) {
         within = 0.0;
+        cycles += 1.0;
     } else if (within < 0.0) {
         within += cycle_seconds;
+        cycles -= 1.0;
     }
     double elapsed = 0.0;
-    for (std::size_t index = 0U; index < pulse_seconds.size(); ++index) {
-        const double next = elapsed + pulse_seconds[index];
-        if (within < next || index + 1U == pulse_seconds.size()) {
-            const double fraction = clamp_value(
-                (within - elapsed) / pulse_seconds[index], 0.0, 1.0);
-            return cycles * static_cast<double>(pulse_seconds.size())
-                   + static_cast<double>(index) + fraction;
+    std::size_t elapsed_pulses = 0U;
+    for (std::size_t index = 0U; index < pulse_runs.size(); ++index) {
+        const TimedMeterPulseRun& run = pulse_runs[index];
+        const double run_seconds = run.seconds
+                                   * static_cast<double>(run.repetitions);
+        const double next = elapsed + run_seconds;
+        if (within < next || index + 1U == pulse_runs.size()) {
+            const double local_pulses = clamp_value(
+                (within - elapsed) / run.seconds, 0.0,
+                static_cast<double>(run.repetitions));
+            return cycles * static_cast<double>(pulse_count)
+                   + static_cast<double>(elapsed_pulses) + local_pulses;
         }
         elapsed = next;
+        elapsed_pulses += run.repetitions;
     }
-    return (cycles + 1.0) * static_cast<double>(pulse_seconds.size());
+    return (cycles + 1.0) * static_cast<double>(pulse_count);
+}
+
+double meter_offset_within_cycle(std::int64_t offset_microseconds,
+                                 double cycle_seconds) {
+    constexpr std::int64_t kMicrosecondsPerSecond = 1000000;
+    // The recurrence doubles its reduced remainder and may add one. Keeping
+    // the modulus at or below 2^52 keeps that complete intermediate <= 2^53.
+    constexpr double kLargestSafeModulo = 4503599627370496.0;
+    const double cycle_microseconds =
+        cycle_seconds * static_cast<double>(kMicrosecondsPerSecond);
+    if (cycle_microseconds <= kLargestSafeModulo) {
+        // Reduce the exact persisted integer one bit at a time. Each
+        // intermediate stays below the cycle, avoiding both a 9e18 -> double
+        // conversion and a huge fmod quotient for subsecond meter cycles.
+        const bool negative = offset_microseconds < 0;
+        const std::uint64_t magnitude = negative
+            ? static_cast<std::uint64_t>(-(offset_microseconds + 1)) + 1U
+            : static_cast<std::uint64_t>(offset_microseconds);
+        double remainder = 0.0;
+        for (int bit = 63; bit >= 0; --bit) {
+            const bool bit_is_set =
+                ((magnitude >> static_cast<unsigned int>(bit)) & 1U) != 0U;
+            remainder = std::fmod(
+                2.0 * remainder + (bit_is_set ? 1.0 : 0.0),
+                cycle_microseconds);
+        }
+        const double seconds =
+            remainder / static_cast<double>(kMicrosecondsPerSecond);
+        return negative ? -seconds : seconds;
+    }
+
+    // INT64 microseconds carry substantially more low-order information than
+    // a double can retain after conversion to roughly 9e12 seconds. Keep the
+    // exactly representable whole-second quotient separate from the signed
+    // subsecond remainder for cycles too large to need microsecond-scale
+    // modular reduction.
+    const std::int64_t whole_seconds =
+        offset_microseconds / kMicrosecondsPerSecond;
+    const std::int64_t fractional_microseconds =
+        offset_microseconds % kMicrosecondsPerSecond;
+    const double whole_remainder = std::fmod(
+        static_cast<double>(whole_seconds), cycle_seconds);
+    return std::fmod(
+        whole_remainder
+            + static_cast<double>(fractional_microseconds)
+                  / static_cast<double>(kMicrosecondsPerSecond),
+        cycle_seconds);
 }
 
 std::vector<double> music_anchors(const ClockConfig& clock) {
@@ -803,32 +871,39 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
         std::string ignored_meter_error;
         (void)parse_meter_expression(config.clock.meter.expression, meter,
                                      ignored_meter_error);
-        std::vector<double> pulse_seconds;
-        pulse_seconds.reserve(meter.pulse_pattern.size());
+        std::vector<TimedMeterPulseRun> pulse_runs;
+        pulse_runs.reserve(meter.pulse_pattern.size());
         double cycle_seconds = 0.0;
-        for (const MeterGroup& group : meter.pulse_pattern) {
+        for (const MeterPulseRun& run : meter.pulse_pattern) {
+            const MeterGroup& group = run.group;
             const double seconds = 60.0 / config.clock.meter.bpm
                 * static_cast<double>(group.numerator)
                 * static_cast<double>(config.clock.meter.tempo_note_denominator)
                 / static_cast<double>(group.denominator);
-            pulse_seconds.push_back(seconds);
-            cycle_seconds += seconds;
+            pulse_runs.push_back({seconds, run.repetitions});
+            cycle_seconds += seconds
+                             * static_cast<double>(run.repetitions);
         }
         if (config.clock.fit == ClockFit::FitSequence) {
             const double cycles = std::max(1.0,
                                            std::round(duration / cycle_seconds));
             const double scale = duration / (cycles * cycle_seconds);
-            for (double& seconds : pulse_seconds) seconds *= scale;
+            for (TimedMeterPulseRun& run : pulse_runs) run.seconds *= scale;
             cycle_seconds *= scale;
         }
-        const double offset = static_cast<double>(
-            config.clock.beat_offset_microseconds) / 1000000.0;
+        // Whole meter cycles are common to start/current/end and cancel during
+        // normalization. Reduce the persisted integer offset before converting
+        // its pieces to seconds so extreme values retain microsecond detail.
+        const double local_offset = meter_offset_within_cycle(
+            config.clock.beat_offset_microseconds, cycle_seconds);
         const double start_position = meter_position_at(
-            pulse_seconds, cycle_seconds, offset);
+            pulse_runs, meter.pulse_count, cycle_seconds, local_offset);
         const double current_position = meter_position_at(
-            pulse_seconds, cycle_seconds, time_seconds + offset);
+            pulse_runs, meter.pulse_count, cycle_seconds,
+            time_seconds + local_offset);
         const double end_position = meter_position_at(
-            pulse_seconds, cycle_seconds, duration + offset);
+            pulse_runs, meter.pulse_count, cycle_seconds,
+            duration + local_offset);
         const double denominator = end_position - start_position;
         phase = (interpolated_position(current_position,
                                        config.clock.interpolation)
@@ -1027,11 +1102,21 @@ bool surface_has_render_work(const SurfaceConfig& surface) {
 
 bool motion_has_render_work(const LayerMotionConfig& motion) {
     if (!motion.enabled) return false;
-    return motion.path != LayerMotionPath::None
+    const bool built_in_path_has_work =
+        motion.path != LayerMotionPath::None
+        && (std::fabs(motion.travel_x) > 1.0e-12
+            || std::fabs(motion.travel_y) > 1.0e-12);
+    const bool scale_has_work =
+        motion.scale_pulse > 1.0e-12
+        && (motion.cycles_y != 0
+            || std::fmod(motion.phase_degrees, 180.0) != 0.0);
+    return built_in_path_has_work
+           || motion.custom_path.enabled
            || std::fabs(motion.center_x - 0.5) > 1.0e-12
            || std::fabs(motion.center_y - 0.5) > 1.0e-12
            || motion.rotations_per_loop != 0
-           || motion.scale_pulse > 1.0e-12;
+           || std::fmod(motion.rotation_offset_degrees, 360.0) != 0.0
+           || scale_has_work;
 }
 
 double srgb_to_linear(double value) {
@@ -1600,10 +1685,10 @@ bool describe_meter(const std::string& expression,
         return false;
     }
     std::ostringstream summary;
-    summary << parsed.canonical << " (" << parsed.measures.size()
-            << (parsed.measures.size() == 1U ? " measure, " : " measures, ")
-            << parsed.pulse_pattern.size()
-            << (parsed.pulse_pattern.size() == 1U ? " pulse)" : " pulses)");
+    summary << parsed.canonical << " (" << parsed.measure_count
+            << (parsed.measure_count == 1U ? " measure, " : " measures, ")
+            << parsed.pulse_count
+            << (parsed.pulse_count == 1U ? " pulse)" : " pulses)");
     description = summary.str();
     set_error(error, std::string{});
     return true;
@@ -2581,14 +2666,28 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         const bool has_transparent_surface =
             surface_has_render_work(config.surface)
             && config.surface.mapping != SurfaceMapping::Plane;
+        const bool has_transparent_palette_source =
+            config.alpha.use_source_alpha && config.palette.enabled
+            && std::any_of(
+                config.palette.colors.begin(), config.palette.colors.end(),
+                [](const PaletteColor& color) { return color.alpha < 1.0; });
+        const bool has_transparent_generated_source =
+            config.alpha.use_source_alpha && !config.starting_image.enabled
+            && !config.palette.enabled
+            && config.starting_colors.include_alpha
+            && config.starting_colors.alpha_minimum < 1.0;
         if (!config.alpha.enabled && !config.output.write_alpha
             && (has_transparent_edge_effect || has_transparent_surface
-                || config.starting_image.enabled
-                || motion_has_render_work(config.motion))) {
+                || (config.starting_image.enabled
+                    && config.alpha.use_source_alpha)
+                || motion_has_render_work(config.motion)
+                || has_transparent_palette_source
+                || has_transparent_generated_source)) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
                 "edge handling, an active 3D surface has a transparent exterior, "
-                "or layer motion can expose the canvas exterior.");
+                "layer motion can expose the canvas exterior, or the active source "
+                "can contain transparency.");
         }
         if (config.output.bit_depth != 8 && config.output.bit_depth != 16
             && config.output.bit_depth != 32) {
@@ -4654,11 +4753,16 @@ CubicPathSample bound_path_sample(const RenderConfig& config,
     const CubicMotionPath* path = find_motion_path(config, binding.path_id);
     if (path == nullptr) return {};
     double clock = binding.synchronized ? motion_clock.global_phase : loop_phase;
-    double position = static_cast<double>(binding.cycles_per_loop)
-                          * clock / kTau
-                      + binding.phase_degrees / 360.0;
-    if (binding.reverse) position = -position;
+    const double direction = binding.reverse ? -1.0 : 1.0;
+    const double signed_cycles = direction
+                                 * static_cast<double>(binding.cycles_per_loop);
+    const double position = signed_cycles * clock / kTau
+                            + binding.phase_degrees / 360.0;
     CubicPathSample sample = sample_cubic_path(*path, position);
+    if (signed_cycles < 0.0) {
+        sample.tangent_x = -sample.tangent_x;
+        sample.tangent_y = -sample.tangent_y;
+    }
     sample.x += binding.offset_x;
     sample.y += binding.offset_y;
     return sample;
@@ -4716,39 +4820,35 @@ void apply_layer_motion(const Image& source, Image& destination,
                         const std::atomic_bool* cancel) {
     throw_if_cancelled(cancel);
     ensure_image(destination, source.width, source.height);
-    const double path_time = loop_phase + radians(motion.phase_degrees);
+    const double phase_offset = radians(motion.phase_degrees);
+    const double path_phase_x = static_cast<double>(motion.cycles_x)
+                                    * loop_phase
+                                + phase_offset;
+    const double path_phase_y = static_cast<double>(motion.cycles_y)
+                                    * loop_phase
+                                + phase_offset;
     double path_x = 0.0;
     double path_y = 0.0;
     switch (motion.path) {
         case LayerMotionPath::None:
             break;
         case LayerMotionPath::Orbit: {
-            const double orbit = static_cast<double>(motion.cycles_x)
-                                 * path_time;
-            path_x = std::cos(orbit);
-            path_y = std::sin(orbit);
+            path_x = std::cos(path_phase_x);
+            path_y = std::sin(path_phase_x);
             break;
         }
         case LayerMotionPath::FigureEight:
-            path_x = std::sin(static_cast<double>(motion.cycles_x)
-                              * path_time);
-            path_y = std::sin(static_cast<double>(motion.cycles_y)
-                              * path_time)
-                     * 0.5;
+            path_x = std::sin(path_phase_x);
+            path_y = std::sin(path_phase_y) * 0.5;
             break;
         case LayerMotionPath::Bounce:
-            path_x = triangle_motion(static_cast<double>(motion.cycles_x)
-                                     * path_time);
-            path_y = triangle_motion(static_cast<double>(motion.cycles_y)
-                                         * path_time
-                                         + 1.5707963267948966);
+            path_x = triangle_motion(path_phase_x);
+            path_y = triangle_motion(path_phase_y
+                                     + 1.5707963267948966);
             break;
         case LayerMotionPath::Lissajous:
-            path_x = std::sin(static_cast<double>(motion.cycles_x)
-                                  * path_time
-                              + 1.5707963267948966);
-            path_y = std::sin(static_cast<double>(motion.cycles_y)
-                              * path_time);
+            path_x = std::sin(path_phase_x + 1.5707963267948966);
+            path_y = std::sin(path_phase_y);
             break;
     }
     const double target_x = motion.center_x
@@ -4768,8 +4868,7 @@ void apply_layer_motion(const Image& source, Image& destination,
     const double sine = std::sin(-rotation);
     const double scale = std::max(
         0.05, 1.0 + motion.scale_pulse
-                        * std::sin(static_cast<double>(motion.cycles_y)
-                                   * path_time));
+                        * std::sin(path_phase_y));
     for (int y = 0; y < source.height; ++y) {
         throw_if_cancelled(cancel);
         for (int x = 0; x < source.width; ++x) {
@@ -5004,7 +5103,9 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              wave.y_percent * 0.01 * static_cast<double>(render.height),
              amplitude, wave.spatial_frequency,
              radians(wave.phase_degrees), wave.direction,
-             wave.cycles_per_loop, wave.synchronized});
+             radians(wave.path.resolved_tangent_degrees),
+             wave.cycles_per_loop, wave.synchronized,
+             wave.path.enabled && wave.path.follow_tangent});
     }
 
     if (audio.enabled && audio.color_enabled) {

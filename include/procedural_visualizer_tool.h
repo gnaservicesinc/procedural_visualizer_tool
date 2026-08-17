@@ -114,18 +114,30 @@ enum class StartingImageFit : std::uint8_t {
 // the product-facing name remains simply Continuous hue.
 enum class StartingColorMode : std::uint8_t {
     ContinuousHue = 0,
-    HorizontalRainbow,
-    VerticalRainbow,
-    DiagonalRainbow,
-    SpiralRainbow,
-    Random,
-    SquareSpiralRainbow,
+    HorizontalRainbow = 1,
+    VerticalRainbow = 2,
+    DiagonalRainbow = 3,
+    // Values 4 and 5 shipped before the radial spiral was introduced and are
+    // part of the public shared-library ABI. Keep legacy compiled clients from
+    // silently changing their generated-color traversal.
+    SquareSpiralRainbow = 4,
+    Random = 5,
+    SpiralRainbow = 6,
     LegacyHue = ContinuousHue,
     ChannelLoops = HorizontalRainbow,
     Interleaved = VerticalRainbow,
     Additive = DiagonalRainbow,
     Subtractive = SquareSpiralRainbow
 };
+
+static_assert(static_cast<std::uint8_t>(StartingColorMode::ContinuousHue) == 0U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::HorizontalRainbow) == 1U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::VerticalRainbow) == 2U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::DiagonalRainbow) == 3U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::SquareSpiralRainbow) == 4U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::Subtractive) == 4U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::Random) == 5U);
+static_assert(static_cast<std::uint8_t>(StartingColorMode::SpiralRainbow) == 6U);
 
 enum class PathHandleMode : std::uint8_t {
     Corner = 0,

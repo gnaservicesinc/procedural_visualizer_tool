@@ -82,6 +82,59 @@ if(inherited_override_position LESS 0)
         "Scripted inherit switch did not disable the active-layer override")
 endif()
 
+# Exercise editor-only RGBA and generated-source controls through stdin, then
+# round-trip the bundle through the public legacy exporter so CMake can inspect
+# the authored layer records without depending on a ZIP extraction utility.
+set(interactive_input "${test_root}/interactive-input.txt")
+file(WRITE "${interactive_input}"
+    "7\n"
+    "\n\n\n\n\n"
+    "5\n"
+    "y\n"
+    "0.125\n0.25\n0.375\n0.5\n0.625\n0.75\n0.875\n1.0\n"
+    "\n\n\n\n"
+    "1\n"
+    "\n\n\n"
+    "0.25\n"
+    "b\n"
+    "8\n"
+    "n\n"
+    "\n\n\n\n\n\n"
+    "10\n"
+    "CliInteractive.zip\n"
+    "0\n")
+execute_process(
+    COMMAND "${PROGRAM}"
+    WORKING_DIRECTORY "${test_root}"
+    INPUT_FILE "${interactive_input}"
+    RESULT_VARIABLE interactive_result
+    OUTPUT_VARIABLE interactive_output
+    ERROR_VARIABLE interactive_error)
+if(NOT interactive_result EQUAL 0
+    OR NOT EXISTS "${test_root}/CliInteractive.zip")
+    message(FATAL_ERROR
+        "Interactive RGBA/generated-color edit failed (${interactive_result}):\n"
+        "${interactive_output}${interactive_error}")
+endif()
+run_cli("interactive RGBA/generated-color reload"
+    --load CliInteractive.zip --save-legacy interactive-colors.pvt)
+file(READ "${test_root}/interactive-colors.pvt" interactive_setup)
+foreach(expected_record
+        "starting_colors.mode${field_separator}spiral"
+        "starting_colors.include_alpha${field_separator}1"
+        "starting_colors.red_minimum${field_separator}0.125"
+        "starting_colors.blue_maximum${field_separator}0.75"
+        "starting_colors.alpha_minimum${field_separator}0.875"
+        "palette.colors.0.alpha${field_separator}0.25"
+        "alpha.use_source_alpha${field_separator}0")
+    string(FIND "${interactive_setup}" "${expected_record}"
+        expected_record_position)
+    if(expected_record_position LESS 0)
+        message(FATAL_ERROR
+            "Interactive color editor did not persist '${expected_record}'")
+    endif()
+endforeach()
+
 run_cli("legacy import to bundle" --load original.pvt --save-default)
 if(NOT EXISTS "${test_root}/original.zip")
     message(FATAL_ERROR "Legacy import did not default to a separate original.zip")
