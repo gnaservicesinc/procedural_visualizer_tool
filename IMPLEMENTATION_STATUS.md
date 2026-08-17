@@ -8,6 +8,19 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
+Version 2.0.1 is a correctness and security-hardening patch. Arithmetic now
+widens before multiplication wherever CodeQL identified a narrow intermediate
+being converted to a larger buffer-size, frame-count, sample-offset, cache,
+filter, or chroma result. The 34 findings covered the pinned miniaudio and
+Beat-and-Tempo-Tracking copies plus one project-owned chroma calculation; they
+were valid width/precision hardening opportunities rather than 34 independently
+confirmed exploits. Review-only upstream patches are retained under
+`patches/upstream/` and have not been submitted.
+
+This patch does not change the public API, SONAME 2 ABI, setup format, or
+project-bundle format. The following 2.0.0 section is retained as the preceding
+renderer-semantics and ABI release record.
+
 Version 2.0.0 is a renderer-correctness and shared-library ABI boundary. Layer
 Starting phase is now independent of cycle count; reusable-path Reverse changes
 travel without negating the authored start; follow-tangent direction survives
@@ -75,7 +88,7 @@ Saving preserves the user's selected tab, including background completion, and
 Cocoa smoke covers the regression. Effect synchronization is labeled simply
 `Synchronization`, without the misleading swing-clock wording.
 
-The public product version is now 2.0.0 and has one source of truth in
+The public product version is now 2.0.1 and has one source of truth in
 `VERSION`. CMake propagates it to the GUI, About PVT, native app metadata,
 installed package metadata, and saved-project provenance;
 `scripts/bump-version.sh` performs a validated SemVer/prerelease bump without silently
@@ -643,6 +656,18 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-08-17 2.0.1 correctness and security-hardening release passed the
+complete Qt-enabled Release suite 21/21, the independent C++20 suite 20/20,
+and the AddressSanitizer plus UndefinedBehaviorSanitizer suite 20/20 with leak
+detection disabled on the macOS beta host. GitHub CodeQL accepted the widened
+arithmetic changes and reports zero open alerts after all 34 findings were
+resolved. The self-contained macOS verifier inspected 27 Mach-O files; the
+embedded `pvt-render` reported 2.0.1 and passed self-test, while native Cocoa
+smoke and deep strict signing passed. A workflow-shaped arm64 archive passed
+single-root layout, ZIP integrity, SHA-256, extraction, version, self-test,
+signature, and extracted-runtime checks. The release preserves the 2.0.0
+public API, SONAME 2 ABI, setup format, and project-bundle format.
 
 The 2026-08-17 2.0.0 correctness and ABI release passed the complete
 Qt-enabled Release suite 21/21, including native Metal parity and Cocoa GUI

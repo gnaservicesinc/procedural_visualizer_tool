@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **2.0.0**. The version is read from `VERSION` by every
+Current product version: **2.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,20 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 2.0.1 correctness and security hardening
+
+Version 2.0.1 widens arithmetic operands before buffer-size, frame-count,
+sample-offset, cache-size, filter, and chroma calculations are converted to a
+larger result type. This resolves all 34 CodeQL multiplication-width findings
+in the project and its pinned miniaudio and Beat-and-Tempo-Tracking sources.
+The findings represented correctness and overflow-hardening opportunities, not
+34 independently confirmed exploits.
+
+Review-only patches for both upstream projects are included under
+`patches/upstream/`; they have not been submitted upstream. This patch release
+does not change the public API, SONAME 2 ABI, setup format, or project-bundle
+format.
 
 ## 2.0 compatibility note
 

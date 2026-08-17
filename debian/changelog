@@ -1,3 +1,13 @@
+procedural-visualizer-tool (2.0.1) stonking; urgency=medium
+
+  * Widen buffer-size, frame-count, sample-offset, cache-size, filter, and
+    chroma multiplications before conversion to their larger result types.
+  * Resolve all 34 CodeQL multiplication-width findings in project and pinned
+    third-party sources without changing the SONAME 2 ABI or saved formats.
+  * Include human-review-only upstream patch artifacts without submitting them.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Mon, 17 Aug 2026 05:39:35 -0400
+
 procedural-visualizer-tool (2.0.0) stonking; urgency=medium
 
   * Correct layer motion phase, reverse-path, tangent-following, and CPU/Metal

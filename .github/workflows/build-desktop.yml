@@ -421,13 +421,11 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This correctness release repairs final-alpha decisions across authored images, RGBA palettes, generated alpha, eraser stacks, reusable motion paths, static rotation, and inactive identity motion. Opaque projects retain RGB when source alpha is explicitly ignored; genuinely transparent stacks are promoted to RGBA before export instead of failing late or silently losing coverage.
+          This patch release widens operands before buffer-size, frame-count, sample-offset, cache-size, filter, and chroma multiplications are converted to a larger result type. It prevents narrow intermediate overflow or precision loss across the pinned miniaudio and Beat-and-Tempo-Tracking sources and the project-owned chroma calculation.
 
-          Layer Starting phase is now independent of cycle count, reusable-path Reverse changes travel direction without negating the authored start, and tangent-following waves retain their direction on Metal. Existing projects still load, but projects that relied on the old cycles-times-phase error or reversed-phase jump can begin at a different placement under the corrected 2.0 semantics.
+          All 34 reported CodeQL multiplication-width findings are resolved. They represented correctness and overflow-hardening opportunities, not 34 independently confirmed exploits. Human-review-only upstream patch artifacts are included under patches/upstream; no patch has been submitted to either upstream project.
 
-          Extreme valid meters remain compact instead of expanding billions of pulse records, and signed 64-bit beat offsets retain their low microseconds. Project copies reject detached embedded-image identities, the CLI exposes the complete RGBA/generated-source and starting-rotation controls, and background GUI failures and version replacement now leave coherent playback, title, and document state.
-
-          The installed C++ shared library now has SONAME 2. Applications linking the library must be recompiled because public by-value configuration types grew during the 1.x line. Saved setup and project bundle formats remain loadable; the major version records the corrected rendering semantics and ABI boundary rather than discarding project data.
+          Public APIs, the SONAME 2 ABI, setup files, and project bundles remain compatible with 2.0.0. Applications already rebuilt for 2.0 do not require another ABI migration.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 
