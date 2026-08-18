@@ -8,6 +8,29 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
+Version 3.0.2 is a logic-correctness patch for Flow Workbench timing, editing
+scope, and neutral effects. Play-once-then-project layer clocks now fall back to
+the project clock exactly once under every opt-in project/layer clock-mixing
+mode, rather than feeding the project phase back through a second mix. Group
+selection and authoring locks continue to protect layer-owned stages,
+synchronization, and audio overrides while leaving project-wide Project and
+Export workspaces reachable; the layer-analysis Cancel action also remains
+available while its clock editor is disabled.
+
+Neutral Lens Distortion effects now remain true no-ops across work admission,
+memory estimation, final-alpha reachability, CPU compositing, and the Qt output
+editor. This patch adds focused core, composite, and GUI-structure regressions
+for those invariants. It does not change the public API, SONAME 3 ABI, setup
+format, or project-bundle format.
+
+Local 3.0.2 portable validation passed 21/21 tests in optimized C++17 and an
+independent optimized C++20 build, plus 21/21 under AddressSanitizer and
+UndefinedBehaviorSanitizer with leak detection disabled on this macOS beta
+host. The rebuilt `pvt-render` reported 3.0.2 and passed self-test. Qt 6 and
+metal-cpp were unavailable in this checkout, so the native GUI, real Metal,
+signed distribution, archive layout, and downloadable assets remain the
+tag-triggered native package matrix's release gate.
+
 Version 3.0.1 is the focused UI follow-up to the 3.0.0 renderer and ABI release.
 It replaces the misleading Surface and Object FX primary stages with seven
 purpose-based workspaces, separates all 11 effect types into five exclusive

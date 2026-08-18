@@ -421,6 +421,12 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          This correctness patch fixes Play once then project fallback when project/layer clock mixing is enabled, so the project phase is adopted exactly once under Replace, Add, Difference, Soft XOR, and exact 24-bit XOR instead of being mixed with a copied project phase.
+
+          Flow Workbench group selection and authoring locks now protect every layer-owned stage, Synchronization control, and audio override without trapping users away from the project-wide Project and Export workspaces. Layer music-analysis cancellation also remains reachable while its clock editor is disabled.
+
+          A Lens Distortion effect with zero distortion is once again a true no-op: it does not request effect work or intermediate memory and does not incorrectly force RGBA output in the renderer or editor.
+
           This release includes the Flow Workbench overhaul: seven focused Project, Starting Colors, Modifiers, Movement, Layer Effects, Post Effects, and Export workspaces with direct project settings and a compact collapsible Synchronization strip.
 
           The single ordered Layer Effects editor separates its catalog into Movement & Distortion, Light & Energy, Stylize, Particles, and Blur. New and randomized effects start on Texture; mapped-surface placement remains an explicit advanced per-effect choice rather than a duplicated Object FX workspace.
