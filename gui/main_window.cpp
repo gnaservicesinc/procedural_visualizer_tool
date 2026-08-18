@@ -448,6 +448,88 @@ void add_enum_item(QComboBox* combo, const QString& label, Enum value) {
     combo->addItem(label, static_cast<int>(value));
 }
 
+enum EffectUiCategory {
+    MovementEffects = 0,
+    LightAndEnergyEffects,
+    StylizeEffects,
+    ParticleEffects,
+    BlurEffects,
+    EffectUiCategoryCount
+};
+
+int effect_ui_category(pvt::EffectType type) {
+    switch (type) {
+        case pvt::EffectType::EndlessZoom:
+        case pvt::EffectType::Ripple:
+        case pvt::EffectType::Shake:
+        case pvt::EffectType::FlagWave:
+        case pvt::EffectType::LensDistortion:
+            return MovementEffects;
+        case pvt::EffectType::Glow:
+        case pvt::EffectType::Starburst:
+            return LightAndEnergyEffects;
+        case pvt::EffectType::BlockScale:
+        case pvt::EffectType::Glitch:
+            return StylizeEffects;
+        case pvt::EffectType::ParticleField:
+            return ParticleEffects;
+        case pvt::EffectType::Blur:
+            return BlurEffects;
+    }
+    return StylizeEffects;
+}
+
+QString effect_ui_category_name(int category) {
+    switch (category) {
+        case MovementEffects: return QObject::tr("Movement & Distortion");
+        case LightAndEnergyEffects: return QObject::tr("Light & Energy");
+        case StylizeEffects: return QObject::tr("Stylize");
+        case ParticleEffects: return QObject::tr("Particles");
+        case BlurEffects: return QObject::tr("Blur");
+        default: return QObject::tr("Effects");
+    }
+}
+
+void populate_effect_types(QComboBox* combo, int category) {
+    combo->clear();
+    const auto add = [combo](pvt::EffectType type) {
+        add_enum_item(combo, QString::fromUtf8(pvt::effect_type_name(type)), type);
+    };
+    switch (category) {
+        case MovementEffects:
+            add(pvt::EffectType::EndlessZoom);
+            add(pvt::EffectType::Ripple);
+            add(pvt::EffectType::Shake);
+            add(pvt::EffectType::FlagWave);
+            add(pvt::EffectType::LensDistortion);
+            break;
+        case LightAndEnergyEffects:
+            add(pvt::EffectType::Glow);
+            add(pvt::EffectType::Starburst);
+            break;
+        case StylizeEffects:
+            add(pvt::EffectType::BlockScale);
+            add(pvt::EffectType::Glitch);
+            break;
+        case ParticleEffects:
+            add(pvt::EffectType::ParticleField);
+            break;
+        case BlurEffects:
+            add(pvt::EffectType::Blur);
+            break;
+        default:
+            break;
+    }
+}
+
+pvt::EffectConfig new_effect_for_ui(pvt::EffectType type) {
+    auto effect = pvt::default_effect(type);
+    // Surface placement is intentionally advanced and opt-in. Keep this UI
+    // invariant independent of any renderer or project-file defaults.
+    effect.space = pvt::EffectSpace::Texture;
+    return effect;
+}
+
 void populate_audio_response_combo(QComboBox* combo) {
     const auto add = [combo](const QString& label,
                              pvt::AudioResponseMode value,
@@ -1275,9 +1357,9 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
     effect.name = name;
     effect.enabled = enabled;
     effect.synchronized = random_chance(random, 0.7);
-    effect.space = random_chance(random, 0.25)
-                       ? pvt::EffectSpace::Surface
-                       : pvt::EffectSpace::Texture;
+    // Mapping placement is deliberately opt-in. Randomization should not
+    // promote a rarely useful advanced placement into an accidental default.
+    effect.space = pvt::EffectSpace::Texture;
     effect.cycles_per_loop = random_nonzero_cycles(random, 4);
     effect.phase_degrees = random_real(random, 0.0, 360.0);
     const int edge = random_integer(random, 0, 5);
@@ -1597,12 +1679,12 @@ MainWindow::MainWindow(QWidget* parent)
     tabs_->setObjectName(QStringLiteral("workflowPageHost"));
     tabs_->setDocumentMode(true);
     tabs_->tabBar()->hide();
-    tabs_->setAccessibleName(tr("Active layer workflow and project settings editor"));
-    tabs_->addTab(source_page_, tr("Source"));
-    tabs_->addTab(effect_page_, tr("Effects"));
-    tabs_->addTab(surface_page_, tr("Surface"));
-    tabs_->addTab(motion_page_, tr("Transform & Motion"));
-    tabs_->addTab(finish_page_, tr("Finish"));
+    tabs_->setAccessibleName(tr("Project settings and active-layer category editor"));
+    tabs_->addTab(source_page_, tr("Starting Colors"));
+    tabs_->addTab(effect_page_, tr("Layer Effects"));
+    tabs_->addTab(surface_page_, tr("Modifiers"));
+    tabs_->addTab(motion_page_, tr("Movement"));
+    tabs_->addTab(finish_page_, tr("Post Effects"));
     tabs_->addTab(project_canvas_page_, tr("Canvas & Loop"));
     tabs_->addTab(project_sync_page_, tr("Project Sync & Audio"));
     tabs_->addTab(project_export_page_, tr("Export"));
@@ -1624,10 +1706,12 @@ MainWindow::MainWindow(QWidget* parent)
     // of being squeezed into the property inspector.
     outer->addWidget(createWorkflowNavigator());
 
-    drivers_group_ = new QGroupBox(tr("Drivers — clocks, swing, and audio"));
+    drivers_group_ = new QGroupBox(tr("Synchronization"));
     drivers_group_->setObjectName(QStringLiteral("driversStrip"));
-    drivers_group_->setAccessibleName(tr("Persistent render drivers"));
+    drivers_group_->setAccessibleName(tr("Project and active-layer synchronization"));
+    drivers_group_->setFlat(true);
     auto* drivers_layout = new QVBoxLayout(drivers_group_);
+    drivers_layout->setContentsMargins(8, 4, 8, 6);
     auto* drivers_row = new QHBoxLayout;
     driver_project_summary_ = new QLabel;
     driver_layer_summary_ = new QLabel;
@@ -1635,18 +1719,19 @@ MainWindow::MainWindow(QWidget* parent)
     driver_audio_summary_ = new QLabel;
     for (QLabel* summary : {driver_project_summary_, driver_layer_summary_,
                             driver_swing_summary_, driver_audio_summary_}) {
-        summary->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
-        summary->setAlignment(Qt::AlignCenter);
-        summary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        summary->setMinimumWidth(90);
-        summary->setWordWrap(true);
-        drivers_row->addWidget(summary, 1);
+        summary->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        summary->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        summary->setMinimumHeight(26);
+        summary->setWordWrap(false);
+        drivers_row->addWidget(summary);
     }
+    drivers_row->addStretch(1);
     drivers_expand_button_ = new QPushButton;
     drivers_expand_button_->setObjectName(QStringLiteral("editDriversButton"));
+    drivers_expand_button_->setMinimumHeight(26);
     drivers_expand_button_->setAccessibleName(tr("Show or hide driver controls"));
     drivers_expand_button_->setToolTip(
-        tr("Open project and active-layer clock, swing, and audio-response controls without leaving the selected workflow stage."));
+        tr("Open project and active-layer clock, swing, rhythm, and audio-response controls."));
     drivers_row->addWidget(drivers_expand_button_);
     drivers_layout->addLayout(drivers_row);
     synchronization_page_->setObjectName(QStringLiteral("driverDetails"));
@@ -1962,7 +2047,7 @@ MainWindow::MainWindow(QWidget* parent)
     updateCompatibilityWarning();
     restoreUserSettings();
     setDriversExpanded(false);
-    setWorkflowStage(0);
+    setWorkflowStage(1);
     if (!custom_defaults_load_warning_.isEmpty()) {
         status_->setText(custom_defaults_load_warning_);
     }
@@ -1991,29 +2076,25 @@ MainWindow::~MainWindow() {
 QWidget* MainWindow::createWorkflowNavigator() {
     auto* navigator = new QWidget;
     navigator->setObjectName(QStringLiteral("workflowStageNavigator"));
-    navigator->setAccessibleName(tr("Layer render pipeline stages"));
+    navigator->setAccessibleName(tr("Project and layer workspace categories"));
     auto* layout = new QHBoxLayout(navigator);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
     const QStringList labels = {
-        tr("Source"), tr("Texture FX"), tr("Surface"),
-        tr("Transform & Motion"), tr("Object FX"), tr("Finish")};
+        tr("Project"), tr("Starting Colors"), tr("Modifiers"),
+        tr("Movement"), tr("Layer Effects"), tr("Post Effects"),
+        tr("Export")};
     const QStringList descriptions = {
-        tr("Establish starting pixels and alpha from generated colors or an image, then apply an optional starting-palette constraint and source shaping."),
-        tr("Edit the ordered effects that run in texture space before surface wrapping."),
-        tr("Wrap the prepared texture around a built-in surface or embedded OBJ."),
-        tr("Apply static layer transforms and loop-safe movement to the complete layer."),
-        tr("Edit the ordered effects that run on the mapped object after surface and layer transforms."),
-        tr("Apply optional post-effects color quantization before compositing.")};
+        tr("Edit project-wide canvas, loop, synchronization, audio, and history settings."),
+        tr("Choose the image, generated colors, or starting palette that establishes the layer's pixels."),
+        tr("Shape the active layer with procedural features, transforms, alpha, and optional surface mapping."),
+        tr("Build motion with waves, seamless layer movement, and reusable paths."),
+        tr("Edit effects in separate movement, light, stylize, particle, and blur categories."),
+        tr("Apply final layer-local processing such as post-effects color quantization."),
+        tr("Set output size, timing, encoding, destination, and start an export.")};
     workflow_stage_buttons_.clear();
     workflow_stage_buttons_.reserve(static_cast<std::size_t>(labels.size()));
     for (int index = 0; index < labels.size(); ++index) {
-        if (index != 0) {
-            auto* arrow = new QLabel(QStringLiteral("›"));
-            arrow->setAlignment(Qt::AlignCenter);
-            arrow->setAccessibleName(tr("then"));
-            layout->addWidget(arrow);
-        }
         QString button_label = labels.at(index);
         button_label.replace(QLatin1Char('&'), QStringLiteral("&&"));
         auto* button = new QPushButton(button_label);
@@ -2027,7 +2108,7 @@ QWidget* MainWindow::createWorkflowNavigator() {
             "padding: 4px 8px; }"));
         button->setToolTip(descriptions.at(index));
         button->setAccessibleName(
-            tr("Stage %1 of %2: %3")
+            tr("Category %1 of %2: %3")
                 .arg(index + 1)
                 .arg(labels.size())
                 .arg(labels.at(index)));
@@ -2035,15 +2116,16 @@ QWidget* MainWindow::createWorkflowNavigator() {
         connect(button, &QPushButton::clicked, this,
                 [this, index] { setWorkflowStage(index); });
         workflow_stage_buttons_.push_back(button);
-        layout->addWidget(button, index == 3 ? 2 : 1);
+        layout->addWidget(button, index == 1 || index == 4 ? 2 : 1);
     }
     return navigator;
 }
 
 void MainWindow::setWorkflowStage(int stage) {
-    if (tabs_ == nullptr || stage < 0 || stage >= 6) return;
+    if (tabs_ == nullptr || stage < 0 || stage >= 7) return;
     workflow_stage_index_ = stage;
-    workflow_project_context_.clear();
+    workflow_project_context_ = stage == 0 ? tr("Canvas & Loop")
+                              : stage == 6 ? tr("Export") : QString{};
     for (std::size_t index = 0; index < workflow_stage_buttons_.size(); ++index) {
         const QSignalBlocker blocker(workflow_stage_buttons_[index]);
         workflow_stage_buttons_[index]->setChecked(
@@ -2051,25 +2133,15 @@ void MainWindow::setWorkflowStage(int stage) {
     }
 
     QWidget* page = source_page_;
-    std::optional<pvt::EffectSpace> requested_filter;
     switch (stage) {
-        case 0: page = source_page_; break;
-        case 1:
-            page = effect_page_;
-            requested_filter = pvt::EffectSpace::Texture;
-            break;
+        case 0: page = project_canvas_page_; break;
+        case 1: page = source_page_; break;
         case 2: page = surface_page_; break;
         case 3: page = motion_page_; break;
-        case 4:
-            page = effect_page_;
-            requested_filter = pvt::EffectSpace::Surface;
-            break;
+        case 4: page = effect_page_; break;
         case 5: page = finish_page_; break;
+        case 6: page = project_export_page_; break;
         default: return;
-    }
-    if (requested_filter && effect_space_filter_ != requested_filter) {
-        effect_space_filter_ = requested_filter;
-        refreshEffectList();
     }
     if (page != nullptr) tabs_->setCurrentWidget(page);
 
@@ -2077,7 +2149,7 @@ void MainWindow::setWorkflowStage(int stage) {
         if (synchronization_page_ != nullptr
             && !synchronization_page_->isHidden()) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
-        } else if (stage == 1 || stage == 4) {
+        } else if (stage == 4) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
         } else {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
@@ -2086,12 +2158,34 @@ void MainWindow::setWorkflowStage(int stage) {
     updateWorkflowSummaries();
 }
 
+void MainWindow::setEffectCategory(int category) {
+    category = std::clamp(category, 0, EffectUiCategoryCount - 1);
+    effect_category_filter_ = category;
+    if (effect_category_tabs_ != nullptr
+        && effect_category_tabs_->currentIndex() != category) {
+        const QSignalBlocker blocker(effect_category_tabs_);
+        effect_category_tabs_->setCurrentIndex(category);
+    }
+    const bool was_populating = populating_;
+    populating_ = true;
+    if (add_effect_type_ != nullptr) {
+        populate_effect_types(add_effect_type_, category);
+    }
+    if (effect_type_ != nullptr) {
+        populate_effect_types(effect_type_, category);
+    }
+    populating_ = was_populating;
+    if (effect_list_ != nullptr) refreshEffectList();
+}
+
 void MainWindow::showProjectSettingsPage(QWidget* page, const QString& title) {
     if (tabs_ == nullptr || page == nullptr) return;
     workflow_project_context_ = title;
-    for (QPushButton* button : workflow_stage_buttons_) {
-        const QSignalBlocker blocker(button);
-        button->setChecked(false);
+    workflow_stage_index_ = page == project_export_page_ ? 6 : 0;
+    for (std::size_t index = 0; index < workflow_stage_buttons_.size(); ++index) {
+        const QSignalBlocker blocker(workflow_stage_buttons_[index]);
+        workflow_stage_buttons_[index]->setChecked(
+            index == static_cast<std::size_t>(workflow_stage_index_));
     }
     tabs_->setCurrentWidget(page);
     updateWorkflowSummaries();
@@ -2102,15 +2196,16 @@ void MainWindow::setDriversExpanded(bool expanded) {
         return;
     }
     synchronization_page_->setVisible(expanded);
-    drivers_expand_button_->setText(expanded ? tr("Hide controls")
-                                             : tr("Edit drivers…"));
+    drivers_expand_button_->setText(expanded ? tr("Collapse")
+                                             : tr("Configure…"));
+    drivers_group_->setMaximumHeight(expanded ? 500 : 78);
     drivers_expand_button_->setAccessibleDescription(
         expanded ? tr("Driver controls are expanded")
                  : tr("Driver controls are collapsed"));
     if (preview_ != nullptr) {
         if (expanded) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
-        } else if (workflow_stage_index_ == 1 || workflow_stage_index_ == 4) {
+        } else if (workflow_stage_index_ == 4) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
         } else {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
@@ -2129,7 +2224,7 @@ void MainWindow::updateWorkflowSummaries() {
             label.replace(QStringLiteral("&&"), QStringLiteral("&"));
             return label;
         }
-        return tr("Source");
+        return tr("Starting Colors");
     };
     const pvt::LayerConfig* layer = activeLayer();
     const pvt::LayerGroup* owning_group =
@@ -2149,36 +2244,43 @@ void MainWindow::updateWorkflowSummaries() {
         }
     }
 
-    const auto effect_count = [this](pvt::EffectSpace space) {
+    const auto effect_count = [this](int category) {
         return static_cast<qulonglong>(std::count_if(
             config_.effects.cbegin(), config_.effects.cend(),
-            [space](const pvt::EffectConfig& effect) {
-                return effect.space == space;
+            [category](const pvt::EffectConfig& effect) {
+                return effect_ui_category(effect.type) == category;
             }));
     };
-    if (workflow_stage_buttons_.size() == 6U) {
+    if (workflow_stage_buttons_.size() == 7U) {
         workflow_stage_buttons_[0]->setStatusTip(
+            tr("%1 × %2 at %3 FPS")
+                .arg(config_.width).arg(config_.height).arg(config_.fps));
+        workflow_stage_buttons_[1]->setStatusTip(
             tr("%1 waves; %2 starting-palette colors")
                 .arg(static_cast<qulonglong>(config_.waves.size()))
                 .arg(static_cast<qulonglong>(config_.palette.colors.size())));
-        workflow_stage_buttons_[1]->setStatusTip(
-            tr("%1 texture effects").arg(effect_count(pvt::EffectSpace::Texture)));
         workflow_stage_buttons_[2]->setStatusTip(
-            config_.surface.enabled ? tr("Surface mapping enabled")
-                                    : tr("Surface mapping bypassed"));
+            config_.surface.enabled ? tr("Modifiers · optional surface mapping enabled")
+                                    : tr("Modifiers · surface mapping off"));
         workflow_stage_buttons_[3]->setStatusTip(
-            config_.motion.enabled ? tr("Whole-layer motion enabled")
-                                   : tr("Whole-layer motion bypassed"));
+            tr("%1 waves · whole-layer motion %2")
+                .arg(static_cast<qulonglong>(config_.waves.size()))
+                .arg(config_.motion.enabled ? tr("enabled") : tr("off")));
         workflow_stage_buttons_[4]->setStatusTip(
-            tr("%1 object effects").arg(effect_count(pvt::EffectSpace::Surface)));
+            tr("%1 categorized layer effects")
+                .arg(static_cast<qulonglong>(config_.effects.size())));
         workflow_stage_buttons_[5]->setStatusTip(
             config_.quantization.enabled ? tr("Post-effects quantization enabled")
                                          : tr("Post-effects quantization bypassed"));
+        workflow_stage_buttons_[6]->setStatusTip(
+            tr("%1-bit output · %2")
+                .arg(project_.output.bit_depth)
+                .arg(QString::fromStdString(project_.output.output_directory)));
     }
 
     if (driver_project_summary_ != nullptr) {
         driver_project_summary_->setText(
-            tr("Project Clock\n%1")
+            tr("Project: %1")
                 .arg(QString::fromUtf8(pvt::clock_mode_name(config_.clock.mode))));
         driver_project_summary_->setToolTip(
             tr("The project-wide clock is always the base timeline for synchronized items."));
@@ -2187,16 +2289,16 @@ void MainWindow::updateWorkflowSummaries() {
         driver_layer_summary_->setText(
             config_.layer_clock.enabled
                 ? (config_.layer_clock.mix_enabled
-                       ? tr("Layer Clock\n%1 · %2")
+                       ? tr("Layer: %1 · %2")
                              .arg(QString::fromUtf8(pvt::clock_mode_name(
                                       config_.layer_clock.clock.mode)),
                                   QString::fromUtf8(
                                       pvt::layer_clock_mix_mode_name(
                                           config_.layer_clock.mix)))
-                       : tr("Layer Clock\n%1 · replaces project (mixing off)")
+                       : tr("Layer: %1 · replace")
                              .arg(QString::fromUtf8(pvt::clock_mode_name(
                                  config_.layer_clock.clock.mode))))
-                : tr("Layer Clock\nOff · project passes through"));
+                : tr("Layer: Off"));
         driver_layer_summary_->setToolTip(
             config_.layer_clock.enabled
                 ? (config_.layer_clock.mix_enabled
@@ -2210,10 +2312,10 @@ void MainWindow::updateWorkflowSummaries() {
             [](const pvt::SwingConfig& swing) { return swing.enabled; }));
         driver_swing_summary_->setText(
             config_.swings_enabled
-                ? tr("Swing\n%1 of %2 active")
+                ? tr("Swing: %1/%2")
                       .arg(enabled_swings)
                       .arg(static_cast<qulonglong>(config_.swings.size()))
-                : tr("Swing\nBypassed"));
+                : tr("Swing: Off"));
     }
     if (driver_audio_summary_ != nullptr) {
         const pvt::AudioReactiveConfig& effective_audio =
@@ -2222,18 +2324,22 @@ void MainWindow::updateWorkflowSummaries() {
         driver_audio_summary_->setText(
             effective_audio.enabled
                 ? (config_.audio_reactive_override_enabled
-                       ? tr("Audio\nLayer override")
-                       : tr("Audio\nProject profile"))
-                : tr("Audio\nOff"));
+                       ? tr("Audio: Layer")
+                       : tr("Audio: Project"))
+                : tr("Audio: Off"));
     }
-    if (effect_stage_summary_ != nullptr && effect_space_filter_) {
-        const bool texture = *effect_space_filter_ == pvt::EffectSpace::Texture;
+    if (effect_stage_summary_ != nullptr) {
         effect_stage_summary_->setText(
-            texture
-                ? tr("Texture FX — ordered before surface wrapping · %1 effects")
-                      .arg(effect_count(pvt::EffectSpace::Texture))
-                : tr("Object FX — ordered after surface and transform · %1 effects")
-                      .arg(effect_count(pvt::EffectSpace::Surface)));
+            tr("%1 · %2 effects · new effects start on Texture")
+                .arg(effect_ui_category_name(effect_category_filter_))
+                .arg(effect_count(effect_category_filter_)));
+    }
+    if (export_canvas_summary_ != nullptr) {
+        export_canvas_summary_->setText(
+            tr("%1 × %2 · %3 FPS · %4 frames · %5-bit %6")
+                .arg(config_.width).arg(config_.height).arg(config_.fps)
+                .arg(effectiveFrameCount()).arg(project_.output.bit_depth)
+                .arg(project_.output.bit_depth == 32 ? tr("EXR") : tr("PNG")));
     }
 
     if (workflow_prerequisite_ != nullptr) {
@@ -2245,21 +2351,16 @@ void MainWindow::updateWorkflowSummaries() {
         } else if (locked) {
             message = tr("This layer belongs to a locked group. Unlock the group in Project & Layers to edit layer stages.");
         } else if (workflow_project_context_.isEmpty()
-                   && workflow_stage_index_ == 2 && !config_.surface.enabled) {
-            message = tr("Surface is currently bypassed. Enable Surface mapping here to wrap the prepared texture; the authored settings are preserved while off.");
-        } else if (workflow_project_context_.isEmpty()
                    && workflow_stage_index_ == 3 && !config_.motion.enabled) {
-            message = tr("Whole-layer motion is bypassed. Static transforms and reusable path editing remain available.");
+            message = tr("Whole-layer motion is off. Waves and reusable path editing remain available.");
         } else if (workflow_project_context_.isEmpty()
-                   && (workflow_stage_index_ == 1
-                       || workflow_stage_index_ == 4)
+                   && workflow_stage_index_ == 4
                    && effect_list_ != nullptr && effect_list_->count() == 0) {
-            message = workflow_stage_index_ == 1
-                          ? tr("No Texture FX yet. Add one to modify source artwork before surface wrapping.")
-                          : tr("No Object FX yet. Add one to modify the mapped surface and silhouette after transform.");
+            message = tr("No %1 effects yet. Choose a type below to add one; it will start on Texture.")
+                          .arg(effect_ui_category_name(effect_category_filter_));
         } else {
             message = workflow_project_context_.isEmpty()
-                          ? tr("Pipeline order is explicit: each stage receives the completed result of the stage to its left.")
+                          ? tr("This category contains one focused part of the active layer; use the top navigation to switch without scrolling through unrelated controls.")
                           : tr("These settings apply to the whole project and are independent of the selected layer stage.");
         }
         workflow_prerequisite_->setText(message);
@@ -3040,7 +3141,7 @@ QWidget* MainWindow::createSwingBlock() {
 
 QWidget* MainWindow::createEffectPage() {
     auto* page = new QWidget;
-    page->setObjectName(QStringLiteral("sharedEffectStagePage"));
+    page->setObjectName(QStringLiteral("categorizedLayerEffectsPage"));
     auto* layout = new QVBoxLayout(page);
     effect_stage_summary_ = new QLabel;
     effect_stage_summary_->setObjectName(QStringLiteral("effectStageSummary"));
@@ -3049,12 +3150,23 @@ QWidget* MainWindow::createEffectPage() {
     effect_stage_summary_->setAccessibleName(tr("Current effect stage"));
     layout->addWidget(effect_stage_summary_);
     auto* explanation = new QLabel(
-        tr("This is one effect editor filtered by the selected pipeline stage. Effects keep "
-           "their order within Texture FX or Object FX; changing Apply to moves an effect to "
-           "the other stage without changing its authored settings. Centers and local radii "
-           "remain draggable in the preview."));
+        tr("Each effect appears in exactly one category based on its type. New effects "
+           "start on Texture, which is the useful default. Mapped-surface placement remains "
+           "an advanced per-effect option; it does not create a duplicate effects window. "
+           "Centers and local radii remain draggable in the preview."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
+
+    effect_category_tabs_ = new QTabBar;
+    effect_category_tabs_->setObjectName(QStringLiteral("effectCategoryTabs"));
+    effect_category_tabs_->setAccessibleName(tr("Effect categories"));
+    effect_category_tabs_->setExpanding(true);
+    for (int category = 0; category < EffectUiCategoryCount; ++category) {
+        QString label = effect_ui_category_name(category);
+        label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        effect_category_tabs_->addTab(label);
+    }
+    layout->addWidget(effect_category_tabs_);
 
     effect_list_ = new QListWidget;
     effect_list_->setAlternatingRowColors(true);
@@ -3062,29 +3174,7 @@ QWidget* MainWindow::createEffectPage() {
 
     auto* add_row = new QGridLayout;
     add_effect_type_ = new QComboBox;
-    const auto populate_effect_types = [](QComboBox* combo) {
-        const auto add = [combo](const char* category,
-                                 pvt::EffectType type) {
-            add_enum_item(
-                combo,
-                QStringLiteral("%1 — %2")
-                    .arg(QString::fromUtf8(category),
-                         QString::fromUtf8(pvt::effect_type_name(type))),
-                type);
-        };
-        add("Motion & Distortion", pvt::EffectType::EndlessZoom);
-        add("Motion & Distortion", pvt::EffectType::Ripple);
-        add("Motion & Distortion", pvt::EffectType::Shake);
-        add("Motion & Distortion", pvt::EffectType::FlagWave);
-        add("Motion & Distortion", pvt::EffectType::LensDistortion);
-        add("Light & Energy", pvt::EffectType::Glow);
-        add("Light & Energy", pvt::EffectType::Starburst);
-        add("Stylize", pvt::EffectType::BlockScale);
-        add("Stylize", pvt::EffectType::Glitch);
-        add("Particles", pvt::EffectType::ParticleField);
-        add("Blur", pvt::EffectType::Blur);
-    };
-    populate_effect_types(add_effect_type_);
+    populate_effect_types(add_effect_type_, effect_category_filter_);
     auto* add = new QPushButton(tr("Add"));
     auto* duplicate = new QPushButton(tr("Duplicate"));
     auto* remove = new QPushButton(tr("Remove"));
@@ -3111,11 +3201,11 @@ QWidget* MainWindow::createEffectPage() {
     effect_audio_response_ = new QComboBox;
     populate_audio_response_combo(effect_audio_response_);
     effect_type_ = new QComboBox;
-    populate_effect_types(effect_type_);
+    populate_effect_types(effect_type_, effect_category_filter_);
     effect_space_ = new QComboBox;
-    add_enum_item(effect_space_, tr("Texture (before surface)"),
+    add_enum_item(effect_space_, tr("Texture (default)"),
                   pvt::EffectSpace::Texture);
-    add_enum_item(effect_space_, tr("Mapped object (after surface)"),
+    add_enum_item(effect_space_, tr("Mapped surface (advanced)"),
                   pvt::EffectSpace::Surface);
     effect_cycles_ = integer_editor(-1000, 1000);
     effect_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
@@ -3153,7 +3243,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(effect_sync_);
     effect_form_->addRow(tr("Audio response"), effect_audio_response_);
     effect_form_->addRow(tr("Type"), effect_type_);
-    effect_form_->addRow(tr("Apply to"), effect_space_);
+    effect_form_->addRow(tr("Placement"), effect_space_);
     effect_form_->addRow(tr("Cycles per loop"), effect_cycles_);
     effect_form_->addRow(tr("Phase (degrees)"), effect_phase_);
     effect_form_->addRow(tr("Blank-space handling"), effect_edge_);
@@ -3184,7 +3274,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_type_->setToolTip(
         tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
     effect_space_->setToolTip(
-        tr("Texture edits artwork before wrapping; Mapped object edits the transformed surface and silhouette afterward."));
+        tr("Texture is the normal choice and works whether surface mapping is on or off. Mapped surface is an advanced after-mapping placement for the uncommon cases that need it."));
     effect_blur_type_->setToolTip(
         tr("Gaussian and Box use separable passes; Directional follows the authored angle; Radial rotates samples around the center; Zoom pulls samples toward the center."));
     effect_blur_passes_->setToolTip(
@@ -3211,8 +3301,7 @@ QWidget* MainWindow::createEffectPage() {
         }
         auto before = captureActiveState();
         const auto type = static_cast<pvt::EffectType>(add_effect_type_->currentData().toInt());
-        auto effect = pvt::default_effect(type);
-        if (effect_space_filter_) effect.space = *effect_space_filter_;
+        auto effect = new_effect_for_ui(type);
         effect.id = pvt::allocate_id(config_);
         const auto id = effect.id;
         config_.effects.push_back(std::move(effect));
@@ -3253,6 +3342,8 @@ QWidget* MainWindow::createEffectPage() {
     });
     connect(up, &QPushButton::clicked, this, [this] { moveSelectedEffect(-1); });
     connect(down, &QPushButton::clicked, this, [this] { moveSelectedEffect(1); });
+    connect(effect_category_tabs_, &QTabBar::currentChanged,
+            this, &MainWindow::setEffectCategory);
     return page;
 }
 
@@ -3270,10 +3361,10 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* surface_layout = make_stage_page(surface_page_);
     auto* motion_layout = make_stage_page(motion_page_);
     auto* finish_layout = make_stage_page(finish_page_);
-    source_page_->setObjectName(QStringLiteral("sourceStagePage"));
-    surface_page_->setObjectName(QStringLiteral("surfaceStagePage"));
-    motion_page_->setObjectName(QStringLiteral("motionStagePage"));
-    finish_page_->setObjectName(QStringLiteral("finishStagePage"));
+    source_page_->setObjectName(QStringLiteral("startingColorsPage"));
+    surface_page_->setObjectName(QStringLiteral("layerModifiersPage"));
+    motion_page_->setObjectName(QStringLiteral("layerMovementPage"));
+    finish_page_->setObjectName(QStringLiteral("postEffectsPage"));
 
     const auto add_stage_intro = [](QVBoxLayout* layout, const QString& title,
                                     const QString& description) {
@@ -3287,17 +3378,17 @@ QWidget* MainWindow::createLayerSettingsPage() {
         layout->addWidget(explanation);
     };
     add_stage_intro(
-        source_layout, tr("Source — establish the layer's starting pixels"),
-        tr("Choose generated colors or an embedded image, optionally constrain them with a starting palette, shape the source with waves and procedural fields, then resolve source/procedural alpha. Later stages receive this result in order."));
+        source_layout, tr("Starting Colors — establish the layer's pixels"),
+        tr("Choose an embedded image or generated color pattern, then optionally constrain it with a starting palette. Shaping, alpha, mapping, and movement have their own categories."));
     add_stage_intro(
-        surface_layout, tr("Surface — wrap the prepared texture"),
-        tr("Map the layer onto a built-in primitive or embedded OBJ. Texture FX run before this stage; Object FX run after it."));
+        surface_layout, tr("Active Layer Modifiers"),
+        tr("Shape generated coordinates, transform the layer, control source/procedural alpha, and optionally wrap it on a 3D surface. Surface mapping is an advanced modifier, not a required workflow stage."));
     add_stage_intro(
-        motion_layout, tr("Transform & Motion — move the complete layer"),
-        tr("Static mirrors and flips run with loop-safe whole-layer movement. Reusable paths remain editable even while whole-layer motion is bypassed."));
+        motion_layout, tr("Layer Movement"),
+        tr("Combine local waves, seamless whole-layer movement, and reusable paths. Movement and distortion effect types are separated in Layer Effects instead of duplicated by mapping location."));
     add_stage_intro(
-        finish_layout, tr("Finish — final color reduction"),
-        tr("Post-effects quantization is the last layer-local operation before compositing. Project export encoding and destination settings live in Project Settings."));
+        finish_layout, tr("Post Effects"),
+        tr("Post-effects quantization is the final layer-local operation before compositing. Export encoding and destination settings are always available from the Export category above."));
 
     auto* rhythm_group = new QGroupBox(tr("Rhythm and color timing"));
     auto* rhythm = new QFormLayout(rhythm_group);
@@ -3448,7 +3539,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     pattern->addRow(tr("Wall mix"), wall_mix_);
     pattern->addRow(tr("Hue cycles per loop"), hue_cycles_);
     pattern->addRow(tr("Saturation"), saturation_);
-    source_layout->addWidget(pattern_group);
+    surface_layout->addWidget(pattern_group);
 
     kaleidoscope_group_ = new QGroupBox(tr("Kaleidoscope shaping"));
     kaleidoscope_group_->setCheckable(true);
@@ -3464,7 +3555,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     kaleidoscope->addRow(tr("Mirrored segments"), kaleidoscope_segments_);
     kaleidoscope->addRow(tr("Rotation"), kaleidoscope_rotation_);
     kaleidoscope->addRow(tr("Coordinate mix"), kaleidoscope_mix_);
-    source_layout->addWidget(kaleidoscope_group_);
+    surface_layout->addWidget(kaleidoscope_group_);
     make_checkable_group_collapsible(kaleidoscope_group_);
 
     domain_warp_group_ = new QGroupBox(tr("Seamless domain warp"));
@@ -3496,7 +3587,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     domain_warp->addRow(tr("Noise octaves"), domain_warp_octaves_);
     domain_warp->addRow(tr("Cycles per loop"), domain_warp_cycles_);
     domain_warp->addRow(tr("Seed"), seed_row);
-    source_layout->addWidget(domain_warp_group_);
+    surface_layout->addWidget(domain_warp_group_);
     make_checkable_group_collapsible(domain_warp_group_);
 
     auto* transform_group = new QGroupBox(tr("Transform layer"));
@@ -3519,7 +3610,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     transform->addRow(transform_flip_horizontal_);
     transform->addRow(transform_flip_vertical_);
     transform->addRow(tr("Mirror symmetry"), transform_mirror_);
-    motion_layout->addWidget(transform_group);
+    surface_layout->addWidget(transform_group);
 
     motion_group_ = new QGroupBox(tr("Seamless layer motion"));
     motion_group_->setCheckable(true);
@@ -3642,14 +3733,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
            "and PNG/EXR palette images."));
     palette_help->setWordWrap(true);
     palette_layout->addWidget(palette_help);
-    const int shaping_index = source_layout->indexOf(pattern_group);
-    source_layout->insertWidget(shaping_index >= 0 ? shaping_index
-                                                    : source_layout->count(),
-                                palette_group);
-    wave_page_->setObjectName(QStringLiteral("sourceWavesEditor"));
-    source_layout->insertWidget(shaping_index >= 0 ? shaping_index + 1
-                                                    : source_layout->count(),
-                                wave_page_);
+    source_layout->addWidget(palette_group);
+    wave_page_->setObjectName(QStringLiteral("movementWavesEditor"));
+    motion_layout->insertWidget(2, wave_page_);
 
     auto* surface_group = new QGroupBox(tr("3D surface wrapping"));
     auto* surface = new QFormLayout(surface_group);
@@ -3708,7 +3794,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     alpha_enabled_ = new QCheckBox(tr("Procedural alpha modulation"));
     alpha_enabled_->setToolTip(
         tr("Controls opacity generated by this layer. The project output channel "
-           "selection is configured separately on the Output tab."));
+           "selection is configured separately in Export."));
     alpha_minimum_ = real_editor(0.0, 1.0);
     alpha_maximum_ = real_editor(0.0, 1.0);
     alpha_frequency_ = real_editor(0.0, 1000.0);
@@ -3727,10 +3813,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     alpha->addRow(tr("Cycles per loop"), alpha_cycles_);
     alpha->addRow(tr("Starting phase (degrees)"), alpha_phase_);
     // Source/procedural alpha is resolved while the base image is created,
-    // before texture effects, surface mapping, motion, and object effects.
-    // Keeping these controls in Source makes the visible pipeline match the
-    // renderer and clarifies how transparent pixels enter later effects.
-    source_layout->addWidget(alpha_group);
+    // but artist-facing navigation treats it as a layer modifier rather than
+    // burying it inside the starting-color chooser.
+    surface_layout->addWidget(alpha_group);
 
     source_layout->addStretch();
     surface_layout->addStretch();
@@ -3935,7 +4020,7 @@ QWidget* MainWindow::createOutputPage() {
     canvas_intro->setWordWrap(true);
     canvas_layout->addWidget(canvas_intro);
     auto* export_intro = new QLabel(tr(
-        "Project-wide output encoding and destination. Source alpha stays in the layer workflow's Source stage; post-effects color quantization stays in Finish."));
+        "Everything needed to understand or start an export is collected here. Canvas size and frame timing are summarized below and remain editable in Project; encoding, destination, and file naming are editable on this page."));
     export_intro->setWordWrap(true);
     export_layout->addWidget(export_intro);
 
@@ -3957,6 +4042,18 @@ QWidget* MainWindow::createOutputPage() {
     canvas->addRow(tr("Effective duration"), effective_frames_);
     canvas->addRow(tr("Playback FPS"), fps_);
     canvas_layout->addWidget(canvas_group);
+
+    auto* export_canvas_group = new QGroupBox(tr("Canvas and timeline"));
+    auto* export_canvas_layout = new QVBoxLayout(export_canvas_group);
+    export_canvas_summary_ = new QLabel;
+    export_canvas_summary_->setObjectName(QStringLiteral("exportCanvasSummary"));
+    export_canvas_summary_->setWordWrap(true);
+    export_canvas_layout->addWidget(export_canvas_summary_);
+    auto* edit_canvas = new QPushButton(tr("Edit Canvas && Timeline…"));
+    edit_canvas->setToolTip(
+        tr("Open project-wide width, height, block size, frame count, and playback rate."));
+    export_canvas_layout->addWidget(edit_canvas, 0, Qt::AlignLeft);
+    export_layout->addWidget(export_canvas_group);
 
     auto* output_group = new QGroupBox(tr("Export"));
     auto* output = new QFormLayout(output_group);
@@ -4010,6 +4107,15 @@ QWidget* MainWindow::createOutputPage() {
     output->addRow(tr("Minimum number digits"), filename_digits_);
     output->addRow(overwrite_);
     export_layout->addWidget(output_group);
+
+    auto* export_actions = new QGroupBox(tr("Start export"));
+    auto* export_actions_layout = new QHBoxLayout(export_actions);
+    auto* export_frames = new QPushButton(tr("Export Frames…"));
+    auto* export_video = new QPushButton(tr("Export Video…"));
+    export_actions_layout->addWidget(export_frames);
+    export_actions_layout->addWidget(export_video);
+    export_actions_layout->addStretch();
+    export_layout->addWidget(export_actions);
     canvas_layout->addStretch();
     export_layout->addStretch();
 
@@ -4023,6 +4129,15 @@ QWidget* MainWindow::createOutputPage() {
             updateOutputEditorValidity();
             applyGlobalEditor(output_directory_);
         }
+    });
+    connect(edit_canvas, &QPushButton::clicked, this, [this] {
+        showProjectSettingsPage(project_canvas_page_, tr("Canvas & Loop"));
+    });
+    connect(export_frames, &QPushButton::clicked, this, [this] {
+        if (export_action_ != nullptr) export_action_->trigger();
+    });
+    connect(export_video, &QPushButton::clicked, this, [this] {
+        if (video_export_action_ != nullptr) video_export_action_->trigger();
     });
     return project_canvas_page_;
 }
@@ -4967,6 +5082,10 @@ void MainWindow::createToolbar() {
     settings_menu->addSeparator();
     settings_menu->addAction(randomize_values_action_);
     settings_menu->addAction(randomize_mix_action_);
+    export_settings_action_ = toolbar->addAction(tr("Export Settings…"));
+    export_settings_action_->setObjectName(QStringLiteral("exportSettingsAction"));
+    export_settings_action_->setToolTip(
+        tr("Review canvas timing, bit depth, alpha, destination, and file naming before exporting."));
     current_frame_export_action_ =
         toolbar->addAction(tr("Export Current Frame…"));
     export_action_ = toolbar->addAction(tr("Export Frames"));
@@ -4974,6 +5093,7 @@ void MainWindow::createToolbar() {
     cancel_export_action_ = toolbar->addAction(tr("Cancel export"));
     cancel_export_action_->setEnabled(false);
     file_menu->addSeparator();
+    file_menu->addAction(export_settings_action_);
     file_menu->addAction(current_frame_export_action_);
     file_menu->addAction(export_action_);
     file_menu->addAction(video_export_action_);
@@ -5049,12 +5169,16 @@ void MainWindow::createToolbar() {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (choice == QMessageBox::Yes) randomizeStackComposition();
     });
+    connect(export_settings_action_, &QAction::triggered, this, [this] {
+        setWorkflowStage(6);
+    });
     connect(export_action_, &QAction::triggered, this, [this] {
         if (export_watcher_->isRunning()) {
             return;
         }
         QString editor_error;
         if (!outputEditorsValid(&editor_error)) {
+            setWorkflowStage(6);
             QMessageBox::warning(this, tr("Invalid output text"), editor_error);
             return;
         }
@@ -5956,7 +6080,7 @@ void MainWindow::connectEditors() {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
         } else if (page == effect_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
-        } else if (page == source_page_) {
+        } else if (page == motion_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
         }
     });
@@ -5964,7 +6088,7 @@ void MainWindow::connectEditors() {
     connect(preview_, &PreviewWidget::waveSelected, this, [this](std::size_t index) {
         if (index < config_.waves.size()) {
             wave_list_->setCurrentRow(static_cast<int>(index));
-            setWorkflowStage(0);
+            setWorkflowStage(3);
         }
     });
     connect(preview_, &PreviewWidget::waveDragStarted, this,
@@ -6067,8 +6191,8 @@ void MainWindow::connectEditors() {
             [this](std::size_t index) {
                 if (index < config_.effects.size()) {
                     const auto& effect = config_.effects[index];
-                    setWorkflowStage(effect.space == pvt::EffectSpace::Texture
-                                         ? 1 : 4);
+                    setWorkflowStage(4);
+                    setEffectCategory(effect_ui_category(effect.type));
                     refreshEffectList(effect.id);
                 }
             });
@@ -8331,7 +8455,7 @@ void MainWindow::refreshEffectList(std::optional<std::uint64_t> selectedId) {
     int selected_row = -1;
     for (std::size_t index = 0; index < config_.effects.size(); ++index) {
         const auto& effect = config_.effects[index];
-        if (effect_space_filter_ && effect.space != *effect_space_filter_) {
+        if (effect_ui_category(effect.type) != effect_category_filter_) {
             continue;
         }
         auto* item = new QListWidgetItem(effect_label(effect, index), effect_list_);
@@ -10154,7 +10278,6 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     }
     auto before = captureActiveState();
     auto& effect = config_.effects[*index];
-    bool moved_between_stages = false;
     if (changed_editor == effect_enabled_) {
         effect.enabled = effect_enabled_->isChecked();
     } else if (changed_editor == effect_sync_) {
@@ -10167,8 +10290,6 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_space_) {
         effect.space = static_cast<pvt::EffectSpace>(
             effect_space_->currentData().toInt());
-        moved_between_stages = effect_space_filter_
-                               && effect.space != *effect_space_filter_;
     } else if (changed_editor == effect_type_) {
         const auto old_type = effect.type;
         const auto new_type =
@@ -10274,15 +10395,7 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     ensureAlphaForTransparency();
     syncActiveRender();
     syncProjectGlobals();
-    if (moved_between_stages) {
-        refreshEffectList();
-        status_->setText(
-            tr("Moved the effect to %1. Open that pipeline stage to continue editing it.")
-                .arg(effect.space == pvt::EffectSpace::Texture
-                         ? tr("Texture FX") : tr("Object FX")));
-    } else {
-        updateEffectListItem(*index);
-    }
+    updateEffectListItem(*index);
     updateEffectEditorVisibility();
     updateWorkflowSummaries();
     preview_->setConfiguration(config_);
@@ -10748,11 +10861,12 @@ void MainWindow::moveSelectedSwing(int direction) {
 void MainWindow::moveSelectedEffect(int direction) {
     const auto index = selectedEffectIndex();
     if (!index || direction == 0) return;
-    const auto space = config_.effects[*index].space;
     std::ptrdiff_t target = static_cast<std::ptrdiff_t>(*index) + direction;
     while (target >= 0
            && target < static_cast<std::ptrdiff_t>(config_.effects.size())
-           && config_.effects[static_cast<std::size_t>(target)].space != space) {
+           && effect_ui_category(
+                  config_.effects[static_cast<std::size_t>(target)].type)
+                  != effect_category_filter_) {
         target += direction;
     }
     if (target < 0
@@ -12775,6 +12889,27 @@ bool MainWindow::runSmokeChecks(QString* error) {
         schedulePreview();
     });
 
+    std::unordered_set<int> categorized_effect_types;
+    int categorized_effect_entries = 0;
+    bool categorized_effects_start_on_texture = true;
+    QComboBox effect_catalog_probe;
+    for (int category = 0; category < EffectUiCategoryCount; ++category) {
+        populate_effect_types(&effect_catalog_probe, category);
+        for (int index = 0; index < effect_catalog_probe.count(); ++index) {
+            const int value = effect_catalog_probe.itemData(index).toInt();
+            categorized_effect_types.insert(value);
+            ++categorized_effect_entries;
+            categorized_effects_start_on_texture =
+                categorized_effects_start_on_texture
+                && new_effect_for_ui(static_cast<pvt::EffectType>(value)).space
+                       == pvt::EffectSpace::Texture;
+        }
+    }
+    const bool effect_catalog_complete =
+        categorized_effect_entries == 11
+        && categorized_effect_types.size() == 11U
+        && categorized_effects_start_on_texture;
+
     if (tabs_ == nullptr || tabs_->count() != 9
         || !tabs_->tabBar()->isHidden()
         || tabs_->indexOf(source_page_) < 0
@@ -12786,14 +12921,24 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || tabs_->indexOf(project_sync_page_) < 0
         || tabs_->indexOf(project_export_page_) < 0
         || tabs_->indexOf(history_page_) < 0
-        || workflow_stage_buttons_.size() != 6U
-        || workflow_stage_buttons_[0]->text() != tr("Source")
-        || workflow_stage_buttons_[1]->text() != tr("Texture FX")
-        || workflow_stage_buttons_[2]->text() != tr("Surface")
-        || workflow_stage_buttons_[3]->text() != tr("Transform && Motion")
-        || workflow_stage_buttons_[4]->text() != tr("Object FX")
-        || workflow_stage_buttons_[5]->text() != tr("Finish")
-        || wave_page_ == nullptr || !source_page_->isAncestorOf(wave_page_)
+        || workflow_stage_buttons_.size() != 7U
+        || workflow_stage_buttons_[0]->text() != tr("Project")
+        || workflow_stage_buttons_[1]->text() != tr("Starting Colors")
+        || workflow_stage_buttons_[2]->text() != tr("Modifiers")
+        || workflow_stage_buttons_[3]->text() != tr("Movement")
+        || workflow_stage_buttons_[4]->text() != tr("Layer Effects")
+        || workflow_stage_buttons_[5]->text() != tr("Post Effects")
+        || workflow_stage_buttons_[6]->text() != tr("Export")
+        || wave_page_ == nullptr || !motion_page_->isAncestorOf(wave_page_)
+        || effect_category_tabs_ == nullptr
+        || effect_category_tabs_->count() != EffectUiCategoryCount
+        || !effect_catalog_complete
+        || add_effect_type_->count() != 5
+        || static_cast<pvt::EffectType>(
+               add_effect_type_->itemData(0).toInt())
+               != pvt::EffectType::EndlessZoom
+        || export_canvas_summary_ == nullptr
+        || export_settings_action_ == nullptr
         || synchronization_page_ == nullptr
         || drivers_group_ == nullptr
         || !drivers_group_->isAncestorOf(synchronization_page_)
@@ -12816,7 +12961,6 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || wave_form_ == nullptr
         || effect_sync_ == nullptr
         || effect_sync_->text() != tr("Synchronization")
-        || effect_type_->findData(static_cast<int>(pvt::EffectType::Blur)) < 0
         || effect_blur_type_ == nullptr || effect_blur_type_->count() != 5
         || effect_blur_passes_ == nullptr || effect_blur_samples_ == nullptr
         || effect_blur_minimum_ == nullptr || effect_blur_maximum_ == nullptr
@@ -12901,15 +13045,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    const int particle_type = effect_type_->findData(
-        static_cast<int>(pvt::EffectType::ParticleField));
-    const int glow_type = effect_type_->findData(
-        static_cast<int>(pvt::EffectType::Glow));
-    const int blur_type = effect_type_->findData(
-        static_cast<int>(pvt::EffectType::Blur));
-    bool effect_ranges_valid = particle_type >= 0 && glow_type >= 0
-                               && blur_type >= 0;
-    if (effect_ranges_valid) {
+    const int previous_effect_category = effect_category_filter_;
+    bool effect_ranges_valid = true;
+    {
         const QSignalBlocker type_blocker(effect_type_);
         const QSignalBlocker intensity_blocker(effect_intensity_);
         const QSignalBlocker magnitude_blocker(effect_magnitude_);
@@ -12917,20 +13055,33 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const QSignalBlocker secondary_blocker(effect_secondary_);
         const QSignalBlocker radius_blocker(effect_radius_);
         const QSignalBlocker threshold_blocker(effect_threshold_);
-        const int previous_type = effect_type_->currentIndex();
+        populate_effect_types(effect_type_, ParticleEffects);
+        const int particle_type = effect_type_->findData(
+            static_cast<int>(pvt::EffectType::ParticleField));
         effect_type_->setCurrentIndex(particle_type);
         updateEffectEditorVisibility();
-        effect_ranges_valid = effect_radius_->minimum() > 0.0
+        effect_ranges_valid = particle_type >= 0
+                              && effect_radius_->minimum() > 0.0
                               && effect_threshold_->minimum() == 0.0
                               && effect_threshold_->maximum() == 1.0;
+
+        populate_effect_types(effect_type_, LightAndEnergyEffects);
+        const int glow_type = effect_type_->findData(
+            static_cast<int>(pvt::EffectType::Glow));
         effect_type_->setCurrentIndex(glow_type);
         updateEffectEditorVisibility();
         effect_ranges_valid = effect_ranges_valid
+                              && glow_type >= 0
                               && effect_radius_->minimum() == 0.0
                               && effect_threshold_->maximum() == 64.0;
+
+        populate_effect_types(effect_type_, BlurEffects);
+        const int blur_type = effect_type_->findData(
+            static_cast<int>(pvt::EffectType::Blur));
         effect_type_->setCurrentIndex(blur_type);
         updateEffectEditorVisibility();
         effect_ranges_valid = effect_ranges_valid
+                              && blur_type >= 0
                               && effect_radius_->minimum() == 0.0
                               && effect_blur_passes_->minimum() == 1
                               && effect_blur_passes_->maximum() == 16
@@ -12947,9 +13098,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
             effect_frequency_, 0.25, block_scale_maximum);
         effect_ranges_valid = effect_ranges_valid
                               && effect_frequency_->minimum() == 0.25;
-        effect_type_->setCurrentIndex(previous_type);
-        updateEffectEditorVisibility();
     }
+    setEffectCategory(previous_effect_category);
     if (!effect_ranges_valid) {
         if (error != nullptr) {
             *error = tr("Effect editor ranges do not match Particle Field, Glow, or Block Scale validation.");
@@ -14373,7 +14523,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     setWorkflowStage(4);
     QWidget* const tab_before_save = tabs_->currentWidget();
     const int stage_before_save = workflow_stage_index_;
-    const auto filter_before_save = effect_space_filter_;
+    const int category_before_save = effect_category_filter_;
     if (!saveProjectPath(bundle_path) || document_ == nullptr
         || document_->versions.size() != 1U || hasUnsavedChanges()) {
         if (error != nullptr) *error = tr("The GUI could not create the first bundle version.");
@@ -14381,7 +14531,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     if (tabs_->currentWidget() != tab_before_save
         || workflow_stage_index_ != stage_before_save
-        || effect_space_filter_ != filter_before_save
+        || effect_category_filter_ != category_before_save
         || !workflow_stage_buttons_[4]->isChecked()) {
         if (error != nullptr) {
             *error = tr("Saving navigated away from the user's selected workflow stage.");
@@ -14668,7 +14818,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     // Leave screenshot-mode smoke runs in the same calm, first-launch state a
     // user sees instead of exposing whichever stage an earlier assertion used.
-    setWorkflowStage(0);
+    setWorkflowStage(1);
     setDriversExpanded(false);
     return true;
 }

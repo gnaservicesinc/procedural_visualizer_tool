@@ -9,9 +9,14 @@ snapshots, not inputs to the current build.
 ## Outcome of this pass
 
 Version 3.0.0 implements the Flow Workbench overhaul and
-the requested procedural expansion. The native Qt editor presents the render as
-six stages—Source, Texture FX, Surface, Transform & Motion, Object FX, and
-Finish—with a persistent Drivers strip and direct Project Settings entry points.
+the requested procedural expansion. The native Qt editor presents seven focused
+workspaces—Project, Starting Colors, Modifiers, Movement, Layer Effects, Post
+Effects, and Export—with a compact collapsible Synchronization strip and direct
+Project Settings entry points. Procedural shaping, alpha, transforms, and the
+advanced surface-mapping controls live under Modifiers. A single ordered Layer
+Effects editor filters its complete catalog into Movement & Distortion, Light &
+Energy, Stylize, Particles, and Blur; each new or randomized effect starts on
+Texture while mapped-surface placement remains an explicit advanced choice.
 The default new-project document is a neutral 1920×1080, 60 FPS, one-layer
 starting point modeled on the supplied `Untitled.zip`; saved custom defaults
 continue to override it.

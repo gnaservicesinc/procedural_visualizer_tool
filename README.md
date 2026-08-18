@@ -12,12 +12,16 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 
 ## 3.0.0 Flow Workbench and procedural expansion
 
-Version 3.0.0 reorganizes the Qt editor around the visible
-render pipeline: **Source → Texture FX → Surface → Transform & Motion → Object
-FX → Finish**. A persistent Drivers strip keeps project clock, active-layer
-clock, Swing, and audio routing visible while each stage presents only the
-controls that can affect it. Project Canvas & Loop, Synchronization & Audio,
-Export, and History remain directly reachable from the Project & Layers panel.
+Version 3.0.0 reorganizes the Qt editor around seven purpose-based workspaces:
+**Project, Starting Colors, Modifiers, Movement, Layer Effects, Post Effects,
+and Export**. Effects have separate Movement & Distortion, Light & Energy,
+Stylize, Particles, and Blur catalogs, so adding more algorithms does not create
+one endless menu. Every new or randomized effect starts on Texture; mapped-
+surface placement remains an advanced per-effect option. A compact collapsible
+Synchronization strip summarizes project clock, active-layer clock, Swing, and
+audio routing without permanently consuming editor space. Project Canvas &
+Loop, Synchronization & Audio, Export, and History are also directly reachable
+from the Project & Layers panel.
 
 This release also adds opt-in project/layer clock mixing, Kaleidoscope and seamless
 Domain Warp generated-source shaping, and Glitch, Starburst, and Lens Distortion
@@ -365,8 +369,13 @@ sudo apt install procedural-visualizer-tool
   CPU + GPU reports a Metal failure instead of silently repeating the whole
   layer on CPU; CPU-only rendering is automatic only where Metal is unavailable.
 
-The GUI uses a six-stage Flow Workbench—Source, Texture FX, Surface, Transform &
-Motion, Object FX, and Finish—alongside a topmost-first Project & Layers dock.
+The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
+Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
+topmost-first Project & Layers dock. Surface mapping is an advanced Modifiers
+section rather than a primary workspace. The Layer Effects workspace filters
+the single ordered effect stack into five type-based catalogs; Texture versus
+mapped-surface placement remains editable on each effect without duplicating
+the stack into separate windows.
 It includes project naming, per-layer blend,
 alpha-order, group, and opacity controls, session-only layer/group **Solo**
 preview, draggable center handles for
@@ -376,8 +385,9 @@ controls, a live checkerboard alpha preview, a continuously updating timeline,
 and background composite export with cooperative cancellation. The
 project Synchronization & Audio page owns both the global Clock and the selected
 layer's optional active-layer Clock, Swing, project-wide Audio Response defaults,
-and active-layer override. A persistent Drivers strip makes effective routing
-and the clock-mixing opt-in visible instead of implicit. **Randomize
+and active-layer override. A compact collapsible Synchronization strip makes
+effective routing and the clock-mixing opt-in available without obscuring the
+current workspace. **Randomize
 values** keeps the current layer's stack structure and types while varying its
 settings; **Randomize mix** creates a new bounded mix. Both live in the Settings
 menu and require confirmation, keeping destructive experiments away from the

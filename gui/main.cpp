@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QDebug>
 #include <QFileInfo>
+#include <QPushButton>
 #include <QTabWidget>
 #include <QTimer>
 
@@ -29,9 +30,12 @@ int main(int argc, char** argv) {
         const qsizetype screenshot_index =
             arguments.indexOf(QStringLiteral("--screenshot"));
         const qsizetype tab_index = arguments.indexOf(QStringLiteral("--tab"));
+        const qsizetype stage_index =
+            arguments.indexOf(QStringLiteral("--stage"));
         if ((screenshot_index >= 0 && screenshot_index + 1 >= arguments.size())
-            || (tab_index >= 0 && tab_index + 1 >= arguments.size())) {
-            qCritical("--screenshot and --tab each require a value");
+            || (tab_index >= 0 && tab_index + 1 >= arguments.size())
+            || (stage_index >= 0 && stage_index + 1 >= arguments.size())) {
+            qCritical("--screenshot, --tab, and --stage each require a value");
             return 1;
         }
         if (tab_index >= 0) {
@@ -44,6 +48,18 @@ int main(int argc, char** argv) {
                 }
                 tabs->setCurrentIndex(requested_tab);
             }
+        }
+        if (stage_index >= 0) {
+            bool valid_stage = false;
+            const int requested_stage =
+                arguments.at(stage_index + 1).toInt(&valid_stage);
+            auto* button = window.findChild<QPushButton*>(
+                QStringLiteral("workflowStage%1").arg(requested_stage));
+            if (!valid_stage || button == nullptr) {
+                qCritical("--stage must identify an existing zero-based workspace category");
+                return 1;
+            }
+            button->click();
         }
         window.show();
         if (screenshot_index >= 0) {
