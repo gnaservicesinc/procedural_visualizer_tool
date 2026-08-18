@@ -975,7 +975,10 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
                                  && effect.blur_maximum > 0.0;
         const bool active_coordinate = effect.intensity > 0.0
                                        && effect.magnitude > 0.0
-                                       && effect.type != pvt::EffectType::Blur;
+                                       && effect.type != pvt::EffectType::Blur
+                                       && (effect.type
+                                               != pvt::EffectType::LensDistortion
+                                           || effect.secondary != 0.0);
         return effect.enabled && (active_blur || active_coordinate)
                && effect.type != pvt::EffectType::Glow
                && effect.type != pvt::EffectType::BlockScale
@@ -2344,7 +2347,9 @@ void MainWindow::updateWorkflowSummaries() {
 
     if (workflow_prerequisite_ != nullptr) {
         QString message;
-        if (selected_group_uuid_) {
+        if (!workflow_project_context_.isEmpty()) {
+            message = tr("These settings apply to the whole project and are independent of the selected layer stage.");
+        } else if (selected_group_uuid_) {
             message = tr("Select a layer row to edit its render pipeline. Group controls remain in the Project & Layers panel.");
         } else if (layer == nullptr) {
             message = tr("Add or select a layer to begin editing this pipeline.");
@@ -2359,9 +2364,7 @@ void MainWindow::updateWorkflowSummaries() {
             message = tr("No %1 effects yet. Choose a type below to add one; it will start on Texture.")
                           .arg(effect_ui_category_name(effect_category_filter_));
         } else {
-            message = workflow_project_context_.isEmpty()
-                          ? tr("This category contains one focused part of the active layer; use the top navigation to switch without scrolling through unrelated controls.")
-                          : tr("These settings apply to the whole project and are independent of the selected layer stage.");
+            message = tr("This category contains one focused part of the active layer; use the top navigation to switch without scrolling through unrelated controls.");
         }
         workflow_prerequisite_->setText(message);
     }
@@ -2830,9 +2833,12 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_music_cancel_->hide();
     layer_progress_row->addWidget(layer_music_progress_, 1);
     layer_progress_row->addWidget(layer_music_cancel_);
-    layer_music_layout->addLayout(layer_progress_row);
     layer_clock_layout->addWidget(layer_music_group);
     layout->addWidget(layer_clock_group_);
+    // Keep the active transaction controls outside the layer-clock editor.
+    // That editor is disabled while analysis owns its state; nesting Cancel
+    // inside it made the only way to stop a long layer analysis unreachable.
+    layout->addLayout(layer_progress_row);
     make_checkable_group_collapsible(layer_clock_group_);
 
     project_audio_response_group_ = new QGroupBox(
@@ -6429,8 +6435,10 @@ void MainWindow::loadLayerEditors() {
     const auto* owning_group = layer != nullptr ? groupForLayer(*layer) : nullptr;
     const bool locked = owning_group != nullptr && owning_group->locked;
     const bool available = layer != nullptr && !selected_group_uuid_;
+    const bool project_actions_available = !music_analysis_active_
+                                           && !project_io_active_;
     const bool layer_actions_available = available && !locked
-                                         && !music_analysis_active_;
+                                         && project_actions_available;
     for (auto* widget : std::initializer_list<QWidget*>{
              layer_name_, layer_enabled_, layer_blend_, layer_alpha_mode_,
              layer_group_, layer_opacity_}) {
@@ -6490,13 +6498,17 @@ void MainWindow::loadLayerEditors() {
                                     || page == surface_page_
                                     || page == motion_page_
                                     || page == finish_page_;
-            page->setEnabled(layer_page ? available && !locked : true);
+            page->setEnabled(layer_page ? layer_actions_available
+                                        : project_actions_available);
         }
     }
-    for (QPushButton* button : workflow_stage_buttons_) {
-        button->setEnabled(available && !locked);
+    for (std::size_t index = 0; index < workflow_stage_buttons_.size(); ++index) {
+        const bool layer_stage = index >= 1U && index <= 5U;
+        workflow_stage_buttons_[index]->setEnabled(
+            layer_stage ? layer_actions_available : project_actions_available);
     }
     populating_ = was_populating;
+    updateSynchronizationState();
     updateWorkflowSummaries();
 }
 
@@ -7987,6 +7999,14 @@ void MainWindow::updateSynchronizationState() {
     if (clock_mode_ == nullptr) return;
     const auto mode = config_.clock.mode;
     const bool editable = !music_analysis_active_;
+    const auto* active_layer = activeLayer();
+    const auto* owning_group = active_layer != nullptr
+                                   ? groupForLayer(*active_layer) : nullptr;
+    const bool layer_accessible = active_layer != nullptr
+                                  && !selected_group_uuid_
+                                  && (owning_group == nullptr
+                                      || !owning_group->locked);
+    const bool layer_editable = editable && layer_accessible;
     const bool pulse_clock = mode == pvt::ClockMode::Frame
                              || mode == pvt::ClockMode::Time
                              || mode == pvt::ClockMode::Meter
@@ -8004,7 +8024,7 @@ void MainWindow::updateSynchronizationState() {
              clock_phase_offset_, music_tempo_mode_, music_beat_offset_ms_}) {
         editor->setEnabled(editable);
     }
-    swings_group_->setEnabled(editable);
+    swings_group_->setEnabled(layer_editable);
     const bool music_audio_available = effective_active_clock_is_music(config_);
     project_audio_response_group_->setVisible(music_audio_available);
     audio_response_group_->setVisible(music_audio_available);
@@ -8014,9 +8034,12 @@ void MainWindow::updateSynchronizationState() {
     effect_form_->setRowVisible(effect_audio_response_, music_audio_available);
     project_audio_response_group_->setEnabled(editable
                                               && music_audio_available);
-    audio_response_group_->setEnabled(editable && music_audio_available);
-    audio_response_effective_->setEnabled(editable && music_audio_available);
-    audio_copy_project_->setEnabled(editable && music_audio_available);
+    audio_response_group_->setEnabled(layer_editable
+                                      && music_audio_available);
+    audio_response_effective_->setEnabled(layer_editable
+                                          && music_audio_available);
+    audio_copy_project_->setEnabled(layer_editable
+                                    && music_audio_available);
     const bool layer_override = config_.audio_reactive_override_enabled;
     const pvt::AudioReactiveConfig& effective_audio =
         layer_override ? config_.audio_reactive
@@ -8031,12 +8054,12 @@ void MainWindow::updateSynchronizationState() {
                                                : tr("disabled")));
     if (const auto wave = selectedWaveIndex()) {
         wave_audio_response_->setEnabled(
-            editable && music_audio_available
+            layer_editable && music_audio_available
             && config_.waves[*wave].synchronized);
     }
     if (const auto effect = selectedEffectIndex()) {
         effect_audio_response_->setEnabled(
-            editable && music_audio_available
+            layer_editable && music_audio_available
             && config_.effects[*effect].synchronized);
     }
     clock_form_->setRowVisible(clock_frame_interval_, mode == pvt::ClockMode::Frame);
@@ -8099,8 +8122,8 @@ void MainWindow::updateSynchronizationState() {
 
     const auto& local = config_.layer_clock;
     const auto local_mode = local.clock.mode;
-    const bool local_enabled = local.enabled && editable;
-    layer_clock_group_->setEnabled(editable);
+    const bool local_enabled = local.enabled && layer_editable;
+    layer_clock_group_->setEnabled(layer_editable);
     layer_clock_mix_enabled_->setEnabled(local_enabled);
     layer_clock_mix_mode_->setEnabled(local_enabled && local.mix_enabled);
     layer_clock_form_->setRowVisible(
@@ -8151,10 +8174,11 @@ void MainWindow::updateSynchronizationState() {
         layer_meter_valid ? QString{} : QStringLiteral("color: #d32f2f;"));
 
     const bool has_layer_music = !local.clock.music.source_sha256.empty();
-    layer_music_relink_->setEnabled(has_layer_music && editable);
+    layer_music_relink_->setEnabled(has_layer_music && layer_editable);
     layer_music_reanalyze_->setEnabled(
-        has_layer_music && editable && !currentMusicSourcePath(true).isEmpty());
-    layer_music_clear_->setEnabled(has_layer_music && editable);
+        has_layer_music && layer_editable
+        && !currentMusicSourcePath(true).isEmpty());
+    layer_music_clear_->setEnabled(has_layer_music && layer_editable);
     layer_music_choose_->setEnabled(local_enabled
                                     && local_mode == pvt::ClockMode::Music);
     layer_music_cancel_->setVisible(music_analysis_active_
@@ -8234,8 +8258,10 @@ void MainWindow::updateMusicTransactionGuards() {
     if (synchronization_page_ != nullptr) {
         synchronization_page_->setEnabled(editable || music_analysis_active_);
     }
-    for (QPushButton* button : workflow_stage_buttons_) {
-        button->setEnabled(layer_editable);
+    for (std::size_t index = 0; index < workflow_stage_buttons_.size(); ++index) {
+        const bool layer_stage = index >= 1U && index <= 5U;
+        workflow_stage_buttons_[index]->setEnabled(
+            layer_stage ? layer_editable : editable);
     }
     updateSynchronizationState();
     updateExportAvailability();
@@ -12523,6 +12549,27 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
     alpha_probe = pvt::default_config();
+    alpha_probe.effects.clear();
+    auto neutral_lens = pvt::default_effect(
+        pvt::EffectType::LensDistortion);
+    neutral_lens.enabled = true;
+    neutral_lens.edge_mode = pvt::EdgeMode::Alpha;
+    neutral_lens.secondary = 0.0;
+    alpha_probe.effects.push_back(neutral_lens);
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A neutral lens distortion unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    alpha_probe.effects.front().secondary = 1.0;
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("An active lens distortion with transparent edges did not request alpha output.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
     alpha_probe.motion.enabled = true;
     alpha_probe.motion.custom_path.enabled = true;
     if (!configuration_requires_alpha(alpha_probe)) {
@@ -12942,6 +12989,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || synchronization_page_ == nullptr
         || drivers_group_ == nullptr
         || !drivers_group_->isAncestorOf(synchronization_page_)
+        || layer_clock_group_ == nullptr
+        || layer_music_cancel_ == nullptr
+        || layer_clock_group_->isAncestorOf(layer_music_cancel_)
         || drivers_expand_button_ == nullptr
         || driver_project_summary_ == nullptr
         || driver_layer_summary_ == nullptr
@@ -14243,11 +14293,26 @@ bool MainWindow::runSmokeChecks(QString* error) {
     selectLayer(top_uuid);
     if (!project_.groups.front().locked || layer_alpha_mode_->isEnabled()
         || source_page_->isEnabled() || randomize_values_action_->isEnabled()
-        || randomize_mix_action_->isEnabled()) {
+        || randomize_mix_action_->isEnabled()
+        || layer_clock_group_->isEnabled() || swings_group_->isEnabled()
+        || !clock_mode_->isEnabled()
+        || !workflow_stage_buttons_[0]->isEnabled()
+        || workflow_stage_buttons_[1]->isEnabled()
+        || !workflow_stage_buttons_[6]->isEnabled()) {
         if (error != nullptr) *error = tr("Locking a group did not protect its contained layer editors.");
         return false;
     }
     selectGroup(group_uuid);
+    if (!workflow_stage_buttons_[0]->isEnabled()
+        || workflow_stage_buttons_[1]->isEnabled()
+        || !workflow_stage_buttons_[6]->isEnabled()
+        || !clock_mode_->isEnabled() || layer_clock_group_->isEnabled()
+        || swings_group_->isEnabled()) {
+        if (error != nullptr) {
+            *error = tr("Selecting a group did not keep project controls reachable while protecting layer controls.");
+        }
+        return false;
+    }
     group_locked_->setChecked(false);
     addLayer();
     const std::string temporary_uuid = active_layer_uuid_;

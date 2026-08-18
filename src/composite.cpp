@@ -225,9 +225,10 @@ bool effect_can_create_transparency(const EffectConfig& effect) {
         || effect.edge_mode != EdgeMode::Alpha) {
         return false;
     }
-    return effect.type == EffectType::Blur
-               ? effect.radius_pixels > 0.0
-               : effect.magnitude > 0.0;
+    if (effect.type == EffectType::Blur) return effect.radius_pixels > 0.0;
+    return effect.magnitude > 0.0
+           && (effect.type != EffectType::LensDistortion
+               || effect.secondary != 0.0);
 }
 
 bool effect_can_create_particle_coverage(const EffectConfig& effect) {

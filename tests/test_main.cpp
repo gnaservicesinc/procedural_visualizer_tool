@@ -1677,6 +1677,23 @@ void test_layer_clock_mixing_and_generated_shaping() {
     music.layer_clock.scale = pvt::LayerClockScale::PlayOnceThenProject;
     CHECK(pvt::detail::prepare_frame_for_backend(music, 15, prepared, &error));
     CHECK(close(prepared.independent_loop_phase / kTau, 0.75));
+    // Once the one-shot layer clock hands off, the project clock is the
+    // complete visual timeline. Mixing must not combine the project phase
+    // with the copied project phase (Add would double it and Difference/XOR
+    // would collapse it).
+    music.layer_clock.mix_enabled = true;
+    for (const pvt::LayerClockMixMode mode : {
+             pvt::LayerClockMixMode::Replace,
+             pvt::LayerClockMixMode::Add,
+             pvt::LayerClockMixMode::Difference,
+             pvt::LayerClockMixMode::SoftXor,
+             pvt::LayerClockMixMode::BitwiseXor}) {
+        music.layer_clock.mix = mode;
+        CHECK(pvt::detail::prepare_frame_for_backend(
+            music, 15, prepared, &error));
+        CHECK(close(normalized_phase(prepared), 0.75));
+        CHECK(close(prepared.independent_loop_phase / kTau, 0.75));
+    }
 
     pvt::RenderConfig generated = pvt::default_config();
     make_small(generated);
@@ -2793,6 +2810,21 @@ void test_validation_limits() {
     CHECK(pvt::validate(config).ok);
     config.effects.front().secondary = 0.0;
     CHECK(pvt::validate(config).ok); // Neutral direction is a valid no-op.
+    config = pvt::default_config();
+    make_small(config);
+    config.effects.clear();
+    const auto no_lens_result = pvt::validate(config);
+    lens.secondary = 0.0;
+    config.effects.push_back(lens);
+    const auto neutral_lens_result = pvt::validate(config);
+    CHECK(neutral_lens_result.ok);
+    CHECK(neutral_lens_result.estimated_peak_bytes
+          == no_lens_result.estimated_peak_bytes);
+    config.effects.front().secondary = 1.0;
+    const auto active_lens_result = pvt::validate(config);
+    CHECK(active_lens_result.ok);
+    CHECK(active_lens_result.estimated_peak_bytes
+          > neutral_lens_result.estimated_peak_bytes);
 
     config = pvt::default_config();
     make_small(config);

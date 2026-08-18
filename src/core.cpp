@@ -1052,21 +1052,20 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
         layer = evaluate_clock_sample(
             local.clock, local_count, local_time * config.fps,
             local_time, local_duration, local_time / local_duration);
-        if (use_project_phase) {
-            layer.normalized_phase = project.normalized_phase;
-            layer.independent_phase = project.independent_phase;
-        }
     }
 
     TimelineSample result = project;
-    result.normalized_phase = combine_clock_phases(
-        project.normalized_phase, layer.normalized_phase,
-        local.mix_enabled ? local.mix : LayerClockMixMode::Replace);
+    result.normalized_phase = use_project_phase
+        ? project.normalized_phase
+        : combine_clock_phases(
+              project.normalized_phase, layer.normalized_phase,
+              local.mix_enabled ? local.mix : LayerClockMixMode::Replace);
     // Before clock mixing existed, an active layer clock became the layer's
     // complete timeline. Preserve its independently mapped/free-running phase
     // as well as its synchronized phase; otherwise unsynchronized effects and
     // path bindings jump back to project time when an old project is opened.
-    result.independent_phase = layer.independent_phase;
+    result.independent_phase = use_project_phase
+        ? project.independent_phase : layer.independent_phase;
     // A layer music source remains this layer's effective dense audio
     // envelope even when its phase is mixed with (or hands off to) the project
     // clock. Non-music layer clocks retain the project envelope.
@@ -1210,8 +1209,9 @@ bool effect_has_render_work(const EffectConfig& effect) {
         case EffectType::FlagWave:
         case EffectType::Glitch:
         case EffectType::Starburst:
-        case EffectType::LensDistortion:
             return effect.magnitude > 0.0;
+        case EffectType::LensDistortion:
+            return effect.magnitude > 0.0 && effect.secondary != 0.0;
     }
     return false;
 }
