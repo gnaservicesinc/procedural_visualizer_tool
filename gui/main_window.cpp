@@ -7,6 +7,7 @@
 #include "../src/audio_analysis.h"
 #include "../src/audio_playback.h"
 #include "../src/config_codec.h"
+#include "../src/palette_io.h"
 #include "../src/project_bundle.h"
 #include "../src/source_image.h"
 
@@ -337,6 +338,66 @@ bool valid_text(const QString& value, TextRule rule) {
     return true;
 }
 
+double linear_to_display_srgb(double value) {
+    const double encoded = value <= 0.0031308
+                               ? 12.92 * value
+                               : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
+    return (std::clamp)(encoded, 0.0, 1.0);
+}
+
+QColor palette_display_color(const pvt::PaletteColor& value) {
+    const bool linear = value.encoding == pvt::PaletteColorEncoding::Linear;
+    const auto channel = [linear](double component) {
+        return linear ? linear_to_display_srgb(component)
+                      : (std::clamp)(component, 0.0, 1.0);
+    };
+    return QColor::fromRgbF(
+        static_cast<float>(channel(value.red)),
+        static_cast<float>(channel(value.green)),
+        static_cast<float>(channel(value.blue)),
+        static_cast<float>((std::clamp)(value.alpha, 0.0, 1.0)));
+}
+
+QString palette_io_summary_text(
+    const QString& path, pvt::palette_io::PaletteFormat format,
+    const pvt::palette_io::PaletteIoSummary& summary) {
+    QString result = QObject::tr(
+        "%1\n%2\n\nScanned: %3\nAccepted: %4\nFully transparent ignored: %5\nDuplicates ignored: %6\nSkipped: %7\nUnsupported: %8")
+        .arg(QString::fromUtf8(pvt::palette_io::format_name(format)), path)
+        .arg(static_cast<qulonglong>(summary.scanned))
+        .arg(static_cast<qulonglong>(summary.accepted))
+        .arg(static_cast<qulonglong>(summary.transparent_ignored))
+        .arg(static_cast<qulonglong>(summary.duplicates_ignored))
+        .arg(static_cast<qulonglong>(summary.skipped))
+        .arg(static_cast<qulonglong>(summary.unsupported));
+    QStringList losses;
+    if (summary.names_lost) losses.push_back(QObject::tr("entry names were not preserved"));
+    if (summary.alpha_lost) losses.push_back(QObject::tr("alpha was not preserved"));
+    if (summary.precision_lost) losses.push_back(QObject::tr("numeric precision was reduced"));
+    if (summary.encoding_converted) {
+        losses.push_back(QObject::tr("color encoding was converted"));
+    }
+    if (!losses.isEmpty()) {
+        result += QObject::tr("\n\nFormat limitations: %1.")
+                      .arg(losses.join(QStringLiteral(", ")));
+    }
+    if (!summary.warnings.empty()) {
+        result += QObject::tr("\n\nNotes:");
+        for (const std::string& warning : summary.warnings) {
+            result += QStringLiteral("\n• ") + QString::fromStdString(warning);
+        }
+    }
+    return result;
+}
+
+QString palette_file_filter() {
+    return QObject::tr(
+        "All supported palettes (*.gpl *.kpl *.css *.py *.php *.java *.txt *.hex *.png *.exr);;"
+        "GIMP palette (*.gpl);;Krita palette (*.kpl);;CSS stylesheet (*.css);;"
+        "Python dictionary (*.py);;PHP dictionary (*.php);;Java map (*.java);;"
+        "Hex text (*.txt *.hex);;PNG palette image (*.png);;FLOAT OpenEXR palette image (*.exr)");
+}
+
 class Utf8TextValidator final : public QValidator {
 public:
     Utf8TextValidator(TextRule rule, QObject* parent)
@@ -613,6 +674,9 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     bytes = saturating_add(bytes, estimated_string_bytes(render.palette.name));
     bytes = saturating_add(
         bytes, render.palette.colors.capacity() * sizeof(pvt::PaletteColor));
+    for (const auto& color : render.palette.colors) {
+        bytes = saturating_add(bytes, estimated_string_bytes(color.name));
+    }
     bytes = saturating_add(
         bytes, estimated_compatibility_bytes(render.source_compatibility));
     bytes = saturating_add(
@@ -1299,6 +1363,33 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.center_y = random_real(random, 0.2, 0.8);
             effect.angle_degrees = random_real(random, -180.0, 180.0);
             break;
+        case pvt::EffectType::Glitch:
+            effect.intensity = random_real(random, 0.3, 0.9);
+            effect.magnitude = random_real(random, 0.008, 0.08);
+            effect.frequency = static_cast<double>(
+                random_integer(random, 8, 72));
+            effect.secondary = random_real(random, 0.1, 0.9);
+            effect.center_x = random_real(random, 0.2, 0.8);
+            effect.center_y = random_real(random, 0.2, 0.8);
+            break;
+        case pvt::EffectType::Starburst:
+            effect.intensity = random_real(random, 0.3, 0.9);
+            effect.magnitude = random_real(random, 0.008, 0.08);
+            effect.frequency = static_cast<double>(
+                random_integer(random, 4, 32));
+            effect.secondary = random_real(random, 0.15, 0.9);
+            effect.center_x = random_real(random, 0.25, 0.75);
+            effect.center_y = random_real(random, 0.25, 0.75);
+            effect.angle_degrees = random_real(random, -180.0, 180.0);
+            break;
+        case pvt::EffectType::LensDistortion:
+            effect.intensity = random_real(random, 0.3, 0.9);
+            effect.magnitude = random_real(random, 0.04, 0.35);
+            effect.frequency = random_real(random, 1.0, 4.0);
+            effect.secondary = random_chance(random, 0.5) ? -1.0 : 1.0;
+            effect.center_x = random_real(random, 0.3, 0.7);
+            effect.center_y = random_real(random, 0.3, 0.7);
+            break;
     }
 }
 
@@ -1367,6 +1458,71 @@ void make_checkable_group_collapsible(QGroupBox* group) {
     set_expanded(group->isChecked());
 }
 
+pvt::ProjectDocument built_in_workbench_project_document() {
+    // Keep the installed application's blank canvas aligned with the supplied
+    // Untitled.zip concept without changing the richer public API defaults
+    // used by existing library clients and tests.
+    pvt::ProjectDocument document = pvt::default_project_document();
+    auto& project = document.project;
+    project.name = "Untitled";
+    project.canvas.width = 1920;
+    project.canvas.height = 1080;
+    project.canvas.block_size = 1;
+    project.canvas.total_frames = 300;
+    project.canvas.fps = 60.0;
+    project.canvas.clock = {};
+    project.canvas.motion_paths.clear();
+    project.canvas.audio_reactive_defaults = {};
+    project.output = {};
+    project.output.write_alpha = true;
+
+    auto& layer = project.layers.front();
+    layer.name = "Layer 1";
+    layer.enabled = true;
+    layer.opacity = 1.0;
+    layer.blend_mode = pvt::BlendMode::Normal;
+    layer.alpha_mode = pvt::AlphaMode::AlphaOver;
+    auto& render = layer.render;
+    render.waves.clear();
+    render.swings.clear();
+    auto swing = pvt::default_swing(0U);
+    swing.id = 4U;
+    render.swings.push_back(std::move(swing));
+    render.swings_enabled = false;
+    render.effects.clear();
+    auto zoom = pvt::default_effect(pvt::EffectType::EndlessZoom);
+    zoom.id = 5U;
+    zoom.enabled = false;
+    render.effects.push_back(std::move(zoom));
+    render.layer_clock = {};
+    render.audio_reactive = {};
+    render.audio_reactive_override_enabled = false;
+    render.phrase_warp = 0.0;
+    render.ghost_mix = 0.0;
+    render.ghost_lag_degrees = 0.0;
+    render.displacement_enabled = false;
+    render.lighting_enabled = false;
+    render.spiral_enabled = false;
+    render.wall_reflection_enabled = false;
+    render.hue_cycles = 1;
+    render.saturation = 1.0;
+    render.starting_image = {};
+    render.palette = {};
+    render.surface = {};
+    render.transform = {};
+    render.motion = {};
+    render.quantization = {};
+    render.alpha = {};
+    render.alpha.minimum = 0.0;
+    render.alpha.maximum = 1.0;
+    render.alpha.spatial_frequency = 1.99;
+    render.alpha.cycles_per_loop = 6;
+    render.alpha.use_source_alpha = false;
+    render.starting_colors = {};
+    document.dirty = false;
+    return document;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -1383,7 +1539,7 @@ MainWindow::MainWindow(QWidget* parent)
     document_ = makeNewProjectDocument(&custom_defaults_load_warning_);
     if (document_ == nullptr || document_->project.layers.empty()) {
         document_ = std::make_unique<pvt::ProjectDocument>(
-            pvt::default_project_document());
+            built_in_workbench_project_document());
     }
     project_ = document_->project;
     document_->dirty = false;
@@ -1396,7 +1552,7 @@ MainWindow::MainWindow(QWidget* parent)
         kMinimumUndoLimit, kMaximumUndoLimit);
     undo_stack_->setUndoLimit(undo_limit);
 
-    resize(1420, 860);
+    resize(1460, 900);
 
     preview_timer_ = new QTimer(this);
     preview_timer_->setSingleShot(true);
@@ -1416,26 +1572,102 @@ MainWindow::MainWindow(QWidget* parent)
     auto* outer = new QVBoxLayout(central);
     auto* splitter = new QSplitter(Qt::Horizontal);
     preview_ = new PreviewWidget;
-    tabs_ = new QTabWidget;
-    tabs_->setDocumentMode(true);
-    tabs_->setUsesScrollButtons(true);
     wave_page_ = createWavePage();
     synchronization_page_ = createSynchronizationPage();
     effect_page_ = createEffectPage();
-    tabs_->addTab(wave_page_, tr("Waves"));
-    tabs_->addTab(synchronization_page_, tr("Synchronization"));
+    source_page_ = createLayerSettingsPage();
+    project_canvas_page_ = createOutputPage();
+    history_page_ = createVersionsPage();
+    project_sync_page_ = new QWidget;
+    project_sync_page_->setObjectName(QStringLiteral("projectSynchronizationPage"));
+    auto* project_sync_layout = new QVBoxLayout(project_sync_page_);
+    auto* project_sync_help = new QLabel(tr(
+        "Project Sync & Audio is edited in the persistent Drivers panel above. Expand it to configure the project clock and inherited audio profile alongside the active layer override."));
+    project_sync_help->setWordWrap(true);
+    project_sync_help->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    project_sync_layout->addWidget(project_sync_help);
+    project_sync_layout->addStretch();
+
+    // QTabWidget remains the stable page host used by the existing editor,
+    // save, undo, and asynchronous history code. Its tab bar is deliberately
+    // hidden: the layer workflow and project controls below are the only
+    // user-facing navigation, so project history cannot masquerade as a
+    // random layer-render stage.
+    tabs_ = new QTabWidget;
+    tabs_->setObjectName(QStringLiteral("workflowPageHost"));
+    tabs_->setDocumentMode(true);
+    tabs_->tabBar()->hide();
+    tabs_->setAccessibleName(tr("Active layer workflow and project settings editor"));
+    tabs_->addTab(source_page_, tr("Source"));
     tabs_->addTab(effect_page_, tr("Effects"));
-    tabs_->addTab(createLayerSettingsPage(), tr("Layer Render"));
-    tabs_->addTab(createOutputPage(), tr("Output"));
-    tabs_->addTab(createVersionsPage(), tr("Versions"));
-    // Keep every tab caption readable at the default UI font. Individual
-    // pages still use wrapping forms/scroll areas for larger accessibility
-    // fonts, but the primary navigation itself must never elide labels.
-    tabs_->setMinimumWidth((std::max)(600, tabs_->tabBar()->sizeHint().width() + 8));
+    tabs_->addTab(surface_page_, tr("Surface"));
+    tabs_->addTab(motion_page_, tr("Transform & Motion"));
+    tabs_->addTab(finish_page_, tr("Finish"));
+    tabs_->addTab(project_canvas_page_, tr("Canvas & Loop"));
+    tabs_->addTab(project_sync_page_, tr("Project Sync & Audio"));
+    tabs_->addTab(project_export_page_, tr("Export"));
+    tabs_->addTab(history_page_, tr("History"));
+    tabs_->setMinimumWidth(440);
+
+    auto* inspector = new QWidget;
+    inspector->setObjectName(QStringLiteral("flowWorkbenchInspector"));
+    auto* inspector_layout = new QVBoxLayout(inspector);
+    inspector_layout->setContentsMargins(0, 0, 0, 0);
+    active_context_label_ = new QLabel;
+    active_context_label_->setObjectName(QStringLiteral("activeWorkflowContext"));
+    active_context_label_->setFrameStyle(QFrame::StyledPanel | QFrame::Raised);
+    active_context_label_->setWordWrap(true);
+    active_context_label_->setAccessibleName(tr("Current workflow context"));
+    inspector_layout->addWidget(active_context_label_);
+    // The stage route and drivers describe the whole preview-to-inspector
+    // workbench, so they span both panes like the selected reference instead
+    // of being squeezed into the property inspector.
+    outer->addWidget(createWorkflowNavigator());
+
+    drivers_group_ = new QGroupBox(tr("Drivers — clocks, swing, and audio"));
+    drivers_group_->setObjectName(QStringLiteral("driversStrip"));
+    drivers_group_->setAccessibleName(tr("Persistent render drivers"));
+    auto* drivers_layout = new QVBoxLayout(drivers_group_);
+    auto* drivers_row = new QHBoxLayout;
+    driver_project_summary_ = new QLabel;
+    driver_layer_summary_ = new QLabel;
+    driver_swing_summary_ = new QLabel;
+    driver_audio_summary_ = new QLabel;
+    for (QLabel* summary : {driver_project_summary_, driver_layer_summary_,
+                            driver_swing_summary_, driver_audio_summary_}) {
+        summary->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+        summary->setAlignment(Qt::AlignCenter);
+        summary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        summary->setMinimumWidth(90);
+        summary->setWordWrap(true);
+        drivers_row->addWidget(summary, 1);
+    }
+    drivers_expand_button_ = new QPushButton;
+    drivers_expand_button_->setObjectName(QStringLiteral("editDriversButton"));
+    drivers_expand_button_->setAccessibleName(tr("Show or hide driver controls"));
+    drivers_expand_button_->setToolTip(
+        tr("Open project and active-layer clock, swing, and audio-response controls without leaving the selected workflow stage."));
+    drivers_row->addWidget(drivers_expand_button_);
+    drivers_layout->addLayout(drivers_row);
+    synchronization_page_->setObjectName(QStringLiteral("driverDetails"));
+    synchronization_page_->setMinimumHeight(220);
+    synchronization_page_->setMaximumHeight(380);
+    drivers_layout->addWidget(synchronization_page_);
+    outer->addWidget(drivers_group_);
+
+    workflow_prerequisite_ = new QLabel;
+    workflow_prerequisite_->setObjectName(QStringLiteral("workflowPrerequisite"));
+    workflow_prerequisite_->setWordWrap(true);
+    workflow_prerequisite_->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    workflow_prerequisite_->setAccessibleName(tr("Workflow status and prerequisites"));
+    inspector_layout->addWidget(workflow_prerequisite_);
+    inspector_layout->addWidget(tabs_, 1);
+
     splitter->addWidget(preview_);
-    splitter->addWidget(tabs_);
+    splitter->addWidget(inspector);
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 2);
+    splitter->setSizes({720, 520});
     outer->addWidget(splitter, 1);
     outer->addWidget(createTimeline());
     setCentralWidget(central);
@@ -1718,6 +1950,9 @@ MainWindow::MainWindow(QWidget* parent)
             });
 
     connectEditors();
+    connect(drivers_expand_button_, &QPushButton::clicked, this, [this] {
+        setDriversExpanded(synchronization_page_->isHidden());
+    });
     connect(undo_stack_, &QUndoStack::cleanChanged, this,
             [this] { updateWindowTitle(); });
     refreshLayerList();
@@ -1726,6 +1961,8 @@ MainWindow::MainWindow(QWidget* parent)
     updateWindowTitle();
     updateCompatibilityWarning();
     restoreUserSettings();
+    setDriversExpanded(false);
+    setWorkflowStage(0);
     if (!custom_defaults_load_warning_.isEmpty()) {
         status_->setText(custom_defaults_load_warning_);
     }
@@ -1749,6 +1986,284 @@ MainWindow::~MainWindow() {
     music_analysis_watcher_->waitForFinished();
     export_watcher_->waitForFinished();
     project_io_watcher_->waitForFinished();
+}
+
+QWidget* MainWindow::createWorkflowNavigator() {
+    auto* navigator = new QWidget;
+    navigator->setObjectName(QStringLiteral("workflowStageNavigator"));
+    navigator->setAccessibleName(tr("Layer render pipeline stages"));
+    auto* layout = new QHBoxLayout(navigator);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    const QStringList labels = {
+        tr("Source"), tr("Texture FX"), tr("Surface"),
+        tr("Transform & Motion"), tr("Object FX"), tr("Finish")};
+    const QStringList descriptions = {
+        tr("Establish starting pixels and alpha from generated colors or an image, then apply an optional starting-palette constraint and source shaping."),
+        tr("Edit the ordered effects that run in texture space before surface wrapping."),
+        tr("Wrap the prepared texture around a built-in surface or embedded OBJ."),
+        tr("Apply static layer transforms and loop-safe movement to the complete layer."),
+        tr("Edit the ordered effects that run on the mapped object after surface and layer transforms."),
+        tr("Apply optional post-effects color quantization before compositing.")};
+    workflow_stage_buttons_.clear();
+    workflow_stage_buttons_.reserve(static_cast<std::size_t>(labels.size()));
+    for (int index = 0; index < labels.size(); ++index) {
+        if (index != 0) {
+            auto* arrow = new QLabel(QStringLiteral("›"));
+            arrow->setAlignment(Qt::AlignCenter);
+            arrow->setAccessibleName(tr("then"));
+            layout->addWidget(arrow);
+        }
+        QString button_label = labels.at(index);
+        button_label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+        auto* button = new QPushButton(button_label);
+        button->setObjectName(
+            QStringLiteral("workflowStage%1").arg(index));
+        button->setCheckable(true);
+        button->setStyleSheet(QStringLiteral(
+            "QPushButton:checked { background-color: palette(highlight); "
+            "color: palette(highlighted-text); font-weight: 600; "
+            "border: 1px solid palette(highlight); border-radius: 4px; "
+            "padding: 4px 8px; }"));
+        button->setToolTip(descriptions.at(index));
+        button->setAccessibleName(
+            tr("Stage %1 of %2: %3")
+                .arg(index + 1)
+                .arg(labels.size())
+                .arg(labels.at(index)));
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        connect(button, &QPushButton::clicked, this,
+                [this, index] { setWorkflowStage(index); });
+        workflow_stage_buttons_.push_back(button);
+        layout->addWidget(button, index == 3 ? 2 : 1);
+    }
+    return navigator;
+}
+
+void MainWindow::setWorkflowStage(int stage) {
+    if (tabs_ == nullptr || stage < 0 || stage >= 6) return;
+    workflow_stage_index_ = stage;
+    workflow_project_context_.clear();
+    for (std::size_t index = 0; index < workflow_stage_buttons_.size(); ++index) {
+        const QSignalBlocker blocker(workflow_stage_buttons_[index]);
+        workflow_stage_buttons_[index]->setChecked(
+            index == static_cast<std::size_t>(stage));
+    }
+
+    QWidget* page = source_page_;
+    std::optional<pvt::EffectSpace> requested_filter;
+    switch (stage) {
+        case 0: page = source_page_; break;
+        case 1:
+            page = effect_page_;
+            requested_filter = pvt::EffectSpace::Texture;
+            break;
+        case 2: page = surface_page_; break;
+        case 3: page = motion_page_; break;
+        case 4:
+            page = effect_page_;
+            requested_filter = pvt::EffectSpace::Surface;
+            break;
+        case 5: page = finish_page_; break;
+        default: return;
+    }
+    if (requested_filter && effect_space_filter_ != requested_filter) {
+        effect_space_filter_ = requested_filter;
+        refreshEffectList();
+    }
+    if (page != nullptr) tabs_->setCurrentWidget(page);
+
+    if (preview_ != nullptr) {
+        if (synchronization_page_ != nullptr
+            && !synchronization_page_->isHidden()) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
+        } else if (stage == 1 || stage == 4) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
+        } else {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
+        }
+    }
+    updateWorkflowSummaries();
+}
+
+void MainWindow::showProjectSettingsPage(QWidget* page, const QString& title) {
+    if (tabs_ == nullptr || page == nullptr) return;
+    workflow_project_context_ = title;
+    for (QPushButton* button : workflow_stage_buttons_) {
+        const QSignalBlocker blocker(button);
+        button->setChecked(false);
+    }
+    tabs_->setCurrentWidget(page);
+    updateWorkflowSummaries();
+}
+
+void MainWindow::setDriversExpanded(bool expanded) {
+    if (synchronization_page_ == nullptr || drivers_expand_button_ == nullptr) {
+        return;
+    }
+    synchronization_page_->setVisible(expanded);
+    drivers_expand_button_->setText(expanded ? tr("Hide controls")
+                                             : tr("Edit drivers…"));
+    drivers_expand_button_->setAccessibleDescription(
+        expanded ? tr("Driver controls are expanded")
+                 : tr("Driver controls are collapsed"));
+    if (preview_ != nullptr) {
+        if (expanded) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
+        } else if (workflow_stage_index_ == 1 || workflow_stage_index_ == 4) {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
+        } else {
+            preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
+        }
+    }
+    updateWorkflowSummaries();
+}
+
+void MainWindow::updateWorkflowSummaries() {
+    const auto stage_name = [this]() -> QString {
+        if (workflow_stage_index_ >= 0
+            && workflow_stage_index_
+                   < static_cast<int>(workflow_stage_buttons_.size())) {
+            QString label = workflow_stage_buttons_[
+                static_cast<std::size_t>(workflow_stage_index_)]->text();
+            label.replace(QStringLiteral("&&"), QStringLiteral("&"));
+            return label;
+        }
+        return tr("Source");
+    };
+    const pvt::LayerConfig* layer = activeLayer();
+    const pvt::LayerGroup* owning_group =
+        layer != nullptr ? groupForLayer(*layer) : nullptr;
+    const bool locked = owning_group != nullptr && owning_group->locked;
+
+    if (active_context_label_ != nullptr) {
+        if (!workflow_project_context_.isEmpty()) {
+            active_context_label_->setText(
+                tr("Project Settings  ›  %1").arg(workflow_project_context_));
+        } else if (layer != nullptr) {
+            active_context_label_->setText(
+                tr("Active Layer  ›  %1  ›  %2")
+                    .arg(QString::fromStdString(layer->name), stage_name()));
+        } else {
+            active_context_label_->setText(tr("No active layer"));
+        }
+    }
+
+    const auto effect_count = [this](pvt::EffectSpace space) {
+        return static_cast<qulonglong>(std::count_if(
+            config_.effects.cbegin(), config_.effects.cend(),
+            [space](const pvt::EffectConfig& effect) {
+                return effect.space == space;
+            }));
+    };
+    if (workflow_stage_buttons_.size() == 6U) {
+        workflow_stage_buttons_[0]->setStatusTip(
+            tr("%1 waves; %2 starting-palette colors")
+                .arg(static_cast<qulonglong>(config_.waves.size()))
+                .arg(static_cast<qulonglong>(config_.palette.colors.size())));
+        workflow_stage_buttons_[1]->setStatusTip(
+            tr("%1 texture effects").arg(effect_count(pvt::EffectSpace::Texture)));
+        workflow_stage_buttons_[2]->setStatusTip(
+            config_.surface.enabled ? tr("Surface mapping enabled")
+                                    : tr("Surface mapping bypassed"));
+        workflow_stage_buttons_[3]->setStatusTip(
+            config_.motion.enabled ? tr("Whole-layer motion enabled")
+                                   : tr("Whole-layer motion bypassed"));
+        workflow_stage_buttons_[4]->setStatusTip(
+            tr("%1 object effects").arg(effect_count(pvt::EffectSpace::Surface)));
+        workflow_stage_buttons_[5]->setStatusTip(
+            config_.quantization.enabled ? tr("Post-effects quantization enabled")
+                                         : tr("Post-effects quantization bypassed"));
+    }
+
+    if (driver_project_summary_ != nullptr) {
+        driver_project_summary_->setText(
+            tr("Project Clock\n%1")
+                .arg(QString::fromUtf8(pvt::clock_mode_name(config_.clock.mode))));
+        driver_project_summary_->setToolTip(
+            tr("The project-wide clock is always the base timeline for synchronized items."));
+    }
+    if (driver_layer_summary_ != nullptr) {
+        driver_layer_summary_->setText(
+            config_.layer_clock.enabled
+                ? (config_.layer_clock.mix_enabled
+                       ? tr("Layer Clock\n%1 · %2")
+                             .arg(QString::fromUtf8(pvt::clock_mode_name(
+                                      config_.layer_clock.clock.mode)),
+                                  QString::fromUtf8(
+                                      pvt::layer_clock_mix_mode_name(
+                                          config_.layer_clock.mix)))
+                       : tr("Layer Clock\n%1 · replaces project (mixing off)")
+                             .arg(QString::fromUtf8(pvt::clock_mode_name(
+                                 config_.layer_clock.clock.mode))))
+                : tr("Layer Clock\nOff · project passes through"));
+        driver_layer_summary_->setToolTip(
+            config_.layer_clock.enabled
+                ? (config_.layer_clock.mix_enabled
+                       ? tr("Clock mixing is explicitly enabled. The selected policy combines project and layer phases.")
+                       : tr("Mixing is off. The active layer clock replaces the project clock, preserving the historical behavior."))
+                : tr("No active-layer clock is applied; the project clock remains unchanged."));
+    }
+    if (driver_swing_summary_ != nullptr) {
+        const auto enabled_swings = static_cast<qulonglong>(std::count_if(
+            config_.swings.cbegin(), config_.swings.cend(),
+            [](const pvt::SwingConfig& swing) { return swing.enabled; }));
+        driver_swing_summary_->setText(
+            config_.swings_enabled
+                ? tr("Swing\n%1 of %2 active")
+                      .arg(enabled_swings)
+                      .arg(static_cast<qulonglong>(config_.swings.size()))
+                : tr("Swing\nBypassed"));
+    }
+    if (driver_audio_summary_ != nullptr) {
+        const pvt::AudioReactiveConfig& effective_audio =
+            config_.audio_reactive_override_enabled
+                ? config_.audio_reactive : config_.audio_reactive_defaults;
+        driver_audio_summary_->setText(
+            effective_audio.enabled
+                ? (config_.audio_reactive_override_enabled
+                       ? tr("Audio\nLayer override")
+                       : tr("Audio\nProject profile"))
+                : tr("Audio\nOff"));
+    }
+    if (effect_stage_summary_ != nullptr && effect_space_filter_) {
+        const bool texture = *effect_space_filter_ == pvt::EffectSpace::Texture;
+        effect_stage_summary_->setText(
+            texture
+                ? tr("Texture FX — ordered before surface wrapping · %1 effects")
+                      .arg(effect_count(pvt::EffectSpace::Texture))
+                : tr("Object FX — ordered after surface and transform · %1 effects")
+                      .arg(effect_count(pvt::EffectSpace::Surface)));
+    }
+
+    if (workflow_prerequisite_ != nullptr) {
+        QString message;
+        if (selected_group_uuid_) {
+            message = tr("Select a layer row to edit its render pipeline. Group controls remain in the Project & Layers panel.");
+        } else if (layer == nullptr) {
+            message = tr("Add or select a layer to begin editing this pipeline.");
+        } else if (locked) {
+            message = tr("This layer belongs to a locked group. Unlock the group in Project & Layers to edit layer stages.");
+        } else if (workflow_project_context_.isEmpty()
+                   && workflow_stage_index_ == 2 && !config_.surface.enabled) {
+            message = tr("Surface is currently bypassed. Enable Surface mapping here to wrap the prepared texture; the authored settings are preserved while off.");
+        } else if (workflow_project_context_.isEmpty()
+                   && workflow_stage_index_ == 3 && !config_.motion.enabled) {
+            message = tr("Whole-layer motion is bypassed. Static transforms and reusable path editing remain available.");
+        } else if (workflow_project_context_.isEmpty()
+                   && (workflow_stage_index_ == 1
+                       || workflow_stage_index_ == 4)
+                   && effect_list_ != nullptr && effect_list_->count() == 0) {
+            message = workflow_stage_index_ == 1
+                          ? tr("No Texture FX yet. Add one to modify source artwork before surface wrapping.")
+                          : tr("No Object FX yet. Add one to modify the mapped surface and silhouette after transform.");
+        } else {
+            message = workflow_project_context_.isEmpty()
+                          ? tr("Pipeline order is explicit: each stage receives the completed result of the stage to its left.")
+                          : tr("These settings apply to the whole project and are independent of the selected layer stage.");
+        }
+        workflow_prerequisite_->setText(message);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -1789,9 +2304,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
             if (event->type() == QEvent::FontChange
                 || event->type() == QEvent::StyleChange) {
                 preserve_control_text_width(widget);
-                if (tabs_ != nullptr && widget == tabs_->tabBar()) {
+                if (tabs_ != nullptr && widget == tabs_->tabBar()
+                    && !tabs_->tabBar()->isHidden()) {
                     tabs_->setMinimumWidth((std::max)(
-                        600, tabs_->tabBar()->sizeHint().width() + 8));
+                        440, tabs_->tabBar()->sizeHint().width() + 8));
                 }
             }
         }
@@ -2066,12 +2582,38 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_clock_group_->setObjectName(QStringLiteral("layerClockGroup"));
     auto* layer_clock_layout = new QVBoxLayout(layer_clock_group_);
     auto* layer_clock_help = new QLabel(
-        tr("Overrides the project clock only for this layer while remaining locked "
-           "to the project timeline. Short music clips can repeat with minimal "
-           "stretch, traverse once, or hand back to the project clock."));
+        tr("With advanced mixing off, this replaces the project clock only for "
+           "the active layer while remaining locked to the project timeline. "
+           "Short music clips can repeat with minimal stretch, traverse once, "
+           "or hand back to the project clock."));
     layer_clock_help->setWordWrap(true);
     layer_clock_layout->addWidget(layer_clock_help);
     layer_clock_form_ = new QFormLayout;
+    layer_clock_mix_enabled_ = new QCheckBox(
+        tr("Mix project and layer clocks (advanced)"));
+    layer_clock_mix_enabled_->setObjectName(
+        QStringLiteral("layerClockMixEnabled"));
+    layer_clock_mix_enabled_->setToolTip(tr(
+        "Off is the safe default and preserves the historical behavior: an "
+        "enabled layer clock replaces the project clock. Turn this on only "
+        "when you deliberately want both phases to contribute."));
+    layer_clock_mix_mode_ = new QComboBox;
+    layer_clock_mix_mode_->setObjectName(QStringLiteral("layerClockMixMode"));
+    for (const auto value : {pvt::LayerClockMixMode::Replace,
+                             pvt::LayerClockMixMode::Add,
+                             pvt::LayerClockMixMode::Difference,
+                             pvt::LayerClockMixMode::SoftXor,
+                             pvt::LayerClockMixMode::BitwiseXor}) {
+        add_enum_item(layer_clock_mix_mode_,
+                      QString::fromUtf8(
+                          pvt::layer_clock_mix_mode_name(value)),
+                      value);
+    }
+    layer_clock_mix_mode_->setToolTip(tr(
+        "Replace is unchanged from normal layer-clock behavior. Add and "
+        "Difference combine wrapped phases. Soft XOR is continuous; Bitwise "
+        "XOR combines 24-bit fixed-point phases and is intentionally "
+        "experimental."));
     layer_clock_scale_ = new QComboBox;
     for (const auto value : {pvt::LayerClockScale::SmartLoopFit,
                              pvt::LayerClockScale::StraightFit,
@@ -2133,6 +2675,8 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_music_beat_offset_ms_->setSuffix(tr(" ms"));
     layer_music_data_only_ = new QCheckBox(
         tr("Data only — mute during preview playback and movie export"));
+    layer_clock_form_->addRow(layer_clock_mix_enabled_);
+    layer_clock_form_->addRow(tr("Mix operation"), layer_clock_mix_mode_);
     layer_clock_form_->addRow(tr("Duration mapping"), layer_clock_scale_);
     layer_clock_form_->addRow(tr("Source"), layer_clock_mode_);
     layer_clock_form_->addRow(tr("Between pulses"), layer_clock_interpolation_);
@@ -2496,12 +3040,19 @@ QWidget* MainWindow::createSwingBlock() {
 
 QWidget* MainWindow::createEffectPage() {
     auto* page = new QWidget;
+    page->setObjectName(QStringLiteral("sharedEffectStagePage"));
     auto* layout = new QVBoxLayout(page);
+    effect_stage_summary_ = new QLabel;
+    effect_stage_summary_->setObjectName(QStringLiteral("effectStageSummary"));
+    effect_stage_summary_->setFrameStyle(QFrame::StyledPanel | QFrame::Raised);
+    effect_stage_summary_->setWordWrap(true);
+    effect_stage_summary_->setAccessibleName(tr("Current effect stage"));
+    layout->addWidget(effect_stage_summary_);
     auto* explanation = new QLabel(
-        tr("Effects keep their list order within two stages: Texture effects run before "
-           "surface wrapping; Mapped object effects run after the surface and layer transform "
-           "and can move or deform the complete primitive silhouette. Centers and local radii "
-           "are draggable in the preview."));
+        tr("This is one effect editor filtered by the selected pipeline stage. Effects keep "
+           "their order within Texture FX or Object FX; changing Apply to moves an effect to "
+           "the other stage without changing its authored settings. Centers and local radii "
+           "remain draggable in the preview."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
@@ -2511,12 +3062,29 @@ QWidget* MainWindow::createEffectPage() {
 
     auto* add_row = new QGridLayout;
     add_effect_type_ = new QComboBox;
-    for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
-                            pvt::EffectType::Shake, pvt::EffectType::FlagWave,
-                            pvt::EffectType::Glow, pvt::EffectType::BlockScale,
-                            pvt::EffectType::ParticleField, pvt::EffectType::Blur}) {
-        add_enum_item(add_effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
-    }
+    const auto populate_effect_types = [](QComboBox* combo) {
+        const auto add = [combo](const char* category,
+                                 pvt::EffectType type) {
+            add_enum_item(
+                combo,
+                QStringLiteral("%1 — %2")
+                    .arg(QString::fromUtf8(category),
+                         QString::fromUtf8(pvt::effect_type_name(type))),
+                type);
+        };
+        add("Motion & Distortion", pvt::EffectType::EndlessZoom);
+        add("Motion & Distortion", pvt::EffectType::Ripple);
+        add("Motion & Distortion", pvt::EffectType::Shake);
+        add("Motion & Distortion", pvt::EffectType::FlagWave);
+        add("Motion & Distortion", pvt::EffectType::LensDistortion);
+        add("Light & Energy", pvt::EffectType::Glow);
+        add("Light & Energy", pvt::EffectType::Starburst);
+        add("Stylize", pvt::EffectType::BlockScale);
+        add("Stylize", pvt::EffectType::Glitch);
+        add("Particles", pvt::EffectType::ParticleField);
+        add("Blur", pvt::EffectType::Blur);
+    };
+    populate_effect_types(add_effect_type_);
     auto* add = new QPushButton(tr("Add"));
     auto* duplicate = new QPushButton(tr("Duplicate"));
     auto* remove = new QPushButton(tr("Remove"));
@@ -2543,12 +3111,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_audio_response_ = new QComboBox;
     populate_audio_response_combo(effect_audio_response_);
     effect_type_ = new QComboBox;
-    for (const auto type : {pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
-                            pvt::EffectType::Shake, pvt::EffectType::FlagWave,
-                            pvt::EffectType::Glow, pvt::EffectType::BlockScale,
-                            pvt::EffectType::ParticleField, pvt::EffectType::Blur}) {
-        add_enum_item(effect_type_, QString::fromUtf8(pvt::effect_type_name(type)), type);
-    }
+    populate_effect_types(effect_type_);
     effect_space_ = new QComboBox;
     add_enum_item(effect_space_, tr("Texture (before surface)"),
                   pvt::EffectSpace::Texture);
@@ -2649,6 +3212,7 @@ QWidget* MainWindow::createEffectPage() {
         auto before = captureActiveState();
         const auto type = static_cast<pvt::EffectType>(add_effect_type_->currentData().toInt());
         auto effect = pvt::default_effect(type);
+        if (effect_space_filter_) effect.space = *effect_space_filter_;
         effect.id = pvt::allocate_id(config_);
         const auto id = effect.id;
         config_.effects.push_back(std::move(effect));
@@ -2693,10 +3257,47 @@ QWidget* MainWindow::createEffectPage() {
 }
 
 QWidget* MainWindow::createLayerSettingsPage() {
-    auto* scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    auto* contents = new QWidget;
-    auto* layout = new QVBoxLayout(contents);
+    const auto make_stage_page = [](QWidget*& page) {
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        auto* contents = new QWidget;
+        auto* layout = new QVBoxLayout(contents);
+        scroll->setWidget(contents);
+        page = scroll;
+        return layout;
+    };
+    auto* source_layout = make_stage_page(source_page_);
+    auto* surface_layout = make_stage_page(surface_page_);
+    auto* motion_layout = make_stage_page(motion_page_);
+    auto* finish_layout = make_stage_page(finish_page_);
+    source_page_->setObjectName(QStringLiteral("sourceStagePage"));
+    surface_page_->setObjectName(QStringLiteral("surfaceStagePage"));
+    motion_page_->setObjectName(QStringLiteral("motionStagePage"));
+    finish_page_->setObjectName(QStringLiteral("finishStagePage"));
+
+    const auto add_stage_intro = [](QVBoxLayout* layout, const QString& title,
+                                    const QString& description) {
+        auto* heading = new QLabel(QStringLiteral("<b>%1</b>").arg(title));
+        heading->setTextFormat(Qt::RichText);
+        heading->setAccessibleName(title);
+        auto* explanation = new QLabel(description);
+        explanation->setWordWrap(true);
+        explanation->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        layout->addWidget(heading);
+        layout->addWidget(explanation);
+    };
+    add_stage_intro(
+        source_layout, tr("Source — establish the layer's starting pixels"),
+        tr("Choose generated colors or an embedded image, optionally constrain them with a starting palette, shape the source with waves and procedural fields, then resolve source/procedural alpha. Later stages receive this result in order."));
+    add_stage_intro(
+        surface_layout, tr("Surface — wrap the prepared texture"),
+        tr("Map the layer onto a built-in primitive or embedded OBJ. Texture FX run before this stage; Object FX run after it."));
+    add_stage_intro(
+        motion_layout, tr("Transform & Motion — move the complete layer"),
+        tr("Static mirrors and flips run with loop-safe whole-layer movement. Reusable paths remain editable even while whole-layer motion is bypassed."));
+    add_stage_intro(
+        finish_layout, tr("Finish — final color reduction"),
+        tr("Post-effects quantization is the last layer-local operation before compositing. Project export encoding and destination settings live in Project Settings."));
 
     auto* rhythm_group = new QGroupBox(tr("Rhythm and color timing"));
     auto* rhythm = new QFormLayout(rhythm_group);
@@ -2710,7 +3311,15 @@ QWidget* MainWindow::createLayerSettingsPage() {
     rhythm->addRow(tr("Phrase warp"), phrase_warp_);
     rhythm->addRow(tr("Ghost mix"), ghost_mix_);
     rhythm->addRow(tr("Ghost lag (degrees)"), ghost_lag_);
-    layout->addWidget(rhythm_group);
+    if (auto* driver_scroll = qobject_cast<QScrollArea*>(synchronization_page_)) {
+        if (auto* driver_contents = driver_scroll->widget()) {
+            if (auto* driver_layout = qobject_cast<QVBoxLayout*>(
+                    driver_contents->layout())) {
+                driver_layout->insertWidget(
+                    (std::max)(0, driver_layout->count() - 1), rhythm_group);
+            }
+        }
+    }
 
     starting_image_group_ = new QGroupBox(tr("Starting image source"));
     auto* source_form = new QFormLayout(starting_image_group_);
@@ -2756,7 +3365,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "are not reduced through an 8-bit intermediate. It controls where source colors appear. When a "
         "starting palette is enabled, the image is quantized to that palette "
         "before effects; the two options are intentionally composable."));
-    layout->addWidget(starting_image_group_);
+    source_layout->addWidget(starting_image_group_);
 
     auto* starting_colors_group = new QGroupBox(tr("Generated starting colors"));
     auto* starting_colors_layout = new QVBoxLayout(starting_colors_group);
@@ -2811,7 +3420,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "coordinates."));
     starting_colors_help->setWordWrap(true);
     starting_colors_layout->addWidget(starting_colors_help);
-    layout->addWidget(starting_colors_group);
+    source_layout->addWidget(starting_colors_group);
 
     auto* pattern_group = new QGroupBox(tr("Procedural features"));
     auto* pattern = new QFormLayout(pattern_group);
@@ -2839,7 +3448,56 @@ QWidget* MainWindow::createLayerSettingsPage() {
     pattern->addRow(tr("Wall mix"), wall_mix_);
     pattern->addRow(tr("Hue cycles per loop"), hue_cycles_);
     pattern->addRow(tr("Saturation"), saturation_);
-    layout->addWidget(pattern_group);
+    source_layout->addWidget(pattern_group);
+
+    kaleidoscope_group_ = new QGroupBox(tr("Kaleidoscope shaping"));
+    kaleidoscope_group_->setCheckable(true);
+    kaleidoscope_group_->setObjectName(QStringLiteral("kaleidoscopeGroup"));
+    kaleidoscope_group_->setToolTip(tr(
+        "Folds generated source coordinates into mirrored radial segments "
+        "before waves and later pipeline stages."));
+    auto* kaleidoscope = new QFormLayout(kaleidoscope_group_);
+    kaleidoscope_segments_ = integer_editor(2, 256);
+    kaleidoscope_rotation_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    kaleidoscope_rotation_->setSuffix(QChar(0x00b0));
+    kaleidoscope_mix_ = real_editor(0.0, 1.0, 4, 0.01);
+    kaleidoscope->addRow(tr("Mirrored segments"), kaleidoscope_segments_);
+    kaleidoscope->addRow(tr("Rotation"), kaleidoscope_rotation_);
+    kaleidoscope->addRow(tr("Coordinate mix"), kaleidoscope_mix_);
+    source_layout->addWidget(kaleidoscope_group_);
+    make_checkable_group_collapsible(kaleidoscope_group_);
+
+    domain_warp_group_ = new QGroupBox(tr("Seamless domain warp"));
+    domain_warp_group_->setCheckable(true);
+    domain_warp_group_->setObjectName(QStringLiteral("domainWarpGroup"));
+    domain_warp_group_->setToolTip(tr(
+        "Distorts generated coordinates with deterministic loop-closed noise. "
+        "It does not affect an embedded starting image."));
+    auto* domain_warp = new QFormLayout(domain_warp_group_);
+    domain_warp_strength_ = real_editor(0.0, 2.0, 4, 0.01);
+    domain_warp_scale_ = real_editor(0.01, 64.0, 4, 0.05);
+    domain_warp_octaves_ = integer_editor(1, 8);
+    domain_warp_cycles_ = integer_editor(-1000, 1000);
+    domain_warp_seed_ = new QLineEdit;
+    domain_warp_seed_->setObjectName(QStringLiteral("domainWarpSeed"));
+    domain_warp_seed_->setMaxLength(20);
+    domain_warp_seed_->setPlaceholderText(tr("Unsigned 64-bit seed"));
+    domain_warp_random_seed_ = new QPushButton(tr("Randomize"));
+    domain_warp_random_seed_->setToolTip(tr(
+        "Choose a new operating-system random seed. The selected value is "
+        "stored in the project, so preview and export remain deterministic."));
+    auto* seed_row = new QWidget;
+    auto* seed_layout = new QHBoxLayout(seed_row);
+    seed_layout->setContentsMargins(0, 0, 0, 0);
+    seed_layout->addWidget(domain_warp_seed_, 1);
+    seed_layout->addWidget(domain_warp_random_seed_);
+    domain_warp->addRow(tr("Strength"), domain_warp_strength_);
+    domain_warp->addRow(tr("Spatial scale"), domain_warp_scale_);
+    domain_warp->addRow(tr("Noise octaves"), domain_warp_octaves_);
+    domain_warp->addRow(tr("Cycles per loop"), domain_warp_cycles_);
+    domain_warp->addRow(tr("Seed"), seed_row);
+    source_layout->addWidget(domain_warp_group_);
+    make_checkable_group_collapsible(domain_warp_group_);
 
     auto* transform_group = new QGroupBox(tr("Transform layer"));
     auto* transform = new QFormLayout(transform_group);
@@ -2861,7 +3519,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     transform->addRow(transform_flip_horizontal_);
     transform->addRow(transform_flip_vertical_);
     transform->addRow(tr("Mirror symmetry"), transform_mirror_);
-    layout->addWidget(transform_group);
+    motion_layout->addWidget(transform_group);
 
     motion_group_ = new QGroupBox(tr("Seamless layer motion"));
     motion_group_->setCheckable(true);
@@ -2909,7 +3567,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion_group_->setToolTip(
         tr("A lightweight path animator. Integer cycles, rotations, and scale "
            "pulses close exactly at the project loop seam."));
-    layout->addWidget(motion_group_);
+    motion_layout->addWidget(motion_group_);
 
     auto* reusable_paths_group = new QGroupBox(tr("Reusable motion paths"));
     auto* reusable_paths_layout = new QVBoxLayout(reusable_paths_group);
@@ -2920,7 +3578,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     reusable_paths_help->setWordWrap(true);
     reusable_paths_layout->addWidget(reusable_paths_help);
     reusable_paths_layout->addWidget(motion_paths_edit_, 0, Qt::AlignLeft);
-    layout->addWidget(reusable_paths_group);
+    motion_layout->addWidget(reusable_paths_group);
 
     auto* palette_group = new QGroupBox(tr("Starting palette"));
     auto* palette_layout = new QVBoxLayout(palette_group);
@@ -2955,8 +3613,10 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* edit_color = new QPushButton(tr("Edit color…"));
     auto* remove_color = new QPushButton(tr("Remove color"));
     auto* random_palette = new QPushButton(tr("Generate random…"));
-    auto* save_palette = new QPushButton(tr("Save…"));
-    auto* load_palette = new QPushButton(tr("Load…"));
+    auto* save_palette = new QPushButton(tr("Save to Library…"));
+    auto* load_palette = new QPushButton(tr("Load Reusable…"));
+    auto* import_palette = new QPushButton(tr("Import File…"));
+    auto* export_palette = new QPushButton(tr("Export As…"));
     palette_buttons->addWidget(add_color);
     palette_buttons->addWidget(edit_color);
     palette_buttons->addWidget(remove_color);
@@ -2967,14 +3627,29 @@ QWidget* MainWindow::createLayerSettingsPage() {
     palette_library_buttons->addWidget(load_palette);
     palette_library_buttons->addStretch();
     palette_layout->addLayout(palette_library_buttons);
+    auto* palette_interchange_buttons = new QHBoxLayout;
+    palette_interchange_buttons->addWidget(import_palette);
+    palette_interchange_buttons->addWidget(export_palette);
+    palette_interchange_buttons->addStretch();
+    palette_layout->addLayout(palette_interchange_buttons);
     auto* palette_help = new QLabel(
-        tr("Colors are authored as sRGBA and embedded in this layer. The renderer "
-           "selects the procedural starting colors from this palette. Lighting and "
+        tr("Colors are embedded in this layer. Ordinary colors use sRGBA; imported "
+           "linear/HDR entries retain their source encoding and exact finite values. "
+           "The renderer selects the procedural starting colors from this palette. Lighting and "
            "effects may create other colors afterward. Use Post-effects "
-           "color quantization below when you want to deliberately reduce final colors."));
+           "color quantization below when you want to deliberately reduce final colors. "
+           "File import/export supports GIMP GPL, Krita KPL, GIMP-style code/text, "
+           "and PNG/EXR palette images."));
     palette_help->setWordWrap(true);
     palette_layout->addWidget(palette_help);
-    layout->addWidget(palette_group);
+    const int shaping_index = source_layout->indexOf(pattern_group);
+    source_layout->insertWidget(shaping_index >= 0 ? shaping_index
+                                                    : source_layout->count(),
+                                palette_group);
+    wave_page_->setObjectName(QStringLiteral("sourceWavesEditor"));
+    source_layout->insertWidget(shaping_index >= 0 ? shaping_index + 1
+                                                    : source_layout->count(),
+                                wave_page_);
 
     auto* surface_group = new QGroupBox(tr("3D surface wrapping"));
     auto* surface = new QFormLayout(surface_group);
@@ -3011,7 +3686,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface->addRow(tr("Starting phase (degrees)"), surface_phase_);
     surface->addRow(tr("Curvature"), surface_curvature_);
     surface->addRow(tr("Lighting"), surface_lighting_);
-    layout->addWidget(surface_group);
+    surface_layout->addWidget(surface_group);
 
     auto* quantization_group = new QGroupBox(tr("Post-effects color quantization"));
     auto* quantization = new QFormLayout(quantization_group);
@@ -3026,7 +3701,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     quantization->addRow(tr("Levels"), quantization_levels_);
     quantization->addRow(tr("Mix"), quantization_mix_);
     quantization->addRow(tr("Mode"), quantization_mode_);
-    layout->addWidget(quantization_group);
+    finish_layout->addWidget(quantization_group);
 
     auto* alpha_group = new QGroupBox(tr("Alpha channel"));
     auto* alpha = new QFormLayout(alpha_group);
@@ -3051,10 +3726,16 @@ QWidget* MainWindow::createLayerSettingsPage() {
     alpha->addRow(tr("Spatial frequency"), alpha_frequency_);
     alpha->addRow(tr("Cycles per loop"), alpha_cycles_);
     alpha->addRow(tr("Starting phase (degrees)"), alpha_phase_);
-    layout->addWidget(alpha_group);
+    // Source/procedural alpha is resolved while the base image is created,
+    // before texture effects, surface mapping, motion, and object effects.
+    // Keeping these controls in Source makes the visible pipeline match the
+    // renderer and clarifies how transparent pixels enter later effects.
+    source_layout->addWidget(alpha_group);
 
-    layout->addStretch();
-    scroll->setWidget(contents);
+    source_layout->addStretch();
+    surface_layout->addStretch();
+    motion_layout->addStretch();
+    finish_layout->addStretch();
 
     connect(surface_obj_browse_, &QPushButton::clicked, this, [this] {
         std::vector<const pvt::LayerConfig*> reusable;
@@ -3224,17 +3905,39 @@ QWidget* MainWindow::createLayerSettingsPage() {
             this, &MainWindow::savePaletteToLibrary);
     connect(load_palette, &QPushButton::clicked,
             this, &MainWindow::loadPaletteFromLibraryOrLayer);
+    connect(import_palette, &QPushButton::clicked,
+            this, &MainWindow::importPaletteFile);
+    connect(export_palette, &QPushButton::clicked,
+            this, &MainWindow::exportPaletteFile);
     connect(palette_colors_, &QListWidget::itemDoubleClicked,
             this, [this](QListWidgetItem*) { editSelectedPaletteColor(); });
 
-    return scroll;
+    return source_page_;
 }
 
 QWidget* MainWindow::createOutputPage() {
-    auto* scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    auto* contents = new QWidget;
-    auto* layout = new QVBoxLayout(contents);
+    const auto make_project_page = [](QWidget*& page) {
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        auto* contents = new QWidget;
+        auto* layout = new QVBoxLayout(contents);
+        scroll->setWidget(contents);
+        page = scroll;
+        return layout;
+    };
+    auto* canvas_layout = make_project_page(project_canvas_page_);
+    auto* export_layout = make_project_page(project_export_page_);
+    project_canvas_page_->setObjectName(QStringLiteral("projectCanvasLoopPage"));
+    project_export_page_->setObjectName(QStringLiteral("projectExportPage"));
+
+    auto* canvas_intro = new QLabel(tr(
+        "Project-wide image dimensions, block resolution, frame count, and playback rate. These values define the timeline shared by every layer."));
+    canvas_intro->setWordWrap(true);
+    canvas_layout->addWidget(canvas_intro);
+    auto* export_intro = new QLabel(tr(
+        "Project-wide output encoding and destination. Source alpha stays in the layer workflow's Source stage; post-effects color quantization stays in Finish."));
+    export_intro->setWordWrap(true);
+    export_layout->addWidget(export_intro);
 
     auto* canvas_group = new QGroupBox(tr("Canvas and loop"));
     auto* canvas = new QFormLayout(canvas_group);
@@ -3253,7 +3956,7 @@ QWidget* MainWindow::createOutputPage() {
     canvas->addRow(tr("Manual frames"), frames_);
     canvas->addRow(tr("Effective duration"), effective_frames_);
     canvas->addRow(tr("Playback FPS"), fps_);
-    layout->addWidget(canvas_group);
+    canvas_layout->addWidget(canvas_group);
 
     auto* output_group = new QGroupBox(tr("Export"));
     auto* output = new QFormLayout(output_group);
@@ -3306,9 +4009,9 @@ QWidget* MainWindow::createOutputPage() {
     output->addRow(tr("First frame number"), first_frame_);
     output->addRow(tr("Minimum number digits"), filename_digits_);
     output->addRow(overwrite_);
-    layout->addWidget(output_group);
-    layout->addStretch();
-    scroll->setWidget(contents);
+    export_layout->addWidget(output_group);
+    canvas_layout->addStretch();
+    export_layout->addStretch();
 
     connect(browse, &QPushButton::clicked, this, [this] {
         const QString selected = QFileDialog::getExistingDirectory(
@@ -3321,7 +4024,7 @@ QWidget* MainWindow::createOutputPage() {
             applyGlobalEditor(output_directory_);
         }
     });
-    return scroll;
+    return project_canvas_page_;
 }
 
 QWidget* MainWindow::createVersionsPage() {
@@ -3678,7 +4381,7 @@ void MainWindow::revertSelectedVersion() {
 }
 
 void MainWindow::createLayerDock() {
-    layers_dock_ = new QDockWidget(tr("Project & Layers"), this);
+    layers_dock_ = new QDockWidget(tr("Project && Layers"), this);
     layers_dock_->setObjectName(QStringLiteral("projectLayersDock"));
     layers_dock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     layers_dock_->setMinimumWidth(250);
@@ -3696,6 +4399,31 @@ void MainWindow::createLayerDock() {
         tr("The display name appears in the window title and supplies the default bundle name."));
     project_form->addRow(tr("Project"), project_name_);
     layout->addLayout(project_form);
+
+    auto* project_settings = new QGroupBox(tr("Project Settings"));
+    project_settings->setObjectName(QStringLiteral("projectSettingsNavigator"));
+    auto* project_settings_layout = new QGridLayout(project_settings);
+    project_canvas_button_ = new QPushButton(tr("Canvas && Loop"));
+    project_sync_button_ = new QPushButton(tr("Sync && Audio"));
+    project_export_button_ = new QPushButton(tr("Export"));
+    project_history_button_ = new QPushButton(tr("History"));
+    project_canvas_button_->setToolTip(
+        tr("Open project-wide dimensions, frame count, and playback rate."));
+    project_sync_button_->setToolTip(
+        tr("Open the persistent Drivers controls for project clock and inherited audio response."));
+    project_export_button_->setToolTip(
+        tr("Open project-wide image encoding and output destination settings."));
+    project_history_button_->setToolTip(
+        tr("Open immutable saved versions, rollback actions, and semantic comparison."));
+    project_canvas_button_->setAccessibleName(tr("Project settings: Canvas and Loop"));
+    project_sync_button_->setAccessibleName(tr("Project settings: Synchronization and Audio"));
+    project_export_button_->setAccessibleName(tr("Project settings: Export"));
+    project_history_button_->setAccessibleName(tr("Project settings: History"));
+    project_settings_layout->addWidget(project_canvas_button_, 0, 0);
+    project_settings_layout->addWidget(project_sync_button_, 0, 1);
+    project_settings_layout->addWidget(project_export_button_, 1, 0);
+    project_settings_layout->addWidget(project_history_button_, 1, 1);
+    layout->addWidget(project_settings);
 
     compatibility_warning_label_ = new QLabel;
     compatibility_warning_label_->setWordWrap(true);
@@ -3795,7 +4523,10 @@ void MainWindow::createLayerDock() {
     layout->addWidget(selected_group_box_);
 
     layers_dock_->setWidget(contents);
-    addDockWidget(Qt::RightDockWidgetArea, layers_dock_);
+    // The selected Flow Workbench reference establishes project structure on
+    // the left, the canvas in the center, and stage inspection on the right.
+    // Users can still drag this dock to either side and saved layouts win.
+    addDockWidget(Qt::LeftDockWidgetArea, layers_dock_);
 
     connect(layers_dock_, &QDockWidget::topLevelChanged, this,
             [this](bool floating) {
@@ -3821,6 +4552,20 @@ void MainWindow::createLayerDock() {
     });
     connect(project_name_, &QLineEdit::editingFinished,
             this, &MainWindow::finishProjectNameEdit);
+    connect(project_canvas_button_, &QPushButton::clicked, this, [this] {
+        showProjectSettingsPage(project_canvas_page_, tr("Canvas & Loop"));
+    });
+    connect(project_sync_button_, &QPushButton::clicked, this, [this] {
+        showProjectSettingsPage(project_sync_page_, tr("Project Sync & Audio"));
+        setDriversExpanded(true);
+    });
+    connect(project_export_button_, &QPushButton::clicked, this, [this] {
+        showProjectSettingsPage(project_export_page_, tr("Export"));
+    });
+    connect(project_history_button_, &QPushButton::clicked, this, [this] {
+        refreshVersionsPage();
+        showProjectSettingsPage(history_page_, tr("History"));
+    });
     connect(qApp, &QApplication::focusChanged, this,
             [this](QWidget* previous, QWidget*) {
                 if (previous != project_name_ || project_name_->hasAcceptableInput()) return;
@@ -4032,12 +4777,12 @@ void MainWindow::createLayerDock() {
 void MainWindow::restoreLayersDock(bool makeVisible) {
     if (layers_dock_ == nullptr) return;
     layers_dock_->setFloating(false);
-    addDockWidget(Qt::RightDockWidgetArea, layers_dock_);
+    addDockWidget(Qt::LeftDockWidgetArea, layers_dock_);
     if (makeVisible) {
         layers_dock_->show();
         layers_dock_->raise();
         if (status_ != nullptr) {
-            status_->setText(tr("Project & Layers restored to the right side."));
+            status_->setText(tr("Project & Layers restored to the left side."));
         }
     } else {
         layers_dock_->hide();
@@ -4046,12 +4791,18 @@ void MainWindow::restoreLayersDock(bool makeVisible) {
 
 QWidget* MainWindow::createTimeline() {
     auto* widget = new QWidget;
+    widget->setObjectName(QStringLiteral("projectTransport"));
+    widget->setAccessibleName(tr("Project timeline transport"));
     auto* layout = new QHBoxLayout(widget);
     layout->setContentsMargins(0, 4, 0, 0);
     play_button_ = new QPushButton(tr("Play"));
     previous_beat_ = new QPushButton(tr("Previous beat"));
     next_beat_ = new QPushButton(tr("Next beat"));
     timeline_ = new QSlider(Qt::Horizontal);
+    timeline_->setObjectName(QStringLiteral("projectFrameTimeline"));
+    timeline_->setAccessibleName(tr("Current project frame"));
+    timeline_->setToolTip(
+        tr("Scrub the single project-wide render timeline. Every visible layer is evaluated at this frame."));
     audio_volume_ = new QSlider(Qt::Horizontal);
     audio_volume_->setObjectName(QStringLiteral("previewAudioVolume"));
     audio_volume_->setRange(0, 100);
@@ -4063,11 +4814,13 @@ QWidget* MainWindow::createTimeline() {
         tr("Monitoring volume for the synchronized mix of audible project and active-layer Music clocks. Data-only sources stay silent."));
     timeline_->setRange(0, std::max(1, effectiveFrameCount()) - 1);
     frame_label_ = new QLabel;
-    frame_label_->setMinimumWidth(230);
+    frame_label_->setObjectName(QStringLiteral("timelineReadout"));
+    frame_label_->setAccessibleName(tr("Current time and frame readout"));
+    frame_label_->setMinimumWidth(270);
     layout->addWidget(play_button_);
     layout->addWidget(previous_beat_);
     layout->addWidget(next_beat_);
-    layout->addWidget(new QLabel(tr("Frame")));
+    layout->addWidget(new QLabel(tr("Project timeline")));
     layout->addWidget(timeline_, 1);
     layout->addWidget(frame_label_);
     layout->addWidget(new QLabel(tr("Audio")));
@@ -4251,7 +5004,7 @@ void MainWindow::createToolbar() {
     restore_layers_dock_action_->setObjectName(
         QStringLiteral("restoreProjectLayersDockAction"));
     restore_layers_dock_action_->setStatusTip(
-        tr("Show the Project & Layers panel and dock it on the right side."));
+        tr("Show the Project & Layers panel and dock it on the left side."));
     view_menu->addAction(restore_layers_dock_action_);
     connect(restore_layers_dock_action_, &QAction::triggered, this,
             [this] { restoreLayersDock(true); });
@@ -5022,7 +5775,10 @@ void MainWindow::connectEditors() {
 
     connect(layer_clock_group_, &QGroupBox::toggled, this,
             [this] { applyClockEditor(layer_clock_group_); });
-    for (auto* editor : {layer_clock_scale_, layer_clock_mode_,
+    connect(layer_clock_mix_enabled_, &QCheckBox::toggled, this,
+            [this] { applyClockEditor(layer_clock_mix_enabled_); });
+    for (auto* editor : {layer_clock_mix_mode_, layer_clock_scale_,
+                         layer_clock_mode_,
                          layer_clock_interpolation_, layer_clock_fit_,
                          layer_music_tempo_mode_}) {
         connect(editor, &QComboBox::currentIndexChanged, this,
@@ -5109,6 +5865,8 @@ void MainWindow::connectEditors() {
     });
 
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
+                         kaleidoscope_segments_, domain_warp_octaves_,
+                         domain_warp_cycles_,
                          surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
                          motion_cycles_y_, motion_rotations_}) {
@@ -5117,6 +5875,8 @@ void MainWindow::connectEditors() {
     }
     for (auto* editor : {fps_, displacement_, wave_depth_, spiral_frequency_,
                          wall_frequency_, wall_mix_, saturation_, surface_curvature_,
+                         kaleidoscope_rotation_, kaleidoscope_mix_,
+                         domain_warp_strength_, domain_warp_scale_,
                          surface_lighting_, quantization_mix_, alpha_minimum_,
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
                          surface_phase_, alpha_phase_, motion_center_x_, motion_center_y_,
@@ -5141,6 +5901,17 @@ void MainWindow::connectEditors() {
     }
     connect(motion_group_, &QGroupBox::toggled, this,
             [this] { applyGlobalEditor(motion_group_); });
+    connect(kaleidoscope_group_, &QGroupBox::toggled, this,
+            [this] { applyGlobalEditor(kaleidoscope_group_); });
+    connect(domain_warp_group_, &QGroupBox::toggled, this,
+            [this] { applyGlobalEditor(domain_warp_group_); });
+    connect(domain_warp_seed_, &QLineEdit::editingFinished, this,
+            [this] { applyGlobalEditor(domain_warp_seed_); });
+    connect(domain_warp_random_seed_, &QPushButton::clicked, this, [this] {
+        domain_warp_seed_->setText(
+            QString::number(QRandomGenerator::system()->generate64()));
+        applyGlobalEditor(domain_warp_seed_);
+    });
     connect(motion_paths_edit_, &QPushButton::clicked, this,
             &MainWindow::showMotionPathEditor);
     connect(starting_image_enabled_, &QCheckBox::toggled, this,
@@ -5180,11 +5951,12 @@ void MainWindow::connectEditors() {
     });
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
         QWidget* page = tabs_->widget(index);
-        if (page == synchronization_page_) {
+        if (synchronization_page_ != nullptr
+            && !synchronization_page_->isHidden()) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Swings);
         } else if (page == effect_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Effects);
-        } else if (page == wave_page_) {
+        } else if (page == source_page_) {
             preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
         }
     });
@@ -5192,7 +5964,7 @@ void MainWindow::connectEditors() {
     connect(preview_, &PreviewWidget::waveSelected, this, [this](std::size_t index) {
         if (index < config_.waves.size()) {
             wave_list_->setCurrentRow(static_cast<int>(index));
-            tabs_->setCurrentIndex(tabs_->indexOf(wave_page_));
+            setWorkflowStage(0);
         }
     });
     connect(preview_, &PreviewWidget::waveDragStarted, this,
@@ -5245,7 +6017,7 @@ void MainWindow::connectEditors() {
             [this](std::size_t index) {
                 if (index < config_.swings.size()) {
                     swing_list_->setCurrentRow(static_cast<int>(index));
-                    tabs_->setCurrentIndex(tabs_->indexOf(synchronization_page_));
+                    setDriversExpanded(true);
                 }
             });
     connect(preview_, &PreviewWidget::swingDragStarted, this,
@@ -5294,8 +6066,10 @@ void MainWindow::connectEditors() {
     connect(preview_, &PreviewWidget::effectSelected, this,
             [this](std::size_t index) {
                 if (index < config_.effects.size()) {
-                    effect_list_->setCurrentRow(static_cast<int>(index));
-                    tabs_->setCurrentIndex(tabs_->indexOf(effect_page_));
+                    const auto& effect = config_.effects[index];
+                    setWorkflowStage(effect.space == pvt::EffectSpace::Texture
+                                         ? 1 : 4);
+                    refreshEffectList(effect.id);
                 }
             });
     connect(preview_, &PreviewWidget::effectDragStarted, this,
@@ -5586,11 +6360,20 @@ void MainWindow::loadLayerEditors() {
         group_locked_->setChecked(false);
     }
     if (tabs_ != nullptr) {
-        for (int index = 0; index < std::min(4, tabs_->count()); ++index) {
-            tabs_->setTabEnabled(index, available && !locked);
+        for (int index = 0; index < tabs_->count(); ++index) {
+            QWidget* page = tabs_->widget(index);
+            const bool layer_page = page == source_page_ || page == effect_page_
+                                    || page == surface_page_
+                                    || page == motion_page_
+                                    || page == finish_page_;
+            page->setEnabled(layer_page ? available && !locked : true);
         }
     }
+    for (QPushButton* button : workflow_stage_buttons_) {
+        button->setEnabled(available && !locked);
+    }
     populating_ = was_populating;
+    updateWorkflowSummaries();
 }
 
 void MainWindow::addLayer() {
@@ -6808,7 +7591,7 @@ std::unique_ptr<pvt::ProjectDocument> MainWindow::makeNewProjectDocument(
     if (warning != nullptr) warning->clear();
     if (!hasCustomNewProjectDefaults()) {
         return std::make_unique<pvt::ProjectDocument>(
-            pvt::default_project_document());
+            built_in_workbench_project_document());
     }
     pvt::ProjectDocument saved_template;
     std::string load_error;
@@ -6820,7 +7603,7 @@ std::unique_ptr<pvt::ProjectDocument> MainWindow::makeNewProjectDocument(
                            .arg(QString::fromStdString(load_error));
         }
         return std::make_unique<pvt::ProjectDocument>(
-            pvt::default_project_document());
+            built_in_workbench_project_document());
     }
     auto fresh = std::make_unique<pvt::ProjectDocument>();
     std::string copy_error;
@@ -6831,7 +7614,7 @@ std::unique_ptr<pvt::ProjectDocument> MainWindow::makeNewProjectDocument(
                            .arg(QString::fromStdString(copy_error));
         }
         return std::make_unique<pvt::ProjectDocument>(
-            pvt::default_project_document());
+            built_in_workbench_project_document());
     }
     fresh->dirty = false;
     return fresh;
@@ -6942,7 +7725,7 @@ void MainWindow::replaceWithNewProject() {
     document_ = makeNewProjectDocument(&warning);
     if (document_ == nullptr || document_->project.layers.empty()) {
         document_ = std::make_unique<pvt::ProjectDocument>(
-            pvt::default_project_document());
+            built_in_workbench_project_document());
     }
     project_ = document_->project;
     document_->dirty = false;
@@ -7035,10 +7818,10 @@ void MainWindow::updateTimelineReadout() {
     const int count = std::max(1, timeline_->maximum() + 1);
     const int frame = timeline_->value();
     const double seconds = static_cast<double>(frame) / config_.fps;
-    QString text = tr("%1 / %2  ·  %3")
+    QString text = tr("Time %1  ·  Frame %2 / %3")
+                       .arg(formatted_time(seconds))
                        .arg(frame + 1)
-                       .arg(count)
-                       .arg(formatted_time(seconds));
+                       .arg(count);
     if (config_.clock.mode == pvt::ClockMode::Music && musicRenderReady()) {
         const auto beats = music_beats_for_ui(config_.clock);
         const auto found = std::upper_bound(beats.begin(), beats.end(), seconds);
@@ -7194,6 +7977,8 @@ void MainWindow::updateSynchronizationState() {
     const auto local_mode = local.clock.mode;
     const bool local_enabled = local.enabled && editable;
     layer_clock_group_->setEnabled(editable);
+    layer_clock_mix_enabled_->setEnabled(local_enabled);
+    layer_clock_mix_mode_->setEnabled(local_enabled && local.mix_enabled);
     layer_clock_form_->setRowVisible(
         layer_clock_scale_, local_mode == pvt::ClockMode::Music);
     layer_clock_scale_->setEnabled(
@@ -7281,6 +8066,7 @@ void MainWindow::updateSynchronizationState() {
     }
     layer_clock_scale_->setToolTip(duration_warning);
     updateMusicSummary();
+    updateWorkflowSummaries();
 }
 
 void MainWindow::updateMusicTransactionGuards() {
@@ -7313,17 +8099,23 @@ void MainWindow::updateMusicTransactionGuards() {
     if (starting_image_group_ != nullptr) starting_image_group_->setEnabled(editable);
     if (tabs_ != nullptr) {
         for (int index = 0; index < tabs_->count(); ++index) {
-            const bool is_layer_page = index < 4;
-            const bool analysis_cancel_page =
-                music_analysis_active_
-                && tabs_->widget(index) == synchronization_page_;
-            tabs_->setTabEnabled(
-                index, analysis_cancel_page
-                           || (is_layer_page ? layer_editable : editable));
+            QWidget* page = tabs_->widget(index);
+            const bool layer_page = page == source_page_ || page == effect_page_
+                                    || page == surface_page_
+                                    || page == motion_page_
+                                    || page == finish_page_;
+            page->setEnabled(layer_page ? layer_editable : editable);
         }
+    }
+    if (synchronization_page_ != nullptr) {
+        synchronization_page_->setEnabled(editable || music_analysis_active_);
+    }
+    for (QPushButton* button : workflow_stage_buttons_) {
+        button->setEnabled(layer_editable);
     }
     updateSynchronizationState();
     updateExportAvailability();
+    updateWorkflowSummaries();
 }
 
 void MainWindow::updateMusicSummary() {
@@ -7461,11 +8253,14 @@ void MainWindow::updateSwingListItem(std::size_t index) {
 }
 
 void MainWindow::updateEffectListItem(std::size_t index) {
-    if (index < config_.effects.size()) {
-        if (auto* item = effect_list_->item(static_cast<int>(index))) {
+    if (index >= config_.effects.size() || effect_list_ == nullptr) return;
+    const auto id = config_.effects[index].id;
+    for (int row = 0; row < effect_list_->count(); ++row) {
+        auto* item = effect_list_->item(row);
+        if (item != nullptr
+            && item->data(Qt::UserRole).toULongLong() == id) {
             item->setText(effect_label(config_.effects[index], index));
-            item->setData(Qt::UserRole,
-                          QVariant::fromValue<qulonglong>(config_.effects[index].id));
+            return;
         }
     }
 }
@@ -7536,19 +8331,23 @@ void MainWindow::refreshEffectList(std::optional<std::uint64_t> selectedId) {
     int selected_row = -1;
     for (std::size_t index = 0; index < config_.effects.size(); ++index) {
         const auto& effect = config_.effects[index];
+        if (effect_space_filter_ && effect.space != *effect_space_filter_) {
+            continue;
+        }
         auto* item = new QListWidgetItem(effect_label(effect, index), effect_list_);
         item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(effect.id));
         if (selectedId && effect.id == *selectedId) {
-            selected_row = static_cast<int>(index);
+            selected_row = effect_list_->count() - 1;
         }
     }
-    if (selected_row < 0 && !config_.effects.empty()) {
+    if (selected_row < 0 && effect_list_->count() > 0) {
         selected_row = 0;
     }
     effect_list_->setCurrentRow(selected_row);
     populating_ = false;
     loadSelectedEffect();
     preview_->setConfiguration(config_);
+    updateWorkflowSummaries();
 }
 
 std::optional<std::size_t> MainWindow::selectedWaveIndex() const {
@@ -7568,11 +8367,16 @@ std::optional<std::size_t> MainWindow::selectedSwingIndex() const {
 }
 
 std::optional<std::size_t> MainWindow::selectedEffectIndex() const {
-    const int row = effect_list_ ? effect_list_->currentRow() : -1;
-    if (row < 0 || static_cast<std::size_t>(row) >= config_.effects.size()) {
-        return std::nullopt;
-    }
-    return static_cast<std::size_t>(row);
+    const QListWidgetItem* item = effect_list_ != nullptr
+                                      ? effect_list_->currentItem() : nullptr;
+    if (item == nullptr) return std::nullopt;
+    const std::uint64_t id = item->data(Qt::UserRole).toULongLong();
+    const auto found = std::find_if(
+        config_.effects.cbegin(), config_.effects.cend(),
+        [id](const pvt::EffectConfig& effect) { return effect.id == id; });
+    if (found == config_.effects.cend()) return std::nullopt;
+    return static_cast<std::size_t>(
+        std::distance(config_.effects.cbegin(), found));
 }
 
 void MainWindow::loadSelectedWave() {
@@ -7652,6 +8456,9 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_block_scale = type == pvt::EffectType::BlockScale;
     const bool is_particles = type == pvt::EffectType::ParticleField;
     const bool is_blur = type == pvt::EffectType::Blur;
+    const bool is_glitch = type == pvt::EffectType::Glitch;
+    const bool is_starburst = type == pvt::EffectType::Starburst;
+    const bool is_lens = type == pvt::EffectType::LensDistortion;
     const bool coordinate_effect = !is_glow && !is_block_scale && !is_particles && !is_blur;
     const bool has_center = !is_block_scale;
     const auto blur_type = static_cast<pvt::BlurType>(
@@ -7666,7 +8473,8 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_secondary_, !is_zoom);
     effect_form_->setRowVisible(effect_center_x_, has_center);
     effect_form_->setRowVisible(effect_center_y_, has_center);
-    effect_form_->setRowVisible(effect_angle_, is_shake || is_flag || is_particles
+    effect_form_->setRowVisible(effect_angle_, is_shake || is_flag
+                                                   || is_starburst || is_particles
                                                    || (is_blur && blur_type == pvt::BlurType::Directional));
     effect_form_->setRowVisible(effect_radius_, is_glow || is_particles || is_blur);
     effect_form_->setRowVisible(effect_threshold_, is_glow || is_particles);
@@ -7713,6 +8521,24 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_secondary_->setRange(0.0, 1.0);
         effect_secondary_->setDecimals(4);
         effect_secondary_->setSingleStep(0.01);
+    } else if (is_glitch || is_starburst) {
+        effect_intensity_->setRange(0.0, 1.0);
+        effect_magnitude_->setRange(0.0, 10.0);
+        effect_frequency_->setRange(1.0, 1000.0);
+        effect_frequency_->setDecimals(0);
+        effect_frequency_->setSingleStep(1.0);
+        effect_secondary_->setRange(0.0, 1.0);
+        effect_secondary_->setDecimals(4);
+        effect_secondary_->setSingleStep(0.01);
+    } else if (is_lens) {
+        effect_intensity_->setRange(0.0, 1.0);
+        effect_magnitude_->setRange(0.0, 10.0);
+        effect_frequency_->setRange(0.25, 64.0);
+        effect_frequency_->setDecimals(4);
+        effect_frequency_->setSingleStep(0.05);
+        effect_secondary_->setRange(-1.0, 1.0);
+        effect_secondary_->setDecimals(4);
+        effect_secondary_->setSingleStep(0.05);
     } else {
         effect_intensity_->setRange(0.0, 100.0);
         effect_magnitude_->setRange(0.0, 10.0);
@@ -7795,6 +8621,43 @@ void MainWindow::updateEffectEditorVisibility() {
             tr("Largest multiplier applied to the canvas block-size setting."));
         effect_secondary_->setToolTip(
             tr("Zero changes smoothly; a whole value snaps the motion into that many intervals."));
+    } else if (is_glitch) {
+        set_form_label(effect_form_, effect_intensity_, tr("Glitch mix"));
+        set_form_label(effect_form_, effect_magnitude_,
+                       tr("Horizontal displacement"));
+        set_form_label(effect_form_, effect_frequency_,
+                       tr("Scanline bands"));
+        set_form_label(effect_form_, effect_secondary_, tr("RGB split"));
+        set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
+        effect_frequency_->setToolTip(
+            tr("Whole horizontal band count. Each band receives a deterministic loop-safe offset."));
+        effect_secondary_->setToolTip(
+            tr("Separates color channels inside displaced bands."));
+    } else if (is_starburst) {
+        set_form_label(effect_form_, effect_intensity_, tr("Starburst mix"));
+        set_form_label(effect_form_, effect_magnitude_,
+                       tr("Radial displacement"));
+        set_form_label(effect_form_, effect_frequency_, tr("Ray count"));
+        set_form_label(effect_form_, effect_secondary_, tr("Ray sharpness"));
+        set_form_label(effect_form_, effect_angle_,
+                       tr("Ray rotation (degrees)"));
+        set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
+        effect_frequency_->setToolTip(
+            tr("Whole radial ray count around the authored center."));
+        effect_secondary_->setToolTip(
+            tr("Sharpens the transition between neighboring rays."));
+    } else if (is_lens) {
+        set_form_label(effect_form_, effect_intensity_, tr("Lens mix"));
+        set_form_label(effect_form_, effect_magnitude_, tr("Lens bend"));
+        set_form_label(effect_form_, effect_frequency_, tr("Radial exponent"));
+        set_form_label(effect_form_, effect_secondary_,
+                       tr("Direction (−1 barrel, +1 pincushion)"));
+        set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
+        effect_secondary_->setToolTip(
+            tr("Negative values bow outward (barrel); positive values pinch inward."));
     } else {
         set_form_label(effect_form_, effect_intensity_, tr("Spark brightness"));
         set_form_label(effect_form_, effect_magnitude_, tr("Travel per loop"));
@@ -7900,6 +8763,8 @@ void MainWindow::loadGlobalEditors() {
         static_cast<double>(config_.clock.beat_offset_microseconds) / 1000.0);
     music_data_only_->setChecked(config_.clock.data_only);
     layer_clock_group_->setChecked(config_.layer_clock.enabled);
+    layer_clock_mix_enabled_->setChecked(config_.layer_clock.mix_enabled);
+    select_enum(layer_clock_mix_mode_, config_.layer_clock.mix);
     select_enum(layer_clock_scale_, config_.layer_clock.scale);
     select_enum(layer_clock_mode_, config_.layer_clock.clock.mode);
     select_enum(layer_clock_interpolation_,
@@ -7977,6 +8842,24 @@ void MainWindow::loadGlobalEditors() {
     wall_mix_->setValue(config_.wall_mix);
     hue_cycles_->setValue(config_.hue_cycles);
     saturation_->setValue(config_.saturation);
+    kaleidoscope_group_->setChecked(
+        config_.starting_colors.kaleidoscope.enabled);
+    kaleidoscope_segments_->setValue(
+        config_.starting_colors.kaleidoscope.mirrored_segments);
+    kaleidoscope_rotation_->setValue(
+        config_.starting_colors.kaleidoscope.rotation_degrees);
+    kaleidoscope_mix_->setValue(config_.starting_colors.kaleidoscope.mix);
+    domain_warp_group_->setChecked(
+        config_.starting_colors.domain_warp.enabled);
+    domain_warp_strength_->setValue(
+        config_.starting_colors.domain_warp.strength);
+    domain_warp_scale_->setValue(config_.starting_colors.domain_warp.scale);
+    domain_warp_octaves_->setValue(
+        config_.starting_colors.domain_warp.octaves);
+    domain_warp_cycles_->setValue(
+        config_.starting_colors.domain_warp.cycles_per_loop);
+    domain_warp_seed_->setText(QString::number(static_cast<qulonglong>(
+        config_.starting_colors.domain_warp.seed)));
     starting_image_enabled_->setChecked(config_.starting_image.enabled);
     starting_image_path_->setText(
         QString::fromStdString(config_.starting_image.basename));
@@ -8066,22 +8949,31 @@ void MainWindow::refreshPaletteEditor() {
     palette_colors_->clear();
     for (std::size_t index = 0U; index < config_.palette.colors.size(); ++index) {
         const pvt::PaletteColor& value = config_.palette.colors[index];
-        const QColor color = QColor::fromRgbF(
-            static_cast<float>(value.red), static_cast<float>(value.green),
-            static_cast<float>(value.blue), static_cast<float>(value.alpha));
+        const QColor color = palette_display_color(value);
+        const QString entry_name = value.name.empty()
+                                       ? tr("Unnamed")
+                                       : QString::fromStdString(value.name);
         auto* item = new QListWidgetItem(
-            tr("%1. %2   RGBA(%3, %4, %5, %6)")
+            tr("%1. %2 — %3 · %4 · RGBA(%5, %6, %7, %8)")
                 .arg(static_cast<qulonglong>(index + 1U))
+                .arg(entry_name)
                 .arg(color.name(QColor::HexArgb).toUpper())
-                .arg(value.red, 0, 'f', 3)
-                .arg(value.green, 0, 'f', 3)
-                .arg(value.blue, 0, 'f', 3)
-                .arg(value.alpha, 0, 'f', 3),
+                .arg(QString::fromUtf8(
+                    pvt::palette_color_encoding_name(value.encoding)))
+                .arg(value.red, 0, 'g', 7)
+                .arg(value.green, 0, 'g', 7)
+                .arg(value.blue, 0, 'g', 7)
+                .arg(value.alpha, 0, 'g', 7),
             palette_colors_);
         item->setBackground(color);
-        const double luminance = 0.2126 * value.red + 0.7152 * value.green
-                                 + 0.0722 * value.blue;
+        const double luminance = 0.2126 * color.redF()
+                                 + 0.7152 * color.greenF()
+                                 + 0.0722 * color.blueF();
         item->setForeground(luminance > 0.5 ? Qt::black : Qt::white);
+        if (value.encoding == pvt::PaletteColorEncoding::Linear) {
+            item->setToolTip(tr(
+                "Linear-light values are preserved exactly. This list swatch is tone-clipped to the displayable sRGB range."));
+        }
         item->setData(Qt::UserRole, static_cast<qulonglong>(index));
     }
     if (!config_.palette.colors.empty()) {
@@ -8114,7 +9006,7 @@ void MainWindow::savePaletteToLibrary() {
         this, tr("Save palette"), tr("Library name"), QLineEdit::Normal,
         QString::fromStdString(config_.palette.name), &accepted).trimmed();
     if (!accepted) return;
-    if (!valid_text(name, TextRule::Name)) {
+    if (name.isEmpty() || !valid_text(name, TextRule::Name)) {
         QMessageBox::warning(this, tr("Invalid palette name"),
                              tr("Enter a non-empty palette name without control characters."));
         return;
@@ -8122,8 +9014,13 @@ void MainWindow::savePaletteToLibrary() {
 
     QSettings settings;
     QJsonArray entries;
-    const QJsonDocument existing = QJsonDocument::fromJson(
-        settings.value(QStringLiteral("paletteLibrary/entries")).toByteArray());
+    const QByteArray existing_bytes = settings.value(
+        QStringLiteral("paletteLibrary/entries")).toByteArray();
+    const QJsonDocument existing =
+        static_cast<std::size_t>(existing_bytes.size())
+                <= pvt::palette_io::kMaximumPaletteFileBytes
+            ? QJsonDocument::fromJson(existing_bytes)
+            : QJsonDocument{};
     if (existing.isArray()) entries = existing.array();
     for (qsizetype index = entries.size() - 1; index >= 0; --index) {
         if (entries.at(index).toObject().value(QStringLiteral("name")).toString()
@@ -8137,16 +9034,37 @@ void MainWindow::savePaletteToLibrary() {
     }
 
     QJsonObject entry;
-    entry.insert(QStringLiteral("schema"), 1);
+    entry.insert(QStringLiteral("schema"), 2);
     entry.insert(QStringLiteral("name"), name);
+    entry.insert(QStringLiteral("columns"),
+                 static_cast<double>(config_.palette.columns));
     QJsonArray colors;
     for (const auto& color : config_.palette.colors) {
-        colors.append(QJsonArray{color.red, color.green, color.blue, color.alpha});
+        QJsonObject encoded;
+        encoded.insert(QStringLiteral("rgba"),
+                       QJsonArray{color.red, color.green, color.blue,
+                                  color.alpha});
+        encoded.insert(QStringLiteral("name"),
+                       QString::fromStdString(color.name));
+        encoded.insert(
+            QStringLiteral("encoding"),
+            color.encoding == pvt::PaletteColorEncoding::Linear
+                ? QStringLiteral("linear")
+                : QStringLiteral("srgb"));
+        colors.append(encoded);
     }
     entry.insert(QStringLiteral("colors"), colors);
     entries.append(entry);
-    settings.setValue(QStringLiteral("paletteLibrary/entries"),
-                      QJsonDocument(entries).toJson(QJsonDocument::Compact));
+    const QByteArray serialized =
+        QJsonDocument(entries).toJson(QJsonDocument::Compact);
+    if (static_cast<std::size_t>(serialized.size())
+        > pvt::palette_io::kMaximumPaletteFileBytes) {
+        QMessageBox::warning(
+            this, tr("Palette library limit"),
+            tr("The local palette library would exceed its 64 MiB safety limit. Export this palette to a file instead."));
+        return;
+    }
+    settings.setValue(QStringLiteral("paletteLibrary/entries"), serialized);
     settings.sync();
     if (settings.status() != QSettings::NoError) {
         QMessageBox::critical(this, tr("Could not save palette"),
@@ -8173,34 +9091,81 @@ void MainWindow::loadPaletteFromLibraryOrLayer() {
             layer.render.palette});
     }
 
-    const QJsonDocument saved = QJsonDocument::fromJson(
-        QSettings().value(QStringLiteral("paletteLibrary/entries")).toByteArray());
+    const QByteArray saved_bytes = QSettings().value(
+        QStringLiteral("paletteLibrary/entries")).toByteArray();
+    const QJsonDocument saved = static_cast<std::size_t>(saved_bytes.size())
+                                    <= pvt::palette_io::kMaximumPaletteFileBytes
+                                ? QJsonDocument::fromJson(saved_bytes)
+                                : QJsonDocument{};
     if (saved.isArray()) {
         for (const QJsonValue& value : saved.array()) {
             const QJsonObject entry = value.toObject();
+            const int schema = entry.value(QStringLiteral("schema")).toInt(1);
             const QString name = entry.value(QStringLiteral("name")).toString().trimmed();
             const QJsonArray colors = entry.value(QStringLiteral("colors")).toArray();
-            if (name.isEmpty() || colors.isEmpty()
+            if ((schema != 1 && schema != 2) || name.isEmpty() || colors.isEmpty()
                 || colors.size() > static_cast<qsizetype>(pvt::kMaximumPaletteColors)) {
                 continue;
             }
             pvt::PaletteConfig palette;
             palette.enabled = true;
-            palette.name = name.toStdString();
+            palette.name = name.toUtf8().toStdString();
+            if (schema == 2) {
+                const double columns = entry.value(QStringLiteral("columns"))
+                                           .toDouble(-1.0);
+                if (!std::isfinite(columns) || columns < 0.0
+                    || columns > static_cast<double>(pvt::kMaximumPaletteColors)
+                    || std::floor(columns) != columns) {
+                    continue;
+                }
+                palette.columns = static_cast<std::size_t>(columns);
+            }
             bool valid = true;
             for (const QJsonValue& color_value : colors) {
-                const QJsonArray rgba = color_value.toArray();
+                const QJsonObject encoded = color_value.toObject();
+                const QJsonArray rgba = schema == 1
+                                            ? color_value.toArray()
+                                            : encoded.value(QStringLiteral("rgba")).toArray();
                 if (rgba.size() != 4) {
                     valid = false;
                     break;
                 }
-                pvt::PaletteColor color{
-                    rgba.at(0).toDouble(-1.0), rgba.at(1).toDouble(-1.0),
-                    rgba.at(2).toDouble(-1.0), rgba.at(3).toDouble(-1.0)};
-                if (color.red < 0.0 || color.red > 1.0
-                    || color.green < 0.0 || color.green > 1.0
-                    || color.blue < 0.0 || color.blue > 1.0
-                    || color.alpha < 0.0 || color.alpha > 1.0) {
+                pvt::PaletteColor color;
+                color.red = rgba.at(0).toDouble(-1.0);
+                color.green = rgba.at(1).toDouble(-1.0);
+                color.blue = rgba.at(2).toDouble(-1.0);
+                color.alpha = rgba.at(3).toDouble(-1.0);
+                if (schema == 2) {
+                    color.name = encoded.value(QStringLiteral("name"))
+                                     .toString().toUtf8().toStdString();
+                    const QString encoding = encoded.value(
+                        QStringLiteral("encoding")).toString();
+                    if (encoding == QStringLiteral("linear")) {
+                        color.encoding = pvt::PaletteColorEncoding::Linear;
+                    } else if (encoding != QStringLiteral("srgb")) {
+                        valid = false;
+                        break;
+                    }
+                }
+                const double maximum = color.encoding
+                                               == pvt::PaletteColorEncoding::Linear
+                                           ? static_cast<double>(
+                                                 (std::numeric_limits<float>::max)())
+                                           : 1.0;
+                const double minimum = color.encoding
+                                               == pvt::PaletteColorEncoding::Linear
+                                           ? -maximum
+                                           : 0.0;
+                if (!std::isfinite(color.red) || color.red < minimum
+                    || color.red > maximum || !std::isfinite(color.green)
+                    || color.green < minimum || color.green > maximum
+                    || !std::isfinite(color.blue) || color.blue < minimum
+                    || color.blue > maximum || !std::isfinite(color.alpha)
+                    || color.alpha < 0.0 || color.alpha > 1.0
+                    || !valid_text(QString::fromUtf8(
+                                       color.name.data(),
+                                       static_cast<qsizetype>(color.name.size())),
+                                   TextRule::Name)) {
                     valid = false;
                     break;
                 }
@@ -8236,6 +9201,202 @@ void MainWindow::loadPaletteFromLibraryOrLayer() {
     schedulePreview();
     recordActiveStateChange(tr("Load reusable palette"), std::move(before));
     status_->setText(tr("Loaded %1.").arg(selected));
+}
+
+void MainWindow::importPaletteFile() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Import starting palette"), usableDialogDirectory(),
+        palette_file_filter());
+    if (path.isEmpty()) return;
+    rememberDialogLocation(path);
+
+    const std::string utf8_path = path.toUtf8().toStdString();
+    const auto format = pvt::palette_io::format_from_path(utf8_path);
+    pvt::palette_io::PaletteDocument document;
+    pvt::palette_io::PaletteIoSummary summary;
+    std::string error;
+    if (!pvt::palette_io::import_palette(
+            utf8_path, format, document, summary, &error)) {
+        QMessageBox::critical(
+            this, tr("Could not import palette"),
+            tr("%1\n\n%2")
+                .arg(path, QString::fromStdString(error)));
+        return;
+    }
+
+    pvt::PaletteConfig imported;
+    imported.enabled = true;
+    imported.name = document.name.empty() ? std::string("Imported Palette")
+                                          : document.name;
+    imported.columns = document.columns.value_or(0U);
+    imported.colors.reserve(document.entries.size());
+    for (const auto& entry : document.entries) {
+        pvt::PaletteColor color;
+        color.red = entry.red;
+        color.green = entry.green;
+        color.blue = entry.blue;
+        color.alpha = entry.alpha;
+        color.name = entry.name;
+        color.encoding = entry.source_encoding
+                                 == pvt::palette_io::ColorEncoding::Linear
+                             ? pvt::PaletteColorEncoding::Linear
+                             : pvt::PaletteColorEncoding::Srgb;
+        imported.colors.push_back(std::move(color));
+    }
+
+    const bool append_fits = imported.colors.size()
+        <= pvt::kMaximumPaletteColors - config_.palette.colors.size();
+    QMessageBox decision(this);
+    decision.setIcon(QMessageBox::Information);
+    decision.setWindowTitle(tr("Palette import summary"));
+    decision.setText(tr("Review the import before changing this layer."));
+    decision.setInformativeText(
+        palette_io_summary_text(path, format, summary)
+        + tr("\n\nReplace the current palette or append these values?"));
+    QAbstractButton* replace = decision.addButton(
+        tr("Replace Palette"), QMessageBox::AcceptRole);
+    QAbstractButton* append = decision.addButton(
+        tr("Append Values"), QMessageBox::ActionRole);
+    QAbstractButton* cancel = decision.addButton(QMessageBox::Cancel);
+    append->setEnabled(append_fits);
+    if (!append_fits) {
+        append->setToolTip(tr(
+            "Appending would exceed the signed-int palette index limit."));
+    }
+    decision.setDefaultButton(
+        qobject_cast<QPushButton*>(replace));
+    decision.exec();
+    if (decision.clickedButton() == cancel || decision.clickedButton() == nullptr) {
+        return;
+    }
+
+    const bool appending = decision.clickedButton() == append;
+    pvt::RenderConfig candidate = config_;
+    if (!appending) {
+        candidate.palette = std::move(imported);
+    } else {
+        const bool was_empty = candidate.palette.colors.empty();
+        if (was_empty) {
+            candidate.palette.name = imported.name;
+            candidate.palette.columns = imported.columns;
+        } else {
+            // Once two independently laid-out palettes are concatenated there
+            // is no honest single source grid width to retain.
+            candidate.palette.columns = 0U;
+        }
+        candidate.palette.colors.insert(
+            candidate.palette.colors.end(),
+            std::make_move_iterator(imported.colors.begin()),
+            std::make_move_iterator(imported.colors.end()));
+        candidate.palette.enabled = true;
+    }
+    // palette_io deliberately preserves finite linear/HDR source values. The
+    // renderer has a tighter float-domain contract, so validate the complete
+    // candidate transaction before changing the project. Account for the same
+    // automatic alpha-output adjustment that will be applied after commit.
+    if (visible_stack_requires_alpha(project_, &candidate,
+                                     active_layer_uuid_)) {
+        candidate.output.write_alpha = true;
+    }
+    const pvt::ValidationResult validation = pvt::validate(candidate);
+    if (!validation.ok) {
+        QMessageBox::critical(
+            this, tr("Palette cannot be used by this project"),
+            tr("The file was imported without changing the layer, but the "
+               "result would violate a renderer limit:\n\n%1")
+                .arg(QString::fromStdString(validation.message)));
+        return;
+    }
+
+    auto before = captureActiveState();
+    config_.palette = std::move(candidate.palette);
+    syncActiveRender();
+    ensureAlphaForTransparency();
+    loadGlobalEditors();
+    schedulePreview();
+    recordActiveStateChange(appending ? tr("Append imported palette")
+                                      : tr("Import palette"),
+                            std::move(before));
+    status_->setText(
+        tr("Imported %1 palette value(s) from %2.")
+            .arg(static_cast<qulonglong>(summary.accepted))
+            .arg(QFileInfo(path).fileName()));
+}
+
+void MainWindow::exportPaletteFile() {
+    if (config_.palette.colors.empty()) {
+        QMessageBox::information(this, tr("Nothing to export"),
+                                 tr("Add at least one palette color first."));
+        return;
+    }
+    QString selected_filter;
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Export starting palette"),
+        QDir(usableDialogDirectory()).filePath(QStringLiteral("palette.gpl")),
+        palette_file_filter(), &selected_filter);
+    if (path.isEmpty()) return;
+    if (QFileInfo(path).suffix().isEmpty()) {
+        QString suffix = QStringLiteral(".gpl");
+        if (selected_filter.contains(QStringLiteral("*.kpl"))) suffix = QStringLiteral(".kpl");
+        else if (selected_filter.contains(QStringLiteral("*.css"))) suffix = QStringLiteral(".css");
+        else if (selected_filter.contains(QStringLiteral("*.py"))) suffix = QStringLiteral(".py");
+        else if (selected_filter.contains(QStringLiteral("*.php"))) suffix = QStringLiteral(".php");
+        else if (selected_filter.contains(QStringLiteral("*.java"))) suffix = QStringLiteral(".java");
+        else if (selected_filter.contains(QStringLiteral("*.txt"))) suffix = QStringLiteral(".txt");
+        else if (selected_filter.contains(QStringLiteral("*.png"))) suffix = QStringLiteral(".png");
+        else if (selected_filter.contains(QStringLiteral("*.exr"))) suffix = QStringLiteral(".exr");
+        path += suffix;
+    }
+    rememberDialogLocation(path);
+    const bool exists = QFileInfo::exists(path);
+    if (exists
+        && QMessageBox::question(
+               this, tr("Replace palette file?"),
+               tr("%1 already exists. Replace it atomically?").arg(path),
+               QMessageBox::Yes | QMessageBox::No,
+               QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
+
+    pvt::palette_io::PaletteDocument document;
+    document.name = config_.palette.name;
+    if (config_.palette.columns > 0U) {
+        document.columns = config_.palette.columns;
+    }
+    document.entries.reserve(config_.palette.colors.size());
+    for (std::size_t index = 0U; index < config_.palette.colors.size(); ++index) {
+        const pvt::PaletteColor& color = config_.palette.colors[index];
+        pvt::palette_io::PaletteEntry entry;
+        entry.name = color.name;
+        entry.red = color.red;
+        entry.green = color.green;
+        entry.blue = color.blue;
+        entry.alpha = color.alpha;
+        entry.source_encoding = color.encoding == pvt::PaletteColorEncoding::Linear
+                                    ? pvt::palette_io::ColorEncoding::Linear
+                                    : pvt::palette_io::ColorEncoding::SRGB;
+        entry.source_order = index;
+        document.entries.push_back(std::move(entry));
+    }
+
+    const std::string utf8_path = path.toUtf8().toStdString();
+    const auto format = pvt::palette_io::format_from_path(utf8_path);
+    pvt::palette_io::PaletteIoSummary summary;
+    std::string error;
+    if (!pvt::palette_io::export_palette(
+            utf8_path, format, document, exists, summary, &error)) {
+        QMessageBox::critical(
+            this, tr("Could not export palette"),
+            tr("%1\n\n%2").arg(path, QString::fromStdString(error)));
+        return;
+    }
+    QMessageBox::information(
+        this, tr("Palette exported"),
+        palette_io_summary_text(path, format, summary));
+    status_->setText(
+        tr("Exported %1 palette value(s) to %2.")
+            .arg(static_cast<qulonglong>(summary.accepted))
+            .arg(QFileInfo(path).fileName()));
 }
 
 void MainWindow::generateRandomPalette() {
@@ -8463,7 +9624,12 @@ void MainWindow::generateRandomPalette() {
                                       * static_cast<double>(index)
                                       / static_cast<double>(count->value() - 1);
         }
-        palette.colors.push_back({red, green, blue, alpha});
+        pvt::PaletteColor color;
+        color.red = red;
+        color.green = green;
+        color.blue = blue;
+        color.alpha = alpha;
+        palette.colors.push_back(std::move(color));
     }
 
     auto before = captureActiveState();
@@ -8489,17 +9655,31 @@ void MainWindow::addPaletteColor() {
     }
     const QColor initial = config_.palette.colors.empty()
                                ? QColor(Qt::white)
-                               : QColor::fromRgbF(
-                                     static_cast<float>(config_.palette.colors.back().red),
-                                     static_cast<float>(config_.palette.colors.back().green),
-                                     static_cast<float>(config_.palette.colors.back().blue),
-                                     static_cast<float>(config_.palette.colors.back().alpha));
+                               : palette_display_color(
+                                     config_.palette.colors.back());
     const QColor chosen = QColorDialog::getColor(
         initial, this, tr("Add palette color"), QColorDialog::ShowAlphaChannel);
     if (!chosen.isValid()) return;
+    bool name_accepted = false;
+    const QString name = QInputDialog::getText(
+        this, tr("Name palette color"),
+        tr("Optional entry name (preserved by GPL and KPL)"),
+        QLineEdit::Normal, QString{}, &name_accepted);
+    if (!name_accepted) return;
+    if (!valid_text(name, TextRule::Name)) {
+        QMessageBox::warning(this, tr("Invalid color name"),
+                             tr("Use UTF-8 text without control characters."));
+        return;
+    }
     auto before = captureActiveState();
-    config_.palette.colors.push_back(
-        {chosen.redF(), chosen.greenF(), chosen.blueF(), chosen.alphaF()});
+    pvt::PaletteColor added;
+    added.red = chosen.redF();
+    added.green = chosen.greenF();
+    added.blue = chosen.blueF();
+    added.alpha = chosen.alphaF();
+    added.name = name.toUtf8().toStdString();
+    added.encoding = pvt::PaletteColorEncoding::Srgb;
+    config_.palette.colors.push_back(std::move(added));
     syncActiveRender();
     refreshPaletteEditor();
     palette_colors_->setCurrentRow(
@@ -8514,21 +9694,49 @@ void MainWindow::editSelectedPaletteColor() {
         return;
     }
     const auto& current = config_.palette.colors[static_cast<std::size_t>(row)];
+    const bool converts_linear =
+        current.encoding == pvt::PaletteColorEncoding::Linear;
+    if (converts_linear
+        && QMessageBox::question(
+               this, tr("Convert linear/HDR color?"),
+               tr("The standard color picker edits display sRGB. Continuing converts this one entry to sRGB and clips values outside the displayable range. The other imported values remain unchanged."),
+               QMessageBox::Yes | QMessageBox::No,
+               QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
     const QColor chosen = QColorDialog::getColor(
-        QColor::fromRgbF(static_cast<float>(current.red),
-                         static_cast<float>(current.green),
-                         static_cast<float>(current.blue),
-                         static_cast<float>(current.alpha)),
+        palette_display_color(current),
         this, tr("Edit palette color"), QColorDialog::ShowAlphaChannel);
     if (!chosen.isValid()) return;
+    bool name_accepted = false;
+    const QString name = QInputDialog::getText(
+        this, tr("Name palette color"),
+        tr("Optional entry name (preserved by GPL and KPL)"),
+        QLineEdit::Normal, QString::fromStdString(current.name),
+        &name_accepted);
+    if (!name_accepted) return;
+    if (!valid_text(name, TextRule::Name)) {
+        QMessageBox::warning(this, tr("Invalid color name"),
+                             tr("Use UTF-8 text without control characters."));
+        return;
+    }
     auto before = captureActiveState();
-    config_.palette.colors[static_cast<std::size_t>(row)] =
-        {chosen.redF(), chosen.greenF(), chosen.blueF(), chosen.alphaF()};
+    pvt::PaletteColor edited;
+    edited.red = chosen.redF();
+    edited.green = chosen.greenF();
+    edited.blue = chosen.blueF();
+    edited.alpha = chosen.alphaF();
+    edited.name = name.toUtf8().toStdString();
+    edited.encoding = pvt::PaletteColorEncoding::Srgb;
+    config_.palette.colors[static_cast<std::size_t>(row)] = std::move(edited);
     syncActiveRender();
     refreshPaletteEditor();
     palette_colors_->setCurrentRow(row);
     schedulePreview();
     recordActiveStateChange(tr("Edit palette color"), std::move(before));
+    if (converts_linear) {
+        status_->setText(tr("Converted the edited entry to display sRGB."));
+    }
 }
 
 void MainWindow::removeSelectedPaletteColor() {
@@ -8659,6 +9867,8 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
     auto before = captureActiveState();
     const bool layer_editor =
         changed_editor == layer_clock_group_
+        || changed_editor == layer_clock_mix_enabled_
+        || changed_editor == layer_clock_mix_mode_
         || changed_editor == layer_clock_scale_
         || changed_editor == layer_clock_mode_
         || changed_editor == layer_clock_interpolation_
@@ -8678,6 +9888,11 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
         auto& clock = local.clock;
         if (changed_editor == layer_clock_group_) {
             local.enabled = layer_clock_group_->isChecked();
+        } else if (changed_editor == layer_clock_mix_enabled_) {
+            local.mix_enabled = layer_clock_mix_enabled_->isChecked();
+        } else if (changed_editor == layer_clock_mix_mode_) {
+            local.mix = static_cast<pvt::LayerClockMixMode>(
+                layer_clock_mix_mode_->currentData().toInt());
         } else if (changed_editor == layer_clock_scale_) {
             local.scale = static_cast<pvt::LayerClockScale>(
                 layer_clock_scale_->currentData().toInt());
@@ -8939,6 +10154,7 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     }
     auto before = captureActiveState();
     auto& effect = config_.effects[*index];
+    bool moved_between_stages = false;
     if (changed_editor == effect_enabled_) {
         effect.enabled = effect_enabled_->isChecked();
     } else if (changed_editor == effect_sync_) {
@@ -8951,6 +10167,8 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_space_) {
         effect.space = static_cast<pvt::EffectSpace>(
             effect_space_->currentData().toInt());
+        moved_between_stages = effect_space_filter_
+                               && effect.space != *effect_space_filter_;
     } else if (changed_editor == effect_type_) {
         const auto old_type = effect.type;
         const auto new_type =
@@ -9056,8 +10274,17 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     ensureAlphaForTransparency();
     syncActiveRender();
     syncProjectGlobals();
-    updateEffectListItem(*index);
+    if (moved_between_stages) {
+        refreshEffectList();
+        status_->setText(
+            tr("Moved the effect to %1. Open that pipeline stage to continue editing it.")
+                .arg(effect.space == pvt::EffectSpace::Texture
+                         ? tr("Texture FX") : tr("Object FX")));
+    } else {
+        updateEffectListItem(*index);
+    }
     updateEffectEditorVisibility();
+    updateWorkflowSummaries();
     preview_->setConfiguration(config_);
     schedulePreview();
     const QString key = editor_change_is_continuous(changed_editor)
@@ -9119,6 +10346,48 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.hue_cycles = hue_cycles_->value();
     } else if (changed_editor == saturation_) {
         config_.saturation = saturation_->value();
+    } else if (changed_editor == kaleidoscope_group_) {
+        config_.starting_colors.kaleidoscope.enabled =
+            kaleidoscope_group_->isChecked();
+    } else if (changed_editor == kaleidoscope_segments_) {
+        config_.starting_colors.kaleidoscope.mirrored_segments =
+            kaleidoscope_segments_->value();
+    } else if (changed_editor == kaleidoscope_rotation_) {
+        config_.starting_colors.kaleidoscope.rotation_degrees =
+            kaleidoscope_rotation_->value();
+    } else if (changed_editor == kaleidoscope_mix_) {
+        config_.starting_colors.kaleidoscope.mix =
+            kaleidoscope_mix_->value();
+    } else if (changed_editor == domain_warp_group_) {
+        config_.starting_colors.domain_warp.enabled =
+            domain_warp_group_->isChecked();
+    } else if (changed_editor == domain_warp_strength_) {
+        config_.starting_colors.domain_warp.strength =
+            domain_warp_strength_->value();
+    } else if (changed_editor == domain_warp_scale_) {
+        config_.starting_colors.domain_warp.scale =
+            domain_warp_scale_->value();
+    } else if (changed_editor == domain_warp_octaves_) {
+        config_.starting_colors.domain_warp.octaves =
+            domain_warp_octaves_->value();
+    } else if (changed_editor == domain_warp_cycles_) {
+        config_.starting_colors.domain_warp.cycles_per_loop =
+            domain_warp_cycles_->value();
+    } else if (changed_editor == domain_warp_seed_) {
+        bool valid_seed = false;
+        const quint64 seed = domain_warp_seed_->text().trimmed().toULongLong(
+            &valid_seed, 10);
+        if (!valid_seed) {
+            const QSignalBlocker blocker(domain_warp_seed_);
+            domain_warp_seed_->setText(QString::number(
+                static_cast<qulonglong>(
+                    config_.starting_colors.domain_warp.seed)));
+            status_->setText(tr(
+                "Domain-warp seed must be an unsigned 64-bit integer."));
+            return;
+        }
+        config_.starting_colors.domain_warp.seed =
+            static_cast<std::uint64_t>(seed);
     } else if (changed_editor == starting_image_enabled_) {
         if (starting_image_enabled_->isChecked()
             && config_.starting_image.path.empty()) {
@@ -9478,13 +10747,16 @@ void MainWindow::moveSelectedSwing(int direction) {
 
 void MainWindow::moveSelectedEffect(int direction) {
     const auto index = selectedEffectIndex();
-    if (!index) {
-        return;
+    if (!index || direction == 0) return;
+    const auto space = config_.effects[*index].space;
+    std::ptrdiff_t target = static_cast<std::ptrdiff_t>(*index) + direction;
+    while (target >= 0
+           && target < static_cast<std::ptrdiff_t>(config_.effects.size())
+           && config_.effects[static_cast<std::size_t>(target)].space != space) {
+        target += direction;
     }
-    const auto target = static_cast<std::ptrdiff_t>(*index) + direction;
-    if (target < 0 || target >= static_cast<std::ptrdiff_t>(config_.effects.size())) {
-        return;
-    }
+    if (target < 0
+        || target >= static_cast<std::ptrdiff_t>(config_.effects.size())) return;
     auto before = captureActiveState();
     const auto id = config_.effects[*index].id;
     std::swap(config_.effects[*index], config_.effects[static_cast<std::size_t>(target)]);
@@ -9571,11 +10843,12 @@ void MainWindow::randomizeStackComposition() {
         config_.swings.front().enabled = true;
     }
 
-    std::array<pvt::EffectType, 8> effect_types = {
+    std::array<pvt::EffectType, 11> effect_types = {
         pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
         pvt::EffectType::Shake, pvt::EffectType::FlagWave, pvt::EffectType::Glow,
         pvt::EffectType::BlockScale, pvt::EffectType::ParticleField,
-        pvt::EffectType::Blur};
+        pvt::EffectType::Blur, pvt::EffectType::Glitch,
+        pvt::EffectType::Starburst, pvt::EffectType::LensDistortion};
     constexpr int kMaximumRandomEffects = 6;
     const int effect_count = random_integer(random, 1, kMaximumRandomEffects);
     bool has_enabled_effect = false;
@@ -10986,7 +12259,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     layers_dock_->hide();
     restore_layers_dock_action_->trigger();
     if (layers_dock_->isFloating() || layers_dock_->isHidden()
-        || dockWidgetArea(layers_dock_) != Qt::RightDockWidgetArea) {
+        || dockWidgetArea(layers_dock_) != Qt::LeftDockWidgetArea) {
         if (error != nullptr) {
             *error = tr("The Project & Layers panel could not be restored from a floating or hidden state.");
         }
@@ -11502,14 +12775,37 @@ bool MainWindow::runSmokeChecks(QString* error) {
         schedulePreview();
     });
 
-    if (tabs_ == nullptr || tabs_->count() != 6
-        || tabs_->indexOf(wave_page_) < 0
-        || tabs_->indexOf(synchronization_page_) < 0
+    if (tabs_ == nullptr || tabs_->count() != 9
+        || !tabs_->tabBar()->isHidden()
+        || tabs_->indexOf(source_page_) < 0
         || tabs_->indexOf(effect_page_) < 0
-        || tabs_->tabText(tabs_->indexOf(synchronization_page_))
-               != tr("Synchronization")
-        || tabs_->indexOf(synchronization_page_)
-               == tabs_->indexOf(wave_page_)
+        || tabs_->indexOf(surface_page_) < 0
+        || tabs_->indexOf(motion_page_) < 0
+        || tabs_->indexOf(finish_page_) < 0
+        || tabs_->indexOf(project_canvas_page_) < 0
+        || tabs_->indexOf(project_sync_page_) < 0
+        || tabs_->indexOf(project_export_page_) < 0
+        || tabs_->indexOf(history_page_) < 0
+        || workflow_stage_buttons_.size() != 6U
+        || workflow_stage_buttons_[0]->text() != tr("Source")
+        || workflow_stage_buttons_[1]->text() != tr("Texture FX")
+        || workflow_stage_buttons_[2]->text() != tr("Surface")
+        || workflow_stage_buttons_[3]->text() != tr("Transform && Motion")
+        || workflow_stage_buttons_[4]->text() != tr("Object FX")
+        || workflow_stage_buttons_[5]->text() != tr("Finish")
+        || wave_page_ == nullptr || !source_page_->isAncestorOf(wave_page_)
+        || synchronization_page_ == nullptr
+        || drivers_group_ == nullptr
+        || !drivers_group_->isAncestorOf(synchronization_page_)
+        || drivers_expand_button_ == nullptr
+        || driver_project_summary_ == nullptr
+        || driver_layer_summary_ == nullptr
+        || driver_swing_summary_ == nullptr
+        || driver_audio_summary_ == nullptr
+        || project_canvas_button_ == nullptr
+        || project_sync_button_ == nullptr
+        || project_export_button_ == nullptr
+        || project_history_button_ == nullptr
         || swings_group_ == nullptr || swings_group_->parentWidget() == nullptr
         || project_audio_response_group_ == nullptr
         || audio_response_group_ == nullptr
@@ -11563,7 +12859,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || audio_wave_source_->count() != audio_effect_source_->count()
         || audio_wave_source_->count() != audio_color_source_->count()) {
         if (error != nullptr) {
-            *error = tr("The Synchronization tab or its active-layer routing blocks were not constructed correctly.");
+            *error = tr("The Flow Workbench stages, persistent Drivers strip, or project settings navigation were not constructed correctly.");
         }
         return false;
     }
@@ -12796,7 +14092,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     group_locked_->setChecked(true);
     selectLayer(top_uuid);
     if (!project_.groups.front().locked || layer_alpha_mode_->isEnabled()
-        || tabs_->isTabEnabled(0) || randomize_values_action_->isEnabled()
+        || source_page_->isEnabled() || randomize_values_action_->isEnabled()
         || randomize_mix_action_->isEnabled()) {
         if (error != nullptr) *error = tr("Locking a group did not protect its contained layer editors.");
         return false;
@@ -13074,16 +14370,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
     undo_stack_->setClean();
     baseline_dirty_ = false;
     const QString bundle_path = directory.filePath(QStringLiteral("smoke-project.zip"));
-    tabs_->setCurrentWidget(effect_page_);
+    setWorkflowStage(4);
     QWidget* const tab_before_save = tabs_->currentWidget();
+    const int stage_before_save = workflow_stage_index_;
+    const auto filter_before_save = effect_space_filter_;
     if (!saveProjectPath(bundle_path) || document_ == nullptr
         || document_->versions.size() != 1U || hasUnsavedChanges()) {
         if (error != nullptr) *error = tr("The GUI could not create the first bundle version.");
         return false;
     }
-    if (tabs_->currentWidget() != tab_before_save) {
+    if (tabs_->currentWidget() != tab_before_save
+        || workflow_stage_index_ != stage_before_save
+        || effect_space_filter_ != filter_before_save
+        || !workflow_stage_buttons_[4]->isChecked()) {
         if (error != nullptr) {
-            *error = tr("Saving navigated away from the user's selected tab.");
+            *error = tr("Saving navigated away from the user's selected workflow stage.");
         }
         return false;
     }
@@ -13365,6 +14666,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    // Leave screenshot-mode smoke runs in the same calm, first-launch state a
+    // user sees instead of exposing whichever stage an earlier assertion used.
+    setWorkflowStage(0);
+    setDriversExpanded(false);
     return true;
 }
 

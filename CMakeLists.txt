@@ -290,6 +290,7 @@ if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI OR BUILD_TESTING)
 endif()
 
 if(PVT_NEEDS_BUNDLE_SUPPORT)
+    find_package(ZLIB REQUIRED)
     set(PVT_MINIZIP_TARGET)
     find_package(minizip 4.2 CONFIG QUIET)
     if(TARGET MINIZIP::minizip)
@@ -355,6 +356,8 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
         src/bundle_archive.h
         src/config_codec.cpp
         src/config_codec.h
+        src/palette_io.cpp
+        src/palette_io.h
         src/project_bundle.cpp
         src/project_bundle.h)
     add_library(ProceduralVisualizerTool::Bundle ALIAS ProceduralVisualizerBundle)
@@ -370,6 +373,7 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
         PUBLIC ProceduralVisualizerTool::ProceduralVisualizerTool
         PRIVATE
             ${PVT_MINIZIP_TARGET}
+            ZLIB::ZLIB
             ProceduralVisualizerTool::Audio)
     pvt_enable_warnings(ProceduralVisualizerBundle)
 endif()
@@ -644,6 +648,14 @@ if(BUILD_TESTING)
         ${PVT_MINIZIP_TARGET})
     pvt_enable_warnings(pvt_bundle_tests)
     add_test(NAME pvt_bundle COMMAND pvt_bundle_tests)
+
+    add_executable(pvt_palette_io_tests tests/palette_io_test.cpp)
+    target_compile_features(pvt_palette_io_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_palette_io_tests PROPERTIES CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_palette_io_tests PRIVATE
+        ProceduralVisualizerTool::Bundle)
+    pvt_enable_warnings(pvt_palette_io_tests)
+    add_test(NAME pvt_palette_io COMMAND pvt_palette_io_tests)
 
     add_executable(pvt_obj_mesh_tests
         tests/obj_mesh_isolated_test.cpp

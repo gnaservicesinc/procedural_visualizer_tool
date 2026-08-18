@@ -4224,6 +4224,12 @@ bool semantic_fields(const ProjectConfig& project,
         fields[render_prefix + "surface.obj_basename"] =
             layer.render.surface.obj_basename;
         fields[render_prefix + "palette.name"] = layer.render.palette.name;
+        for (std::size_t color = 0U;
+             color < layer.render.palette.colors.size(); ++color) {
+            fields[render_prefix + "palette.colors."
+                   + std::to_string(color) + ".name"] =
+                layer.render.palette.colors[color].name;
+        }
         for (std::size_t wave = 0U; wave < layer.render.waves.size(); ++wave) {
             fields[render_prefix + "waves." + std::to_string(wave) + ".name"] =
                 layer.render.waves[wave].name;

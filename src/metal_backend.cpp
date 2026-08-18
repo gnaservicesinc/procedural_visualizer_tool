@@ -66,6 +66,8 @@ struct alignas(16) GpuFrameConstants {
     UInt4 starting_reference;
     Float4 starting_minimum;
     Float4 starting_maximum;
+    UInt4 shaping_uint; // segments, octaves, signed cycles, seed low 32 bits
+    Float4 shaping_values; // rotation, mix, warp strength, warp scale
 };
 
 struct alignas(16) GpuWave {
@@ -112,7 +114,7 @@ struct alignas(16) GpuParticleGrid {
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
-static_assert(sizeof(GpuFrameConstants) == 256U);
+static_assert(sizeof(GpuFrameConstants) == 288U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 80U);
@@ -451,7 +453,8 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         config.lighting_enabled ? 1U : 0U,
         config.spiral_enabled ? 1U : 0U,
         config.wall_reflection_enabled ? 1U : 0U,
-        0U};
+        static_cast<std::uint32_t>(
+            config.starting_colors.domain_warp.seed >> 32U)};
     result.signed_values = {
         config.alpha.cycles_per_loop,
         config.spiral_arms,
@@ -540,6 +543,19 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<float>(starting.green_maximum),
         static_cast<float>(starting.blue_maximum),
         static_cast<float>(starting.alpha_maximum)};
+    result.shaping_uint = {
+        static_cast<std::uint32_t>(starting.kaleidoscope.mirrored_segments),
+        static_cast<std::uint32_t>(starting.domain_warp.octaves),
+        static_cast<std::uint32_t>(starting.domain_warp.cycles_per_loop),
+        static_cast<std::uint32_t>(starting.domain_warp.seed)};
+    result.shaping_values = {
+        static_cast<float>(starting.kaleidoscope.rotation_degrees
+                           * kPi / 180.0),
+        static_cast<float>(starting.kaleidoscope.enabled
+                               ? starting.kaleidoscope.mix : 0.0),
+        static_cast<float>(starting.domain_warp.enabled
+                               ? starting.domain_warp.strength : 0.0),
+        static_cast<float>(starting.domain_warp.scale)};
     return result;
 }
 
@@ -591,7 +607,8 @@ GpuEffect make_effect(const PreparedEffect& effect) {
     GpuEffect result;
     result.kind = {static_cast<std::uint32_t>(effect.type),
                    static_cast<std::uint32_t>(effect.space),
-                   static_cast<std::uint32_t>(effect.edge_mode), 0U};
+                   static_cast<std::uint32_t>(effect.edge_mode),
+                   static_cast<std::uint32_t>(effect.id)};
     result.primary = {static_cast<float>(effect.phase),
                       static_cast<float>(effect.intensity),
                       static_cast<float>(effect.magnitude),
@@ -606,7 +623,8 @@ GpuEffect make_effect(const PreparedEffect& effect) {
                         static_cast<float>(effect.area_radius)};
     result.blur = {static_cast<std::uint32_t>(effect.blur_type),
                    static_cast<std::uint32_t>(effect.blur_samples),
-                   static_cast<std::uint32_t>(effect.blur_passes), 0U};
+                   static_cast<std::uint32_t>(effect.blur_passes),
+                   static_cast<std::uint32_t>(effect.id >> 32U)};
     return result;
 }
 

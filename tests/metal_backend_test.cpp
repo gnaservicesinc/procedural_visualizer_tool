@@ -92,6 +92,11 @@ pvt::RenderConfig parity_config() {
     config.alpha.phase_degrees = 17.0;
     config.palette = pvt::default_palette(2U);
     config.palette.enabled = true;
+    config.palette.columns = 4U;
+    config.palette.colors.front().name = "Linear HDR parity";
+    config.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    config.palette.colors.front().red = 1.35;
     config.swings.push_back(pvt::default_swing(1U));
     config.swings.back().id = pvt::allocate_id(config);
     config.swings.back().radius = 0.42;
@@ -390,6 +395,29 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
                 "reversed reusable wave path tangent");
 
+    pvt::RenderConfig shaped_source = parity_config();
+    shaped_source.palette = {};
+    shaped_source.effects.clear();
+    shaped_source.quantization.enabled = false;
+    shaped_source.transform = {};
+    shaped_source.starting_colors.kaleidoscope.enabled = true;
+    shaped_source.starting_colors.kaleidoscope.mirrored_segments = 9;
+    shaped_source.starting_colors.kaleidoscope.rotation_degrees = 23.0;
+    shaped_source.starting_colors.kaleidoscope.mix = 0.72;
+    shaped_source.starting_colors.domain_warp.enabled = true;
+    shaped_source.starting_colors.domain_warp.strength = 0.24;
+    shaped_source.starting_colors.domain_warp.scale = 2.6;
+    shaped_source.starting_colors.domain_warp.octaves = 4;
+    shaped_source.starting_colors.domain_warp.cycles_per_loop = -3;
+    shaped_source.starting_colors.domain_warp.seed =
+        UINT64_C(0x123456789abcdef0);
+    CHECK(pvt::render_frame_at_phase(shaped_source, 0.37, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(shaped_source, 0.37, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.20, 0.018, 0.004, 0.0004,
+                "generated kaleidoscope/domain warp");
+
     const std::vector<pvt::EffectType> effect_types = {
         pvt::EffectType::EndlessZoom,
         pvt::EffectType::Ripple,
@@ -397,7 +425,10 @@ void test_backend_contract() {
         pvt::EffectType::FlagWave,
         pvt::EffectType::Glow,
         pvt::EffectType::BlockScale,
-        pvt::EffectType::ParticleField};
+        pvt::EffectType::ParticleField,
+        pvt::EffectType::Glitch,
+        pvt::EffectType::Starburst,
+        pvt::EffectType::LensDistortion};
     for (const pvt::EffectType type : effect_types) {
         pvt::RenderConfig single_effect = parity_config();
         single_effect.effects.clear();

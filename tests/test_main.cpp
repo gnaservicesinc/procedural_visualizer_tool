@@ -224,6 +224,14 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(pvt::render_frame_at_phase(
         image_with_generated_limits, 0.0, image_not_remapped, &error));
     CHECK(image_not_remapped.pixels == stretched.pixels);
+    image_with_generated_limits.starting_colors.kaleidoscope.enabled = true;
+    image_with_generated_limits.starting_colors.kaleidoscope.mirrored_segments = 9;
+    image_with_generated_limits.starting_colors.domain_warp.enabled = true;
+    image_with_generated_limits.starting_colors.domain_warp.strength = 0.3;
+    image_with_generated_limits.starting_colors.domain_warp.seed = 778899U;
+    CHECK(pvt::render_frame_at_phase(
+        image_with_generated_limits, 0.37, image_not_remapped, &error));
+    CHECK(image_not_remapped.pixels == stretched.pixels);
     image_config.alpha.use_source_alpha = false;
     pvt::Image ignored_source_alpha;
     CHECK(pvt::render_frame_at_phase(
@@ -240,7 +248,8 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     image_config.palette.enabled = true;
     image_config.palette.name = "RGBA source palette";
     image_config.palette.colors = {
-        {1.0, 0.0, 0.0, 0.25}, {0.0, 0.0, 1.0, 0.75}};
+        {1.0, 0.0, 0.0, 0.25, {}, pvt::PaletteColorEncoding::Srgb},
+        {0.0, 0.0, 1.0, 0.75, {}, pvt::PaletteColorEncoding::Srgb}};
     image_config.starting_image.palette_dither_enabled = false;
     pvt::Image image_paletted;
     CHECK(pvt::render_frame_at_phase(
@@ -1368,7 +1377,8 @@ void test_synchronized_clocks_and_music() {
     // one-color starting palette must visibly follow the music envelope.
     music.palette.enabled = true;
     music.palette.name = "Audio hue regression";
-    music.palette.colors = {{1.0, 0.0, 0.0}};
+    music.palette.colors = {
+        {1.0, 0.0, 0.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb}};
     CHECK(pvt::render_frame(music, 4, before_spike, &error));
     CHECK(pvt::render_frame(music, 5, at_spike, &error));
     CHECK(before_spike.pixels != at_spike.pixels);
@@ -1583,6 +1593,185 @@ void test_synchronized_clocks_and_music() {
           == "Bass");
 }
 
+void test_layer_clock_mixing_and_generated_shaping() {
+    constexpr double kTau = 6.283185307179586476925286766559;
+    const auto normalized_phase = [&](const pvt::detail::PreparedFrame& frame) {
+        return frame.loop_phase / kTau;
+    };
+    const auto close = [](double first, double second) {
+        return std::fabs(first - second) < 1.0e-12;
+    };
+
+    pvt::RenderConfig clock = pvt::default_config();
+    CHECK(!clock.layer_clock.mix_enabled);
+    CHECK(clock.layer_clock.mix == pvt::LayerClockMixMode::Replace);
+    make_small(clock);
+    clock.total_frames = 16;
+    clock.clock = {};
+    clock.clock.phase_offset_degrees = 36.0;
+    clock.layer_clock.enabled = true;
+    clock.layer_clock.clock = {};
+    clock.layer_clock.clock.phase_offset_degrees = 72.0;
+    clock.layer_clock.mix = pvt::LayerClockMixMode::Add;
+    clock.layer_clock.mix_enabled = false;
+
+    std::string error;
+    pvt::detail::PreparedFrame prepared;
+    CHECK(pvt::detail::prepare_frame_for_backend(clock, 4, prepared, &error));
+    // Mixing is opt-in. A disabled non-Replace record must preserve the
+    // historical active-layer behavior and replace the project clock.
+    CHECK(close(normalized_phase(prepared), 0.45));
+
+    clock.layer_clock.mix_enabled = true;
+    const std::array<std::pair<pvt::LayerClockMixMode, double>, 4U> expected{{
+        {pvt::LayerClockMixMode::Replace, 0.45},
+        {pvt::LayerClockMixMode::Add, 0.80},
+        {pvt::LayerClockMixMode::Difference, 0.90},
+        {pvt::LayerClockMixMode::SoftXor, 0.485},
+    }};
+    for (const auto& [mode, phase] : expected) {
+        clock.layer_clock.mix = mode;
+        CHECK(pvt::detail::prepare_frame_for_backend(
+            clock, 4, prepared, &error));
+        CHECK(close(normalized_phase(prepared), phase));
+    }
+    clock.layer_clock.mix = pvt::LayerClockMixMode::BitwiseXor;
+    CHECK(pvt::detail::prepare_frame_for_backend(clock, 4, prepared, &error));
+    constexpr std::uint32_t kFixedScale = UINT32_C(1) << 24U;
+    const std::uint32_t project_fixed = static_cast<std::uint32_t>(
+        std::floor(0.35 * static_cast<double>(kFixedScale)));
+    const std::uint32_t layer_fixed = static_cast<std::uint32_t>(
+        std::floor(0.45 * static_cast<double>(kFixedScale)));
+    const double xor_phase = static_cast<double>(project_fixed ^ layer_fixed)
+                             / static_cast<double>(kFixedScale);
+    CHECK(close(normalized_phase(prepared), xor_phase));
+    CHECK(std::string(pvt::layer_clock_mix_mode_name(
+              pvt::LayerClockMixMode::BitwiseXor)) == "Bitwise XOR");
+
+    // The project timeline remains authoritative, while a layer Music clock
+    // supplies the effective dense audio envelope after clock mixing.
+    pvt::RenderConfig music = pvt::default_config();
+    make_small(music);
+    music.total_frames = 10;
+    music.fps = 10.0;
+    music.clock = {};
+    music.layer_clock.enabled = true;
+    music.layer_clock.scale = pvt::LayerClockScale::OriginalSpeedLoop;
+    music.layer_clock.clock = ready_music_clock(1.0, 10U);
+    music.layer_clock.clock.music.feature_samples.assign(11U, {});
+    music.layer_clock.clock.music.feature_samples[5U].energy = 0.8F;
+    music.audio_reactive.enabled = true;
+    music.audio_reactive.color_enabled = true;
+    music.audio_reactive.color_source = pvt::MusicFeature::Energy;
+    music.audio_reactive.color_amount_degrees = 100.0;
+    CHECK(pvt::effective_frame_count(music, &error) == 10);
+    CHECK(pvt::detail::prepare_frame_for_backend(music, 5, prepared, &error));
+    CHECK(std::fabs(prepared.audio_hue_shift_degrees - 80.0) < 1.0e-5);
+
+    // An active layer Music clock historically supplied the independent phase
+    // too. Keep free-running effects and path bindings on the mapped layer
+    // timeline even though mixing is disabled by default.
+    music.total_frames = 20;
+    CHECK(pvt::detail::prepare_frame_for_backend(music, 15, prepared, &error));
+    CHECK(close(prepared.independent_loop_phase / kTau, 0.5));
+    music.layer_clock.scale = pvt::LayerClockScale::PlayOnceThenProject;
+    CHECK(pvt::detail::prepare_frame_for_backend(music, 15, prepared, &error));
+    CHECK(close(prepared.independent_loop_phase / kTau, 0.75));
+
+    pvt::RenderConfig generated = pvt::default_config();
+    make_small(generated);
+    generated.waves.clear();
+    generated.swings.clear();
+    generated.effects.clear();
+    generated.displacement_enabled = false;
+    generated.lighting_enabled = false;
+    generated.starting_colors.kaleidoscope.mirrored_segments = 7;
+    generated.starting_colors.kaleidoscope.rotation_degrees = 19.0;
+    generated.starting_colors.kaleidoscope.mix = 0.82;
+    generated.starting_colors.domain_warp.strength = 0.28;
+    generated.starting_colors.domain_warp.scale = 2.7;
+    generated.starting_colors.domain_warp.octaves = 4;
+    generated.starting_colors.domain_warp.cycles_per_loop = 3;
+    generated.starting_colors.domain_warp.seed = UINT64_C(0x123456789abcdef0);
+
+    pvt::Image baseline;
+    pvt::Image neutral;
+    pvt::Image shaped;
+    pvt::Image repeated;
+    pvt::Image seam;
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, baseline, &error));
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, neutral, &error));
+    CHECK(baseline.pixels == neutral.pixels);
+
+    generated.starting_colors.kaleidoscope.enabled = true;
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, shaped, &error));
+    CHECK(mean_absolute_difference(baseline, shaped) > 0.0001);
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, repeated, &error));
+    CHECK(shaped.pixels == repeated.pixels);
+
+    generated.starting_colors.kaleidoscope.enabled = false;
+    generated.starting_colors.domain_warp.enabled = true;
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, shaped, &error));
+    CHECK(mean_absolute_difference(baseline, shaped) > 0.0001);
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, repeated, &error));
+    CHECK(shaped.pixels == repeated.pixels);
+    const pvt::Image first_seed = shaped;
+    CHECK(pvt::render_frame_at_phase(generated, 0.0, shaped, &error));
+    CHECK(pvt::render_frame_at_phase(generated, 1.0, seam, &error));
+    CHECK(shaped.pixels == seam.pixels);
+    generated.starting_colors.domain_warp.seed ^= UINT64_C(0x55aa55aa);
+    CHECK(pvt::render_frame_at_phase(generated, 0.37, repeated, &error));
+    CHECK(mean_absolute_difference(repeated, first_seed) > 0.0001);
+}
+
+void test_new_procedural_effects() {
+    pvt::RenderConfig base = pvt::default_config();
+    make_small(base);
+    base.effects.clear();
+    base.output.write_alpha = true;
+    base.alpha.enabled = true;
+    base.alpha.minimum = 0.15;
+    base.alpha.maximum = 0.85;
+
+    std::string error;
+    pvt::Image unchanged;
+    CHECK(pvt::render_frame_at_phase(base, 0.37, unchanged, &error));
+    for (const pvt::EffectType type : {
+             pvt::EffectType::Glitch,
+             pvt::EffectType::Starburst,
+             pvt::EffectType::LensDistortion}) {
+        pvt::RenderConfig config = base;
+        pvt::EffectConfig effect = pvt::default_effect(type);
+        effect.id = UINT64_C(0x1234567800000000)
+                    + static_cast<std::uint64_t>(type);
+        effect.enabled = true;
+        effect.edge_mode = pvt::EdgeMode::Alpha;
+        config.effects.push_back(effect);
+        CHECK(pvt::validate(config).ok);
+        CHECK(std::string(pvt::effect_type_name(type)) != "Unknown");
+
+        pvt::Image first;
+        pvt::Image second;
+        pvt::Image loop_end;
+        CHECK(pvt::render_frame_at_phase(config, 0.37, first, &error));
+        CHECK(pvt::render_frame_at_phase(config, 0.37, second, &error));
+        CHECK(first.pixels == second.pixels);
+        CHECK(mean_absolute_difference(unchanged, first) > 0.000001);
+        CHECK(pvt::render_frame_at_phase(config, 0.0, first, &error));
+        CHECK(pvt::render_frame_at_phase(config, 1.0, loop_end, &error));
+        CHECK(first.pixels == loop_end.pixels);
+        for (std::size_t offset = 0U; offset < first.pixels.size();
+             offset += 4U) {
+            CHECK(std::isfinite(first.pixels[offset]));
+            CHECK(std::isfinite(first.pixels[offset + 1U]));
+            CHECK(std::isfinite(first.pixels[offset + 2U]));
+            CHECK(std::isfinite(first.pixels[offset + 3U]));
+            CHECK(first.pixels[offset + 3U] >= 0.0F);
+            CHECK(first.pixels[offset + 3U] <= 1.0F);
+        }
+    }
+}
+
 void test_determinism_and_seam_continuity() {
     auto config = pvt::default_config();
     make_small(config);
@@ -1612,13 +1801,25 @@ void test_determinism_and_seam_continuity() {
     CHECK(before.pixels == after.pixels);
 
     // Every effect type closes its loop with either synchronization mode.
-    for (int raw_type = static_cast<int>(pvt::EffectType::EndlessZoom);
-         raw_type <= static_cast<int>(pvt::EffectType::ParticleField); ++raw_type) {
+    const std::array<pvt::EffectType, 11U> effect_types{{
+        pvt::EffectType::EndlessZoom,
+        pvt::EffectType::Ripple,
+        pvt::EffectType::Shake,
+        pvt::EffectType::FlagWave,
+        pvt::EffectType::Glow,
+        pvt::EffectType::BlockScale,
+        pvt::EffectType::ParticleField,
+        pvt::EffectType::Blur,
+        pvt::EffectType::Glitch,
+        pvt::EffectType::Starburst,
+        pvt::EffectType::LensDistortion,
+    }};
+    for (const pvt::EffectType type : effect_types) {
         for (const bool synchronized : {false, true}) {
             auto one_effect = pvt::default_config();
             make_small(one_effect);
             one_effect.effects.clear();
-            auto effect = pvt::default_effect(static_cast<pvt::EffectType>(raw_type));
+            auto effect = pvt::default_effect(type);
             effect.id = pvt::allocate_id(one_effect);
             effect.enabled = true;
             effect.synchronized = synchronized;
@@ -1972,7 +2173,8 @@ void test_particle_straight_alpha_emission() {
     config.wall_reflection_enabled = false;
     config.hue_cycles = 0;
     config.palette.enabled = true;
-    config.palette.colors = {{0.0, 0.0, 0.0}};
+    config.palette.colors = {
+        {0.0, 0.0, 0.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb}};
     config.alpha.enabled = true;
     config.alpha.minimum = 0.0;
     config.alpha.maximum = 0.0;
@@ -2132,7 +2334,9 @@ void test_palettes_transforms_and_spatial_stages() {
     // A populated but disabled palette is a complete render bypass. This
     // locks down the GUI/CLI toggle contract independently of persistence.
     config.palette.name = "Ignored while disabled";
-    config.palette.colors = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}};
+    config.palette.colors = {
+        {0.0, 0.0, 0.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb},
+        {1.0, 1.0, 1.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb}};
     pvt::Image disabled_palette;
     CHECK(pvt::render_frame_at_phase(config, 0.371, disabled_palette, &error));
     CHECK(disabled_palette.pixels == baseline.pixels);
@@ -2171,7 +2375,9 @@ void test_palettes_transforms_and_spatial_stages() {
     config.transform = {};
     config.palette.enabled = true;
     config.palette.name = "Binary";
-    config.palette.colors = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}};
+    config.palette.colors = {
+        {0.0, 0.0, 0.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb},
+        {1.0, 1.0, 1.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb}};
     config.lighting_enabled = false;
     pvt::Image paletted;
     CHECK(pvt::render_frame_at_phase(config, 0.371, paletted, &error));
@@ -2191,6 +2397,24 @@ void test_palettes_transforms_and_spatial_stages() {
     CHECK(palette_seam_start.pixels == palette_seam.pixels);
     CHECK(!pvt::default_palette(0U).colors.empty());
     CHECK(pvt::default_palette(0U).name != pvt::default_palette(1U).name);
+
+    // Interchange metadata is operational, not decorative: the same numeric
+    // component is decoded from sRGB but passed through when authored linear.
+    auto srgb_palette = config;
+    srgb_palette.palette.colors = {
+        {0.5, 0.5, 0.5, 1.0, {}, pvt::PaletteColorEncoding::Srgb}};
+    pvt::Image srgb_palette_image;
+    CHECK(pvt::render_frame_at_phase(
+        srgb_palette, 0.371, srgb_palette_image, &error));
+    auto linear_palette = srgb_palette;
+    linear_palette.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    pvt::Image linear_palette_image;
+    CHECK(pvt::render_frame_at_phase(
+        linear_palette, 0.371, linear_palette_image, &error));
+    CHECK(mean_absolute_difference(srgb_palette_image,
+                                   linear_palette_image) > 0.1);
+    CHECK(std::fabs(linear_palette_image.pixels.front() - 0.5F) < 1.0e-6F);
 
     // Slope lighting follows source-color selection, so a starting palette
     // does not make that independent layer feature inert.
@@ -2416,6 +2640,31 @@ void test_validation_limits() {
         config.palette.colors.push_back(config.palette.colors.back());
     }
     CHECK(pvt::validate(config).ok); // The former 256-color policy cap is gone.
+    config = pvt::default_config();
+    config.palette.enabled = true;
+    config.palette.columns = 4U;
+    config.palette.colors.front().name = "Linear HDR";
+    config.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    config.palette.colors.front().red = -0.25;
+    config.palette.colors.front().green = 2.5;
+    CHECK(pvt::validate(config).ok);
+    config.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Srgb;
+    CHECK(!pvt::validate(config).ok);
+    config.palette.colors.front().encoding =
+        static_cast<pvt::PaletteColorEncoding>(255);
+    CHECK(!pvt::validate(config).ok);
+    config.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    config.palette.colors.front().red =
+        std::numeric_limits<double>::infinity();
+    CHECK(!pvt::validate(config).ok);
+    config.palette.colors.front().red =
+        static_cast<double>((std::numeric_limits<float>::max)());
+    config.palette.enabled = false;
+    CHECK(pvt::validate(config).ok);
+    config = pvt::default_config();
     config.clock.time_interval_microseconds =
         (std::numeric_limits<std::int64_t>::max)();
     config.clock.beat_offset_microseconds =
@@ -2512,6 +2761,38 @@ void test_validation_limits() {
     CHECK(pvt::validate(config).ok); // Former count/stamp-work caps are gone.
     particles.radius_pixels = 2.0;
     CHECK(pvt::validate(config).ok);
+
+    config = pvt::default_config();
+    config.starting_colors.kaleidoscope.mirrored_segments = 1;
+    CHECK(!pvt::validate(config).ok);
+    config.starting_colors.kaleidoscope.mirrored_segments = 6;
+    config.starting_colors.domain_warp.octaves = 9;
+    CHECK(!pvt::validate(config).ok);
+    config.starting_colors.domain_warp.octaves = 3;
+    config.layer_clock.mix = static_cast<pvt::LayerClockMixMode>(255U);
+    CHECK(!pvt::validate(config).ok);
+
+    for (const pvt::EffectType type : {
+             pvt::EffectType::Glitch, pvt::EffectType::Starburst}) {
+        config = pvt::default_config();
+        config.effects.clear();
+        auto procedural = pvt::default_effect(type);
+        procedural.id = 9001U;
+        procedural.enabled = true;
+        config.effects.push_back(procedural);
+        CHECK(pvt::validate(config).ok);
+        config.effects.front().frequency += 0.5;
+        CHECK(!pvt::validate(config).ok);
+    }
+    config = pvt::default_config();
+    config.effects.clear();
+    auto lens = pvt::default_effect(pvt::EffectType::LensDistortion);
+    lens.id = 9002U;
+    lens.enabled = true;
+    config.effects.push_back(lens);
+    CHECK(pvt::validate(config).ok);
+    config.effects.front().secondary = 0.0;
+    CHECK(pvt::validate(config).ok); // Neutral direction is a valid no-op.
 
     config = pvt::default_config();
     make_small(config);
@@ -2656,6 +2937,16 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.starting_colors.red_maximum = 0.9;
     original.starting_colors.alpha_minimum = 0.2;
     original.starting_colors.alpha_maximum = 0.8;
+    original.starting_colors.kaleidoscope.enabled = true;
+    original.starting_colors.kaleidoscope.mirrored_segments = 11;
+    original.starting_colors.kaleidoscope.rotation_degrees = -27.5;
+    original.starting_colors.kaleidoscope.mix = 0.63;
+    original.starting_colors.domain_warp.enabled = true;
+    original.starting_colors.domain_warp.strength = 0.37;
+    original.starting_colors.domain_warp.scale = 3.25;
+    original.starting_colors.domain_warp.octaves = 5;
+    original.starting_colors.domain_warp.cycles_per_loop = -4;
+    original.starting_colors.domain_warp.seed = UINT64_C(0xfedcba9876543210);
     original.starting_image.palette_dither_enabled = true;
     original.starting_image.palette_dither_method =
         pvt::DitherMethod::OrderedBayer;
@@ -2666,6 +2957,12 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.surface.obj_path = "mesh folder/test.obj";
     original.palette = pvt::default_palette(2U);
     original.palette.enabled = false;
+    original.palette.columns = 7U;
+    original.palette.colors.front().name = "HDR ember";
+    original.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    original.palette.colors.front().red = 0.275;
+    original.palette.colors.back().name = "Display violet";
     original.palette.colors.front().alpha = 0.37;
     original.transform.flip_horizontal = true;
     original.transform.mirror = pvt::MirrorMode::BottomToTop;
@@ -2730,6 +3027,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.effects.front().audio_response = pvt::AudioResponseMode::Energy;
     original.layer_clock.enabled = true;
     original.layer_clock.scale = pvt::LayerClockScale::OriginalSpeedLoop;
+    original.layer_clock.mix = pvt::LayerClockMixMode::SoftXor;
+    original.layer_clock.mix_enabled = true;
     original.layer_clock.clock.mode = pvt::ClockMode::Time;
     original.layer_clock.clock.time_interval_microseconds = 187500;
     original.layer_clock.clock.reverse = true;
@@ -2809,6 +3108,17 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.starting_colors.red_maximum == 0.9);
     CHECK(loaded.starting_colors.alpha_minimum == 0.2);
     CHECK(loaded.starting_colors.alpha_maximum == 0.8);
+    CHECK(loaded.starting_colors.kaleidoscope.enabled);
+    CHECK(loaded.starting_colors.kaleidoscope.mirrored_segments == 11);
+    CHECK(loaded.starting_colors.kaleidoscope.rotation_degrees == -27.5);
+    CHECK(loaded.starting_colors.kaleidoscope.mix == 0.63);
+    CHECK(loaded.starting_colors.domain_warp.enabled);
+    CHECK(loaded.starting_colors.domain_warp.strength == 0.37);
+    CHECK(loaded.starting_colors.domain_warp.scale == 3.25);
+    CHECK(loaded.starting_colors.domain_warp.octaves == 5);
+    CHECK(loaded.starting_colors.domain_warp.cycles_per_loop == -4);
+    CHECK(loaded.starting_colors.domain_warp.seed
+          == UINT64_C(0xfedcba9876543210));
 
     // New radial spirals serialize under their own token. The former
     // `subtractive` token migrates to the explicitly named square spiral so
@@ -2858,6 +3168,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
           == pvt::DitherMethod::OrderedBayer);
     CHECK(!loaded.palette.enabled);
     CHECK(loaded.palette.name == original.palette.name);
+    CHECK(loaded.palette.columns == original.palette.columns);
     CHECK(loaded.palette.colors.size() == original.palette.colors.size());
     if (loaded.palette.colors.size() == original.palette.colors.size()) {
         for (std::size_t index = 0U; index < loaded.palette.colors.size(); ++index) {
@@ -2869,6 +3180,10 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
                   == original.palette.colors[index].blue);
             CHECK(loaded.palette.colors[index].alpha
                   == original.palette.colors[index].alpha);
+            CHECK(loaded.palette.colors[index].name
+                  == original.palette.colors[index].name);
+            CHECK(loaded.palette.colors[index].encoding
+                  == original.palette.colors[index].encoding);
         }
     }
     CHECK(loaded.transform.flip_horizontal);
@@ -2902,6 +3217,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
           == pvt::AudioResponseMode::Energy);
     CHECK(loaded.layer_clock.enabled);
     CHECK(loaded.layer_clock.scale == pvt::LayerClockScale::OriginalSpeedLoop);
+    CHECK(loaded.layer_clock.mix == pvt::LayerClockMixMode::SoftXor);
+    CHECK(loaded.layer_clock.mix_enabled);
     CHECK(loaded.layer_clock.clock.mode == pvt::ClockMode::Time);
     CHECK(loaded.layer_clock.clock.time_interval_microseconds == 187500);
     CHECK(loaded.layer_clock.clock.data_only);
@@ -2912,6 +3229,33 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.motion.scale_pulse == 0.14);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
+
+    pvt::RenderConfig procedural_effect_setup = pvt::default_config();
+    procedural_effect_setup.effects.clear();
+    for (const pvt::EffectType type : {
+             pvt::EffectType::Glitch,
+             pvt::EffectType::Starburst,
+             pvt::EffectType::LensDistortion}) {
+        auto effect = pvt::default_effect(type);
+        effect.id = pvt::allocate_id(procedural_effect_setup);
+        effect.enabled = true;
+        procedural_effect_setup.effects.push_back(effect);
+    }
+    std::string procedural_effect_text;
+    CHECK(pvt::detail::serialize_setup_config(
+        procedural_effect_setup, procedural_effect_text, &error));
+    pvt::RenderConfig loaded_procedural_effects;
+    CHECK(pvt::detail::deserialize_setup_config(
+        procedural_effect_text, loaded_procedural_effects, &error));
+    CHECK(loaded_procedural_effects.effects.size() == 3U);
+    if (loaded_procedural_effects.effects.size() == 3U) {
+        CHECK(loaded_procedural_effects.effects[0].type
+              == pvt::EffectType::Glitch);
+        CHECK(loaded_procedural_effects.effects[1].type
+              == pvt::EffectType::Starburst);
+        CHECK(loaded_procedural_effects.effects[2].type
+              == pvt::EffectType::LensDistortion);
+    }
 
     // Each compatibility fixture removes the records introduced by the newer
     // version; merely changing a header would create an impossible old file.
@@ -2957,9 +3301,41 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_ten_bytes = read_bytes(first);
-    CHECK(std::string(version_ten_bytes.begin(), version_ten_bytes.end())
-              .rfind("PVT_SETUP\t10\n", 0U) == 0U);
+    const auto version_eleven_bytes = read_bytes(first);
+    CHECK(std::string(version_eleven_bytes.begin(), version_eleven_bytes.end())
+              .rfind("PVT_SETUP\t11\n", 0U) == 0U);
+    std::string version_ten(version_eleven_bytes.begin(),
+                            version_eleven_bytes.end());
+    version_ten.replace(0U, std::string("PVT_SETUP\t11").size(),
+                        "PVT_SETUP\t10");
+    erase_record(version_ten, "layer_clock.mix");
+    erase_record(version_ten, "layer_clock.mix_enabled");
+    erase_records_with_prefix(version_ten,
+                              "starting_colors.kaleidoscope.");
+    erase_records_with_prefix(version_ten,
+                              "starting_colors.domain_warp.");
+    erase_record(version_ten, "palette.columns");
+    for (std::size_t index = 0U; index < original.palette.colors.size(); ++index) {
+        erase_record(version_ten, "palette.colors." + std::to_string(index)
+                                      + ".name");
+        erase_record(version_ten, "palette.colors." + std::to_string(index)
+                                      + ".encoding");
+    }
+    pvt::RenderConfig loaded_version_ten;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_ten, loaded_version_ten, &error));
+    CHECK(loaded_version_ten.layer_clock.mix
+          == pvt::LayerClockMixMode::Replace);
+    CHECK(!loaded_version_ten.layer_clock.mix_enabled);
+    CHECK(!loaded_version_ten.starting_colors.kaleidoscope.enabled);
+    CHECK(!loaded_version_ten.starting_colors.domain_warp.enabled);
+    CHECK(loaded_version_ten.palette.columns == 0U);
+    for (const auto& color : loaded_version_ten.palette.colors) {
+        CHECK(color.name.empty());
+        CHECK(color.encoding == pvt::PaletteColorEncoding::Srgb);
+    }
+    const std::vector<char> version_ten_bytes(version_ten.begin(),
+                                               version_ten.end());
     std::string version_nine(version_ten_bytes.begin(),
                              version_ten_bytes.end());
     version_nine.replace(0U, std::string("PVT_SETUP\t10").size(),
@@ -3863,10 +4239,12 @@ int main(int argc, char** argv) {
 
     test_defaults_and_dynamic_collections();
     test_synchronized_clocks_and_music();
+    test_layer_clock_mixing_and_generated_shaping();
     test_image_access_and_transactional_render();
     test_cancellable_single_layer_render();
     test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
+    test_new_procedural_effects();
     test_direction_alpha_and_surfaces(source_root);
     test_configurable_blur_effects();
     test_partial_alpha_glow_composition();

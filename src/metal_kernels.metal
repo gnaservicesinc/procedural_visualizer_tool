@@ -26,6 +26,8 @@ struct FrameConstants {
     uint4 starting_reference; // full width/height/block size, auto levels
     float4 starting_minimum; // RGBA range minima
     float4 starting_maximum; // RGBA range maxima
+    uint4 shaping_uint; // segments, octaves, signed cycles, seed low 32 bits
+    float4 shaping_values; // kaleido rotation/mix, warp strength/scale
 };
 
 struct GpuWave {
@@ -81,6 +83,74 @@ float smooth_unit(float value) {
 float wrap_unit(float value) {
     value = fmod(value, 1.0f);
     return value < 0.0f ? value + 1.0f : value;
+}
+
+ulong generated_shape_hash(ulong value) {
+    value += 0x9e3779b97f4a7c15ul;
+    value = (value ^ (value >> 30u)) * 0xbf58476d1ce4e5b9ul;
+    value = (value ^ (value >> 27u)) * 0x94d049bb133111ebul;
+    return value ^ (value >> 31u);
+}
+
+float generated_shape_unit(ulong value) {
+    return float(generated_shape_hash(value) >> 40u)
+           * (1.0f / 16777216.0f);
+}
+
+float2 shape_generated_coordinate(constant FrameConstants& frame,
+                                  float2 coordinate) {
+    const float center_x = 0.5f * float(frame.dimensions_counts.x - 1u);
+    const float center_y = 0.5f * float(frame.dimensions_counts.y - 1u);
+    const float short_side = frame.phases.w;
+    const float warp_strength = frame.shaping_values.z;
+    if (warp_strength > 1.0e-7f) {
+        float2 normalized = (coordinate - float2(center_x, center_y))
+                            / short_side;
+        float2 offset = float2(0.0f);
+        float amplitude = warp_strength;
+        float normalization = 0.0f;
+        float frequency = frame.shaping_values.w;
+        const float temporal = float(int(frame.shaping_uint.z))
+                               * frame.phases.x;
+        const ulong seed = (ulong(frame.base_flags.w) << 32u)
+                           | ulong(frame.shaping_uint.w);
+        for (uint octave = 0u; octave < frame.shaping_uint.y; ++octave) {
+            const ulong octave_seed = generated_shape_hash(
+                seed ^ (ulong(octave) + 1ul) * 0xd1b54a32d192ed03ul);
+            const float phase_x = kTau * generated_shape_unit(octave_seed);
+            const float phase_y = kTau * generated_shape_unit(
+                octave_seed ^ 0x94d049bb133111ebul);
+            offset.x += amplitude * sin(
+                kTau * frequency * normalized.y + temporal + phase_x);
+            offset.y += amplitude * cos(
+                kTau * frequency * normalized.x - temporal + phase_y);
+            normalization += amplitude;
+            normalized += 0.35f * offset;
+            amplitude *= 0.5f;
+            frequency *= 2.0f;
+        }
+        if (normalization > 1.0e-7f) {
+            coordinate += short_side * offset / normalization
+                          * warp_strength;
+        }
+    }
+
+    const float kaleidoscope_mix = frame.shaping_values.y;
+    if (kaleidoscope_mix > 1.0e-7f) {
+        const float2 delta = coordinate - float2(center_x, center_y);
+        const float radius = length(delta);
+        const float rotation = frame.shaping_values.x;
+        const float period = kTau / float(frame.shaping_uint.x);
+        float local = fmod(atan2(delta.y, delta.x) - rotation, period);
+        if (local < 0.0f) local += period;
+        const float folded = fabs(local - 0.5f * period);
+        const float target_angle = rotation + folded;
+        const float2 target = float2(center_x, center_y)
+                              + radius * float2(cos(target_angle),
+                                                sin(target_angle));
+        coordinate = mix(coordinate, target, kaleidoscope_mix);
+    }
+    return coordinate;
 }
 
 float srgb_to_linear(float value) {
@@ -495,8 +565,14 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
                                    : 0.0f;
     const float displaced_x = x + slope_x * displacement;
     const float displaced_y = y + slope_y * displacement;
-    const float dx = displaced_x - frame.center_ghost.x;
-    const float dy = displaced_y - frame.center_ghost.y;
+    const bool shaped_source = frame.shaping_values.y > 1.0e-7f
+                               || frame.shaping_values.z > 1.0e-7f;
+    const float2 shaped = shape_generated_coordinate(
+        frame, float2(displaced_x, displaced_y));
+    const float pattern_x = shaped.x;
+    const float pattern_y = shaped.y;
+    const float dx = pattern_x - frame.center_ghost.x;
+    const float dy = pattern_y - frame.center_ghost.y;
     const float normalized_distance = length(float2(dx, dy)) / frame.phases.w;
     const float angle = atan2(dy, dx);
     const ulong starting_reference_width =
@@ -509,11 +585,17 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     const ulong starting_reference_y = min(
         starting_reference_height - 1ul,
         ulong(block_y) * starting_reference_height / ulong(height));
-    const float2 starting_delta = float2(
-        float(starting_reference_x)
-            - 0.5f * float(starting_reference_width - 1ul),
-        float(starting_reference_y)
-            - 0.5f * float(starting_reference_height - 1ul));
+    const float2 starting_delta = shaped_source
+        ? float2(
+            (pattern_x / max(1.0f, float(width - 1u)) - 0.5f)
+                * float(starting_reference_width - 1ul),
+            (pattern_y / max(1.0f, float(height - 1u)) - 0.5f)
+                * float(starting_reference_height - 1ul))
+        : float2(
+            float(starting_reference_x)
+                - 0.5f * float(starting_reference_width - 1ul),
+            float(starting_reference_y)
+                - 0.5f * float(starting_reference_height - 1ul));
     const float starting_short_side = float(min(
         starting_reference_width, starting_reference_height));
     const float starting_radius = length(starting_delta)
@@ -522,9 +604,11 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     const float starting_spiral_hue = frame.starting_flags.x == 6u
         ? 360.0f * (3.0f * starting_radius + starting_angle / kTau)
         : 0.0f;
-    const float wall_distance = min(
-        min(x, float(width - 1u - block_x)),
-        min(y, float(height - 1u - block_y)));
+    const float wall_distance = shaped_source
+        ? min(min(pattern_x, float(width - 1u) - pattern_x),
+              min(pattern_y, float(height - 1u) - pattern_y))
+        : min(min(x, float(width - 1u - block_x)),
+              min(y, float(height - 1u - block_y)));
     const float normalized_wall_distance = wall_distance / frame.phases.w;
     const float ghost_phase = motion - frame.center_ghost.z;
     const float main_spiral = frame.base_flags.y != 0u
@@ -1137,8 +1221,8 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
     const float center_x = effect.placement.y * float(width - 1u);
     const float center_y = effect.placement.z * float(height - 1u);
     const float intensity = max(0.0f, effect.primary.y);
-    const float displacement =
-        effect.primary.z * frame.phases.w * intensity;
+    const float base_displacement = effect.primary.z * frame.phases.w;
+    const float displacement = base_displacement * intensity;
     const float axis_x = cos(effect.placement.w);
     const float axis_y = sin(effect.placement.w);
     const float perpendicular_x = -axis_y;
@@ -1208,7 +1292,7 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
         sampled = sample_bilinear(source, x - rotated_x * area,
                                   y - rotated_y * area,
                                   width, height, effect.kind.z);
-    } else {
+    } else if (effect.kind.x == 3u) {
         const float dx = x - center_x;
         const float dy = y - center_y;
         const float along = (dx * axis_x + dy * axis_y) / frame.phases.w;
@@ -1222,6 +1306,71 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
         sample_y -= perpendicular_y * amount;
         sampled = sample_bilinear(source, sample_x, sample_y,
                                   width, height, effect.kind.z);
+    } else if (effect.kind.x == 8u) {
+        const uint bands = max(1u, uint(floor(effect.primary.w + 0.5f)));
+        const uint band = min(
+            bands - 1u, uint((ulong(gid.y) * ulong(bands))
+                             / ulong(max(1u, height))));
+        const ulong effect_id = (ulong(effect.blur.w) << 32u)
+                                | ulong(effect.kind.w);
+        const ulong band_seed = generated_shape_hash(
+            effect_id ^ (ulong(band) + 1ul) * 0xd1b54a32d192ed03ul);
+        const float random = generated_shape_unit(band_seed);
+        const float band_offset = base_displacement
+            * (2.0f * random - 1.0f)
+            * sin(effect.primary.x + kTau * random) * area;
+        const float split = fabs(base_displacement)
+                            * effect.placement.x * area;
+        const float4 middle = sample_bilinear(
+            source, x - band_offset, y, width, height, effect.kind.z);
+        const float4 red = sample_bilinear(
+            source, x - band_offset - split, y,
+            width, height, effect.kind.z);
+        const float4 blue = sample_bilinear(
+            source, x - band_offset + split, y,
+            width, height, effect.kind.z);
+        const float4 glitched = float4(
+            red.r, middle.g, blue.b, max(red.a, max(middle.a, blue.a)));
+        sampled = mix(source[gid.y * width + gid.x], glitched,
+                      clamp_unit(intensity * area));
+    } else if (effect.kind.x == 9u) {
+        const float dx = x - center_x;
+        const float dy = y - center_y;
+        const float distance = length(float2(dx, dy));
+        if (distance <= 1.0e-7f) {
+            sampled = source[gid.y * width + gid.x];
+        } else {
+            const float ray_angle = atan2(dy, dx) - effect.placement.w;
+            const float ray = max(
+                0.0f, cos(effect.primary.w * ray_angle - effect.primary.x));
+            const float sharp = pow(
+                ray, 1.0f + 15.0f * effect.placement.x);
+            const float travel = base_displacement * sharp
+                * sin(effect.primary.x + kTau * distance / frame.phases.w)
+                * area;
+            const float4 burst = sample_bilinear(
+                source, x - dx / distance * travel,
+                y - dy / distance * travel, width, height, effect.kind.z);
+            sampled = mix(source[gid.y * width + gid.x], burst,
+                          clamp_unit(intensity * area));
+        }
+    } else if (effect.kind.x == 10u) {
+        const float dx = x - center_x;
+        const float dy = y - center_y;
+        const float normalized_radius = length(float2(dx, dy))
+                                        / frame.phases.w;
+        const float pulse = 0.75f + 0.25f * sin(effect.primary.x);
+        const float radial = pow(normalized_radius, effect.primary.w);
+        const float scale = max(
+            0.05f, 1.0f + effect.placement.x * effect.primary.z
+                            * pulse * radial * area);
+        const float4 distorted = sample_bilinear(
+            source, center_x + dx * scale, center_y + dy * scale,
+            width, height, effect.kind.z);
+        sampled = mix(source[gid.y * width + gid.x], distorted,
+                      clamp_unit(intensity * area));
+    } else {
+        sampled = source[gid.y * width + gid.x];
     }
     sampled.a = clamp_unit(sampled.a);
     output[gid.y * width + gid.x] = sampled;

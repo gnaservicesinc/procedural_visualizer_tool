@@ -85,6 +85,21 @@ bool parse_integer(const std::string& text, long long minimum, long long maximum
     return true;
 }
 
+bool parse_uint64(const std::string& text, std::uint64_t& value) {
+    if (text.empty() || text.front() == '-') {
+        return false;
+    }
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long long parsed = std::strtoull(text.c_str(), &end, 10);
+    if (errno != 0 || end == text.c_str() || *end != '\0'
+        || parsed > (std::numeric_limits<std::uint64_t>::max)()) {
+        return false;
+    }
+    value = static_cast<std::uint64_t>(parsed);
+    return true;
+}
+
 bool parse_real(const std::string& text, double minimum, double maximum, double& value) {
     if (text.empty()) {
         return false;
@@ -176,6 +191,26 @@ bool prompt_int(const std::string& label, int& value, int minimum, int maximum) 
         }
         std::cout << "Enter a whole number from " << minimum << " to " << maximum
                   << ", or press Enter to keep the current value.\n";
+    }
+}
+
+bool prompt_uint64(const std::string& label, std::uint64_t& value) {
+    for (;;) {
+        std::string input;
+        if (!read_line(label + " [" + std::to_string(value) + "]: ", input)) {
+            return false;
+        }
+        if (input.empty()) {
+            return true;
+        }
+        std::uint64_t parsed = 0U;
+        if (parse_uint64(input, parsed)) {
+            g_prompt_changed = g_prompt_changed || value != parsed;
+            value = parsed;
+            return true;
+        }
+        std::cout << "Enter an unsigned 64-bit whole number, or press Enter to "
+                     "keep the current value.\n";
     }
 }
 
@@ -407,6 +442,7 @@ audio_response_choices() {
 bool palettes_equal(const pvt::PaletteConfig& left,
                     const pvt::PaletteConfig& right) {
     if (left.enabled != right.enabled || left.name != right.name
+        || left.columns != right.columns
         || left.colors.size() != right.colors.size()) {
         return false;
     }
@@ -414,7 +450,9 @@ bool palettes_equal(const pvt::PaletteConfig& left,
         if (left.colors[index].red != right.colors[index].red
             || left.colors[index].green != right.colors[index].green
             || left.colors[index].blue != right.colors[index].blue
-            || left.colors[index].alpha != right.colors[index].alpha) {
+            || left.colors[index].alpha != right.colors[index].alpha
+            || left.colors[index].name != right.colors[index].name
+            || left.colors[index].encoding != right.colors[index].encoding) {
             return false;
         }
     }
@@ -446,7 +484,10 @@ bool configure_palette(RenderConfig& config) {
                   << (palette.enabled ? "used" : "not used") << ") --\n";
         for (std::size_t index = 0U; index < palette.colors.size(); ++index) {
             const auto& color = palette.colors[index];
-            std::cout << "  " << (index + 1U) << ") RGBA " << color.red << ", "
+            std::cout << "  " << (index + 1U) << ") "
+                      << (color.name.empty() ? "(unnamed)" : color.name)
+                      << " [" << pvt::palette_color_encoding_name(color.encoding)
+                      << "] RGBA " << color.red << ", "
                       << color.green << ", " << color.blue << ", "
                       << color.alpha << '\n';
         }
@@ -514,9 +555,27 @@ bool configure_palette(RenderConfig& config) {
                 std::cout << "The signed-int UI/API color index is exhausted.\n";
                 continue;
             }
-            const pvt::PaletteColor next = config.palette.colors.empty()
-                                               ? pvt::PaletteColor{1.0, 1.0, 1.0}
-                                               : config.palette.colors.back();
+            pvt::PaletteColor next;
+            if (config.palette.colors.empty()) {
+                next.red = 1.0;
+                next.green = 1.0;
+                next.blue = 1.0;
+            } else {
+                next = config.palette.colors.back();
+            }
+            if (next.encoding == pvt::PaletteColorEncoding::Linear) {
+                const auto display = [](double value) {
+                    const double encoded = value <= 0.0031308
+                        ? 12.92 * value
+                        : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
+                    return std::clamp(encoded, 0.0, 1.0);
+                };
+                next.red = display(next.red);
+                next.green = display(next.green);
+                next.blue = display(next.blue);
+            }
+            next.name.clear();
+            next.encoding = pvt::PaletteColorEncoding::Srgb;
             config.palette.colors.push_back(next);
             g_prompt_changed = true;
             const std::size_t index = config.palette.colors.size() - 1U;
@@ -560,6 +619,26 @@ bool configure_palette(RenderConfig& config) {
         }
         auto& color = config.palette.colors[
             static_cast<std::size_t>(selected - 1)];
+        if (color.encoding == pvt::PaletteColorEncoding::Linear) {
+            bool convert = false;
+            std::cout << "This is a linear/HDR entry. The interactive editor uses "
+                         "display sRGB and will clip out-of-range values.\n";
+            if (!prompt_bool("Convert this entry to display sRGB", convert)) {
+                return false;
+            }
+            if (!convert) continue;
+            const auto display = [](double value) {
+                const double encoded = value <= 0.0031308
+                    ? 12.92 * value
+                    : 1.055 * std::pow(value, 1.0 / 2.4) - 0.055;
+                return std::clamp(encoded, 0.0, 1.0);
+            };
+            color.red = display(color.red);
+            color.green = display(color.green);
+            color.blue = display(color.blue);
+            color.encoding = pvt::PaletteColorEncoding::Srgb;
+            g_prompt_changed = true;
+        }
         if (!prompt_real("Red (sRGB)", color.red, 0.0, 1.0)
             || !prompt_real("Green (sRGB)", color.green, 0.0, 1.0)
             || !prompt_real("Blue (sRGB)", color.blue, 0.0, 1.0)
@@ -687,7 +766,10 @@ EffectType choose_effect_type() {
                  {EffectType::Glow, "Glow"},
                  {EffectType::BlockScale, "Block scale"},
                  {EffectType::ParticleField, "Particle field"},
-                 {EffectType::Blur, "Blur"}});
+                 {EffectType::Blur, "Blur"},
+                 {EffectType::Glitch, "Glitch"},
+                 {EffectType::Starburst, "Starburst"},
+                 {EffectType::LensDistortion, "Lens distortion"}});
     return type;
 }
 
@@ -840,6 +922,45 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                                    effect.blur_minimum, 1.0)
                     && prompt_int("Pulses per effect cycle",
                                   effect.blur_pulses_per_cycle, 1, 1000));
+        case EffectType::Glitch: {
+            int bands = static_cast<int>(std::llround(effect.frequency));
+            if (!prompt_real("Source/effect mix", effect.intensity, 0.0, 1.0)
+                || !prompt_real("Maximum horizontal displacement (fraction of short edge)",
+                                effect.magnitude, 0.0, 10.0)
+                || !prompt_int("Scanline band count", bands, 1, 1000)
+                || !prompt_real("RGB channel split", effect.secondary,
+                                0.0, 1.0)
+                || !configure_edge_mode(effect.edge_mode)) {
+                return false;
+            }
+            effect.frequency = static_cast<double>(bands);
+            return true;
+        }
+        case EffectType::Starburst: {
+            int rays = static_cast<int>(std::llround(effect.frequency));
+            if (!prompt_real("Source/effect mix", effect.intensity, 0.0, 1.0)
+                || !prompt_real("Radial displacement (fraction of short edge)",
+                                effect.magnitude, 0.0, 10.0)
+                || !prompt_int("Ray count", rays, 1, 1000)
+                || !prompt_real("Ray sharpness", effect.secondary, 0.0, 1.0)
+                || !prompt_real("Ray rotation (degrees)",
+                                effect.angle_degrees, -36000.0, 36000.0)
+                || !configure_edge_mode(effect.edge_mode)) {
+                return false;
+            }
+            effect.frequency = static_cast<double>(rays);
+            return true;
+        }
+        case EffectType::LensDistortion:
+            return prompt_real("Source/effect mix", effect.intensity,
+                               0.0, 1.0)
+                   && prompt_real("Radial bend", effect.magnitude,
+                                  0.0, 10.0)
+                   && prompt_real("Radial exponent", effect.frequency,
+                                  0.25, 1000.0)
+                   && prompt_real("Direction (-1 barrel, +1 pincushion)",
+                                  effect.secondary, -1.0, 1.0)
+                   && configure_edge_mode(effect.edge_mode);
     }
     return true;
 }
@@ -1094,6 +1215,19 @@ void configure_active_layer_clock(RenderConfig& config,
                  "music data drive only this layer.\n";
     if (!prompt_bool("Override the project-wide clock", local.enabled)) return;
     if (!local.enabled) return;
+    if (!prompt_bool("Mix project and layer clocks", local.mix_enabled)) return;
+    if (local.mix_enabled
+        && !prompt_enum("Project/layer clock mix", local.mix,
+                        {{pvt::LayerClockMixMode::Replace,
+                          "Replace project clock (legacy)"},
+                         {pvt::LayerClockMixMode::Add,
+                          "Add wrapped phases"},
+                         {pvt::LayerClockMixMode::Difference,
+                          "Project minus layer"},
+                         {pvt::LayerClockMixMode::SoftXor,
+                          "Continuous soft XOR"},
+                         {pvt::LayerClockMixMode::BitwiseXor,
+                          "Deterministic 24-bit XOR"}})) return;
     if (!prompt_enum("Duration mapping", local.scale,
                      {{pvt::LayerClockScale::SmartLoopFit,
                        "Smart loop fit (most loops, least stretch)"},
@@ -1267,6 +1401,29 @@ void configure_color(RenderConfig& config) {
                         config.starting_colors.alpha_minimum, 0.0, 1.0)
         || !prompt_real("Generated alpha maximum",
                         config.starting_colors.alpha_maximum, 0.0, 1.0)
+        || !prompt_bool("Kaleidoscope enabled",
+                        config.starting_colors.kaleidoscope.enabled)
+        || !prompt_int("Kaleidoscope mirrored segments",
+                       config.starting_colors.kaleidoscope.mirrored_segments,
+                       2, 256)
+        || !prompt_real("Kaleidoscope rotation (degrees)",
+                        config.starting_colors.kaleidoscope.rotation_degrees,
+                        -36000.0, 36000.0)
+        || !prompt_real("Kaleidoscope mix",
+                        config.starting_colors.kaleidoscope.mix, 0.0, 1.0)
+        || !prompt_bool("Seamless domain warp enabled",
+                        config.starting_colors.domain_warp.enabled)
+        || !prompt_real("Domain warp strength (fraction of short edge)",
+                        config.starting_colors.domain_warp.strength, 0.0, 2.0)
+        || !prompt_real("Domain warp scale",
+                        config.starting_colors.domain_warp.scale, 0.01, 64.0)
+        || !prompt_int("Domain warp octaves",
+                       config.starting_colors.domain_warp.octaves, 1, 8)
+        || !prompt_int("Domain warp cycles per loop",
+                       config.starting_colors.domain_warp.cycles_per_loop,
+                       -1000, 1000)
+        || !prompt_uint64("Domain warp deterministic seed",
+                          config.starting_colors.domain_warp.seed)
         || !prompt_bool("Post-effects quantization enabled", config.quantization.enabled)
         || !prompt_int("Post-effects quantization levels", config.quantization.levels, 2, 65536)
         || !prompt_real("Post-effects quantization mix", config.quantization.mix, 0.0, 1.0)
@@ -2562,6 +2719,15 @@ int quick_self_test() {
     alpha_palette.colors.front().alpha = 0.25;
     if (palettes_equal(alpha_palette, opaque_palette)) {
         std::cerr << "Self-test failed: palette alpha was ignored.\n";
+        return EXIT_FAILURE;
+    }
+    pvt::PaletteConfig metadata_palette = opaque_palette;
+    metadata_palette.columns = 3U;
+    metadata_palette.colors.front().name = "Linear test";
+    metadata_palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    if (palettes_equal(metadata_palette, opaque_palette)) {
+        std::cerr << "Self-test failed: palette interchange metadata was ignored.\n";
         return EXIT_FAILURE;
     }
 

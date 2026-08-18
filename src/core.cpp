@@ -160,6 +160,9 @@ bool valid_enum(EffectType value) {
         case EffectType::BlockScale:
         case EffectType::ParticleField:
         case EffectType::Blur:
+        case EffectType::Glitch:
+        case EffectType::Starburst:
+        case EffectType::LensDistortion:
             return true;
     }
     return false;
@@ -193,6 +196,27 @@ bool valid_enum(LayerClockScale value) {
         case LayerClockScale::PlayOnce:
         case LayerClockScale::PlayOnceThenProject:
         case LayerClockScale::OriginalSpeedLoop:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(LayerClockMixMode value) {
+    switch (value) {
+        case LayerClockMixMode::Replace:
+        case LayerClockMixMode::Add:
+        case LayerClockMixMode::Difference:
+        case LayerClockMixMode::SoftXor:
+        case LayerClockMixMode::BitwiseXor:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(PaletteColorEncoding value) {
+    switch (value) {
+        case PaletteColorEncoding::Srgb:
+        case PaletteColorEncoding::Linear:
             return true;
     }
     return false;
@@ -820,71 +844,63 @@ std::vector<double> music_anchors(const ClockConfig& clock) {
     return selected;
 }
 
-TimelineSample resolve_timeline_sample(const RenderConfig& config,
-                                       int frame_index) {
-    int frame_count = config.total_frames;
-    std::string ignored;
-    (void)effective_frame_count_impl(config.total_frames, config.fps,
-                                     config.clock, frame_count, ignored);
-    int frame = frame_index % frame_count;
-    if (frame < 0) frame += frame_count;
-
+TimelineSample evaluate_clock_sample(const ClockConfig& clock,
+                                     int frame_count,
+                                     double frame_position,
+                                     double time_seconds,
+                                     double duration,
+                                     double direct_phase) {
     TimelineSample result;
-    const double direct_phase = static_cast<double>(frame)
-                                / static_cast<double>(frame_count);
     result.independent_phase = direct_phase;
-    if (config.clock.mode == ClockMode::Default) {
-        result.normalized_phase = apply_clock_transform(direct_phase,
-                                                        config.clock);
+    if (clock.mode == ClockMode::Default) {
+        result.normalized_phase = apply_clock_transform(direct_phase, clock);
         return result;
     }
 
-    const double duration = static_cast<double>(frame_count) / config.fps;
-    const double time_seconds = static_cast<double>(frame) / config.fps;
     double phase = direct_phase;
 
-    if (config.clock.mode == ClockMode::Frame) {
-        double interval = static_cast<double>(config.clock.frame_interval);
+    if (clock.mode == ClockMode::Frame) {
+        double interval = static_cast<double>(clock.frame_interval);
         double normalization = static_cast<double>(frame_count) / interval;
-        if (config.clock.fit == ClockFit::FitSequence) {
+        if (clock.fit == ClockFit::FitSequence) {
             const double pulses = std::max(1.0, std::round(normalization));
             interval = static_cast<double>(frame_count) / pulses;
             normalization = pulses;
         }
-        phase = interpolated_position(static_cast<double>(frame) / interval,
-                                      config.clock.interpolation)
+        phase = interpolated_position(frame_position / interval,
+                                      clock.interpolation)
                 / normalization;
-    } else if (config.clock.mode == ClockMode::Time) {
+    } else if (clock.mode == ClockMode::Time) {
         double interval = static_cast<double>(
-            config.clock.time_interval_microseconds) / 1000000.0;
+            clock.time_interval_microseconds) / 1000000.0;
         double normalization = duration / interval;
-        if (config.clock.fit == ClockFit::FitSequence) {
+        if (clock.fit == ClockFit::FitSequence) {
             const double pulses = std::max(1.0, std::round(normalization));
             interval = duration / pulses;
             normalization = pulses;
         }
         phase = interpolated_position(time_seconds / interval,
-                                      config.clock.interpolation)
+                                      clock.interpolation)
                 / normalization;
-    } else if (config.clock.mode == ClockMode::Meter) {
+    } else if (clock.mode == ClockMode::Meter) {
         ParsedMeter meter;
         std::string ignored_meter_error;
-        (void)parse_meter_expression(config.clock.meter.expression, meter,
+        (void)parse_meter_expression(clock.meter.expression, meter,
                                      ignored_meter_error);
         std::vector<TimedMeterPulseRun> pulse_runs;
         pulse_runs.reserve(meter.pulse_pattern.size());
         double cycle_seconds = 0.0;
         for (const MeterPulseRun& run : meter.pulse_pattern) {
             const MeterGroup& group = run.group;
-            const double seconds = 60.0 / config.clock.meter.bpm
+            const double seconds = 60.0 / clock.meter.bpm
                 * static_cast<double>(group.numerator)
-                * static_cast<double>(config.clock.meter.tempo_note_denominator)
+                * static_cast<double>(clock.meter.tempo_note_denominator)
                 / static_cast<double>(group.denominator);
             pulse_runs.push_back({seconds, run.repetitions});
             cycle_seconds += seconds
                              * static_cast<double>(run.repetitions);
         }
-        if (config.clock.fit == ClockFit::FitSequence) {
+        if (clock.fit == ClockFit::FitSequence) {
             const double cycles = std::max(1.0,
                                            std::round(duration / cycle_seconds));
             const double scale = duration / (cycles * cycle_seconds);
@@ -895,7 +911,7 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
         // normalization. Reduce the persisted integer offset before converting
         // its pieces to seconds so extreme values retain microsecond detail.
         const double local_offset = meter_offset_within_cycle(
-            config.clock.beat_offset_microseconds, cycle_seconds);
+            clock.beat_offset_microseconds, cycle_seconds);
         const double start_position = meter_position_at(
             pulse_runs, meter.pulse_count, cycle_seconds, local_offset);
         const double current_position = meter_position_at(
@@ -906,16 +922,16 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
             duration + local_offset);
         const double denominator = end_position - start_position;
         phase = (interpolated_position(current_position,
-                                       config.clock.interpolation)
+                                       clock.interpolation)
                  - interpolated_position(start_position,
-                                         config.clock.interpolation))
+                                         clock.interpolation))
                 / denominator;
-    } else if (config.clock.mode == ClockMode::Music) {
-        const std::vector<double> anchors = music_anchors(config.clock);
+    } else if (clock.mode == ClockMode::Music) {
+        const std::vector<double> anchors = music_anchors(clock);
         const double offset = static_cast<double>(
-            config.clock.beat_offset_microseconds) / 1000000.0;
+            clock.beat_offset_microseconds) / 1000000.0;
         const double music_time = clamp_value(time_seconds + offset, 0.0,
-                                              config.clock.music.duration_seconds);
+                                              clock.music.duration_seconds);
         const auto upper = std::upper_bound(anchors.begin(), anchors.end(),
                                             music_time);
         const std::size_t second = upper == anchors.end()
@@ -927,9 +943,9 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
         double amount = span > 0.0
                             ? (music_time - anchors[first]) / span
                             : 0.0;
-        if (config.clock.interpolation == ClockInterpolation::Hold) {
+        if (clock.interpolation == ClockInterpolation::Hold) {
             amount = 0.0;
-        } else if (config.clock.interpolation
+        } else if (clock.interpolation
                    == ClockInterpolation::Smoothstep) {
             amount = smoothstep(amount);
         }
@@ -938,10 +954,123 @@ TimelineSample resolve_timeline_sample(const RenderConfig& config,
         // Beat anchors drive only the base motion clock. The independently
         // authored audio-reactive routes consume the dense analysis envelope
         // at the actual frame timestamp, retaining within-beat transients.
-        result.music = music_features_at(config.clock.music, music_time);
+        result.music = music_features_at(clock.music, music_time);
     }
 
-    result.normalized_phase = apply_clock_transform(phase, config.clock);
+    result.normalized_phase = apply_clock_transform(phase, clock);
+    return result;
+}
+
+double combine_clock_phases(double project, double layer,
+                            LayerClockMixMode mode) {
+    project = wrap_unit(project);
+    layer = wrap_unit(layer);
+    switch (mode) {
+        case LayerClockMixMode::Replace:
+            return layer;
+        case LayerClockMixMode::Add:
+            return wrap_unit(project + layer);
+        case LayerClockMixMode::Difference:
+            return wrap_unit(project - layer);
+        case LayerClockMixMode::SoftXor:
+            return project + layer - 2.0 * project * layer;
+        case LayerClockMixMode::BitwiseXor: {
+            constexpr std::uint32_t scale = UINT32_C(1) << 24U;
+            const auto fixed = [](double phase) {
+                constexpr double fixed_scale = 16777216.0;
+                return static_cast<std::uint32_t>(
+                    std::floor(wrap_unit(phase) * fixed_scale));
+            };
+            return static_cast<double>(fixed(project) ^ fixed(layer))
+                   / static_cast<double>(scale);
+        }
+    }
+    return layer;
+}
+
+TimelineSample resolve_timeline_sample(const RenderConfig& config,
+                                       int frame_index) {
+    int frame_count = config.total_frames;
+    std::string ignored;
+    (void)effective_frame_count_impl(config.total_frames, config.fps,
+                                     config.clock, frame_count, ignored);
+    int frame = frame_index % frame_count;
+    if (frame < 0) frame += frame_count;
+
+    const double direct_phase = static_cast<double>(frame)
+                                / static_cast<double>(frame_count);
+    const double project_duration =
+        config.clock.mode == ClockMode::Music
+                && config.clock.music.duration_seconds > 0.0
+            ? config.clock.music.duration_seconds
+            : static_cast<double>(frame_count) / config.fps;
+    const double project_time = static_cast<double>(frame) / config.fps;
+    TimelineSample project = evaluate_clock_sample(
+        config.clock, frame_count, static_cast<double>(frame),
+        project_time, project_duration, direct_phase);
+
+    const LayerClockConfig& local = config.layer_clock;
+    if (!local.enabled) return project;
+
+    TimelineSample layer;
+    bool use_project_phase = false;
+    if (local.clock.mode != ClockMode::Music) {
+        layer = evaluate_clock_sample(
+            local.clock, frame_count, static_cast<double>(frame),
+            project_time, project_duration, direct_phase);
+    } else {
+        const double local_duration = local.clock.music.duration_seconds;
+        double local_time = 0.0;
+        switch (local.scale) {
+            case LayerClockScale::SmartLoopFit: {
+                const int loops = std::max(
+                    1, static_cast<int>(std::floor(
+                           project_duration / local_duration)));
+                const double rate = static_cast<double>(loops)
+                                    * local_duration / project_duration;
+                local_time = std::fmod(project_time * rate, local_duration);
+                break;
+            }
+            case LayerClockScale::StraightFit:
+                local_time = project_time * local_duration / project_duration;
+                break;
+            case LayerClockScale::PlayOnce:
+                local_time = std::min(
+                    project_time, std::nextafter(local_duration, 0.0));
+                break;
+            case LayerClockScale::PlayOnceThenProject:
+                use_project_phase = project_time >= local_duration;
+                local_time = std::min(
+                    project_time, std::nextafter(local_duration, 0.0));
+                break;
+            case LayerClockScale::OriginalSpeedLoop:
+                local_time = std::fmod(project_time, local_duration);
+                break;
+        }
+        const int local_count = std::max(
+            1, static_cast<int>(std::ceil(local_duration * config.fps)));
+        layer = evaluate_clock_sample(
+            local.clock, local_count, local_time * config.fps,
+            local_time, local_duration, local_time / local_duration);
+        if (use_project_phase) {
+            layer.normalized_phase = project.normalized_phase;
+            layer.independent_phase = project.independent_phase;
+        }
+    }
+
+    TimelineSample result = project;
+    result.normalized_phase = combine_clock_phases(
+        project.normalized_phase, layer.normalized_phase,
+        local.mix_enabled ? local.mix : LayerClockMixMode::Replace);
+    // Before clock mixing existed, an active layer clock became the layer's
+    // complete timeline. Preserve its independently mapped/free-running phase
+    // as well as its synchronized phase; otherwise unsynchronized effects and
+    // path bindings jump back to project time when an old project is opened.
+    result.independent_phase = layer.independent_phase;
+    // A layer music source remains this layer's effective dense audio
+    // envelope even when its phase is mixed with (or hands off to) the project
+    // clock. Non-music layer clocks retain the project envelope.
+    if (local.clock.mode == ClockMode::Music) result.music = layer.music;
     return result;
 }
 
@@ -1079,6 +1208,9 @@ bool effect_has_render_work(const EffectConfig& effect) {
         case EffectType::Ripple:
         case EffectType::Shake:
         case EffectType::FlagWave:
+        case EffectType::Glitch:
+        case EffectType::Starburst:
+        case EffectType::LensDistortion:
             return effect.magnitude > 0.0;
     }
     return false;
@@ -1705,6 +1837,9 @@ const char* effect_type_name(EffectType value) {
         case EffectType::BlockScale: return "Block scale";
         case EffectType::ParticleField: return "Particle field";
         case EffectType::Blur: return "Blur";
+        case EffectType::Glitch: return "Glitch";
+        case EffectType::Starburst: return "Starburst";
+        case EffectType::LensDistortion: return "Lens distortion";
     }
     return "Unknown";
 }
@@ -1728,6 +1863,25 @@ const char* layer_clock_scale_name(LayerClockScale value) {
         case LayerClockScale::PlayOnceThenProject:
             return "Play once, then project clock";
         case LayerClockScale::OriginalSpeedLoop: return "Original-speed loop";
+    }
+    return "Unknown";
+}
+
+const char* layer_clock_mix_mode_name(LayerClockMixMode value) {
+    switch (value) {
+        case LayerClockMixMode::Replace: return "Replace project clock";
+        case LayerClockMixMode::Add: return "Add clocks";
+        case LayerClockMixMode::Difference: return "Project minus layer";
+        case LayerClockMixMode::SoftXor: return "Soft XOR";
+        case LayerClockMixMode::BitwiseXor: return "Bitwise XOR";
+    }
+    return "Unknown";
+}
+
+const char* palette_color_encoding_name(PaletteColorEncoding value) {
+    switch (value) {
+        case PaletteColorEncoding::Srgb: return "sRGB";
+        case PaletteColorEncoding::Linear: return "Linear";
     }
     return "Unknown";
 }
@@ -1945,6 +2099,24 @@ EffectConfig default_effect(EffectType type) {
             effect.blur_maximum = 0.85;
             effect.blur_pulses_per_cycle = 1;
             break;
+        case EffectType::Glitch:
+            effect.intensity = 0.70;
+            effect.magnitude = 0.04;
+            effect.frequency = 24.0; // whole horizontal band count
+            effect.secondary = 0.65; // RGB channel split
+            break;
+        case EffectType::Starburst:
+            effect.intensity = 0.70;
+            effect.magnitude = 0.04;
+            effect.frequency = 12.0; // whole radial ray count
+            effect.secondary = 0.65; // ray sharpness
+            break;
+        case EffectType::LensDistortion:
+            effect.intensity = 0.75;
+            effect.magnitude = 0.18;
+            effect.frequency = 2.0; // radial exponent
+            effect.secondary = -1.0; // barrel direction
+            break;
     }
     return effect;
 }
@@ -1987,42 +2159,49 @@ CubicMotionPath default_ellipse_path(std::uint64_t path_id,
 PaletteConfig default_palette(std::size_t index) {
     PaletteConfig palette;
     palette.enabled = true;
+    const auto srgb = [](double red, double green, double blue) {
+        PaletteColor color;
+        color.red = red;
+        color.green = green;
+        color.blue = blue;
+        return color;
+    };
     switch (index % kBuiltInPaletteCount) {
         case 0U:
             palette.name = "Ember";
-            palette.colors = {{0.08, 0.01, 0.02}, {0.55, 0.03, 0.02},
-                              {1.00, 0.24, 0.02}, {1.00, 0.75, 0.12},
-                              {1.00, 0.97, 0.72}};
+            palette.colors = {srgb(0.08, 0.01, 0.02), srgb(0.55, 0.03, 0.02),
+                              srgb(1.00, 0.24, 0.02), srgb(1.00, 0.75, 0.12),
+                              srgb(1.00, 0.97, 0.72)};
             break;
         case 1U:
             palette.name = "Deep Ocean";
-            palette.colors = {{0.01, 0.04, 0.16}, {0.00, 0.20, 0.42},
-                              {0.00, 0.52, 0.66}, {0.20, 0.86, 0.82},
-                              {0.78, 1.00, 0.92}};
+            palette.colors = {srgb(0.01, 0.04, 0.16), srgb(0.00, 0.20, 0.42),
+                              srgb(0.00, 0.52, 0.66), srgb(0.20, 0.86, 0.82),
+                              srgb(0.78, 1.00, 0.92)};
             break;
         case 2U:
             palette.name = "Vaporwave";
-            palette.colors = {{0.12, 0.02, 0.24}, {0.42, 0.10, 0.72},
-                              {0.96, 0.18, 0.72}, {0.12, 0.86, 0.96},
-                              {1.00, 0.78, 0.96}};
+            palette.colors = {srgb(0.12, 0.02, 0.24), srgb(0.42, 0.10, 0.72),
+                              srgb(0.96, 0.18, 0.72), srgb(0.12, 0.86, 0.96),
+                              srgb(1.00, 0.78, 0.96)};
             break;
         case 3U:
             palette.name = "Forest Biolume";
-            palette.colors = {{0.01, 0.08, 0.05}, {0.02, 0.28, 0.15},
-                              {0.10, 0.58, 0.30}, {0.42, 0.92, 0.38},
-                              {0.84, 1.00, 0.62}};
+            palette.colors = {srgb(0.01, 0.08, 0.05), srgb(0.02, 0.28, 0.15),
+                              srgb(0.10, 0.58, 0.30), srgb(0.42, 0.92, 0.38),
+                              srgb(0.84, 1.00, 0.62)};
             break;
         case 4U:
             palette.name = "Arcade";
-            palette.colors = {{0.02, 0.02, 0.04}, {0.98, 0.08, 0.22},
-                              {1.00, 0.82, 0.08}, {0.10, 0.92, 0.42},
-                              {0.06, 0.36, 1.00}, {0.72, 0.12, 1.00}};
+            palette.colors = {srgb(0.02, 0.02, 0.04), srgb(0.98, 0.08, 0.22),
+                              srgb(1.00, 0.82, 0.08), srgb(0.10, 0.92, 0.42),
+                              srgb(0.06, 0.36, 1.00), srgb(0.72, 0.12, 1.00)};
             break;
         default:
             palette.name = "Moonlight";
-            palette.colors = {{0.02, 0.03, 0.08}, {0.12, 0.16, 0.28},
-                              {0.34, 0.40, 0.58}, {0.68, 0.74, 0.88},
-                              {0.96, 0.98, 1.00}};
+            palette.colors = {srgb(0.02, 0.03, 0.08), srgb(0.12, 0.16, 0.28),
+                              srgb(0.34, 0.40, 0.58), srgb(0.68, 0.74, 0.88),
+                              srgb(0.96, 0.98, 1.00)};
             break;
     }
     return palette;
@@ -2295,9 +2474,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         }
     }
     if (validate_layer_clock) {
-        if (!valid_enum(config.layer_clock.scale)) {
+        if (!valid_enum(config.layer_clock.scale)
+            || !valid_enum(config.layer_clock.mix)) {
             return invalid_result(
-                "The active-layer clock contains an unknown scaling policy.");
+                "The active-layer clock contains an unknown scaling or mixing policy.");
         }
         RenderConfig layer_clock_probe = config;
         layer_clock_probe.clock = config.layer_clock.clock;
@@ -2470,6 +2650,35 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 + " requires a positive whole particle count fitting signed int, positive size, and "
                   "trail/core controls from 0 to 1.");
         }
+        if (effect.type == EffectType::Glitch
+            && (effect.intensity > 1.0
+                || effect.frequency < 1.0
+                || std::floor(effect.frequency) != effect.frequency
+                || effect.secondary < 0.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Glitch effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, a positive whole band count, "
+                  "and an RGB split from 0 to 1.");
+        }
+        if (effect.type == EffectType::Starburst
+            && (effect.intensity > 1.0
+                || effect.frequency < 1.0
+                || std::floor(effect.frequency) != effect.frequency
+                || effect.secondary < 0.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Starburst effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, a positive whole ray count, "
+                  "and a sharpness from 0 to 1.");
+        }
+        if (effect.type == EffectType::LensDistortion
+            && (effect.intensity > 1.0
+                || effect.frequency < 0.25
+                || effect.secondary < -1.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Lens distortion effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, a radial exponent of at least "
+                  "0.25, and a barrel/pincushion direction from -1 to 1.");
+        }
         if (effect.type == EffectType::Blur
             && effect.blur_type == BlurType::Gaussian
             && effect.blur_samples % 2 == 0) {
@@ -2542,17 +2751,47 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
 
     if (!valid_name(config.palette.name)
         || config.palette.colors.size() > kMaximumPaletteColors
+        || config.palette.columns > kMaximumPaletteColors
         || (config.palette.enabled && config.palette.colors.empty())) {
         return invalid_result(
             "An enabled starting palette needs at least one color, a valid name, and a color count that fits the signed-int UI/API index.");
     }
+    double maximum_palette_channel = 1.0;
+    constexpr double maximum_linear_component =
+        static_cast<double>((std::numeric_limits<float>::max)());
     for (const PaletteColor& color : config.palette.colors) {
-        if (!finite_in_range(color.red, 0.0, 1.0)
-            || !finite_in_range(color.green, 0.0, 1.0)
-            || !finite_in_range(color.blue, 0.0, 1.0)
+        const bool rgb_valid = color.encoding == PaletteColorEncoding::Srgb
+            ? finite_in_range(color.red, 0.0, 1.0)
+                  && finite_in_range(color.green, 0.0, 1.0)
+                  && finite_in_range(color.blue, 0.0, 1.0)
+            : finite_in_range(color.red, -maximum_linear_component,
+                              maximum_linear_component)
+                  && finite_in_range(color.green, -maximum_linear_component,
+                                     maximum_linear_component)
+                  && finite_in_range(color.blue, -maximum_linear_component,
+                                     maximum_linear_component);
+        if (!valid_enum(color.encoding) || !valid_name(color.name)
+            || !rgb_valid
             || !finite_in_range(color.alpha, 0.0, 1.0)) {
-            return invalid_result("Palette colors must contain finite RGBA values from 0 to 1.");
+            return invalid_result(
+                "Palette colors need valid names/encodings, alpha from 0 to 1, "
+                "and finite RGB appropriate to sRGB or 32-bit linear light.");
         }
+        if (config.palette.enabled) {
+            maximum_palette_channel = std::max(
+                maximum_palette_channel,
+                std::max({std::fabs(color.red), std::fabs(color.green),
+                          std::fabs(color.blue)}));
+        }
+    }
+    const double palette_adjusted_log_bound = logarithmic_color_bound
+        + std::log(std::max(8.0, maximum_palette_channel) / 8.0);
+    if (palette_adjusted_log_bound
+        >= std::log(static_cast<double>(
+            (std::numeric_limits<float>::max)()))) {
+        return invalid_result(
+            "The enabled HDR palette and glow/particle stack can exceed the "
+            "32-bit float color range.");
     }
     const StartingColorConfig& starting = config.starting_colors;
     const bool no_reference = starting.reference_width == 0
@@ -2581,9 +2820,20 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_in_range(starting.alpha_minimum, 0.0, 1.0)
         || !finite_in_range(starting.alpha_maximum, 0.0, 1.0)
         || starting.alpha_minimum > starting.alpha_maximum
+        || starting.kaleidoscope.mirrored_segments < 2
+        || starting.kaleidoscope.mirrored_segments > 256
+        || !finite_in_range(starting.kaleidoscope.rotation_degrees,
+                            -36000.0, 36000.0)
+        || !finite_in_range(starting.kaleidoscope.mix, 0.0, 1.0)
+        || !finite_in_range(starting.domain_warp.strength, 0.0, 2.0)
+        || !finite_in_range(starting.domain_warp.scale, 0.01, 64.0)
+        || starting.domain_warp.octaves < 1
+        || starting.domain_warp.octaves > 8
+        || starting.domain_warp.cycles_per_loop < -1000
+        || starting.domain_warp.cycles_per_loop > 1000
         || (!no_reference && !valid_reference)) {
         return invalid_result(
-            "Generated starting-color ranges, compatibility values, or preview reference are invalid.");
+            "Generated starting-color ranges, pattern shaping, compatibility values, or preview reference are invalid.");
     }
     if (!valid_enum(config.transform.mirror)) {
         return invalid_result("The layer transform contains an unknown mirror mode.");
@@ -2793,9 +3043,13 @@ std::vector<Color> prepare_starting_palette(const PaletteConfig& palette,
     }
     prepared.reserve(palette.colors.size());
     for (const PaletteColor& authored : palette.colors) {
-        prepared.push_back({srgb_to_linear(authored.red),
-                            srgb_to_linear(authored.green),
-                            srgb_to_linear(authored.blue),
+        const bool linear = authored.encoding == PaletteColorEncoding::Linear;
+        prepared.push_back({linear ? authored.red
+                                   : srgb_to_linear(authored.red),
+                            linear ? authored.green
+                                   : srgb_to_linear(authored.green),
+                            linear ? authored.blue
+                                   : srgb_to_linear(authored.blue),
                             use_source_alpha ? authored.alpha : 1.0});
     }
     return prepared;
@@ -3138,6 +3392,86 @@ double alpha_at(const RenderConfig& config, int x, int y, double loop_phase) {
     return mix_value(config.alpha.minimum, config.alpha.maximum, amount);
 }
 
+std::uint64_t generated_shape_hash(std::uint64_t value) {
+    value += UINT64_C(0x9e3779b97f4a7c15);
+    value = (value ^ (value >> 30U)) * UINT64_C(0xbf58476d1ce4e5b9);
+    value = (value ^ (value >> 27U)) * UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
+}
+
+double generated_shape_unit(std::uint64_t value) {
+    return static_cast<double>(generated_shape_hash(value) >> 40U)
+           * (1.0 / 16777216.0);
+}
+
+std::array<double, 2U> shape_generated_coordinate(
+    const RenderConfig& config, double x, double y, double loop_phase) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const double center_x = 0.5 * static_cast<double>(config.width - 1);
+    const double center_y = 0.5 * static_cast<double>(config.height - 1);
+    const double short_side = static_cast<double>(
+        std::max(1, std::min(config.width, config.height)));
+
+    if (starting.domain_warp.enabled
+        && starting.domain_warp.strength > 1.0e-12) {
+        double normalized_x = (x - center_x) / short_side;
+        double normalized_y = (y - center_y) / short_side;
+        double offset_x = 0.0;
+        double offset_y = 0.0;
+        double amplitude = starting.domain_warp.strength;
+        double normalization = 0.0;
+        double frequency = starting.domain_warp.scale;
+        const double temporal =
+            static_cast<double>(starting.domain_warp.cycles_per_loop)
+            * loop_phase;
+        for (int octave = 0; octave < starting.domain_warp.octaves;
+             ++octave) {
+            const std::uint64_t octave_seed = generated_shape_hash(
+                starting.domain_warp.seed
+                ^ (static_cast<std::uint64_t>(octave) + 1U)
+                      * UINT64_C(0xd1b54a32d192ed03));
+            const double phase_x = kTau * generated_shape_unit(octave_seed);
+            const double phase_y = kTau * generated_shape_unit(
+                octave_seed ^ UINT64_C(0x94d049bb133111eb));
+            offset_x += amplitude * std::sin(
+                kTau * frequency * normalized_y + temporal + phase_x);
+            offset_y += amplitude * std::cos(
+                kTau * frequency * normalized_x - temporal + phase_y);
+            normalization += amplitude;
+            normalized_x += 0.35 * offset_x;
+            normalized_y += 0.35 * offset_y;
+            amplitude *= 0.5;
+            frequency *= 2.0;
+        }
+        if (normalization > 1.0e-12) {
+            x += short_side * offset_x / normalization
+                 * starting.domain_warp.strength;
+            y += short_side * offset_y / normalization
+                 * starting.domain_warp.strength;
+        }
+    }
+
+    if (starting.kaleidoscope.enabled
+        && starting.kaleidoscope.mix > 1.0e-12) {
+        const double dx = x - center_x;
+        const double dy = y - center_y;
+        const double radius = std::hypot(dx, dy);
+        const double rotation = radians(
+            starting.kaleidoscope.rotation_degrees);
+        const double period = kTau / static_cast<double>(
+            starting.kaleidoscope.mirrored_segments);
+        double local = std::fmod(std::atan2(dy, dx) - rotation, period);
+        if (local < 0.0) local += period;
+        const double folded = std::fabs(local - 0.5 * period);
+        const double target_angle = rotation + folded;
+        const double target_x = center_x + radius * std::cos(target_angle);
+        const double target_y = center_y + radius * std::sin(target_angle);
+        x = mix_value(x, target_x, starting.kaleidoscope.mix);
+        y = mix_value(y, target_y, starting.kaleidoscope.mix);
+    }
+    return {x, y};
+}
+
 void generate_base_image(const RenderConfig& config, double loop_phase,
                          double independent_loop_phase,
                          const MotionClockState& motion_clock,
@@ -3224,11 +3558,20 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                             : 0.0;
             const double displaced_x = block_x + slope_x * displacement;
             const double displaced_y = block_y + slope_y * displacement;
-            const double dx = displaced_x - center_x;
-            const double dy = displaced_y - center_y;
+            const StartingColorConfig& starting = config.starting_colors;
+            const bool shaped_source =
+                (starting.domain_warp.enabled
+                 && starting.domain_warp.strength > 1.0e-12)
+                || (starting.kaleidoscope.enabled
+                    && starting.kaleidoscope.mix > 1.0e-12);
+            const std::array<double, 2U> shaped = shape_generated_coordinate(
+                config, displaced_x, displaced_y, loop_phase);
+            const double pattern_x = shaped[0];
+            const double pattern_y = shaped[1];
+            const double dx = pattern_x - center_x;
+            const double dy = pattern_y - center_y;
             const double normalized_distance = std::hypot(dx, dy) / short_side;
             const double angle = std::atan2(dy, dx);
-            const StartingColorConfig& starting = config.starting_colors;
             const std::uint64_t starting_reference_width =
                 static_cast<std::uint64_t>(
                     starting.reference_width > 0
@@ -3249,12 +3592,22 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                     / static_cast<std::uint64_t>(config.height));
             const double starting_short_side = static_cast<double>(std::min(
                 starting_reference_width, starting_reference_height));
-            const double starting_dx =
-                static_cast<double>(starting_reference_x)
-                - 0.5 * static_cast<double>(starting_reference_width - 1U);
-            const double starting_dy =
-                static_cast<double>(starting_reference_y)
-                - 0.5 * static_cast<double>(starting_reference_height - 1U);
+            const double starting_dx = shaped_source
+                ? (pattern_x / std::max(1.0,
+                                        static_cast<double>(config.width - 1))
+                   - 0.5)
+                      * static_cast<double>(starting_reference_width - 1U)
+                : static_cast<double>(starting_reference_x)
+                      - 0.5
+                            * static_cast<double>(starting_reference_width - 1U);
+            const double starting_dy = shaped_source
+                ? (pattern_y / std::max(1.0,
+                                        static_cast<double>(config.height - 1))
+                   - 0.5)
+                      * static_cast<double>(starting_reference_height - 1U)
+                : static_cast<double>(starting_reference_y)
+                      - 0.5
+                            * static_cast<double>(starting_reference_height - 1U);
             const double starting_radius = std::hypot(starting_dx, starting_dy)
                 / std::max(1.0, 0.5 * starting_short_side);
             const double starting_angle = std::atan2(starting_dy, starting_dx);
@@ -3264,10 +3617,16 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                                + starting_angle / kTau)
                     : 0.0;
             const double wall_distance = std::min(
-                std::min(static_cast<double>(block_x),
-                         static_cast<double>(config.width - 1 - block_x)),
-                std::min(static_cast<double>(block_y),
-                         static_cast<double>(config.height - 1 - block_y)));
+                std::min(shaped_source ? pattern_x
+                                       : static_cast<double>(block_x),
+                         shaped_source
+                             ? static_cast<double>(config.width - 1) - pattern_x
+                             : static_cast<double>(config.width - 1 - block_x)),
+                std::min(shaped_source ? pattern_y
+                                       : static_cast<double>(block_y),
+                         shaped_source
+                             ? static_cast<double>(config.height - 1) - pattern_y
+                             : static_cast<double>(config.height - 1 - block_y)));
             const double normalized_wall_distance = wall_distance / short_side;
 
             const double main_spiral = config.spiral_enabled
@@ -3558,7 +3917,8 @@ void apply_coordinate_effect(const Image& source, Image& destination,
     const double center_x = effect.center_x * static_cast<double>(source.width - 1);
     const double center_y = effect.center_y * static_cast<double>(source.height - 1);
     const double intensity = std::max(0.0, effect.intensity);
-    const double displacement = effect.magnitude * short_side * intensity;
+    const double base_displacement = effect.magnitude * short_side;
+    const double displacement = base_displacement * intensity;
     const double angle = radians(effect.angle_degrees);
     const double axis_x = std::cos(angle);
     const double axis_y = std::sin(angle);
@@ -3663,6 +4023,83 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                                 * (flag + effect.secondary * 0.35 * harmonic)
                                 * area;
                     sampled = sample_bilinear(source, sample_x, sample_y, effect.edge_mode);
+                    break;
+                }
+                case EffectType::Glitch: {
+                    const int bands = std::max(
+                        1, static_cast<int>(std::llround(effect.frequency)));
+                    const int band = std::min(
+                        bands - 1, static_cast<int>(
+                            static_cast<long long>(y) * bands
+                            / std::max(1, source.height)));
+                    const std::uint64_t band_seed = generated_shape_hash(
+                        effect.id
+                        ^ (static_cast<std::uint64_t>(band) + 1U)
+                              * UINT64_C(0xd1b54a32d192ed03));
+                    const double random = generated_shape_unit(band_seed);
+                    const double band_offset = base_displacement
+                        * (2.0 * random - 1.0)
+                        * std::sin(phase + kTau * random) * area;
+                    const double split = std::fabs(base_displacement)
+                                         * effect.secondary * area;
+                    const Color middle = sample_bilinear(
+                        source, x - band_offset, y, effect.edge_mode);
+                    const Color red = sample_bilinear(
+                        source, x - band_offset - split, y,
+                        effect.edge_mode);
+                    const Color blue = sample_bilinear(
+                        source, x - band_offset + split, y,
+                        effect.edge_mode);
+                    Color glitched{red.r, middle.g, blue.b,
+                                   std::max(red.a,
+                                            std::max(middle.a, blue.a))};
+                    sampled = blend_straight_alpha(
+                        load_color(source, x, y), glitched,
+                        clamp_value(intensity * area, 0.0, 1.0));
+                    break;
+                }
+                case EffectType::Starburst: {
+                    const double dx = x - center_x;
+                    const double dy = y - center_y;
+                    const double distance = std::hypot(dx, dy);
+                    if (distance <= 1.0e-12) {
+                        sampled = load_color(source, x, y);
+                        break;
+                    }
+                    const double ray_angle = std::atan2(dy, dx)
+                                             - angle;
+                    const double ray = std::max(
+                        0.0, std::cos(effect.frequency * ray_angle - phase));
+                    const double sharp = std::pow(
+                        ray, 1.0 + 15.0 * effect.secondary);
+                    const double travel = base_displacement * sharp
+                        * std::sin(phase + kTau * distance / short_side)
+                        * area;
+                    const Color burst = sample_bilinear(
+                        source, x - dx / distance * travel,
+                        y - dy / distance * travel, effect.edge_mode);
+                    sampled = blend_straight_alpha(
+                        load_color(source, x, y), burst,
+                        clamp_value(intensity * area, 0.0, 1.0));
+                    break;
+                }
+                case EffectType::LensDistortion: {
+                    const double dx = x - center_x;
+                    const double dy = y - center_y;
+                    const double normalized_radius =
+                        std::hypot(dx, dy) / short_side;
+                    const double pulse = 0.75 + 0.25 * std::sin(phase);
+                    const double radial = std::pow(
+                        normalized_radius, effect.frequency);
+                    const double scale = std::max(
+                        0.05, 1.0 + effect.secondary * effect.magnitude
+                                        * pulse * radial * area);
+                    const Color distorted = sample_bilinear(
+                        source, center_x + dx * scale,
+                        center_y + dy * scale, effect.edge_mode);
+                    sampled = blend_straight_alpha(
+                        load_color(source, x, y), distorted,
+                        clamp_value(intensity * area, 0.0, 1.0));
                     break;
                 }
                 case EffectType::Glow:

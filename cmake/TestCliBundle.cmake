@@ -92,6 +92,10 @@ file(WRITE "${interactive_input}"
     "5\n"
     "y\n"
     "0.125\n0.25\n0.375\n0.5\n0.625\n0.75\n0.875\n1.0\n"
+    # Keep the new Kaleidoscope and Domain Warp controls at their defaults.
+    "\n\n\n\n"
+    "\n\n\n\n\n\n"
+    # Preserve the existing post-effects quantization defaults.
     "\n\n\n\n"
     "1\n"
     "\n\n\n"

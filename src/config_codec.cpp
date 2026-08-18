@@ -195,6 +195,16 @@ bool is_setup_v10_key(std::string_view key) {
                    || has_suffix(key, ".blur_pulses_per_cycle")));
 }
 
+bool is_setup_v11_key(std::string_view key) {
+    return key == "layer_clock.mix" || key == "layer_clock.mix_enabled"
+           || starts_with(key, "starting_colors.kaleidoscope.")
+           || starts_with(key, "starting_colors.domain_warp.")
+           || key == "palette.columns"
+           || (starts_with(key, "palette.colors.")
+               && (has_suffix(key, ".name")
+                   || has_suffix(key, ".encoding")));
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -208,7 +218,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 4U ? 6U
                     : layer_version == 5U ? 7U
                     : layer_version == 6U ? 8U
-                    : layer_version == 7U ? 9U : 10U;
+                    : layer_version == 7U ? 9U
+                    : layer_version == 8U ? 10U : 11U;
     return true;
 }
 
@@ -455,6 +466,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 10U && is_setup_v10_key(key)) {
+            continue;
+        }
+        if (setup_version < 11U && is_setup_v11_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

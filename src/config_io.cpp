@@ -68,7 +68,9 @@ namespace {
 // extends those same selectors with explicit audio-feature overrides. Older
 // versions remain accepted with neutral defaults for every field introduced
 // later. Version 10 adds source RGBA, generated source-color ordering,
-// image-to-palette dithering, and configurable blur fields.
+// image-to-palette dithering, and configurable blur fields. Version 11 adds
+// active-layer/project clock mixing, generated pattern shaping, and Glitch,
+// Starburst, and Lens distortion effect types.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -80,8 +82,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 10U,
-              "config_io.cpp implements setup format version 10");
+static_assert(kSetupFormatVersion == 11U,
+              "config_io.cpp implements setup format version 11");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -183,6 +185,20 @@ bool setup_v10_record(std::string_view key) {
                    || suffix(".blur_samples") || suffix(".blur_minimum")
                    || suffix(".blur_maximum")
                    || suffix(".blur_pulses_per_cycle")));
+}
+
+bool setup_v11_record(std::string_view key) {
+    const auto suffix = [key](std::string_view value) {
+        return key.size() >= value.size()
+               && key.compare(key.size() - value.size(), value.size(), value)
+                      == 0;
+    };
+    return key == "layer_clock.mix" || key == "layer_clock.mix_enabled"
+           || starts_with(key, "starting_colors.kaleidoscope.")
+           || starts_with(key, "starting_colors.domain_warp.")
+           || key == "palette.columns"
+           || (starts_with(key, "palette.colors.")
+               && (suffix(".name") || suffix(".encoding")));
 }
 
 void clear_error(std::string* error) {
@@ -729,7 +745,8 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 7U> kEffectTypesV9
     {"particle_field", EffectType::ParticleField},
 }};
 
-constexpr std::array<std::pair<std::string_view, EffectType>, 8U> kEffectTypes{{
+constexpr std::array<std::pair<std::string_view, EffectType>, 8U>
+    kEffectTypesV10{{
     {"endless_zoom", EffectType::EndlessZoom},
     {"ripple", EffectType::Ripple},
     {"shake", EffectType::Shake},
@@ -738,6 +755,20 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 8U> kEffectTypes{{
     {"block_scale", EffectType::BlockScale},
     {"particle_field", EffectType::ParticleField},
     {"blur", EffectType::Blur},
+}};
+
+constexpr std::array<std::pair<std::string_view, EffectType>, 11U> kEffectTypes{{
+    {"endless_zoom", EffectType::EndlessZoom},
+    {"ripple", EffectType::Ripple},
+    {"shake", EffectType::Shake},
+    {"flag_wave", EffectType::FlagWave},
+    {"glow", EffectType::Glow},
+    {"block_scale", EffectType::BlockScale},
+    {"particle_field", EffectType::ParticleField},
+    {"blur", EffectType::Blur},
+    {"glitch", EffectType::Glitch},
+    {"starburst", EffectType::Starburst},
+    {"lens_distortion", EffectType::LensDistortion},
 }};
 
 constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
@@ -771,6 +802,21 @@ constexpr std::array<std::pair<std::string_view, LayerClockScale>, 5U>
         {"play_once", LayerClockScale::PlayOnce},
         {"play_once_then_project", LayerClockScale::PlayOnceThenProject},
         {"original_speed_loop", LayerClockScale::OriginalSpeedLoop},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LayerClockMixMode>, 5U>
+    kLayerClockMixModes{{
+        {"replace", LayerClockMixMode::Replace},
+        {"add", LayerClockMixMode::Add},
+        {"difference", LayerClockMixMode::Difference},
+        {"soft_xor", LayerClockMixMode::SoftXor},
+        {"bitwise_xor", LayerClockMixMode::BitwiseXor},
+    }};
+
+constexpr std::array<std::pair<std::string_view, PaletteColorEncoding>, 2U>
+    kPaletteColorEncodings{{
+        {"srgb", PaletteColorEncoding::Srgb},
+        {"linear", PaletteColorEncoding::Linear},
     }};
 
 constexpr std::array<std::pair<std::string_view, LayerMotionPath>, 5U>
@@ -1348,6 +1394,10 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_bool("layer_clock.enabled", config.layer_clock.enabled);
     builder.add_enum("layer_clock.scale", config.layer_clock.scale,
                      kLayerClockScales);
+    builder.add_enum("layer_clock.mix", config.layer_clock.mix,
+                     kLayerClockMixModes);
+    builder.add_bool("layer_clock.mix_enabled",
+                     config.layer_clock.mix_enabled);
     add_clock_records(builder, "layer_clock.clock.", "layer_clock.music.",
                       config.layer_clock.clock);
 
@@ -1488,6 +1538,26 @@ bool serialize_setup(const RenderConfig& config,
                        config.starting_colors.alpha_minimum);
     builder.add_double("starting_colors.alpha_maximum",
                        config.starting_colors.alpha_maximum);
+    builder.add_bool("starting_colors.kaleidoscope.enabled",
+                     config.starting_colors.kaleidoscope.enabled);
+    builder.add_integer("starting_colors.kaleidoscope.mirrored_segments",
+                        config.starting_colors.kaleidoscope.mirrored_segments);
+    builder.add_double("starting_colors.kaleidoscope.rotation_degrees",
+                       config.starting_colors.kaleidoscope.rotation_degrees);
+    builder.add_double("starting_colors.kaleidoscope.mix",
+                       config.starting_colors.kaleidoscope.mix);
+    builder.add_bool("starting_colors.domain_warp.enabled",
+                     config.starting_colors.domain_warp.enabled);
+    builder.add_double("starting_colors.domain_warp.strength",
+                       config.starting_colors.domain_warp.strength);
+    builder.add_double("starting_colors.domain_warp.scale",
+                       config.starting_colors.domain_warp.scale);
+    builder.add_integer("starting_colors.domain_warp.octaves",
+                        config.starting_colors.domain_warp.octaves);
+    builder.add_integer("starting_colors.domain_warp.cycles_per_loop",
+                        config.starting_colors.domain_warp.cycles_per_loop);
+    builder.add_integer("starting_colors.domain_warp.seed",
+                        config.starting_colors.domain_warp.seed);
 
     builder.add_bool("quantization.enabled", config.quantization.enabled);
     builder.add_integer("quantization.levels", config.quantization.levels);
@@ -1518,6 +1588,7 @@ bool serialize_setup(const RenderConfig& config,
 
     builder.add_bool("palette.enabled", config.palette.enabled);
     builder.add_string("palette.name", config.palette.name);
+    builder.add_integer("palette.columns", config.palette.columns);
     builder.add_integer("palette.colors.count", config.palette.colors.size());
     for (std::size_t index = 0; index < config.palette.colors.size(); ++index) {
         const PaletteColor& color = config.palette.colors[index];
@@ -1525,6 +1596,9 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("palette.colors", index, "green"), color.green);
         builder.add_double(indexed_key("palette.colors", index, "blue"), color.blue);
         builder.add_double(indexed_key("palette.colors", index, "alpha"), color.alpha);
+        builder.add_string(indexed_key("palette.colors", index, "name"), color.name);
+        builder.add_enum(indexed_key("palette.colors", index, "encoding"),
+                         color.encoding, kPaletteColorEncodings);
     }
 
     builder.add_bool("transform.flip_horizontal", config.transform.flip_horizontal);
@@ -2046,6 +2120,17 @@ bool deserialize_setup(Records& records,
             return false;
         }
     }
+    if (setup_version >= 11U
+        && !consume_enum(records, "layer_clock.mix",
+                         candidate.layer_clock.mix,
+                         kLayerClockMixModes, error)) {
+        return false;
+    }
+    if (setup_version >= 11U
+        && !consume_bool(records, "layer_clock.mix_enabled",
+                         candidate.layer_clock.mix_enabled, error)) {
+        return false;
+    }
 
     std::size_t wave_count = 0;
     if (!consume_count(records, "waves.count", kMaximumWaves, wave_count, error)) {
@@ -2127,9 +2212,14 @@ bool deserialize_setup(Records& records,
             || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)) {
             return false;
         }
-        if (setup_version >= 10U) {
+        if (setup_version >= 11U) {
             if (!consume_enum(records, indexed_key("effects", index, "type"),
                               effect.type, kEffectTypes, error)) {
+                return false;
+            }
+        } else if (setup_version >= 10U) {
+            if (!consume_enum(records, indexed_key("effects", index, "type"),
+                              effect.type, kEffectTypesV10, error)) {
                 return false;
             }
         } else if (!consume_enum(records, indexed_key("effects", index, "type"),
@@ -2297,6 +2387,35 @@ bool deserialize_setup(Records& records,
             return false;
         }
     }
+    if (setup_version >= 11U) {
+        StartingColorConfig& starting = candidate.starting_colors;
+        if (!consume_bool(records, "starting_colors.kaleidoscope.enabled",
+                          starting.kaleidoscope.enabled, error)
+            || !consume_integer(
+                records,
+                "starting_colors.kaleidoscope.mirrored_segments",
+                starting.kaleidoscope.mirrored_segments, error)
+            || !consume_double(
+                records, "starting_colors.kaleidoscope.rotation_degrees",
+                starting.kaleidoscope.rotation_degrees, error)
+            || !consume_double(records, "starting_colors.kaleidoscope.mix",
+                               starting.kaleidoscope.mix, error)
+            || !consume_bool(records, "starting_colors.domain_warp.enabled",
+                             starting.domain_warp.enabled, error)
+            || !consume_double(records, "starting_colors.domain_warp.strength",
+                               starting.domain_warp.strength, error)
+            || !consume_double(records, "starting_colors.domain_warp.scale",
+                               starting.domain_warp.scale, error)
+            || !consume_integer(records, "starting_colors.domain_warp.octaves",
+                                starting.domain_warp.octaves, error)
+            || !consume_integer(
+                records, "starting_colors.domain_warp.cycles_per_loop",
+                starting.domain_warp.cycles_per_loop, error)
+            || !consume_integer(records, "starting_colors.domain_warp.seed",
+                                starting.domain_warp.seed, error)) {
+            return false;
+        }
+    }
     if (setup_version >= 2U
         && !consume_string(records, "surface.obj_path",
                            candidate.surface.obj_path, error)) {
@@ -2320,6 +2439,10 @@ bool deserialize_setup(Records& records,
         std::size_t palette_color_count = 0U;
         if (!consume_bool(records, "palette.enabled", candidate.palette.enabled, error)
             || !consume_string(records, "palette.name", candidate.palette.name, error)
+            || (setup_version >= 11U
+                && !consume_count(records, "palette.columns",
+                                  kMaximumPaletteColors,
+                                  candidate.palette.columns, error))
             || !consume_count(records, "palette.colors.count",
                               kMaximumPaletteColors, palette_color_count, error)) {
             return false;
@@ -2340,6 +2463,17 @@ bool deserialize_setup(Records& records,
                 && !consume_double(
                     records, indexed_key("palette.colors", index, "alpha"),
                     color.alpha, error)) {
+                return false;
+            }
+            if (setup_version >= 11U
+                && (!consume_string(
+                        records,
+                        indexed_key("palette.colors", index, "name"),
+                        color.name, error)
+                    || !consume_enum(
+                        records,
+                        indexed_key("palette.colors", index, "encoding"),
+                        color.encoding, kPaletteColorEncodings, error))) {
                 return false;
             }
         }
@@ -2559,7 +2693,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 6U && setup_v6_record(key))
              || (setup_version < 7U && setup_v7_record(key))
              || (setup_version < 8U && setup_v8_record(key))
-             || (setup_version < 10U && setup_v10_record(key)));
+             || (setup_version < 10U && setup_v10_record(key))
+             || (setup_version < 11U && setup_v11_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

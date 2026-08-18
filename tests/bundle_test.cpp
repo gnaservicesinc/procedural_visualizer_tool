@@ -261,6 +261,11 @@ void test_layer_codec_backward_compatibility() {
     original.effects.front().space = pvt::EffectSpace::Surface;
     original.effects.front().area_radius = 0.36;
     original.palette = pvt::default_palette(2U);
+    original.palette.columns = 5U;
+    original.palette.colors.front().name = "Linear cyan";
+    original.palette.colors.front().encoding =
+        pvt::PaletteColorEncoding::Linear;
+    original.palette.colors.back().name = "Display magenta";
     original.transform.flip_vertical = true;
     original.transform.mirror = pvt::MirrorMode::RightToLeft;
     original.swings_enabled = false;
@@ -281,6 +286,13 @@ void test_layer_codec_backward_compatibility() {
     original.waves.front().path.cycles_per_loop = 2;
     original.effects.front().path.path_id = 91U;
     original.motion.custom_path.path_id = 91U;
+    original.layer_clock.mix = pvt::LayerClockMixMode::Difference;
+    original.layer_clock.mix_enabled = true;
+    original.starting_colors.kaleidoscope.enabled = true;
+    original.starting_colors.kaleidoscope.mirrored_segments = 13;
+    original.starting_colors.domain_warp.enabled = true;
+    original.starting_colors.domain_warp.strength = 0.21;
+    original.starting_colors.domain_warp.seed = UINT64_C(0x123456789abcdef0);
     const std::vector<pvt::CubicMotionPath> motion_paths{
         pvt::default_ellipse_path(91U, 100U, "Layer ellipse")};
     const auto has_suffix = [](const std::string& value,
@@ -294,7 +306,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t8\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t9\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -303,6 +315,7 @@ void test_layer_codec_backward_compatibility() {
           == pvt::EffectSpace::Surface);
     CHECK(current_round_trip.palette.enabled);
     CHECK(current_round_trip.palette.name == "Vaporwave");
+    CHECK(current_round_trip.palette.columns == original.palette.columns);
     CHECK(current_round_trip.palette.colors.size()
           == original.palette.colors.size());
     if (current_round_trip.palette.colors.size()
@@ -315,6 +328,10 @@ void test_layer_codec_backward_compatibility() {
                   == original.palette.colors[index].green);
             CHECK(current_round_trip.palette.colors[index].blue
                   == original.palette.colors[index].blue);
+            CHECK(current_round_trip.palette.colors[index].name
+                  == original.palette.colors[index].name);
+            CHECK(current_round_trip.palette.colors[index].encoding
+                  == original.palette.colors[index].encoding);
         }
     }
     CHECK(current_round_trip.transform.mirror
@@ -335,11 +352,60 @@ void test_layer_codec_backward_compatibility() {
           == pvt::AudioResponseMode::Energy);
     CHECK(current_round_trip.waves.front().path.enabled);
     CHECK(current_round_trip.waves.front().path.path_id == 91U);
+    CHECK(current_round_trip.layer_clock.mix
+          == pvt::LayerClockMixMode::Difference);
+    CHECK(current_round_trip.layer_clock.mix_enabled);
+    CHECK(current_round_trip.starting_colors.kaleidoscope.enabled);
+    CHECK(current_round_trip.starting_colors.kaleidoscope.mirrored_segments
+          == 13);
+    CHECK(current_round_trip.starting_colors.domain_warp.enabled);
+    CHECK(current_round_trip.starting_colors.domain_warp.strength == 0.21);
+    CHECK(current_round_trip.starting_colors.domain_warp.seed
+          == UINT64_C(0x123456789abcdef0));
+
+    // Layer v8/setup v10 predates layer-clock mixing and generated pattern
+    // shaping. Missing records recover the neutral, legacy behavior.
+    std::istringstream current_v9_input(current_layer);
+    std::ostringstream version_eight_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_v9_input, line)));
+    CHECK(line == "PVT_LAYER\t9");
+    version_eight_output << "PVT_LAYER\t8\n";
+    while (std::getline(current_v9_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v9_only = key == "layer_clock.mix"
+                             || key == "layer_clock.mix_enabled"
+                             || key == "palette.columns"
+                             || (key.rfind("palette.colors.", 0U) == 0U
+                                 && (has_suffix(key, ".name")
+                                     || has_suffix(key, ".encoding")))
+                             || key.rfind(
+                                    "starting_colors.kaleidoscope.", 0U)
+                                    == 0U
+                             || key.rfind(
+                                    "starting_colors.domain_warp.", 0U)
+                                    == 0U;
+        if (!v9_only) version_eight_output << line << '\n';
+    }
+    const std::string version_eight = version_eight_output.str();
+    pvt::RenderData loaded_version_eight;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_eight, loaded_version_eight, &error, &motion_paths));
+    CHECK(loaded_version_eight.layer_clock.mix
+          == pvt::LayerClockMixMode::Replace);
+    CHECK(!loaded_version_eight.layer_clock.mix_enabled);
+    CHECK(!loaded_version_eight.starting_colors.kaleidoscope.enabled);
+    CHECK(!loaded_version_eight.starting_colors.domain_warp.enabled);
+    CHECK(loaded_version_eight.palette.columns == 0U);
+    for (const auto& color : loaded_version_eight.palette.colors) {
+        CHECK(color.name.empty());
+        CHECK(color.encoding == pvt::PaletteColorEncoding::Srgb);
+    }
 
     // Layer v7/setup v9 predates RGBA source generation and blur controls.
-    std::istringstream current_v8_input(current_layer);
+    std::istringstream current_v8_input(version_eight);
     std::ostringstream version_seven_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(current_v8_input, line)));
     CHECK(line == "PVT_LAYER\t8");
     version_seven_output << "PVT_LAYER\t7\n";

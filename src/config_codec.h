@@ -7,7 +7,7 @@
 
 namespace pvt::detail {
 
-inline constexpr std::uint32_t kLayerConfigFormatVersion = 8U;
+inline constexpr std::uint32_t kLayerConfigFormatVersion = 9U;
 inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 5U;
 inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 1U;
 inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 3U;

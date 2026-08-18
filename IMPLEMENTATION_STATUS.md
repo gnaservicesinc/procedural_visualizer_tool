@@ -1,12 +1,58 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
 ## Outcome of this pass
+
+Version 3.0.0 implements the Flow Workbench overhaul and
+the requested procedural expansion. The native Qt editor presents the render as
+six stages—Source, Texture FX, Surface, Transform & Motion, Object FX, and
+Finish—with a persistent Drivers strip and direct Project Settings entry points.
+The default new-project document is a neutral 1920×1080, 60 FPS, one-layer
+starting point modeled on the supplied `Untitled.zip`; saved custom defaults
+continue to override it.
+
+Active-layer clock mixing is an explicit advanced opt-in and defaults off in
+both new and migrated data. Disabled mixing preserves the historical layer-
+replaces-project result. Enabled mixing combines independently transformed
+project/layer phases by Replace, Add, Difference, continuous Soft XOR, or exact
+24-bit XOR before Swing, while project duration/frame count remains
+authoritative and dense layer-music features retain their local envelope.
+
+Generated sources add loop-seam-safe Kaleidoscope and deterministic Domain Warp
+shaping. The ordered effect stack adds Glitch, Starburst, and Lens Distortion,
+including type-specific Qt/CLI controls and CPU/Metal parity. Setup format 11
+and project layer format 9 persist these values and recover neutral behavior
+when older records are absent.
+
+Palette interchange is implemented as a non-executing, bounded parser/exporter
+for GIMP GPL, Krita KPL, GIMP-style CSS/Python/PHP/Java/text, PNG, and FLOAT EXR.
+Image palettes traverse row-major, ignore alpha-zero pixels, and keep the first
+exact decoded duplicate. The UI presents a structured summary before Replace or
+Append and reports precision/name/alpha/encoding loss after export. Palette
+entry names, column layout, alpha, and per-entry sRGB versus finite linear/HDR
+values now round-trip through setup 11, layer 9, project bundles, and the local
+palette library.
+
+These additions grow installed by-value configuration structs. Version 3.0.0
+therefore advances the shared-library ABI to SONAME 3, and installed clients
+must rebuild. Existing setup and project data remain supported migration inputs.
+
+Focused implementation validation covered the core renderer, bundle,
+project/composite, palette-I/O, native GUI build/smoke, and strict Metal parity
+paths. The final local 3.0.0 release build passed all 22 tests, including native
+Metal and Cocoa smoke, and produced a verified ad-hoc-signed macOS application
+containing 28 Mach-O files, the ABI-3 renderer library, and `pvt-render 3.0.0`.
+The beta host toolchain requires `/usr/lib` as a test-only dyld fallback; the
+staged application passed the project's dependency, deployment-target, and
+deep-signature verification. Remote package matrices and release assets remain
+the tag workflow's responsibility.
+
+## 2.0.1 release record
 
 Version 2.0.1 is a correctness and security-hardening patch. Arithmetic now
 widens before multiplication wherever CodeQL identified a narrow intermediate

@@ -23,7 +23,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 10;
+constexpr std::uint32_t kSetupFormatVersion = 11;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -69,7 +69,10 @@ enum class EffectType : std::uint8_t {
     Glow,
     BlockScale,
     ParticleField,
-    Blur
+    Blur,
+    Glitch,
+    Starburst,
+    LensDistortion
 };
 
 enum class BlurType : std::uint8_t {
@@ -248,6 +251,21 @@ enum class LayerClockScale : std::uint8_t {
     OriginalSpeedLoop
 };
 
+// Project and active-layer clocks are independently evaluated and transformed
+// before this operation is applied. Replace preserves the behavior of every
+// setup written before format 11. SoftXor is the continuous fuzzy-XOR
+// P + L - 2*P*L. BitwiseXor converts each wrapped phase to an unsigned 24-bit
+// fixed-point value, XORs those integers, then converts the result back to a
+// normalized phase. LayerClockScale remains an independent duration-mapping
+// policy and is never inferred from this operation.
+enum class LayerClockMixMode : std::uint8_t {
+    Replace = 0,
+    Add,
+    Difference,
+    SoftXor,
+    BitwiseXor
+};
+
 // Compact, seamless alternatives to the deferred hand-authored Bezier path
 // editor. Integer cycle counts close exactly over the half-open project loop.
 enum class LayerMotionPath : std::uint8_t {
@@ -402,6 +420,12 @@ struct LayerClockConfig {
         value.data_only = true;
         return value;
     }();
+    // Appended for aggregate-initializer compatibility. Missing persisted
+    // values select Replace, preserving the historical layer-clock override.
+    LayerClockMixMode mix = LayerClockMixMode::Replace;
+    // Mixing is an explicit opt-in. When false an enabled layer clock always
+    // replaces the project clock, regardless of the stored mix selection.
+    bool mix_enabled = false;
 };
 
 // Music response changes only evaluated values. Authored wave/effect settings
@@ -506,6 +530,18 @@ struct SwingConfig {
 //              angle, edge mode.
 // FlagWave:    intensity, magnitude, frequency, secondary (harmonic mix),
 //              center, angle, edge mode.
+// Glitch:      intensity (source/effect mix), magnitude (maximum horizontal
+//              displacement as a fraction of the short edge), frequency
+//              (whole scanline band count), secondary (RGB split from 0..1),
+//              center/local area, edge mode. The effect ID and clock phase
+//              deterministically choose each band's offset.
+// Starburst:   intensity (source/effect mix), magnitude (radial displacement
+//              as a fraction of the short edge), frequency (whole ray count),
+//              secondary (ray sharpness from 0..1), center, angle, edge mode.
+// LensDistortion: intensity (source/effect mix), magnitude (radial bend),
+//              frequency (radial exponent), secondary (-1 barrel, +1
+//              pincushion, 0 neutral), center/local area, edge mode. Its
+//              authored clock animates the bend without changing the loop seam.
 // Glow:        intensity, secondary (pulse depth), radius_pixels, threshold,
 //              soft_knee. Glow expands alpha coverage using straight-alpha
 //              compositing.
@@ -561,8 +597,15 @@ struct EffectConfig {
     int blur_pulses_per_cycle = 1;
 };
 
-// Palette component values are authored in display/sRGB space. When enabled,
-// the palette selects the procedural layer's starting colors in linear light.
+enum class PaletteColorEncoding : std::uint8_t {
+    Srgb = 0,
+    Linear
+};
+
+// Palette component values retain their source encoding. Ordinary authored
+// colors use display/sRGB; imported FLOAT EXR and linear Krita values remain
+// linear and may carry finite HDR or negative RGB. When enabled, the palette
+// selects the procedural layer's starting colors in linear light.
 // Procedural slope lighting, Texture effects, surface lighting, mapped-object
 // effects, and explicit quantization run afterward and may create other colors.
 // Alpha is an authored source component. The layer's source-alpha switch can
@@ -572,12 +615,18 @@ struct PaletteColor {
     double green = 0.0;
     double blue = 0.0;
     double alpha = 1.0;
+    // Optional interchange name and per-entry encoding are appended so old
+    // aggregate initializers continue to author unnamed sRGB colors.
+    std::string name;
+    PaletteColorEncoding encoding = PaletteColorEncoding::Srgb;
 };
 
 struct PaletteConfig {
     bool enabled = false;
     std::string name = "Custom";
     std::vector<PaletteColor> colors;
+    // Zero means the source did not declare a preferred grid width.
+    std::size_t columns = 0U;
 };
 
 struct LayerTransformConfig {
@@ -653,6 +702,24 @@ struct StartingColorConfig {
     int reference_width = 0;
     int reference_height = 0;
     int reference_block_size = 0;
+
+    // Generated-source pattern shaping. These controls are evaluated only by
+    // procedural base generation; an enabled StartingImageConfig bypasses
+    // them completely. Neutral defaults preserve pre-format-11 rendering.
+    struct KaleidoscopeConfig {
+        bool enabled = false;
+        int mirrored_segments = 6;
+        double rotation_degrees = 0.0;
+        double mix = 1.0;
+    } kaleidoscope;
+    struct DomainWarpConfig {
+        bool enabled = false;
+        double strength = 0.0; // Fraction of the shorter canvas edge.
+        double scale = 2.0;
+        int octaves = 3;
+        int cycles_per_loop = 1;
+        std::uint64_t seed = 0;
+    } domain_warp;
 };
 
 struct QuantizationConfig {
@@ -1054,6 +1121,8 @@ PVT_API const char* clock_interpolation_name(ClockInterpolation value);
 PVT_API const char* clock_fit_name(ClockFit value);
 PVT_API const char* music_tempo_mode_name(MusicTempoMode value);
 PVT_API const char* layer_clock_scale_name(LayerClockScale value);
+PVT_API const char* layer_clock_mix_mode_name(LayerClockMixMode value);
+PVT_API const char* palette_color_encoding_name(PaletteColorEncoding value);
 PVT_API const char* layer_motion_path_name(LayerMotionPath value);
 PVT_API const char* music_feature_name(MusicFeature value);
 PVT_API const char* audio_response_mode_name(AudioResponseMode value);

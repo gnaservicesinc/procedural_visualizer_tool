@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **2.0.1**. The version is read from `VERSION` by every
+Current product version: **3.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,35 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 3.0.0 Flow Workbench and procedural expansion
+
+Version 3.0.0 reorganizes the Qt editor around the visible
+render pipeline: **Source → Texture FX → Surface → Transform & Motion → Object
+FX → Finish**. A persistent Drivers strip keeps project clock, active-layer
+clock, Swing, and audio routing visible while each stage presents only the
+controls that can affect it. Project Canvas & Loop, Synchronization & Audio,
+Export, and History remain directly reachable from the Project & Layers panel.
+
+This release also adds opt-in project/layer clock mixing, Kaleidoscope and seamless
+Domain Warp generated-source shaping, and Glitch, Starburst, and Lens Distortion
+effects with CPU/Metal implementations. Clock mixing is **off for every old and
+new project**. With an active layer clock and mixing off, the historical rule is
+unchanged: the layer clock replaces the project clock. Enabling the advanced
+switch exposes Replace, Add, Difference, Soft XOR, and exact 24-bit XOR.
+
+Starting palettes now import and export GIMP GPL, Krita KPL, GIMP-style CSS,
+Python, PHP, Java and hex text, plus PNG and FLOAT OpenEXR palette images. Image
+pixels are traversed top-to-bottom and left-to-right; fully transparent pixels
+are ignored, exact decoded duplicates keep only their first occurrence, and a
+review summary is shown before Replace or Append. Entry names, grid columns,
+alpha, and sRGB versus linear/HDR encoding are retained whenever the chosen
+format can represent them; export summaries identify any name, alpha, encoding,
+or precision loss.
+
+These changes grow installed by-value renderer configuration types, so 3.0.0
+advances the shared-library ABI to SONAME 3 and requires installed clients to
+rebuild. Existing setup and project data remain compatible migration inputs.
 
 ## 2.0.1 correctness and security hardening
 
@@ -197,8 +226,16 @@ sudo apt install procedural-visualizer-tool
   destructive source edits. Each Music clock has a **Data only** switch; it
   keeps analysis-driven visuals while muting that source during preview and
   movie export. This defaults on for layer clocks and off for the project clock.
+- Advanced project/layer clock mixing is available only while the active-layer
+  clock is enabled and only after its separate opt-in switch is turned on.
+  Replace, Add, project-minus-layer Difference, continuous Soft XOR, and exact
+  24-bit XOR combine independently transformed project/layer phases before
+  Swing. Mixing defaults off in both migrated and newly created projects, so an
+  active layer clock retains the historical replace behavior.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
-  glow, animated block scaling, and a deterministic spark/trail particle field.
+  glow, animated block scaling, deterministic spark/trail particles, Blur,
+  scanline/RGB-split Glitch, radial Starburst, and barrel/pincushion Lens
+  Distortion.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
   A synchronized effect can inherit its effective audio category and source,
   override that source with any analyzed feature, force that effect on with the
@@ -257,13 +294,19 @@ sudo apt install procedural-visualizer-tool
   clock even when the synchronized clock uses Hold or another pulse mapping.
   Endless Zoom uses intensity 0–1 as source mix and values above 1 as additional
   zoom depth, keeping positive audio modulation visible at its default full mix.
-- An optional starting palette per layer with one or more authored sRGB colors
+- An optional starting palette per layer with one or more authored sRGB or
+  imported linear/HDR colors
   up to the signed-int UI/API index capacity, custom
   add/edit/remove controls, and six presets: Ember, Deep Ocean, Vaporwave,
   Forest Biolume, Arcade, and Moonlight. The palette chooses exact procedural
   source colors in linear light without changing alpha; lighting and effects
   may create other colors afterward. Presets never silently change
   whether the starting palette is enabled.
+  The UI also imports/exports GIMP GPL, Krita KPL, CSS, Python, PHP, Java, hex
+  text, PNG, and FLOAT EXR. Code-looking formats are parsed only as bounded data
+  and are never executed. PNG/EXR image palettes import each non-fully-
+  transparent pixel in row-major order and remove exact decoded duplicates.
+  Import and export summaries make skipped colors and format losses explicit.
 - Generated starting colors begin with **Continuous hue** or one of five
   whole-render patterns: **Horizontal rainbow**, **Vertical rainbow**,
   **Diagonal rainbow**, **Spiral rainbow**, or **Square spiral rainbow**.
@@ -283,6 +326,10 @@ sudo apt install procedural-visualizer-tool
   separate sources and are not remapped by those generated-color limits.
   Preview sampling retains full-resolution coordinates, so resizing the live
   preview cannot rearrange colors and preview/export placement stays identical.
+  Optional Kaleidoscope shaping adds mirrored radial segments, rotation, and
+  blend amount; deterministic multi-octave Domain Warp adds strength, scale,
+  integer loop cycles, and a full 64-bit seed. Both preserve the loop seam and
+  bypass authored starting-image pixels.
 - An optional embedded 8/16-bit PNG starting image per layer, with Stretch,
   Contain, Cover, and Tile fitting. The decoder converts directly to the
   float32 linear working image without an 8-bit intermediate. It replaces
@@ -318,18 +365,19 @@ sudo apt install procedural-visualizer-tool
   CPU + GPU reports a Metal failure instead of silently repeating the whole
   layer on CPU; CPU-only rendering is automatic only where Metal is unavailable.
 
-The GUI includes a topmost-first Layers dock, project naming, per-layer blend,
+The GUI uses a six-stage Flow Workbench—Source, Texture FX, Surface, Transform &
+Motion, Object FX, and Finish—alongside a topmost-first Project & Layers dock.
+It includes project naming, per-layer blend,
 alpha-order, group, and opacity controls, session-only layer/group **Solo**
 preview, draggable center handles for
 waves, swings, and centered effects with visible radius rings, ordered
-wave/swing/effect editors, palette and transform controls, type-aware effect
+wave/swing/effect editors, palette interchange and transform controls, type-aware effect
 controls, a live checkerboard alpha preview, a continuously updating timeline,
 and background composite export with cooperative cancellation. The
-**Synchronization** tab owns both the global Clock and the selected layer's
-optional active-layer Clock, Swing, project-wide Audio Response defaults, and
-active-layer override. A persistent effective-routing summary makes inheritance
-visible instead of implicit. The Output tab is
-global while the Layer Render tab always edits the selected layer. **Randomize
+project Synchronization & Audio page owns both the global Clock and the selected
+layer's optional active-layer Clock, Swing, project-wide Audio Response defaults,
+and active-layer override. A persistent Drivers strip makes effective routing
+and the clock-mixing opt-in visible instead of implicit. **Randomize
 values** keeps the current layer's stack structure and types while varying its
 settings; **Randomize mix** creates a new bounded mix. Both live in the Settings
 menu and require confirmation, keeping destructive experiments away from the
@@ -400,7 +448,11 @@ manual frame count is preserved in every mode; a render-ready Music clock uses
 the ignored field until another clock is selected.
 
 An enabled active-layer clock locally replaces that clock evaluation without
-changing the project timeline or export length. Its duration policy maps the
+changing the project timeline or export length whenever advanced mixing is off.
+When mixing is explicitly enabled, the independently offset/reversed/fitted
+project and layer phases are combined by the selected policy before Swing; the
+project remains the sole authority for duration and exported frame count. The
+layer clock's duration policy maps the
 local source over the project duration: **Smart loop fit** repeats the greatest
 whole number of clips that fit and spreads the residual adjustment over that
 aggregate; **Straight fit** makes one traversal; **Play once** holds the final
@@ -760,8 +812,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-8 remain importable;
-current explicit legacy output is setup format 9. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-10 remain importable;
+current explicit legacy output is setup format 11. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -770,7 +822,12 @@ motion paths. Format 8 adds project-wide audio-response defaults, explicit
 layer inheritance, and nullable per-wave/per-effect routing. Versions 1-7 keep
 their historical layer-authoritative behavior on import. Format 9 adds explicit
 per-wave/per-effect feature-source overrides while retaining format 8's force/
-ignore meanings. Older files receive neutral compatibility
+ignore meanings. Format 10 adds RGBA generated colors, source-alpha policy,
+starting-image dithering, and Blur controls. Format 11 adds the disabled-by-
+default clock-mixing switch and mode, Kaleidoscope and Domain Warp shaping,
+Glitch/Starburst/Lens Distortion settings, and palette column/name/encoding
+metadata. Project layer records use the corresponding current layer format 9.
+Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
