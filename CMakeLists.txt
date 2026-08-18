@@ -373,8 +373,14 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
         PUBLIC ProceduralVisualizerTool::ProceduralVisualizerTool
         PRIVATE
             ${PVT_MINIZIP_TARGET}
+            PNG::PNG
             ZLIB::ZLIB
             ProceduralVisualizerTool::Audio)
+    if(PVT_DISTRIBUTION_LIBPNG)
+        # palette_io.cpp includes png.h directly. Ensure the private staged
+        # libpng install (headers and archive) exists before it is compiled.
+        add_dependencies(ProceduralVisualizerBundle pvt_distribution_libpng)
+    endif()
     pvt_enable_warnings(ProceduralVisualizerBundle)
 endif()
 
