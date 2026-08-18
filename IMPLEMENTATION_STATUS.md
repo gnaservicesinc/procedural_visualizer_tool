@@ -8,6 +8,21 @@ snapshots, not inputs to the current build.
 
 ## Outcome of this pass
 
+Version 3.0.1 is the focused UI follow-up to the 3.0.0 renderer and ABI release.
+It replaces the misleading Surface and Object FX primary stages with seven
+purpose-based workspaces, separates all 11 effect types into five exclusive
+catalogs, makes Texture the invariant default for newly added and randomized
+effects, restores first-class Project and Export discovery, and keeps the full
+synchronization editor behind a compact live summary. No public API, SONAME,
+setup format, or project-bundle format changes in this patch.
+
+The local 3.0.1 release build passed all 22 tests, including native Metal and
+Cocoa GUI smoke. The distribution verifier passed over 28 Mach-O files, the
+staged and freshly extracted applications passed deep strict code-signature and
+build-machine dependency checks, embedded `pvt-render` reported 3.0.1 and passed
+self-test, and the 25 MiB macOS archive passed its generated SHA-256 check with
+only the application, README, and license beneath its package root.
+
 Version 3.0.0 implements the Flow Workbench overhaul and
 the requested procedural expansion. The native Qt editor presents seven focused
 workspaces—Project, Starting Colors, Modifiers, Movement, Layer Effects, Post

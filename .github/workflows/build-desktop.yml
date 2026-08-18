@@ -421,7 +421,9 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This major release introduces the Flow Workbench: a six-stage Source, Texture FX, Surface, Transform & Motion, Object FX, and Finish workflow with a persistent Drivers strip and direct project settings.
+          This release includes the Flow Workbench overhaul: seven focused Project, Starting Colors, Modifiers, Movement, Layer Effects, Post Effects, and Export workspaces with direct project settings and a compact collapsible Synchronization strip.
+
+          The single ordered Layer Effects editor separates its catalog into Movement & Distortion, Light & Energy, Stylize, Particles, and Blur. New and randomized effects start on Texture; mapped-surface placement remains an explicit advanced per-effect choice rather than a duplicated Object FX workspace.
 
           Generated sources add Kaleidoscope and seamless deterministic Domain Warp controls. The ordered effect stack adds Glitch, Starburst, and Lens Distortion with CPU and Metal implementations, CLI controls, persistence, and parity coverage.
 
