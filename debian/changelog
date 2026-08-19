@@ -1,3 +1,11 @@
+procedural-visualizer-tool (5.0.2) stonking; urgency=medium
+
+  * Expose wave displacement and slope-lighting outputs on the Wave page.
+  * Warn when enabled waves cannot affect pixels because both outputs are off.
+  * Keep GUI smoke checks independent of persisted strict-GPU preferences.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Wed, 19 Aug 2026 07:44:15 -0400
+
 procedural-visualizer-tool (5.0.1) stonking; urgency=medium
 
   * Initialize and tear down Qt/OpenGL contexts without headless CLI deadlocks.

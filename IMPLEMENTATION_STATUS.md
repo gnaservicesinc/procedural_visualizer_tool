@@ -6,6 +6,31 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 5.0.2 wave-output reachability
+
+Version 5.0.2 makes the Wave editor's render prerequisites explicit. Waves
+produce visible pixels through generated-pattern displacement, slope lighting,
+or both; previously those two layer switches lived only under Modifiers, so an
+enabled wave could appear inert without any explanation. The Wave page now
+shows both output switches in place, keeps them synchronized with the existing
+Modifiers controls, and reports whether enabled waves have an active output.
+The supplied Test3 bundle is the regression case: its version 4 contains an
+enabled wave while both output switches are off.
+
+Automated GUI smoke now verifies the silent-output warning and its recovery.
+After first confirming that the persisted rendering-backend preference was
+restored correctly, the remainder of smoke rendering uses CPU so a user's
+strict-GPU preference cannot make the test depend on host GPU availability.
+
+Local 5.0.2 validation passed the Release CPU/core and CLI suite (21/21), the
+native AVFoundation video-export check, the Cocoa GUI smoke test, and the
+public `pvt-render --version`/`--self-test` checks. Real Metal execution,
+signed distribution verification, and native Windows/Linux packages remain
+gates of the tag workflow rather than claims from this host.
+
+This patch does not change the renderer, public API, SONAME 5 ABI, setup
+format, layer format, or project-bundle format.
+
 ## 5.0.1 cross-platform release reliability
 
 Version 5.0.1 repairs the two integration failures found by native release and

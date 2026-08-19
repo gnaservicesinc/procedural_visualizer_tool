@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **5.0.1**. The version is read from `VERSION` by every
+Current product version: **5.0.2**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,16 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 5.0.2 wave-output reachability
+
+Version 5.0.2 makes enabled waves useful and understandable again when their
+layer outputs are disabled. The Wave page now exposes generated-pattern
+displacement and wave-slope lighting directly, keeps those switches synchronized
+with Modifiers, and explains when an enabled wave cannot affect pixels because
+both outputs are off. GUI smoke coverage protects that state and no longer lets
+a persisted strict-GPU preference make otherwise portable editor checks depend
+on the test machine's GPU.
 
 ## 5.0.1 cross-platform release reliability
 

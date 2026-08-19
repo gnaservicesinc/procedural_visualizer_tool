@@ -168,6 +168,7 @@ private:
     void loadSelectedSwing();
     void loadSelectedEffect();
     void loadGlobalEditors();
+    void updateWaveOutputState();
     void updateSurfaceEditorState();
     void updatePostProcessEditorState();
     void applyWaveEditor(const QObject* changedEditor);
@@ -519,6 +520,9 @@ private:
     QSpinBox* wave_cycles_ = nullptr;
     QDoubleSpinBox* wave_phase_ = nullptr;
     QDoubleSpinBox* wave_direction_ = nullptr;
+    QLabel* wave_output_status_ = nullptr;
+    QCheckBox* wave_displacement_enabled_ = nullptr;
+    QCheckBox* wave_lighting_enabled_ = nullptr;
 
     QGroupBox* clock_group_ = nullptr;
     QFormLayout* clock_form_ = nullptr;

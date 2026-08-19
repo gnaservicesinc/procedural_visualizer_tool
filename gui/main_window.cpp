@@ -2522,6 +2522,27 @@ QWidget* MainWindow::createWavePage() {
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
+    auto* output = new QGroupBox(tr("Wave output"));
+    auto* output_layout = new QVBoxLayout(output);
+    wave_output_status_ = new QLabel;
+    wave_output_status_->setObjectName(QStringLiteral("waveOutputStatus"));
+    wave_output_status_->setWordWrap(true);
+    output_layout->addWidget(wave_output_status_);
+    wave_displacement_enabled_ = new QCheckBox(
+        tr("Displace the generated pattern"));
+    wave_displacement_enabled_->setObjectName(
+        QStringLiteral("waveDisplacementEnabled"));
+    wave_displacement_enabled_->setToolTip(tr(
+        "Uses wave slopes to move the generated pattern. This is the same layer setting shown under Modifiers > Procedural features."));
+    wave_lighting_enabled_ = new QCheckBox(tr("Apply wave-slope lighting"));
+    wave_lighting_enabled_->setObjectName(
+        QStringLiteral("waveLightingEnabled"));
+    wave_lighting_enabled_->setToolTip(tr(
+        "Uses wave slopes to shade the generated pattern. This is the same layer setting shown under Modifiers > Procedural features."));
+    output_layout->addWidget(wave_displacement_enabled_);
+    output_layout->addWidget(wave_lighting_enabled_);
+    layout->addWidget(output);
+
     wave_list_ = new QListWidget;
     wave_list_->setAlternatingRowColors(true);
     layout->addWidget(wave_list_, 1);
@@ -6158,6 +6179,11 @@ void MainWindow::connectEditors() {
     }
     connect(wave_cycles_, &QSpinBox::valueChanged, this,
             [this] { applyWaveEditor(wave_cycles_); });
+    for (auto* editor : {wave_displacement_enabled_,
+                         wave_lighting_enabled_}) {
+        connect(editor, &QCheckBox::toggled, this,
+                [this, editor] { applyGlobalEditor(editor); });
+    }
 
     connect(swing_name_, &QLineEdit::editingFinished, this, [this] {
         const QString name = swing_name_->text();
@@ -9044,6 +9070,7 @@ void MainWindow::refreshWaveList(std::optional<std::uint64_t> selectedId) {
     wave_list_->setCurrentRow(selected_row);
     populating_ = false;
     loadSelectedWave();
+    updateWaveOutputState();
     preview_->setConfiguration(config_);
 }
 
@@ -9586,8 +9613,10 @@ void MainWindow::loadGlobalEditors() {
     ghost_mix_->setValue(config_.ghost_mix);
     ghost_lag_->setValue(config_.ghost_lag_degrees);
     displacement_enabled_->setChecked(config_.displacement_enabled);
+    wave_displacement_enabled_->setChecked(config_.displacement_enabled);
     displacement_->setValue(config_.displacement);
     lighting_enabled_->setChecked(config_.lighting_enabled);
+    wave_lighting_enabled_->setChecked(config_.lighting_enabled);
     wave_depth_->setValue(config_.wave_depth);
     spiral_enabled_->setChecked(config_.spiral_enabled);
     spiral_frequency_->setValue(config_.spiral_frequency);
@@ -9722,8 +9751,52 @@ void MainWindow::loadGlobalEditors() {
     filename_digits_->setValue(config_.output.filename_digits);
     overwrite_->setChecked(config_.output.overwrite_existing);
     populating_ = false;
+    updateWaveOutputState();
     updateOutputEditorValidity();
     updateSynchronizationState();
+}
+
+void MainWindow::updateWaveOutputState() {
+    if (wave_output_status_ == nullptr
+        || wave_displacement_enabled_ == nullptr
+        || wave_lighting_enabled_ == nullptr) {
+        return;
+    }
+    {
+        const QSignalBlocker displacement_blocker(
+            wave_displacement_enabled_);
+        const QSignalBlocker lighting_blocker(wave_lighting_enabled_);
+        wave_displacement_enabled_->setChecked(
+            config_.displacement_enabled);
+        wave_lighting_enabled_->setChecked(config_.lighting_enabled);
+    }
+    const bool has_enabled_wave = std::any_of(
+        config_.waves.cbegin(), config_.waves.cend(),
+        [](const pvt::WaveConfig& wave) { return wave.enabled; });
+    if (!has_enabled_wave) {
+        wave_output_status_->setText(tr(
+            "Add or enable a wave, then choose at least one output below."));
+        wave_output_status_->setStyleSheet(QString{});
+    } else if (!config_.displacement_enabled
+               && !config_.lighting_enabled) {
+        wave_output_status_->setText(tr(
+            "This layer's enabled waves cannot affect pixels because both wave outputs are off."));
+        wave_output_status_->setStyleSheet(
+            QStringLiteral("color: #ff6b6b; font-weight: 600;"));
+    } else if (config_.displacement_enabled
+               && config_.lighting_enabled) {
+        wave_output_status_->setText(tr(
+            "Enabled waves drive both generated-pattern displacement and slope lighting."));
+        wave_output_status_->setStyleSheet(QString{});
+    } else if (config_.displacement_enabled) {
+        wave_output_status_->setText(tr(
+            "Enabled waves drive generated-pattern displacement."));
+        wave_output_status_->setStyleSheet(QString{});
+    } else {
+        wave_output_status_->setText(tr(
+            "Enabled waves drive slope lighting."));
+        wave_output_status_->setStyleSheet(QString{});
+    }
 }
 
 void MainWindow::updateSurfaceEditorState() {
@@ -10632,6 +10705,7 @@ void MainWindow::applyWaveEditor(const QObject* changed_editor) {
     }
     syncActiveRender();
     updateWaveListItem(*index);
+    updateWaveOutputState();
     preview_->setConfiguration(config_);
     schedulePreview();
     const QString key = editor_change_is_continuous(changed_editor)
@@ -11146,12 +11220,29 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.ghost_mix = ghost_mix_->value();
     } else if (changed_editor == ghost_lag_) {
         config_.ghost_lag_degrees = ghost_lag_->value();
-    } else if (changed_editor == displacement_enabled_) {
-        config_.displacement_enabled = displacement_enabled_->isChecked();
+    } else if (changed_editor == displacement_enabled_
+               || changed_editor == wave_displacement_enabled_) {
+        config_.displacement_enabled =
+            changed_editor == displacement_enabled_
+                ? displacement_enabled_->isChecked()
+                : wave_displacement_enabled_->isChecked();
+        const QSignalBlocker modifier_blocker(displacement_enabled_);
+        const QSignalBlocker wave_blocker(wave_displacement_enabled_);
+        displacement_enabled_->setChecked(config_.displacement_enabled);
+        wave_displacement_enabled_->setChecked(
+            config_.displacement_enabled);
     } else if (changed_editor == displacement_) {
         config_.displacement = displacement_->value();
-    } else if (changed_editor == lighting_enabled_) {
-        config_.lighting_enabled = lighting_enabled_->isChecked();
+    } else if (changed_editor == lighting_enabled_
+               || changed_editor == wave_lighting_enabled_) {
+        config_.lighting_enabled =
+            changed_editor == lighting_enabled_
+                ? lighting_enabled_->isChecked()
+                : wave_lighting_enabled_->isChecked();
+        const QSignalBlocker modifier_blocker(lighting_enabled_);
+        const QSignalBlocker wave_blocker(wave_lighting_enabled_);
+        lighting_enabled_->setChecked(config_.lighting_enabled);
+        wave_lighting_enabled_->setChecked(config_.lighting_enabled);
     } else if (changed_editor == wave_depth_) {
         config_.wave_depth = wave_depth_->value();
     } else if (changed_editor == spiral_enabled_) {
@@ -11522,6 +11613,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.starting_image.palette_dither_enabled);
     updateSurfaceEditorState();
     updatePostProcessEditorState();
+    updateWaveOutputState();
     png_compression_->setEnabled(config_.output.bit_depth != 32);
     if (changed_editor == post_invert_rgb_enabled_
         || changed_editor == post_invert_alpha_enabled_
@@ -13287,6 +13379,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
     }
+    // Preference restoration is verified above. Keep the remainder of this
+    // deterministic smoke suite independent of whether the current machine
+    // can satisfy a user's persisted strict-GPU preference.
+    render_backend_ = pvt::RenderBackend::Cpu;
     if (motion_group_ == nullptr || motion_paths_edit_ == nullptr
         || motion_group_->isAncestorOf(motion_paths_edit_)) {
         if (error != nullptr) {
@@ -13306,6 +13402,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
             }
             return false;
         }
+    }
+    if (wave_output_status_ == nullptr
+        || wave_displacement_enabled_ == nullptr
+        || wave_lighting_enabled_ == nullptr
+        || wave_output_status_->text().isEmpty()) {
+        if (error != nullptr) {
+            *error = tr("The Wave page does not expose its output prerequisites.");
+        }
+        return false;
     }
     if (surface_mapping_ == nullptr || surface_obj_row_ == nullptr
         || surface_plane_displacement_group_ == nullptr
@@ -14752,6 +14857,37 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
         wave_enabled_->setChecked(expected_wave_enabled);
+
+        const bool expected_displacement = config_.displacement_enabled;
+        const bool expected_lighting = config_.lighting_enabled;
+        const bool restored_wave_enabled = config_.waves.front().enabled;
+        config_.waves.front().enabled = true;
+        config_.displacement_enabled = false;
+        config_.lighting_enabled = false;
+        updateWaveOutputState();
+        if (wave_displacement_enabled_->isChecked()
+            || wave_lighting_enabled_->isChecked()
+            || !wave_output_status_->text().contains(
+                tr("cannot affect pixels"))) {
+            if (error != nullptr) {
+                *error = tr("The Wave page did not expose its silent-output state.");
+            }
+            return false;
+        }
+        config_.displacement_enabled = true;
+        updateWaveOutputState();
+        if (!wave_displacement_enabled_->isChecked()
+            || wave_output_status_->text().contains(
+                tr("cannot affect pixels"))) {
+            if (error != nullptr) {
+                *error = tr("The Wave page output controls did not update the layer.");
+            }
+            return false;
+        }
+        config_.displacement_enabled = expected_displacement;
+        config_.lighting_enabled = expected_lighting;
+        config_.waves.front().enabled = restored_wave_enabled;
+        updateWaveOutputState();
     }
     if (!expected.swings.empty()) {
         const bool expected_swing_enabled = config_.swings.front().enabled;
