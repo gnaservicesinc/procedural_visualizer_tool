@@ -26,7 +26,8 @@ Use Qt's public OpenGL integration in the existing GUI and
 2. Extract the current Metal kernel inputs into backend-neutral packed
    parameters and explicit passes. The CPU renderer remains the reference.
 3. **First stage implemented:** an OpenGL float-texture/framebuffer pass covers
-   analytic closed Cylinder, Sphere, and Cube mapping. Flat/displacement Plane,
+   analytic closed Cylinder, Sphere, and Cube mapping on Windows/Linux, plus
+   flat Plane rotation on Windows. Linux flat Plane, displacement Plane,
    procedural sources,
    effects, quantization, mesh surfaces, and final layer compositing remain on
    CPU for the portable path. CPU + GPU accelerates an eligible stage; strict
@@ -34,9 +35,10 @@ Use Qt's public OpenGL integration in the existing GUI and
 4. Reuse the current bounded admission, cancellation, straight-alpha, linear
    light, half-open loop, and ordered-compositing contracts. Do not read a GPU
    result into the CPU between every effect.
-5. **CI stage implemented:** run CPU/OpenGL image and alpha parity for all three
-   analytic mappings with Mesa under Xvfb, plus native compilation/package smoke
-   on Windows. Cancellation expansion and real Intel, AMD, and NVIDIA driver
+5. **CI stage implemented:** run CPU/OpenGL image and alpha parity for the three
+   portable curved mappings with Mesa under Xvfb, plus flat Plane parity and
+   native compilation/package smoke on Windows. Cancellation expansion and real
+   Intel, AMD, and NVIDIA driver
    qualification remain required before calling the complete portable backend
    production-ready.
 6. Keep Metal as the preferred macOS backend. Apple's deprecated OpenGL stack

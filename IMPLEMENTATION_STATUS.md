@@ -49,7 +49,9 @@ Windows and Linux Qt product builds now compile a public-API OpenGL 3.3 surface
 backend. A process-lifetime service creates a `QOffscreenSurface` on the GUI
 thread, owns one serialized render context on a dedicated thread, uploads and
 reads float RGBA textures, and evaluates the analytic closed Cylinder, Sphere,
-and Cube mappings in a fragment shader. `RendererCapabilities` reports
+and Cube mappings in a fragment shader. Windows additionally admits flat Plane
+rotation; Linux keeps that inexpensive transform on CPU after Mesa parity
+testing exposed driver-dependent straight-RGB sampling. `RendererCapabilities` reports
 compiled/available state, driver renderer, and actionable status. CPU + GPU
 uses the stage when available and does not hide an admitted shader/runtime
 failure behind a CPU retry. Strict GPU requires a supported active analytic
@@ -1191,8 +1193,9 @@ target.
    and desktop-entry behavior.
 4. **Cross-platform acceleration:** retain explicit CPU, CPU+GPU, and GPU
    policy. Metal remains the broad macOS backend; 5.0.0 adds the first
-   Qt-hosted OpenGL stage for analytic Cylinder/Sphere/Cube mapping on
-   Windows and Linux. Continue the staged design in `PORTABILITY_ROADMAP.md`
+   Qt-hosted OpenGL stage for analytic Cylinder/Sphere/Cube mapping on Windows
+   and Linux, plus flat Plane rotation on Windows. Continue the staged design in
+   `PORTABILITY_ROADMAP.md`
    through sources, effects, quantization, and GPU-resident compositing, and
    call the complete backend production-ready only after real Windows/Linux
    Intel, AMD, and NVIDIA stacks pass; Mesa/hosted CI does not prove physical

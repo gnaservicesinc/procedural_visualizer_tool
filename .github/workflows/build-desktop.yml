@@ -446,7 +446,7 @@ jobs:
 
           Plane mapping now supports embedded PNG height maps, signed minimum and maximum displacement, an artist-selected neutral midpoint, pixel-to-node density, resolution-aware preview/output mesh caches, and Wavefront OBJ export. Setup format advances to 13, layer records to 11, and the public C++ ABI to SONAME 5; existing projects remain migration inputs.
 
-          Windows and Linux product builds add a public-Qt offscreen OpenGL 3.3 stage for analytic Cylinder, Sphere, and Cube mapping. CPU + GPU uses it when the runtime context supports it, strict GPU reports unsupported Plane/mesh/context work directly, and runtime capabilities show the actual OpenGL renderer. Flat/displacement Plane and imported-OBJ work remains ordered CPU stages, and full portable effect/source/compositing coverage plus physical Intel/AMD/NVIDIA qualification remain follow-up work. macOS continues to use its broader Metal pipeline.
+          Windows and Linux product builds add a public-Qt offscreen OpenGL 3.3 stage for analytic Cylinder, Sphere, and Cube mapping; Windows also accelerates flat Plane rotation. CPU + GPU uses it when the runtime context supports it, strict GPU reports unsupported Plane/mesh/context work directly, and runtime capabilities show the actual OpenGL renderer. Linux flat Plane, displacement Plane, and imported-OBJ work remains ordered CPU stages, and full portable effect/source/compositing coverage plus physical Intel/AMD/NVIDIA qualification remain follow-up work. macOS continues to use its broader Metal pipeline.
 
           Application Settings and Video Export now cap themselves to the active monitor, keep action buttons visible, and scroll their content when the display or UI scale cannot fit the natural layout.
 

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -80,9 +81,14 @@ int main(int argc, char** argv) {
     pvt::FrameRenderOptions gpu;
     gpu.backend = pvt::RenderBackend::Gpu;
 
-    for (const pvt::SurfaceMapping mapping : {
-             pvt::SurfaceMapping::Cylinder, pvt::SurfaceMapping::Sphere,
-             pvt::SurfaceMapping::Cube}) {
+    std::vector<pvt::SurfaceMapping> accelerated_mappings = {
+        pvt::SurfaceMapping::Cylinder, pvt::SurfaceMapping::Sphere,
+        pvt::SurfaceMapping::Cube};
+#if defined(_WIN32)
+    accelerated_mappings.insert(accelerated_mappings.begin(),
+                                pvt::SurfaceMapping::Plane);
+#endif
+    for (const pvt::SurfaceMapping mapping : accelerated_mappings) {
         const pvt::RenderConfig config = analytic_config(mapping);
         pvt::Image reference;
         pvt::Image accelerated;
@@ -168,8 +174,12 @@ int main(int argc, char** argv) {
     CHECK(error.find("displacement-Plane") != std::string::npos);
 
     pvt::RenderConfig flat_plane = analytic_config(pvt::SurfaceMapping::Plane);
+#if defined(_WIN32)
+    CHECK(pvt::render_frame(flat_plane, 0, gpu, rejected, nullptr, &error));
+#else
     CHECK(!pvt::render_frame(flat_plane, 0, gpu, rejected, nullptr, &error));
-    CHECK(error.find("flat Plane rotation") != std::string::npos);
+    CHECK(error.find("flat Plane rotation on Linux") != std::string::npos);
+#endif
 
     pvt::RenderConfig neutral = pvt::default_config();
     neutral.width = 32;
@@ -181,8 +191,8 @@ int main(int argc, char** argv) {
         std::cerr << failures << " OpenGL surface backend test(s) failed.\n";
         return EXIT_FAILURE;
     }
-    std::cout << "OpenGL analytic Cylinder/Sphere/Cube acceleration and strict "
-                 "unsupported-Plane/mesh policy passed on "
+    std::cout << "OpenGL analytic surface acceleration and strict "
+                 "unsupported-stage policy passed on "
               << capabilities.opengl_surface_device_name << ".\n";
     return EXIT_SUCCESS;
 }
