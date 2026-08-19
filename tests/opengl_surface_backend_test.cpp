@@ -112,6 +112,22 @@ int main(int argc, char** argv) {
             pvt::Image inverse;
             CHECK(pvt::render_frame(inverse_config, 5, cpu, inverse, nullptr,
                                     &error));
+            const std::size_t pixel_index = strict_index - strict_index % 4U;
+            std::size_t nearest_identity_pixel = 0U;
+            double nearest_identity_distance = 1.0e30;
+            for (std::size_t candidate = 0U;
+                 candidate < identity.pixels.size(); candidate += 4U) {
+                double distance = 0.0;
+                for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                    distance += std::fabs(
+                        static_cast<double>(strict.pixels[pixel_index + channel])
+                        - identity.pixels[candidate + channel]);
+                }
+                if (distance < nearest_identity_distance) {
+                    nearest_identity_distance = distance;
+                    nearest_identity_pixel = candidate;
+                }
+            }
             std::cerr << pvt::surface_mapping_name(mapping)
                       << " CPU/hybrid max difference " << hybrid_difference
                       << " at value " << hybrid_index << " (CPU "
@@ -123,7 +139,22 @@ int main(int argc, char** argv) {
                       << strict.pixels[strict_index] << "); GPU/identity "
                       << maximum_difference(strict, identity)
                       << ", GPU/inverse "
-                      << maximum_difference(strict, inverse) << '\n';
+                      << maximum_difference(strict, inverse) << "; CPU rgba [";
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                if (channel != 0U) std::cerr << ", ";
+                std::cerr << reference.pixels[pixel_index + channel];
+            }
+            std::cerr << "], GPU rgba [";
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                if (channel != 0U) std::cerr << ", ";
+                std::cerr << strict.pixels[pixel_index + channel];
+            }
+            const std::size_t nearest_pixel = nearest_identity_pixel / 4U;
+            std::cerr << "], nearest input pixel ("
+                      << nearest_pixel % static_cast<std::size_t>(identity.width)
+                      << ", "
+                      << nearest_pixel / static_cast<std::size_t>(identity.width)
+                      << ") distance " << nearest_identity_distance << '\n';
         }
         CHECK(hybrid_difference <= 0.0035);
         CHECK(strict_difference <= 0.0035);
