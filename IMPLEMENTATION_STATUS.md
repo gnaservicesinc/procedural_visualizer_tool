@@ -6,6 +6,45 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 5.0.3 unrestricted live authoring
+
+Version 5.0.3 decouples the Live workspace from the Live runtime. Opening the
+full project editor no longer calls the runtime shutdown path, and returning to
+Live reuses the active input/render/stage session. The Live renderer requests a
+fresh project snapshot for every frame rather than relying on a UI-refresh
+cache, so scalar edits, structural edits, undo/redo, MIDI, and OSC all share one
+authoritative project state. Cocoa GUI smoke explicitly opens the editor from
+Live and proves the runtime remains active.
+
+The related constraint audit removes UI and validation ceilings that expressed
+policy rather than semantics: ordinary render parameters now use a shared
+CPU/GPU representation boundary; integer controls use their actual signed-int
+storage boundary; Live safety/mapping values, capture-buffer size, recent
+projects, and ordinary numeric fields no longer stop at small round numbers. Domain
+warp stops only when additional float octaves are no longer representable, and
+Endless Zoom uses the largest finite base-2 float exponent instead of a
+four-octave product cap. Normalized mixes, enum ranges, portable filename
+components, protocol fields, hostile-input expansion checks, and checked
+memory arithmetic remain intentionally bounded.
+
+Per-wave/effect audio routing no longer depends on the item's synchronized
+clock toggle; the explicit synchronized-only profile policy remains
+authoritative when selected. Play Once and Play Once Then Project accept local
+sources longer than the project and expose their honest reachable behavior
+instead of disabling the choices. Regression coverage exercises values beyond
+the former caps, long one-shot sources, and free-running item audio response.
+
+This patch does not change the public configuration layout, SONAME 5 ABI,
+setup format, layer format, or project-bundle format.
+
+Local static and SONAME-5 shared release builds each passed all 23 CTest cases
+with the host system C++ runtime path, including CPU, Metal, AVFoundation,
+bundle, CLI, and Cocoa GUI smoke coverage; the headless ASan/UBSan build passed
+22/22. The macOS 13 arm64 distribution target then verified 26 Mach-O files,
+its ad-hoc signature and dependency closure; the staged GUI smoke, embedded
+`pvt-render` version/self-test, architecture checks, archive root, and SHA-256
+generation also passed.
+
 ## 5.0.2 wave-output reachability
 
 Version 5.0.2 makes the Wave editor's render prerequisites explicit. Waves
@@ -751,7 +790,7 @@ consumers do not inherit minizip requirements.
 | # | Request | Status | Result |
 |---|---|---|---|
 | 1 | More seamlessly looping effects | Complete | All animated controls use integer cycles over the half-open loop interval. |
-| 2 | Optional synchronization per wave/effect | Complete | Each wave and effect has a `synchronized` toggle; free clocks are independent but still periodic. Synchronized items can inherit the profile or choose a specific audio feature, force the profile feature, or ignore audio. |
+| 2 | Optional synchronization per wave/effect | Complete | Each wave and effect has a `synchronized` toggle; free clocks are independent but still periodic. Every item can inherit the audio profile or choose a specific feature, force the profile feature, or ignore audio; only the explicit synchronized-only profile policy filters free-running items. |
 | 3 | Toggle/add/remove/reorder any quantity | Complete | Dynamic wave, swing, and effect collections support zero through the signed-int UI/API index capacity; memory availability is the practical lower boundary. |
 | 4 | Direction from horizontal through radial to vertical | Complete | Continuous `0.0` horizontal, `0.5` radial/default, `1.0` vertical control. |
 | 4a-f | Endless zoom, ripple, shake, flag wave, glow, block scale | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses visible straight-alpha-safe HDR bloom; Block Scale animates smooth or stepped pixel grouping at its stack position. |
@@ -762,7 +801,7 @@ consumers do not inherit minizip requirements.
 | 8 | Safe setup save/load | Complete | Versioned deterministic `.pvt` files, bounded strict parser, complete validation, transactional load, atomic/durable save, UTF-8 paths, and no NUL truncation. |
 | 9 | Library-only build and useful Qt-facing API | Complete | `libProceduralVisualizerTool`, public header, installable CMake package, example consumer, and build switches that omit every `main`. |
 | 10 | Qt GUI using the library | Complete | Qt Widgets client with live async preview, draggable wave/swing/effect center handles and visible local-radius rings, dynamic stack editors, all configuration fields, timeline, project bundle/legacy import I/O, background export, consistent dense-panel layout, and meaningful tooltips for non-obvious controls. |
-| 11 | More quantization/swing levels and variations | Complete | 2-65,536 levels, RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
+| 11 | More quantization/swing levels and variations | Complete | Quantization levels span 2 through signed-int storage, with RGB/luminance/hue modes and mix; dynamic sine/triangle/smooth-pulse/bounce swing stacks. |
 | 12 | Plane/cube/sphere/cylinder/custom OBJ wrapping | Complete | Analytic built-ins plus transactional, representation-bounded cached OBJ parsing and perspective rasterization; authored UV/normal data has safe fallbacks. All mappings are two-sided and transparent closed surfaces peel until exhausted. |
 | 13 | Configurable PNG compression | Complete | Levels 0-9 are available in the API, setup v2-v9, CLI, and GUI; level 5 is the balanced default and EXR ignores it. |
 | 14 | Randomize stack values or composition | Complete | Confirmed Settings-menu actions preserve existing identity/type structure or create a new bounded mix of waves, swing waveforms, effect types, and enabled items; they are no longer exposed on the main toolbar. |
@@ -794,15 +833,15 @@ consumers do not inherit minizip requirements.
 | 40 | macOS icon and self-contained distribution | Complete | The supplied PNG generates a full ICNS resource; public and local `make distribution` targets stage Qt/plugins, statically build pinned libpng, embed license notices, enforce the macOS deployment baseline across every Mach-O, reject build-machine paths, sign, and verify the app. |
 | 41 | vImage/NEON assessment | Complete - no vImage integration | The workload is dominated by custom float procedural/effect/projection code; compiler NEON vectorization plus Metal is a better fit than extra vImage format passes without measured benefit. |
 | 42 | Active-layer clocks | Complete | Each layer may locally override the project clock while retaining the master duration; Smart loop fit, Straight fit, Play once, Play once then project, and Original-speed loop are validated, persisted, previewed, and exported. |
-| 43 | Live performance mode | Implemented; hardware/release validation pending | A sibling Qt performance surface shares the renderer and project model; bounded capture/incremental analysis, portable MIDI/OSC/foot mappings, project/layer clocks and MIDI clock output, scenes, full-screen output, freeze/blackout, last-good behavior, and a watchdog are integrated. Machine bindings and active performance state stay local/ephemeral. See `LIVE_PERFORMANCE_STATUS.md`. |
+| 43 | Live performance mode | Implemented; hardware/release validation pending | A sibling Qt performance surface shares the renderer and project model; the complete project editor can remain open while Live input/render/stage output continues, with fresh project snapshots per frame. Allocation-free capture/incremental analysis, portable MIDI/OSC/foot mappings, project/layer clocks and MIDI clock output, scenes, full-screen output, freeze/blackout, last-good behavior, and a watchdog are integrated. Machine bindings and active performance state stay local/ephemeral. See `LIVE_PERFORMANCE_STATUS.md`. |
 | 44 | Destination-out eraser blends | Complete | Alpha erase, soft linear-light tone erase, and brightness-threshold erase affect only the accumulated lower stack; serialization, CLI, GUI descriptions, alpha validation, and composite tests cover them. |
 | 45 | Projected source/UV editing | Complete | Texture-effect and localized-Swing handles move and render inside an explicit labelled unwrapped source/UV inset for non-plane surfaces; mapped-object controls remain in final screen space. |
 | 46 | Encoder cancellation and GUI install | Complete | PNG/EXR writers abort between scanlines and discard their temporary file. `cmake --install` installs the Qt application when enabled; `PVT_DEPLOY_QT_RUNTIME` optionally stages Qt dependencies, while system-Qt installs remain the Linux default. |
-| 47 | Hierarchical audio-response routing | Complete | A project-wide profile feeds inheriting layers; an optional layer profile overrides it; synchronized waves/effects can inherit, opt in with an explicit source, force the item on with the profile source, or ignore audio. The profile master remains authoritative. Missing/null fields are neutral, old projects preserve historical output, every CPU/Metal preparation path shares the same semantics, and GUI/CLI/persistence/undo tests cover the hierarchy. |
+| 47 | Hierarchical audio-response routing | Complete | A project-wide profile feeds inheriting layers; an optional layer profile overrides it; every wave/effect can inherit, opt in with an explicit source, force the item on with the profile source, or ignore audio independently of clock synchronization. The profile master and explicit synchronized-only policy remain authoritative. Missing/null fields are neutral, old projects preserve historical output, every CPU/Metal preparation path shares the same semantics, and GUI/CLI/persistence/undo tests cover the hierarchy. |
 | 48 | Export current frame | Complete | The GUI renders the current timeline frame at full canvas resolution through the selected backend and transactionally writes the configured 8/16-bit PNG or 32-bit FLOAT EXR quality, independent of preview scaling. |
 | 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
-| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and 1–4 passes before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and bounded controls. |
+| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and representation-bounded controls. |
 
 ## Important implementation map
 

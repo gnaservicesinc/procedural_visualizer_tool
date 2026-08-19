@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **5.0.2**. The version is read from `VERSION` by every
+Current product version: **5.0.3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,22 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 5.0.3 unrestricted live authoring
+
+Version 5.0.3 keeps Live input, rendering, clocks, and stage output running
+while the full project editor is open. **Edit Project** changes the workspace,
+not the runtime state, and every live frame obtains the current project
+snapshot, so ordinary UI edits become visible just like MIDI/OSC changes.
+
+The accompanying artificial-limit audit removes round-number policy ceilings
+from renderer fields, editor widgets, Live mappings/safety timings, audio input
+buffers, recent-project history, and one-shot layer clocks.
+Normalized values and format/protocol/representation boundaries remain real
+constraints. Per-item audio response is now independent of clock
+synchronization unless the artist explicitly enables the profile's
+**synchronized items only** policy; a one-shot local source longer than the
+project is valid and simply shows the available prefix.
 
 ## 5.0.2 wave-output reachability
 
@@ -335,8 +351,8 @@ sudo apt install procedural-visualizer-tool
   with add,
   duplicate, remove, enable, and reorder controls.
 - Per-wave synchronization, placement, amplitude, spatial frequency, phase,
-  cycles per loop, propagation direction, and per-wave audio-feature override
-  for synchronized waves. **Default** inherits the effective profile; Beat,
+  cycles per loop, propagation direction, and per-wave audio-feature override.
+  **Default** inherits the effective profile; Beat,
   Onset, Energy, Bass, Midrange, Treble, spectral, and tonal sources can be
   selected directly.
 - A project-wide base clock with Default, frame-interval, elapsed-time, musical
@@ -361,7 +377,7 @@ sudo apt install procedural-visualizer-tool
   scanline/RGB-split Glitch, radial Starburst, and barrel/pincushion Lens
   Distortion.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
-  A synchronized effect can inherit its effective audio category and source,
+  An effect can inherit its effective audio category and source,
   override that source with any analyzed feature, force that effect on with the
   profile source even when the category default is off, or ignore audio without
   changing its authored intensity. The effective profile master switch remains
@@ -469,7 +485,8 @@ sudo apt install procedural-visualizer-tool
   wall reflection.
 - Post-effects linear RGB inversion and alpha inversion with independent mixes,
   premultiplied edge antialiasing with strength/threshold/pass controls, then
-  RGB, luminance, or hue quantization with 2-65,536 levels and adjustable mix.
+  RGB, luminance, or hue quantization from 2 through the signed-int UI/API
+  capacity with adjustable mix.
   This final pipeline remains independent of the starting palette.
 - Plane (flat or PNG-displaced), closed ray-cast cylinder, sphere, ray-cast
   cube, and custom Wavefront OBJ mappings.
@@ -603,8 +620,9 @@ whole number of clips that fit and spreads the residual adjustment over that
 aggregate; **Straight fit** makes one traversal; **Play once** holds the final
 local visual state; **Play once then project** switches visual timing to the
 project clock; and **Original-speed loop** repeats unchanged. The one-shot
-policies are rejected when the local source is longer than the project because
-that configuration cannot reach its intended transition inside the loop.
+policies also accept a local source longer than the project: **Play once**
+shows the available prefix, while **Play once then project** simply does not
+reach its transition before the project ends.
 
 Wave propagation direction is continuous:
 
@@ -1293,8 +1311,10 @@ Workbench. It adds bounded low-latency audio-device capture and causal feature
 analysis, CoreMIDI control and 24-PPQN clock routing on macOS, OSC input, stable
 setting mappings with MIDI Learn, project/layer live clocks, scene recall,
 full-screen secondary-display output, freeze/blackout, last-good-frame safety,
-and a frame-time watchdog. Machine-only audio, MIDI, OSC, and screen bindings
-are kept in local application preferences.
+and a frame-time watchdog. **Edit Project** opens the complete authoring
+workspace without stopping that runtime; returning to Live shows the same
+uninterrupted session. Machine-only audio, MIDI, OSC, and screen bindings are
+kept in local application preferences.
 
 Projects persist logical endpoint roles, portable mappings, scenes, signed
 latency compensation, clock routes, and safety preferences. They never persist

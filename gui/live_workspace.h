@@ -11,8 +11,10 @@
 
 // The Live workspace is deliberately a sibling of the authoring workspaces:
 // it owns transient device bindings and performance state, while the editor
-// remains the sole owner of project history and widgets.  The three callbacks
-// are the only bridge needed by MainWindow.
+// remains the sole owner of project history and widgets. The runtime may stay
+// active while the editor is visible; each frame obtains the current project
+// through the snapshot callback. The three callbacks are the only bridge
+// needed by MainWindow.
 class LiveWorkspace final : public QWidget {
     Q_OBJECT
 

@@ -16,8 +16,6 @@ namespace {
 
 constexpr ma_uint32 kCaptureChannels = 1U;
 constexpr ma_uint32 kCaptureSampleRate = 48000U;
-constexpr ma_uint32 kMinimumPeriodFrames = 32U;
-constexpr ma_uint32 kMaximumPeriodFrames = 2048U;
 constexpr double kPi = 3.141592653589793238462643383279502884;
 
 bool fail(std::string* error, std::string message) {
@@ -105,8 +103,8 @@ struct LiveAudioCapture::Impl {
         double treble_squared = 0.0;
         std::uint32_t zero_crossings = 0U;
         for (ma_uint32 frame = 0U; frame < frame_count; ++frame) {
-            const double sample = std::clamp(
-                static_cast<double>(samples[frame]) * input_gain, -8.0, 8.0);
+            const double sample = static_cast<double>(samples[frame])
+                                  * input_gain;
             self->low_state += bass_alpha * (sample - self->low_state);
             self->mid_low_state += mid_alpha * (sample - self->mid_low_state);
             const double low = self->low_state;
@@ -284,9 +282,8 @@ bool LiveAudioCapture::start(const std::string& runtime_device_name,
                              std::string* error) {
     if (error != nullptr) error->clear();
     stop();
-    requested_period_frames = std::clamp(requested_period_frames,
-                                         kMinimumPeriodFrames,
-                                         kMaximumPeriodFrames);
+    requested_period_frames = std::max<ma_uint32>(1U,
+                                                  requested_period_frames);
     ma_result result = ma_context_init(nullptr, 0U, nullptr, &impl_->context);
     if (result != MA_SUCCESS) {
         return fail(error, miniaudio_error(
@@ -412,14 +409,18 @@ LiveAudioSnapshot LiveAudioCapture::snapshot() const noexcept {
 
 void LiveAudioCapture::set_gain(double requested) noexcept {
     if (!std::isfinite(requested)) return;
-    impl_->gain.store(static_cast<float>(std::clamp(requested, 0.0, 8.0)),
+    impl_->gain.store(static_cast<float>(std::clamp(
+                          requested, 0.0,
+                          static_cast<double>((std::numeric_limits<float>::max)()))),
                       std::memory_order_relaxed);
 }
 
 void LiveAudioCapture::set_sensitivity(double requested) noexcept {
     if (!std::isfinite(requested)) return;
     impl_->sensitivity.store(
-        static_cast<float>(std::clamp(requested, 0.05, 8.0)),
+        static_cast<float>(std::clamp(
+            requested, 0.0,
+            static_cast<double>((std::numeric_limits<float>::max)()))),
         std::memory_order_relaxed);
 }
 

@@ -928,9 +928,9 @@ void test_active_layer_clock_mappings() {
     project.layers.front().render.layer_clock.clock = ready_music_clock(11.0);
     project.layers.front().render.layer_clock.scale =
         pvt::LayerClockScale::PlayOnce;
-    CHECK(!pvt::validate(project).ok);
+    CHECK(pvt::validate(project).ok);
     project.layers.front().render.layer_clock.scale =
-        pvt::LayerClockScale::StraightFit;
+        pvt::LayerClockScale::PlayOnceThenProject;
     CHECK(pvt::validate(project).ok);
 
     // A music duration need not contain a whole number of output frames.

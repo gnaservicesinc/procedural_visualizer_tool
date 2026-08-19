@@ -138,9 +138,9 @@ VideoExportDialog::VideoExportDialog(
 
     chunk_seconds_ = new QDoubleSpinBox(this);
     chunk_seconds_->setObjectName(QStringLiteral("videoChunkSeconds"));
+    chunk_seconds_->setDecimals(3);
     chunk_seconds_->setRange(0.001,
                              static_cast<double>((std::numeric_limits<int>::max)()));
-    chunk_seconds_->setDecimals(3);
     chunk_seconds_->setValue(10.0);
     chunk_seconds_->setSuffix(tr(" seconds"));
     form->addRow(tr("Maximum chunk duration"), chunk_seconds_);

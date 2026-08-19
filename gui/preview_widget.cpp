@@ -388,14 +388,17 @@ void PreviewWidget::moveHandle(const QPointF& position) {
     if (target.width() <= 0.0 || target.height() <= 0.0) {
         return;
     }
+    const double maximum = pvt::maximum_render_parameter_magnitude();
     const double normalized_x = std::clamp(
-        (position.x() - target.left()) / target.width(), -10.0, 10.0);
+        (position.x() - target.left()) / target.width(), -maximum, maximum);
     const double normalized_y = std::clamp(
-        (position.y() - target.top()) / target.height(), -10.0, 10.0);
+        (position.y() - target.top()) / target.height(), -maximum, maximum);
     switch (overlay_mode_) {
         case OverlayMode::Waves: {
-            const double x = std::clamp(normalized_x * 100.0, -100.0, 200.0);
-            const double y = std::clamp(normalized_y * 100.0, -100.0, 200.0);
+            const double x = std::clamp(
+                normalized_x * 100.0, -maximum, maximum);
+            const double y = std::clamp(
+                normalized_y * 100.0, -maximum, maximum);
             config_.waves[*dragged_handle_].x_percent = x;
             config_.waves[*dragged_handle_].y_percent = y;
             emit waveMoved(*dragged_handle_, x, y);

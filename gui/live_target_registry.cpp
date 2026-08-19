@@ -11,6 +11,14 @@
 
 namespace {
 
+const double kMaximumRenderParameter =
+    pvt::maximum_render_parameter_magnitude();
+constexpr double kMinimumPositiveUiValue = 0.000001;
+constexpr double kMinimumIntegerParameter =
+    static_cast<double>((std::numeric_limits<int>::min)());
+constexpr double kMaximumIntegerParameter =
+    static_cast<double>((std::numeric_limits<int>::max)());
+
 template <typename Value>
 Value bounded(double value, double minimum, double maximum) {
     const double clamped = std::clamp(value, minimum, maximum);
@@ -91,24 +99,32 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
     };
 
     append(QStringLiteral("project.fps"), QObject::tr("Playback FPS"),
-           QObject::tr("Project"), LiveTargetKind::Real, 1.0, 240.0,
+           QObject::tr("Project"), LiveTargetKind::Real,
+           kMinimumPositiveUiValue, kMaximumRenderParameter,
            project.canvas.fps,
            [](pvt::ProjectConfig& value, double input) {
-               value.canvas.fps = bounded<double>(input, 1.0, 240.0); return true;
+               value.canvas.fps = bounded<double>(
+                   input, kMinimumPositiveUiValue, kMaximumRenderParameter);
+               return true;
            });
     append(QStringLiteral("project.clock.bpm"), QObject::tr("Project tempo"),
-           QObject::tr("Project clock"), LiveTargetKind::Real, 1.0, 1000.0,
+           QObject::tr("Project clock"), LiveTargetKind::Real,
+           kMinimumPositiveUiValue, kMaximumRenderParameter,
            project.canvas.clock.meter.bpm,
            [](pvt::ProjectConfig& value, double input) {
-               value.canvas.clock.meter.bpm = bounded<double>(input, 1.0, 1000.0);
+               value.canvas.clock.meter.bpm = bounded<double>(
+                   input, kMinimumPositiveUiValue, kMaximumRenderParameter);
                return true;
            });
     append(QStringLiteral("project.clock.phase"), QObject::tr("Project clock phase"),
-           QObject::tr("Project clock"), LiveTargetKind::Real, -36000.0, 36000.0,
+           QObject::tr("Project clock"), LiveTargetKind::Real,
+           -kMaximumRenderParameter, kMaximumRenderParameter,
            project.canvas.clock.phase_offset_degrees,
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.clock.phase_offset_degrees =
-                   bounded<double>(input, -36000.0, 36000.0); return true;
+                   bounded<double>(input, -kMaximumRenderParameter,
+                                   kMaximumRenderParameter);
+               return true;
            });
     append(QStringLiteral("project.clock.reverse"), QObject::tr("Reverse project clock"),
            QObject::tr("Project clock"), LiveTargetKind::Boolean, 0.0, 1.0,
@@ -146,18 +162,22 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                return true;
            });
     append(QStringLiteral("project.audio.wave_amount"), QObject::tr("Wave response amount"),
-           QObject::tr("Project audio"), LiveTargetKind::Real, -10.0, 10.0,
+           QObject::tr("Project audio"), LiveTargetKind::Real,
+           -kMaximumRenderParameter, kMaximumRenderParameter,
            project.canvas.audio_reactive_defaults.wave_amount,
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.audio_reactive_defaults.wave_amount =
-                   bounded<double>(input, -10.0, 10.0); return true;
+                   bounded<double>(input, -kMaximumRenderParameter,
+                                   kMaximumRenderParameter); return true;
            });
     append(QStringLiteral("project.audio.effect_amount"), QObject::tr("Effect response amount"),
-           QObject::tr("Project audio"), LiveTargetKind::Real, -10.0, 10.0,
+           QObject::tr("Project audio"), LiveTargetKind::Real,
+           -kMaximumRenderParameter, kMaximumRenderParameter,
            project.canvas.audio_reactive_defaults.effect_amount,
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.audio_reactive_defaults.effect_amount =
-                   bounded<double>(input, -10.0, 10.0); return true;
+                   bounded<double>(input, -kMaximumRenderParameter,
+                                   kMaximumRenderParameter); return true;
            });
     append(QStringLiteral("project.audio.effects_enabled"), QObject::tr("Audio drives effects"),
            QObject::tr("Project audio"), LiveTargetKind::Boolean, 0.0, 1.0,
@@ -175,11 +195,13 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                return true;
            });
     append(QStringLiteral("project.audio.color_amount"), QObject::tr("Color response degrees"),
-           QObject::tr("Project audio"), LiveTargetKind::Real, -36000.0, 36000.0,
+           QObject::tr("Project audio"), LiveTargetKind::Real,
+           -kMaximumRenderParameter, kMaximumRenderParameter,
            project.canvas.audio_reactive_defaults.color_amount_degrees,
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.audio_reactive_defaults.color_amount_degrees =
-                   bounded<double>(input, -36000.0, 36000.0); return true;
+                   bounded<double>(input, -kMaximumRenderParameter,
+                                   kMaximumRenderParameter); return true;
            });
     append(QStringLiteral("project.audio.color_enabled"), QObject::tr("Audio drives color"),
            QObject::tr("Project audio"), LiveTargetKind::Boolean, 0.0, 1.0,
@@ -281,46 +303,53 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                       });
         };
         add_render_real(QStringLiteral("phrase_warp"), QObject::tr("Phrase warp"),
-                        QObject::tr("Rhythm"), 0.0, 2.0, render.phrase_warp,
+                        QObject::tr("Rhythm"), -kMaximumRenderParameter,
+                        kMaximumRenderParameter, render.phrase_warp,
                         &pvt::RenderData::phrase_warp);
         add_render_real(QStringLiteral("ghost_mix"), QObject::tr("Ghost mix"),
                         QObject::tr("Rhythm"), 0.0, 1.0, render.ghost_mix,
                         &pvt::RenderData::ghost_mix);
         add_render_real(QStringLiteral("ghost_lag"), QObject::tr("Ghost lag"),
-                        QObject::tr("Rhythm"), -360.0, 360.0,
+                        QObject::tr("Rhythm"), -kMaximumRenderParameter,
+                        kMaximumRenderParameter,
                         render.ghost_lag_degrees, &pvt::RenderData::ghost_lag_degrees);
         add_render_bool(QStringLiteral("displacement_enabled"), QObject::tr("Displacement"),
                         QObject::tr("Modifiers"), render.displacement_enabled,
                         &pvt::RenderData::displacement_enabled);
         add_render_real(QStringLiteral("displacement"), QObject::tr("Displacement amount"),
-                        QObject::tr("Modifiers"), 0.0, 1000.0, render.displacement,
+                        QObject::tr("Modifiers"), 0.0,
+                        kMaximumRenderParameter, render.displacement,
                         &pvt::RenderData::displacement);
         add_render_bool(QStringLiteral("lighting_enabled"), QObject::tr("Slope lighting"),
                         QObject::tr("Modifiers"), render.lighting_enabled,
                         &pvt::RenderData::lighting_enabled);
         add_render_real(QStringLiteral("wave_depth"), QObject::tr("Lighting depth"),
-                        QObject::tr("Modifiers"), 0.0, 10.0, render.wave_depth,
+                        QObject::tr("Modifiers"), 0.0,
+                        kMaximumRenderParameter, render.wave_depth,
                         &pvt::RenderData::wave_depth);
         add_render_bool(QStringLiteral("spiral_enabled"), QObject::tr("Spiral"),
                         QObject::tr("Modifiers"), render.spiral_enabled,
                         &pvt::RenderData::spiral_enabled);
         add_render_real(QStringLiteral("spiral_frequency"), QObject::tr("Spiral frequency"),
-                        QObject::tr("Modifiers"), 0.0, 1000.0,
+                        QObject::tr("Modifiers"), 0.0, kMaximumRenderParameter,
                         render.spiral_frequency, &pvt::RenderData::spiral_frequency);
         add_render_int(QStringLiteral("spiral_arms"), QObject::tr("Spiral arms"),
-                       QObject::tr("Modifiers"), -100.0, 100.0,
+                       QObject::tr("Modifiers"), kMinimumIntegerParameter,
+                       kMaximumIntegerParameter,
                        render.spiral_arms, &pvt::RenderData::spiral_arms);
         add_render_bool(QStringLiteral("wall_enabled"), QObject::tr("Wall reflection"),
                         QObject::tr("Modifiers"), render.wall_reflection_enabled,
                         &pvt::RenderData::wall_reflection_enabled);
         add_render_real(QStringLiteral("wall_frequency"), QObject::tr("Wall frequency"),
-                        QObject::tr("Modifiers"), 0.0, 1000.0,
+                        QObject::tr("Modifiers"), 0.0, kMaximumRenderParameter,
                         render.wall_frequency, &pvt::RenderData::wall_frequency);
         add_render_real(QStringLiteral("wall_mix"), QObject::tr("Wall mix"),
-                        QObject::tr("Modifiers"), 0.0, 5.0, render.wall_mix,
+                        QObject::tr("Modifiers"), -kMaximumRenderParameter,
+                        kMaximumRenderParameter, render.wall_mix,
                         &pvt::RenderData::wall_mix);
         add_render_int(QStringLiteral("hue_cycles"), QObject::tr("Hue cycles"),
-                       QObject::tr("Color"), -100.0, 100.0, render.hue_cycles,
+                       QObject::tr("Color"), kMinimumIntegerParameter,
+                       kMaximumIntegerParameter, render.hue_cycles,
                        &pvt::RenderData::hue_cycles);
         add_render_real(QStringLiteral("saturation"), QObject::tr("Saturation"),
                         QObject::tr("Color"), 0.0, 1.0, render.saturation,
@@ -354,7 +383,8 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Audio"), LiveTargetKind::Enumeration, 0, 9,
                    static_cast<double>(render.audio_reactive.wave_source), [](pvt::RenderData& r, double v) { r.audio_reactive.wave_source = static_cast<pvt::MusicFeature>(std::llround(v)); });
         add_nested(QStringLiteral("audio.wave_amount"), QObject::tr("Wave response amount"),
-                   QObject::tr("Audio"), LiveTargetKind::Real, -10, 10,
+                   QObject::tr("Audio"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.audio_reactive.wave_amount, [](pvt::RenderData& r, double v) { r.audio_reactive.wave_amount = v; });
         add_nested(QStringLiteral("audio.effects_enabled"), QObject::tr("Audio drives effects"),
                    QObject::tr("Audio"), LiveTargetKind::Boolean, 0, 1,
@@ -363,7 +393,8 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Audio"), LiveTargetKind::Enumeration, 0, 9,
                    static_cast<double>(render.audio_reactive.effect_source), [](pvt::RenderData& r, double v) { r.audio_reactive.effect_source = static_cast<pvt::MusicFeature>(std::llround(v)); });
         add_nested(QStringLiteral("audio.effect_amount"), QObject::tr("Effect response amount"),
-                   QObject::tr("Audio"), LiveTargetKind::Real, -10, 10,
+                   QObject::tr("Audio"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.audio_reactive.effect_amount, [](pvt::RenderData& r, double v) { r.audio_reactive.effect_amount = v; });
         add_nested(QStringLiteral("audio.color_enabled"), QObject::tr("Audio drives color"),
                    QObject::tr("Audio"), LiveTargetKind::Boolean, 0, 1,
@@ -372,16 +403,19 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Audio"), LiveTargetKind::Enumeration, 0, 9,
                    static_cast<double>(render.audio_reactive.color_source), [](pvt::RenderData& r, double v) { r.audio_reactive.color_source = static_cast<pvt::MusicFeature>(std::llround(v)); });
         add_nested(QStringLiteral("audio.color_amount"), QObject::tr("Color response degrees"),
-                   QObject::tr("Audio"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Audio"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.audio_reactive.color_amount_degrees, [](pvt::RenderData& r, double v) { r.audio_reactive.color_amount_degrees = v; });
         add_nested(QStringLiteral("clock.enabled"), QObject::tr("Layer clock"),
                    QObject::tr("Clock"), LiveTargetKind::Boolean, 0, 1,
                    render.layer_clock.enabled, [](pvt::RenderData& r, double v) { r.layer_clock.enabled = v >= 0.5; });
         add_nested(QStringLiteral("clock.bpm"), QObject::tr("Layer tempo"),
-                   QObject::tr("Clock"), LiveTargetKind::Real, 1, 1000,
+                   QObject::tr("Clock"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
                    render.layer_clock.clock.meter.bpm, [](pvt::RenderData& r, double v) { r.layer_clock.clock.meter.bpm = v; });
         add_nested(QStringLiteral("clock.phase"), QObject::tr("Layer clock phase"),
-                   QObject::tr("Clock"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Clock"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.layer_clock.clock.phase_offset_degrees, [](pvt::RenderData& r, double v) { r.layer_clock.clock.phase_offset_degrees = v; });
         add_nested(QStringLiteral("clock.reverse"), QObject::tr("Reverse layer clock"),
                    QObject::tr("Clock"), LiveTargetKind::Boolean, 0, 1,
@@ -411,13 +445,16 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                        r.alpha.minimum = std::min(r.alpha.minimum, v);
                    });
         add_nested(QStringLiteral("alpha.frequency"), QObject::tr("Alpha frequency"),
-                   QObject::tr("Alpha"), LiveTargetKind::Real, 0, 1000,
+                   QObject::tr("Alpha"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
                    render.alpha.spatial_frequency, [](pvt::RenderData& r, double v) { r.alpha.spatial_frequency = v; });
         add_nested(QStringLiteral("alpha.cycles"), QObject::tr("Alpha cycles"),
-                   QObject::tr("Alpha"), LiveTargetKind::Integer, -1000, 1000,
+                   QObject::tr("Alpha"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.alpha.cycles_per_loop, [](pvt::RenderData& r, double v) { r.alpha.cycles_per_loop = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("alpha.phase"), QObject::tr("Alpha phase"),
-                   QObject::tr("Alpha"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Alpha"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.alpha.phase_degrees, [](pvt::RenderData& r, double v) { r.alpha.phase_degrees = v; });
         add_nested(QStringLiteral("alpha.use_source"), QObject::tr("Use palette/PNG alpha"),
                    QObject::tr("Alpha"), LiveTargetKind::Boolean, 0, 1,
@@ -426,7 +463,8 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
                    render.quantization.enabled, [](pvt::RenderData& r, double v) { r.quantization.enabled = v >= 0.5; });
         add_nested(QStringLiteral("quantization.levels"), QObject::tr("Quantization levels"),
-                   QObject::tr("Post Effects"), LiveTargetKind::Integer, 2, 65536,
+                   QObject::tr("Post Effects"), LiveTargetKind::Integer, 2,
+                   kMaximumIntegerParameter,
                    render.quantization.levels, [](pvt::RenderData& r, double v) { r.quantization.levels = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("quantization.mix"), QObject::tr("Quantization mix"),
                    QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
@@ -456,43 +494,54 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
                    render.post_process.antialias_threshold, [](pvt::RenderData& r, double v) { r.post_process.antialias_threshold = v; });
         add_nested(QStringLiteral("post.antialias_passes"), QObject::tr("Antialias passes"),
-                   QObject::tr("Post Effects"), LiveTargetKind::Integer, 1, 4,
+                   QObject::tr("Post Effects"), LiveTargetKind::Integer, 1,
+                   kMaximumIntegerParameter,
                    render.post_process.antialias_passes, [](pvt::RenderData& r, double v) { r.post_process.antialias_passes = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("motion.enabled"), QObject::tr("Layer motion"),
                    QObject::tr("Movement"), LiveTargetKind::Boolean, 0, 1,
                    render.motion.enabled, [](pvt::RenderData& r, double v) { r.motion.enabled = v >= 0.5; });
         add_nested(QStringLiteral("motion.center_x"), QObject::tr("Motion center X"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, -10, 10,
+                   QObject::tr("Movement"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.motion.center_x, [](pvt::RenderData& r, double v) { r.motion.center_x = v; });
         add_nested(QStringLiteral("motion.center_y"), QObject::tr("Motion center Y"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, -10, 10,
+                   QObject::tr("Movement"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.motion.center_y, [](pvt::RenderData& r, double v) { r.motion.center_y = v; });
         add_nested(QStringLiteral("motion.travel_x"), QObject::tr("Horizontal travel"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, 0, 10,
+                   QObject::tr("Movement"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
                    render.motion.travel_x, [](pvt::RenderData& r, double v) { r.motion.travel_x = v; });
         add_nested(QStringLiteral("motion.travel_y"), QObject::tr("Vertical travel"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, 0, 10,
+                   QObject::tr("Movement"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
                    render.motion.travel_y, [](pvt::RenderData& r, double v) { r.motion.travel_y = v; });
         add_nested(QStringLiteral("motion.phase"), QObject::tr("Motion phase"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Movement"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.motion.phase_degrees, [](pvt::RenderData& r, double v) { r.motion.phase_degrees = v; });
         add_nested(QStringLiteral("motion.scale"), QObject::tr("Motion scale pulse"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, 0, 0.95,
+                   QObject::tr("Movement"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
                    render.motion.scale_pulse, [](pvt::RenderData& r, double v) { r.motion.scale_pulse = v; });
         add_nested(QStringLiteral("motion.path"), QObject::tr("Motion path"),
                    QObject::tr("Movement"), LiveTargetKind::Enumeration, 0, 4,
                    static_cast<double>(render.motion.path), [](pvt::RenderData& r, double v) { r.motion.path = static_cast<pvt::LayerMotionPath>(std::llround(v)); });
         add_nested(QStringLiteral("motion.cycles_x"), QObject::tr("Motion X cycles"),
-                   QObject::tr("Movement"), LiveTargetKind::Integer, -1000, 1000,
+                   QObject::tr("Movement"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.motion.cycles_x, [](pvt::RenderData& r, double v) { r.motion.cycles_x = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("motion.cycles_y"), QObject::tr("Motion Y cycles"),
-                   QObject::tr("Movement"), LiveTargetKind::Integer, -1000, 1000,
+                   QObject::tr("Movement"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.motion.cycles_y, [](pvt::RenderData& r, double v) { r.motion.cycles_y = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("motion.rotations"), QObject::tr("Motion rotations"),
-                   QObject::tr("Movement"), LiveTargetKind::Integer, -1000, 1000,
+                   QObject::tr("Movement"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.motion.rotations_per_loop, [](pvt::RenderData& r, double v) { r.motion.rotations_per_loop = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("motion.rotation_offset"), QObject::tr("Motion rotation offset"),
-                   QObject::tr("Movement"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Movement"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.motion.rotation_offset_degrees, [](pvt::RenderData& r, double v) { r.motion.rotation_offset_degrees = v; });
         add_nested(QStringLiteral("surface.enabled"), QObject::tr("Surface mapping"),
                    QObject::tr("Surface"), LiveTargetKind::Boolean, 0, 1,
@@ -501,7 +550,8 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Surface"), LiveTargetKind::Real, 0, 1,
                    render.surface.curvature, [](pvt::RenderData& r, double v) { r.surface.curvature = v; });
         add_nested(QStringLiteral("surface.lighting"), QObject::tr("Surface lighting"),
-                   QObject::tr("Surface"), LiveTargetKind::Real, 0, 10,
+                   QObject::tr("Surface"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
                    render.surface.lighting, [](pvt::RenderData& r, double v) { r.surface.lighting = v; });
         add_nested(QStringLiteral("surface.mapping"), QObject::tr("Surface type"),
                    QObject::tr("Surface"), LiveTargetKind::Enumeration, 0,
@@ -515,10 +565,12 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                        }
                    });
         add_nested(QStringLiteral("surface.rotations"), QObject::tr("Surface rotations"),
-                   QObject::tr("Surface"), LiveTargetKind::Integer, -1000, 1000,
+                   QObject::tr("Surface"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.surface.rotations_per_loop, [](pvt::RenderData& r, double v) { r.surface.rotations_per_loop = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("surface.phase"), QObject::tr("Surface phase"),
-                   QObject::tr("Surface"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.surface.phase_degrees, [](pvt::RenderData& r, double v) { r.surface.phase_degrees = v; });
         if (!render.surface.plane_displacement.path.empty()
             || !render.surface.plane_displacement.sha256.empty()) {
@@ -538,18 +590,24 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             add_nested(
                 QStringLiteral("surface.plane_displacement.minimum"),
                 QObject::tr("Plane minimum height"), QObject::tr("Surface"),
-                LiveTargetKind::Real, -2, 0,
+                LiveTargetKind::Real, -kMaximumRenderParameter,
+                kMaximumRenderParameter,
                 render.surface.plane_displacement.minimum,
                 [](pvt::RenderData& r, double v) {
                     r.surface.plane_displacement.minimum = v;
+                    r.surface.plane_displacement.maximum = std::max(
+                        r.surface.plane_displacement.maximum, v);
                 });
             add_nested(
                 QStringLiteral("surface.plane_displacement.maximum"),
                 QObject::tr("Plane maximum height"), QObject::tr("Surface"),
-                LiveTargetKind::Real, 0, 2,
+                LiveTargetKind::Real, -kMaximumRenderParameter,
+                kMaximumRenderParameter,
                 render.surface.plane_displacement.maximum,
                 [](pvt::RenderData& r, double v) {
                     r.surface.plane_displacement.maximum = v;
+                    r.surface.plane_displacement.minimum = std::min(
+                        r.surface.plane_displacement.minimum, v);
                 });
             add_nested(
                 QStringLiteral("surface.plane_displacement.midpoint"),
@@ -634,10 +692,12 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Starting Colors"), LiveTargetKind::Boolean, 0, 1,
                    render.starting_colors.kaleidoscope.enabled, [](pvt::RenderData& r, double v) { r.starting_colors.kaleidoscope.enabled = v >= 0.5; });
         add_nested(QStringLiteral("starting.kaleidoscope.segments"), QObject::tr("Kaleidoscope segments"),
-                   QObject::tr("Starting Colors"), LiveTargetKind::Integer, 2, 256,
+                   QObject::tr("Starting Colors"), LiveTargetKind::Integer, 2,
+                   kMaximumIntegerParameter,
                    render.starting_colors.kaleidoscope.mirrored_segments, [](pvt::RenderData& r, double v) { r.starting_colors.kaleidoscope.mirrored_segments = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("starting.kaleidoscope.rotation"), QObject::tr("Kaleidoscope rotation"),
-                   QObject::tr("Starting Colors"), LiveTargetKind::Real, -36000, 36000,
+                   QObject::tr("Starting Colors"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.starting_colors.kaleidoscope.rotation_degrees, [](pvt::RenderData& r, double v) { r.starting_colors.kaleidoscope.rotation_degrees = v; });
         add_nested(QStringLiteral("starting.kaleidoscope.mix"), QObject::tr("Kaleidoscope mix"),
                    QObject::tr("Starting Colors"), LiveTargetKind::Real, 0, 1,
@@ -646,16 +706,20 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Starting Colors"), LiveTargetKind::Boolean, 0, 1,
                    render.starting_colors.domain_warp.enabled, [](pvt::RenderData& r, double v) { r.starting_colors.domain_warp.enabled = v >= 0.5; });
         add_nested(QStringLiteral("starting.warp.strength"), QObject::tr("Domain warp strength"),
-                   QObject::tr("Starting Colors"), LiveTargetKind::Real, 0, 2,
+                   QObject::tr("Starting Colors"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
                    render.starting_colors.domain_warp.strength, [](pvt::RenderData& r, double v) { r.starting_colors.domain_warp.strength = v; });
         add_nested(QStringLiteral("starting.warp.scale"), QObject::tr("Domain warp scale"),
-                   QObject::tr("Starting Colors"), LiveTargetKind::Real, 0.01, 64,
+                   QObject::tr("Starting Colors"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
                    render.starting_colors.domain_warp.scale, [](pvt::RenderData& r, double v) { r.starting_colors.domain_warp.scale = v; });
         add_nested(QStringLiteral("starting.warp.octaves"), QObject::tr("Domain warp octaves"),
-                   QObject::tr("Starting Colors"), LiveTargetKind::Integer, 1, 8,
+                   QObject::tr("Starting Colors"), LiveTargetKind::Integer, 1,
+                   kMaximumIntegerParameter,
                    render.starting_colors.domain_warp.octaves, [](pvt::RenderData& r, double v) { r.starting_colors.domain_warp.octaves = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("starting.warp.cycles"), QObject::tr("Domain warp cycles"),
-                   QObject::tr("Starting Colors"), LiveTargetKind::Integer, -1000, 1000,
+                   QObject::tr("Starting Colors"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.starting_colors.domain_warp.cycles_per_loop, [](pvt::RenderData& r, double v) { r.starting_colors.domain_warp.cycles_per_loop = static_cast<int>(std::llround(v)); });
 
         for (const pvt::WaveConfig& wave : render.waves) {
@@ -681,13 +745,13 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             add_wave(QStringLiteral("enabled"), QObject::tr("Enabled"), LiveTargetKind::Boolean, 0, 1, wave.enabled, [](pvt::WaveConfig& w, double v) { w.enabled = v >= 0.5; });
             add_wave(QStringLiteral("synchronized"), QObject::tr("Use master clock"), LiveTargetKind::Boolean, 0, 1, wave.synchronized, [](pvt::WaveConfig& w, double v) { w.synchronized = v >= 0.5; });
             add_wave(QStringLiteral("audio_response"), QObject::tr("Audio response"), LiveTargetKind::Enumeration, 0, 12, static_cast<double>(wave.audio_response), [](pvt::WaveConfig& w, double v) { w.audio_response = static_cast<pvt::AudioResponseMode>(std::llround(v)); });
-            add_wave(QStringLiteral("amplitude"), QObject::tr("Amplitude"), LiveTargetKind::Real, -10, 10, wave.amplitude, [](pvt::WaveConfig& w, double v) { w.amplitude = v; });
-            add_wave(QStringLiteral("frequency"), QObject::tr("Spatial frequency"), LiveTargetKind::Real, 0, 1000, wave.spatial_frequency, [](pvt::WaveConfig& w, double v) { w.spatial_frequency = v; });
-            add_wave(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, -1000, 1000, wave.cycles_per_loop, [](pvt::WaveConfig& w, double v) { w.cycles_per_loop = static_cast<int>(std::llround(v)); });
-            add_wave(QStringLiteral("phase"), QObject::tr("Phase"), LiveTargetKind::Real, -36000, 36000, wave.phase_degrees, [](pvt::WaveConfig& w, double v) { w.phase_degrees = v; });
+            add_wave(QStringLiteral("amplitude"), QObject::tr("Amplitude"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, wave.amplitude, [](pvt::WaveConfig& w, double v) { w.amplitude = v; });
+            add_wave(QStringLiteral("frequency"), QObject::tr("Spatial frequency"), LiveTargetKind::Real, 0, kMaximumRenderParameter, wave.spatial_frequency, [](pvt::WaveConfig& w, double v) { w.spatial_frequency = v; });
+            add_wave(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, kMinimumIntegerParameter, kMaximumIntegerParameter, wave.cycles_per_loop, [](pvt::WaveConfig& w, double v) { w.cycles_per_loop = static_cast<int>(std::llround(v)); });
+            add_wave(QStringLiteral("phase"), QObject::tr("Phase"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, wave.phase_degrees, [](pvt::WaveConfig& w, double v) { w.phase_degrees = v; });
             add_wave(QStringLiteral("direction"), QObject::tr("Direction"), LiveTargetKind::Real, 0, 1, wave.direction, [](pvt::WaveConfig& w, double v) { w.direction = v; });
-            add_wave(QStringLiteral("x"), QObject::tr("Center X"), LiveTargetKind::Real, -1000, 1000, wave.x_percent, [](pvt::WaveConfig& w, double v) { w.x_percent = v; });
-            add_wave(QStringLiteral("y"), QObject::tr("Center Y"), LiveTargetKind::Real, -1000, 1000, wave.y_percent, [](pvt::WaveConfig& w, double v) { w.y_percent = v; });
+            add_wave(QStringLiteral("x"), QObject::tr("Center X"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, wave.x_percent, [](pvt::WaveConfig& w, double v) { w.x_percent = v; });
+            add_wave(QStringLiteral("y"), QObject::tr("Center Y"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, wave.y_percent, [](pvt::WaveConfig& w, double v) { w.y_percent = v; });
         }
         for (const pvt::SwingConfig& swing : render.swings) {
             const std::uint64_t id = swing.id;
@@ -711,13 +775,13 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             };
             add_swing(QStringLiteral("enabled"), QObject::tr("Enabled"), LiveTargetKind::Boolean, 0, 1, swing.enabled, [](pvt::SwingConfig& s, double v) { s.enabled = v >= 0.5; });
             add_swing(QStringLiteral("waveform"), QObject::tr("Waveform"), LiveTargetKind::Enumeration, 0, 3, static_cast<double>(swing.waveform), [](pvt::SwingConfig& s, double v) { s.waveform = static_cast<pvt::Waveform>(std::llround(v)); });
-            add_swing(QStringLiteral("amount"), QObject::tr("Amount"), LiveTargetKind::Real, -2, 2, swing.amount, [](pvt::SwingConfig& s, double v) { s.amount = v; });
-            add_swing(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, -1000, 1000, swing.cycles_per_loop, [](pvt::SwingConfig& s, double v) { s.cycles_per_loop = static_cast<int>(std::llround(v)); });
-            add_swing(QStringLiteral("phase"), QObject::tr("Phase"), LiveTargetKind::Real, -36000, 36000, swing.phase_degrees, [](pvt::SwingConfig& s, double v) { s.phase_degrees = v; });
+            add_swing(QStringLiteral("amount"), QObject::tr("Amount"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, swing.amount, [](pvt::SwingConfig& s, double v) { s.amount = v; });
+            add_swing(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, kMinimumIntegerParameter, kMaximumIntegerParameter, swing.cycles_per_loop, [](pvt::SwingConfig& s, double v) { s.cycles_per_loop = static_cast<int>(std::llround(v)); });
+            add_swing(QStringLiteral("phase"), QObject::tr("Phase"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, swing.phase_degrees, [](pvt::SwingConfig& s, double v) { s.phase_degrees = v; });
             add_swing(QStringLiteral("shape"), QObject::tr("Shape"), LiveTargetKind::Real, 0, 1, swing.shape, [](pvt::SwingConfig& s, double v) { s.shape = v; });
-            add_swing(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -10, 10, swing.center_x, [](pvt::SwingConfig& s, double v) { s.center_x = v; });
-            add_swing(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -10, 10, swing.center_y, [](pvt::SwingConfig& s, double v) { s.center_y = v; });
-            add_swing(QStringLiteral("radius"), QObject::tr("Local radius"), LiveTargetKind::Real, 0, 2, swing.radius, [](pvt::SwingConfig& s, double v) { s.radius = v; });
+            add_swing(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, swing.center_x, [](pvt::SwingConfig& s, double v) { s.center_x = v; });
+            add_swing(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, swing.center_y, [](pvt::SwingConfig& s, double v) { s.center_y = v; });
+            add_swing(QStringLiteral("radius"), QObject::tr("Local radius"), LiveTargetKind::Real, 0, kMaximumRenderParameter, swing.radius, [](pvt::SwingConfig& s, double v) { s.radius = v; });
         }
         for (const pvt::EffectConfig& effect : render.effects) {
             const std::uint64_t id = effect.id;
@@ -725,6 +789,26 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             const QString section = layer_section(
                 authored_layer, QObject::tr("Effect — %1")
                                     .arg(QString::fromStdString(effect.name)));
+            const bool block_scale = effect.type == pvt::EffectType::BlockScale;
+            const bool particles = effect.type == pvt::EffectType::ParticleField;
+            const bool glitch = effect.type == pvt::EffectType::Glitch;
+            const bool starburst = effect.type == pvt::EffectType::Starburst;
+            const bool lens = effect.type == pvt::EffectType::LensDistortion;
+            const bool normalized_intensity =
+                block_scale || glitch || starburst || lens;
+            const double frequency_minimum = block_scale
+                ? std::max(kMinimumPositiveUiValue, effect.magnitude)
+                : (particles || glitch || starburst ? 1.0
+                                                     : (lens ? 0.25 : 0.0));
+            const double frequency_maximum = particles || glitch
+                ? kMaximumIntegerParameter : kMaximumRenderParameter;
+            const double secondary_minimum = block_scale || particles
+                                                     || glitch || starburst
+                ? 0.0 : (lens ? -1.0 : -kMaximumRenderParameter);
+            const double secondary_maximum = block_scale
+                ? kMaximumIntegerParameter
+                : (particles || glitch || starburst || lens
+                       ? 1.0 : kMaximumRenderParameter);
             const auto add_effect = [&](const QString& key, const QString& label,
                                         LiveTargetKind kind, double minimum,
                                         double maximum, double current, auto setter) {
@@ -745,25 +829,25 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             add_effect(QStringLiteral("synchronized"), QObject::tr("Use master clock"), LiveTargetKind::Boolean, 0, 1, effect.synchronized, [](pvt::EffectConfig& e, double v) { e.synchronized = v >= 0.5; });
             add_effect(QStringLiteral("edge_mode"), QObject::tr("Edge mode"), LiveTargetKind::Enumeration, 0, 3, static_cast<double>(effect.edge_mode), [](pvt::EffectConfig& e, double v) { e.edge_mode = static_cast<pvt::EdgeMode>(std::llround(v)); });
             add_effect(QStringLiteral("audio_response"), QObject::tr("Audio response"), LiveTargetKind::Enumeration, 0, 12, static_cast<double>(effect.audio_response), [](pvt::EffectConfig& e, double v) { e.audio_response = static_cast<pvt::AudioResponseMode>(std::llround(v)); });
-            add_effect(QStringLiteral("intensity"), QObject::tr("Intensity"), LiveTargetKind::Real, 0, 100, effect.intensity, [](pvt::EffectConfig& e, double v) { e.intensity = v; });
-            add_effect(QStringLiteral("magnitude"), QObject::tr("Magnitude"), LiveTargetKind::Real, 0, 10, effect.magnitude, [](pvt::EffectConfig& e, double v) { e.magnitude = v; });
-            add_effect(QStringLiteral("frequency"), QObject::tr("Frequency"), LiveTargetKind::Real, 0, std::max(1000.0, effect.frequency), effect.frequency, [](pvt::EffectConfig& e, double v) { e.frequency = v; });
-            add_effect(QStringLiteral("secondary"), QObject::tr("Secondary"), LiveTargetKind::Real, -100, 100, effect.secondary, [](pvt::EffectConfig& e, double v) { e.secondary = v; });
-            add_effect(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -10, 10, effect.center_x, [](pvt::EffectConfig& e, double v) { e.center_x = v; });
-            add_effect(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -10, 10, effect.center_y, [](pvt::EffectConfig& e, double v) { e.center_y = v; });
-            add_effect(QStringLiteral("angle"), QObject::tr("Angle"), LiveTargetKind::Real, -36000, 36000, effect.angle_degrees, [](pvt::EffectConfig& e, double v) { e.angle_degrees = v; });
-            add_effect(QStringLiteral("radius"), QObject::tr("Radius"), LiveTargetKind::Real, 0, std::max(100000.0, effect.radius_pixels), effect.radius_pixels, [](pvt::EffectConfig& e, double v) { e.radius_pixels = v; });
-            add_effect(QStringLiteral("threshold"), QObject::tr("Threshold"), LiveTargetKind::Real, 0, 64, effect.threshold, [](pvt::EffectConfig& e, double v) { e.threshold = v; });
+            add_effect(QStringLiteral("intensity"), QObject::tr("Intensity"), LiveTargetKind::Real, 0, normalized_intensity ? 1.0 : kMaximumRenderParameter, effect.intensity, [](pvt::EffectConfig& e, double v) { e.intensity = v; });
+            add_effect(QStringLiteral("magnitude"), QObject::tr("Magnitude"), LiveTargetKind::Real, block_scale ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { e.magnitude = v; });
+            add_effect(QStringLiteral("frequency"), QObject::tr("Frequency"), LiveTargetKind::Real, frequency_minimum, frequency_maximum, effect.frequency, [](pvt::EffectConfig& e, double v) { e.frequency = v; });
+            add_effect(QStringLiteral("secondary"), QObject::tr("Secondary"), LiveTargetKind::Real, secondary_minimum, secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { e.secondary = v; });
+            add_effect(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_x, [](pvt::EffectConfig& e, double v) { e.center_x = v; });
+            add_effect(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_y, [](pvt::EffectConfig& e, double v) { e.center_y = v; });
+            add_effect(QStringLiteral("angle"), QObject::tr("Angle"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.angle_degrees, [](pvt::EffectConfig& e, double v) { e.angle_degrees = v; });
+            add_effect(QStringLiteral("radius"), QObject::tr("Radius"), LiveTargetKind::Real, particles ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.radius_pixels, [](pvt::EffectConfig& e, double v) { e.radius_pixels = v; });
+            add_effect(QStringLiteral("threshold"), QObject::tr("Threshold"), LiveTargetKind::Real, 0, particles ? 1.0 : kMaximumRenderParameter, effect.threshold, [](pvt::EffectConfig& e, double v) { e.threshold = v; });
             add_effect(QStringLiteral("soft_knee"), QObject::tr("Soft knee"), LiveTargetKind::Real, 0, 1, effect.soft_knee, [](pvt::EffectConfig& e, double v) { e.soft_knee = v; });
-            add_effect(QStringLiteral("area"), QObject::tr("Local area"), LiveTargetKind::Real, 0, 10, effect.area_radius, [](pvt::EffectConfig& e, double v) { e.area_radius = v; });
-            add_effect(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, -1000, 1000, effect.cycles_per_loop, [](pvt::EffectConfig& e, double v) { e.cycles_per_loop = static_cast<int>(std::llround(v)); });
-            add_effect(QStringLiteral("phase"), QObject::tr("Phase"), LiveTargetKind::Real, -36000, 36000, effect.phase_degrees, [](pvt::EffectConfig& e, double v) { e.phase_degrees = v; });
+            add_effect(QStringLiteral("area"), QObject::tr("Local area"), LiveTargetKind::Real, 0, kMaximumRenderParameter, effect.area_radius, [](pvt::EffectConfig& e, double v) { e.area_radius = v; });
+            add_effect(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, kMinimumIntegerParameter, kMaximumIntegerParameter, effect.cycles_per_loop, [](pvt::EffectConfig& e, double v) { e.cycles_per_loop = static_cast<int>(std::llround(v)); });
+            add_effect(QStringLiteral("phase"), QObject::tr("Phase"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.phase_degrees, [](pvt::EffectConfig& e, double v) { e.phase_degrees = v; });
             add_effect(QStringLiteral("blur_type"), QObject::tr("Blur type"), LiveTargetKind::Enumeration, 0, 4, static_cast<double>(effect.blur_type), [](pvt::EffectConfig& e, double v) { e.blur_type = static_cast<pvt::BlurType>(std::llround(v)); });
-            add_effect(QStringLiteral("blur_passes"), QObject::tr("Blur passes"), LiveTargetKind::Integer, 1, 16, effect.blur_passes, [](pvt::EffectConfig& e, double v) { e.blur_passes = static_cast<int>(std::llround(v)); });
-            add_effect(QStringLiteral("blur_samples"), QObject::tr("Blur samples"), LiveTargetKind::Integer, 2, 129, effect.blur_samples, [](pvt::EffectConfig& e, double v) {
+            add_effect(QStringLiteral("blur_passes"), QObject::tr("Blur passes"), LiveTargetKind::Integer, 1, kMaximumIntegerParameter, effect.blur_passes, [](pvt::EffectConfig& e, double v) { e.blur_passes = static_cast<int>(std::llround(v)); });
+            add_effect(QStringLiteral("blur_samples"), QObject::tr("Blur samples"), LiveTargetKind::Integer, 2, kMaximumIntegerParameter, effect.blur_samples, [](pvt::EffectConfig& e, double v) {
                 int samples = static_cast<int>(std::llround(v));
                 if (e.blur_type == pvt::BlurType::Gaussian && samples % 2 == 0) {
-                    samples = std::min(129, samples + 1);
+                    ++samples;
                 }
                 e.blur_samples = samples;
             });

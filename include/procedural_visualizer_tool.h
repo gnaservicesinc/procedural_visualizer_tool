@@ -2,6 +2,7 @@
 #define PROCEDURAL_VISUALIZER_TOOL_H
 
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -29,6 +30,17 @@ constexpr std::uint32_t kSetupFormatVersion = 13;
 // checked render-memory arithmetic are the real limits below this API bound.
 constexpr std::size_t kMaximumUiItems =
     static_cast<std::size_t>((std::numeric_limits<int>::max)());
+// Scalar authoring values cross CPU double math and GPU float storage. The
+// longest render expression multiplies four independently authored controls
+// and one signed-int canvas dimension; derive a shared boundary that keeps
+// that product finite instead of imposing small per-control policy ceilings.
+inline double maximum_render_parameter_magnitude() noexcept {
+    static const double value = std::pow(
+        static_cast<double>((std::numeric_limits<float>::max)())
+            / static_cast<double>((std::numeric_limits<int>::max)()),
+        0.25);
+    return value;
+}
 constexpr std::size_t kMaximumWaves = kMaximumUiItems;
 constexpr std::size_t kMaximumEffects = kMaximumUiItems;
 constexpr std::size_t kMaximumSwings = kMaximumUiItems;
@@ -51,9 +63,10 @@ constexpr std::size_t kMaximumAttachmentBasenameBytes = 255;
 constexpr std::size_t kMaximumOutputFilenameBytes = 255;
 // Bundle entries are materialized by APIs with signed-int interoperability.
 constexpr std::size_t kMaximumEmbeddedAssetBytes = kMaximumUiItems;
-// Live routing is visited on latency-sensitive paths. These limits are high
-// enough for large stage rigs while keeping hostile projects from creating an
-// unbounded amount of per-event or scene-switch work.
+// Live routing is visited on latency-sensitive paths. These limits bound
+// deterministic per-event and scene-switch work from both authored and
+// hostile projects; they are workload/security boundaries rather than scalar
+// authoring policy.
 constexpr std::size_t kMaximumLiveEndpoints = 256;
 constexpr std::size_t kMaximumLiveMappings = 16384;
 constexpr std::size_t kMaximumLiveClockInputs = 4096;

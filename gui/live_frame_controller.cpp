@@ -111,7 +111,7 @@ void LiveFrameController::request(pvt::ProjectConfig project,
     request.phase = normalized_phase - std::floor(normalized_phase);
     request.display_pixels = display_pixels;
     request.resolution_scale = resolution_scale;
-    request.watchdog_milliseconds = std::clamp(watchdog_milliseconds, 1, 60000);
+    request.watchdog_milliseconds = std::max(1, watchdog_milliseconds);
     request.options = options;
     request.sequence = next_sequence_++;
     request.dropped_requests = dropped_requests_;

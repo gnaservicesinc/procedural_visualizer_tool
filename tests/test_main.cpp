@@ -278,7 +278,8 @@ void test_plane_displacement_mesh(const fs::path& directory) {
     invalid.surface.plane_displacement.path.clear();
     CHECK(!pvt::validate(invalid).ok);
     invalid = config;
-    invalid.surface.plane_displacement.minimum = 0.1;
+    invalid.surface.plane_displacement.minimum =
+        invalid.surface.plane_displacement.maximum + 0.1;
     CHECK(!pvt::validate(invalid).ok);
 }
 
@@ -372,6 +373,8 @@ void test_post_process_effects(const fs::path& directory) {
 
     pvt::RenderConfig invalid = config;
     invalid.post_process.antialias_passes = 5;
+    CHECK(pvt::validate(invalid).ok);
+    invalid.post_process.antialias_passes = 0;
     CHECK(!pvt::validate(invalid).ok);
     invalid = config;
     invalid.post_process.antialias_threshold =
@@ -463,6 +466,18 @@ void test_live_control_model_and_setup_codec() {
 
     CHECK(pvt::validate(live).ok);
     CHECK(pvt::validate(project).ok);
+
+    pvt::LiveConfig expanded_live = live;
+    expanded_live.endpoints.front().input_latency_microseconds = 20000000;
+    expanded_live.mappings.front().output_minimum = -2.0e12;
+    expanded_live.mappings.front().output_maximum = 2.0e12;
+    expanded_live.mappings.front().curve = 1000.0;
+    expanded_live.mappings.front().smoothing_milliseconds = 60001;
+    expanded_live.scenes.front().transition_milliseconds = 60001;
+    expanded_live.safety.watchdog_timeout_milliseconds = 60001;
+    expanded_live.safety.audio_dropout_grace_milliseconds = 60001;
+    expanded_live.safety.last_good_frame_timeout_milliseconds = 60001;
+    CHECK(pvt::validate(expanded_live).ok);
     CHECK(std::string(pvt::live_endpoint_protocol_name(
                           pvt::LiveEndpointProtocol::Midi)) == "MIDI");
     CHECK(std::string(pvt::live_action_name(pvt::LiveAction::Blackout))
@@ -1777,8 +1792,28 @@ void test_synchronized_clocks_and_music() {
     CHECK(pvt::render_frame(music, 4, before_spike, &error));
     CHECK(pvt::render_frame(music, 5, at_spike, &error));
     CHECK(before_spike.pixels != at_spike.pixels);
+
     pvt::detail::PreparedFrame prepared_before;
     pvt::detail::PreparedFrame prepared_at;
+    // Per-item audio routing is independent of clock synchronization. The
+    // synchronized-only profile switch remains an explicit opt-in filter.
+    music.waves.front().synchronized = false;
+    music.audio_reactive.synchronized_only = false;
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        music, 4, prepared_before, &error));
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        music, 5, prepared_at, &error));
+    CHECK(prepared_before.waves.front().amplitude
+          != prepared_at.waves.front().amplitude);
+    music.audio_reactive.synchronized_only = true;
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        music, 4, prepared_before, &error));
+    CHECK(pvt::detail::prepare_frame_for_backend(
+        music, 5, prepared_at, &error));
+    CHECK(prepared_before.waves.front().amplitude
+          == prepared_at.waves.front().amplitude);
+    music.audio_reactive.synchronized_only = false;
+    music.waves.front().synchronized = true;
     CHECK(pvt::detail::prepare_frame_for_backend(
         music, 4, prepared_before, &error));
     CHECK(pvt::detail::prepare_frame_for_backend(
@@ -3189,7 +3224,31 @@ void test_validation_limits() {
     CHECK(!pvt::validate(config).ok);
     config.starting_colors.kaleidoscope.mirrored_segments = 6;
     config.starting_colors.domain_warp.octaves = 9;
-    CHECK(!pvt::validate(config).ok);
+    CHECK(pvt::validate(config).ok);
+    config.fps = 0.5;
+    config.phrase_warp = -5.0;
+    config.ghost_lag_degrees = 72000.0;
+    config.displacement = 1001.0;
+    config.wave_depth = 11.0;
+    config.spiral_frequency = 1001.0;
+    config.spiral_arms = 101;
+    config.wall_frequency = 1001.0;
+    config.wall_mix = -6.0;
+    config.hue_cycles = 101;
+    config.starting_colors.kaleidoscope.mirrored_segments = 257;
+    config.starting_colors.kaleidoscope.rotation_degrees = 36001.0;
+    config.starting_colors.domain_warp.strength = 2.1;
+    config.starting_colors.domain_warp.scale = 65.0;
+    config.motion.center_x = 11.0;
+    config.motion.travel_x = 11.0;
+    config.motion.scale_pulse = 1.0;
+    config.alpha.spatial_frequency = 1001.0;
+    config.quantization.levels = 65537;
+    config.post_process.antialias_passes = 5;
+    config.surface.lighting = 11.0;
+    config.surface.plane_displacement.minimum = 3.0;
+    config.surface.plane_displacement.maximum = 5.0;
+    CHECK(pvt::validate(config).ok);
     config.starting_colors.domain_warp.octaves = 3;
     config.layer_clock.mix = static_cast<pvt::LayerClockMixMode>(255U);
     CHECK(!pvt::validate(config).ok);

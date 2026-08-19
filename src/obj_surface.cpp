@@ -606,7 +606,8 @@ bool apply_mesh_surface_mapping(const Image& source,
         mapped.width = source.width;
         mapped.height = source.height;
         mapped.pixels.assign(pixel_count * 4U, 0.0F);
-        const double mapped_lighting = clamp_value(lighting, 0.0, 10.0) * curvature;
+        const double mapped_lighting = clamp_value(
+            lighting, 0.0, maximum_render_parameter_magnitude()) * curvature;
 
         if (source_is_opaque(source, pixel_count, cancel)) {
             std::vector<float> depth(pixel_count,

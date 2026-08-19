@@ -112,6 +112,11 @@ constexpr std::size_t kMaximumPrefixBytes = kMaximumNameBytes;
 constexpr int kDefaultUndoLimit = 500;
 constexpr int kMinimumUndoLimit = 0;
 constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
+const double kMaximumRenderParameter =
+    pvt::maximum_render_parameter_magnitude();
+constexpr double kMinimumPositiveUiValue = 0.000001;
+constexpr int kMinimumIntegerParameter = (std::numeric_limits<int>::min)();
+constexpr int kMaximumIntegerParameter = (std::numeric_limits<int>::max)();
 // QDoubleSpinBox supplies double milliseconds while ClockConfig persists int64
 // microseconds. Leave a conversion margin so rounding cannot overflow int64.
 constexpr double kMaximumClockMilliseconds =
@@ -437,8 +442,8 @@ void append_copy_suffix(std::string& name) {
 QDoubleSpinBox* real_editor(double minimum, double maximum, int decimals = 4,
                             double step = 0.01) {
     auto* editor = new QDoubleSpinBox;
-    editor->setRange(minimum, maximum);
     editor->setDecimals(decimals);
+    editor->setRange(minimum, maximum);
     editor->setSingleStep(step);
     editor->setKeyboardTracking(false);
     return editor;
@@ -2570,12 +2575,17 @@ QWidget* MainWindow::createWavePage() {
     wave_sync_ = new QCheckBox(tr("Use synchronized clock"));
     wave_audio_response_ = new QComboBox;
     populate_audio_response_combo(wave_audio_response_);
-    wave_x_ = real_editor(-100.0, 200.0, 3, 1.0);
-    wave_y_ = real_editor(-100.0, 200.0, 3, 1.0);
-    wave_amplitude_ = real_editor(0.0, 10.0);
-    wave_frequency_ = real_editor(0.0, 1000.0);
-    wave_cycles_ = integer_editor(-1000, 1000);
-    wave_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    wave_x_ = real_editor(-kMaximumRenderParameter,
+                          kMaximumRenderParameter, 3, 1.0);
+    wave_y_ = real_editor(-kMaximumRenderParameter,
+                          kMaximumRenderParameter, 3, 1.0);
+    wave_amplitude_ = real_editor(-kMaximumRenderParameter,
+                                  kMaximumRenderParameter);
+    wave_frequency_ = real_editor(0.0, kMaximumRenderParameter);
+    wave_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                  kMaximumIntegerParameter);
+    wave_phase_ = real_editor(-kMaximumRenderParameter,
+                              kMaximumRenderParameter, 3, 1.0);
     wave_direction_ = real_editor(0.0, 1.0, 4, 0.05);
     wave_form_->addRow(tr("Name"), wave_name_);
     wave_form_->addRow(wave_enabled_);
@@ -2592,7 +2602,7 @@ QWidget* MainWindow::createWavePage() {
     wave_enabled_->setToolTip(tr("Bypasses this wave without deleting or resetting its authored settings."));
     wave_sync_->setToolTip(tr("Uses the layer's swung synchronized clock. Clear it for an independent seamless clock."));
     wave_audio_response_->setToolTip(
-        tr("For synchronized waves, Default inherits both the effective profile's Waves switch and Wave source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this wave in and overrides that source. The final two choices force this wave on with the profile source or ignore audio. Missing/null project data is Default."));
+        tr("Default inherits both the effective profile's Waves switch and Wave source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this wave in and overrides that source. The final two choices force this wave on with the profile source or ignore audio. Clock synchronization is independent unless the profile explicitly limits response to synchronized items. Missing/null project data is Default."));
     wave_x_->setToolTip(tr("Horizontal wave source position. Values outside 0–100% place the source beyond the canvas."));
     wave_y_->setToolTip(tr("Vertical wave source position. Values outside 0–100% place the source beyond the canvas."));
     wave_amplitude_->setToolTip(tr("Peak contribution of this wave before optional audio modulation."));
@@ -2699,13 +2709,15 @@ QWidget* MainWindow::createSynchronizationPage() {
     meter_expression_->setPlaceholderText(tr("Examples: 7/8, 3+2+3/8, 5/4 | 6/4, 4/3"));
     meter_summary_ = new QLabel;
     meter_summary_->setWordWrap(true);
-    meter_bpm_ = real_editor(1.0, 1000.0, 3, 1.0);
+    meter_bpm_ = real_editor(
+        kMinimumPositiveUiValue, kMaximumRenderParameter, 6, 1.0);
     meter_bpm_->setSuffix(tr(" BPM"));
     // Keep this aligned with the meter parser's bounded denominator domain.
     meter_tempo_note_ = integer_editor(1, (std::numeric_limits<int>::max)());
     meter_tempo_note_->setPrefix(tr("1/"));
     clock_reverse_ = new QCheckBox(tr("Reverse clock direction"));
-    clock_phase_offset_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    clock_phase_offset_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
     clock_phase_offset_->setSuffix(QChar(0x00b0));
     music_tempo_mode_ = new QComboBox;
     for (const auto value : {pvt::MusicTempoMode::Half,
@@ -2856,13 +2868,15 @@ QWidget* MainWindow::createSynchronizationPage() {
         tr("Examples: 7/8, 3+2+3/8, 5/4 | 6/4"));
     layer_meter_summary_ = new QLabel;
     layer_meter_summary_->setWordWrap(true);
-    layer_meter_bpm_ = real_editor(1.0, 1000.0, 3, 1.0);
+    layer_meter_bpm_ = real_editor(
+        kMinimumPositiveUiValue, kMaximumRenderParameter, 6, 1.0);
     layer_meter_bpm_->setSuffix(tr(" BPM"));
     layer_meter_tempo_note_ = integer_editor(
         1, (std::numeric_limits<int>::max)());
     layer_meter_tempo_note_->setPrefix(tr("1/"));
     layer_clock_reverse_ = new QCheckBox(tr("Reverse layer clock direction"));
-    layer_clock_phase_offset_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    layer_clock_phase_offset_ = real_editor(-kMaximumRenderParameter,
+                                            kMaximumRenderParameter, 3, 1.0);
     layer_clock_phase_offset_->setSuffix(QChar(0x00b0));
     layer_music_tempo_mode_ = new QComboBox;
     for (const auto value : {pvt::MusicTempoMode::Half,
@@ -2955,14 +2969,17 @@ QWidget* MainWindow::createSynchronizationPage() {
     project_audio_waves_enabled_ = new QCheckBox(
         tr("Modulate wave amplitude"));
     project_audio_wave_source_ = new QComboBox;
-    project_audio_wave_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    project_audio_wave_amount_ = real_editor(-kMaximumRenderParameter,
+                                             kMaximumRenderParameter, 3, 0.05);
     project_audio_effects_enabled_ = new QCheckBox(
         tr("Modulate effect strength"));
     project_audio_effect_source_ = new QComboBox;
-    project_audio_effect_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    project_audio_effect_amount_ = real_editor(-kMaximumRenderParameter,
+                                               kMaximumRenderParameter, 3, 0.05);
     project_audio_color_enabled_ = new QCheckBox(tr("Modulate color hue"));
     project_audio_color_source_ = new QComboBox;
-    project_audio_color_amount_ = real_editor(-3600.0, 3600.0, 2, 1.0);
+    project_audio_color_amount_ = real_editor(-kMaximumRenderParameter,
+                                              kMaximumRenderParameter, 2, 1.0);
     project_audio_color_amount_->setSuffix(QChar(0x00b0));
 
     audio_response_group_ = new QGroupBox(
@@ -2987,13 +3004,16 @@ QWidget* MainWindow::createSynchronizationPage() {
     audio_sync_only_ = new QCheckBox(tr("Only synchronized waves and effects"));
     audio_waves_enabled_ = new QCheckBox(tr("Modulate wave amplitude"));
     audio_wave_source_ = new QComboBox;
-    audio_wave_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    audio_wave_amount_ = real_editor(-kMaximumRenderParameter,
+                                     kMaximumRenderParameter, 3, 0.05);
     audio_effects_enabled_ = new QCheckBox(tr("Modulate effect strength"));
     audio_effect_source_ = new QComboBox;
-    audio_effect_amount_ = real_editor(-1.0, 10.0, 3, 0.05);
+    audio_effect_amount_ = real_editor(-kMaximumRenderParameter,
+                                       kMaximumRenderParameter, 3, 0.05);
     audio_color_enabled_ = new QCheckBox(tr("Modulate color hue"));
     audio_color_source_ = new QComboBox;
-    audio_color_amount_ = real_editor(-3600.0, 3600.0, 2, 1.0);
+    audio_color_amount_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 2, 1.0);
     audio_color_amount_->setSuffix(QChar(0x00b0));
     // MusicFeature has an explicit byte-sized ABI. Discover every named value
     // for both profiles so analyzer upgrades cannot make the editors drift.
@@ -3163,13 +3183,18 @@ QWidget* MainWindow::createSwingBlock() {
     add_enum_item(swing_waveform_, tr("Triangle"), pvt::Waveform::Triangle);
     add_enum_item(swing_waveform_, tr("Smooth pulse"), pvt::Waveform::SmoothPulse);
     add_enum_item(swing_waveform_, tr("Bounce"), pvt::Waveform::Bounce);
-    swing_amount_ = real_editor(-2.0, 2.0, 4, 0.05);
-    swing_cycles_ = integer_editor(0, 1000);
-    swing_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    swing_amount_ = real_editor(-kMaximumRenderParameter,
+                                kMaximumRenderParameter, 4, 0.05);
+    swing_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                   kMaximumIntegerParameter);
+    swing_phase_ = real_editor(-kMaximumRenderParameter,
+                               kMaximumRenderParameter, 3, 1.0);
     swing_shape_ = real_editor(0.0, 1.0, 4, 0.05);
-    swing_center_x_ = real_editor(-10.0, 10.0, 4, 0.01);
-    swing_center_y_ = real_editor(-10.0, 10.0, 4, 0.01);
-    swing_radius_ = real_editor(0.0, 10.0, 4, 0.01);
+    swing_center_x_ = real_editor(-kMaximumRenderParameter,
+                                  kMaximumRenderParameter, 4, 0.01);
+    swing_center_y_ = real_editor(-kMaximumRenderParameter,
+                                  kMaximumRenderParameter, 4, 0.01);
+    swing_radius_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
     swing_radius_->setSpecialValueText(tr("Whole layer (0)"));
     swing_amount_->setToolTip(
         tr("Strength of this timing modulation. Negative values invert the swing."));
@@ -3310,25 +3335,30 @@ QWidget* MainWindow::createEffectPage() {
                   pvt::EffectSpace::Texture);
     add_enum_item(effect_space_, tr("Mapped surface (advanced)"),
                   pvt::EffectSpace::Surface);
-    effect_cycles_ = integer_editor(-1000, 1000);
-    effect_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    effect_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                    kMaximumIntegerParameter);
+    effect_phase_ = real_editor(-kMaximumRenderParameter,
+                                kMaximumRenderParameter, 3, 1.0);
     effect_edge_ = new QComboBox;
     add_enum_item(effect_edge_, tr("Transparent alpha"), pvt::EdgeMode::Alpha);
     add_enum_item(effect_edge_, tr("Black"), pvt::EdgeMode::Black);
     add_enum_item(effect_edge_, tr("White"), pvt::EdgeMode::White);
     add_enum_item(effect_edge_, tr("Reflected pattern"), pvt::EdgeMode::Reflect);
-    effect_intensity_ = real_editor(0.0, 100.0);
-    effect_magnitude_ = real_editor(0.0, 10.0, 5, 0.005);
-    effect_frequency_ = real_editor(0.0, 1000.0);
-    effect_secondary_ = real_editor(-100.0, 100.0);
-    effect_center_x_ = real_editor(-10.0, 10.0);
-    effect_center_y_ = real_editor(-10.0, 10.0);
-    effect_angle_ = real_editor(-36000.0, 36000.0, 2, 5.0);
-    effect_radius_ = real_editor(
-        0.0, static_cast<double>((std::numeric_limits<int>::max)()), 2, 1.0);
-    effect_threshold_ = real_editor(0.0, 64.0);
+    effect_intensity_ = real_editor(0.0, kMaximumRenderParameter);
+    effect_magnitude_ = real_editor(0.0, kMaximumRenderParameter, 6, 0.005);
+    effect_frequency_ = real_editor(0.0, kMaximumRenderParameter);
+    effect_secondary_ = real_editor(-kMaximumRenderParameter,
+                                    kMaximumRenderParameter);
+    effect_center_x_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter);
+    effect_center_y_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter);
+    effect_angle_ = real_editor(-kMaximumRenderParameter,
+                                kMaximumRenderParameter, 2, 5.0);
+    effect_radius_ = real_editor(0.0, kMaximumRenderParameter, 6, 1.0);
+    effect_threshold_ = real_editor(0.0, kMaximumRenderParameter);
     effect_knee_ = real_editor(0.0, 1.0);
-    effect_area_radius_ = real_editor(0.0, 10.0, 4, 0.01);
+    effect_area_radius_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
     effect_area_radius_->setSpecialValueText(tr("Whole layer (0)"));
     effect_blur_type_ = new QComboBox;
     for (const auto type : {pvt::BlurType::Gaussian, pvt::BlurType::Box,
@@ -3337,8 +3367,8 @@ QWidget* MainWindow::createEffectPage() {
         add_enum_item(effect_blur_type_,
                       QString::fromUtf8(pvt::blur_type_name(type)), type);
     }
-    effect_blur_passes_ = integer_editor(1, 16);
-    effect_blur_samples_ = integer_editor(2, 129);
+    effect_blur_passes_ = integer_editor(1, kMaximumIntegerParameter);
+    effect_blur_samples_ = integer_editor(2, kMaximumIntegerParameter);
     effect_blur_minimum_ = real_editor(0.0, 1.0, 4, 0.01);
     effect_blur_maximum_ = real_editor(0.0, 1.0, 4, 0.01);
     effect_form_->addRow(tr("Name"), effect_name_);
@@ -3373,7 +3403,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_sync_->setToolTip(
         tr("On: use the effective project or per-layer clock. Off: use an independent seamless clock. Cycles per loop is the modulation count in either mode."));
     effect_audio_response_->setToolTip(
-        tr("For synchronized effects, Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Missing/null project data is Default."));
+        tr("Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Clock synchronization is independent unless the profile explicitly limits response to synchronized items. Missing/null project data is Default."));
     effect_type_->setToolTip(
         tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
     effect_space_->setToolTip(
@@ -3495,9 +3525,11 @@ QWidget* MainWindow::createLayerSettingsPage() {
 
     auto* rhythm_group = new QGroupBox(tr("Rhythm and color timing"));
     auto* rhythm = new QFormLayout(rhythm_group);
-    phrase_warp_ = real_editor(0.0, 2.0, 4, 0.01);
+    phrase_warp_ = real_editor(-kMaximumRenderParameter,
+                               kMaximumRenderParameter, 4, 0.01);
     ghost_mix_ = real_editor(0.0, 1.0, 4, 0.01);
-    ghost_lag_ = real_editor(-360.0, 360.0, 3, 1.0);
+    ghost_lag_ = real_editor(-kMaximumRenderParameter,
+                             kMaximumRenderParameter, 3, 1.0);
     phrase_warp_->setToolTip(
         tr("Periodic warp applied to the effective project-wide or per-layer synchronized clock."));
     ghost_mix_->setToolTip(tr("Mix between the main and phase-lagged color signals."));
@@ -3621,16 +3653,19 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* pattern_group = new QGroupBox(tr("Procedural features"));
     auto* pattern = new QFormLayout(pattern_group);
     displacement_enabled_ = new QCheckBox(tr("Displacement enabled"));
-    displacement_ = real_editor(0.0, 1000.0, 2, 1.0);
+    displacement_ = real_editor(0.0, kMaximumRenderParameter, 2, 1.0);
     lighting_enabled_ = new QCheckBox(tr("Slope lighting enabled"));
-    wave_depth_ = real_editor(0.0, 10.0);
+    wave_depth_ = real_editor(0.0, kMaximumRenderParameter);
     spiral_enabled_ = new QCheckBox(tr("Spiral enabled"));
-    spiral_frequency_ = real_editor(0.0, 1000.0);
-    spiral_arms_ = integer_editor(-100, 100);
+    spiral_frequency_ = real_editor(0.0, kMaximumRenderParameter);
+    spiral_arms_ = integer_editor(kMinimumIntegerParameter,
+                                  kMaximumIntegerParameter);
     wall_enabled_ = new QCheckBox(tr("Wall reflection enabled"));
-    wall_frequency_ = real_editor(0.0, 1000.0);
-    wall_mix_ = real_editor(0.0, 5.0);
-    hue_cycles_ = integer_editor(-100, 100);
+    wall_frequency_ = real_editor(0.0, kMaximumRenderParameter);
+    wall_mix_ = real_editor(-kMaximumRenderParameter,
+                            kMaximumRenderParameter);
+    hue_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                 kMaximumIntegerParameter);
     saturation_ = real_editor(0.0, 1.0);
     pattern->addRow(displacement_enabled_);
     pattern->addRow(tr("Displacement"), displacement_);
@@ -3653,8 +3688,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "Folds generated source coordinates into mirrored radial segments "
         "before waves and later pipeline stages."));
     auto* kaleidoscope = new QFormLayout(kaleidoscope_group_);
-    kaleidoscope_segments_ = integer_editor(2, 256);
-    kaleidoscope_rotation_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    kaleidoscope_segments_ = integer_editor(2, kMaximumIntegerParameter);
+    kaleidoscope_rotation_ = real_editor(-kMaximumRenderParameter,
+                                         kMaximumRenderParameter, 3, 1.0);
     kaleidoscope_rotation_->setSuffix(QChar(0x00b0));
     kaleidoscope_mix_ = real_editor(0.0, 1.0, 4, 0.01);
     kaleidoscope->addRow(tr("Mirrored segments"), kaleidoscope_segments_);
@@ -3670,10 +3706,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "Distorts generated coordinates with deterministic loop-closed noise. "
         "It does not affect an embedded starting image."));
     auto* domain_warp = new QFormLayout(domain_warp_group_);
-    domain_warp_strength_ = real_editor(0.0, 2.0, 4, 0.01);
-    domain_warp_scale_ = real_editor(0.01, 64.0, 4, 0.05);
-    domain_warp_octaves_ = integer_editor(1, 8);
-    domain_warp_cycles_ = integer_editor(-1000, 1000);
+    domain_warp_strength_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
+    domain_warp_scale_ = real_editor(
+        kMinimumPositiveUiValue, kMaximumRenderParameter, 6, 0.05);
+    domain_warp_octaves_ = integer_editor(1, kMaximumIntegerParameter);
+    domain_warp_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                         kMaximumIntegerParameter);
     domain_warp_seed_ = new QLineEdit;
     domain_warp_seed_->setObjectName(QStringLiteral("domainWarpSeed"));
     domain_warp_seed_->setMaxLength(20);
@@ -3730,20 +3768,27 @@ QWidget* MainWindow::createLayerSettingsPage() {
         add_enum_item(motion_path_,
                       QString::fromUtf8(pvt::layer_motion_path_name(path)), path);
     }
-    motion_center_x_ = real_editor(-10.0, 10.0, 4, 0.01);
-    motion_center_y_ = real_editor(-10.0, 10.0, 4, 0.01);
-    motion_travel_x_ = real_editor(0.0, 10.0, 4, 0.01);
-    motion_travel_y_ = real_editor(0.0, 10.0, 4, 0.01);
-    motion_cycles_x_ = integer_editor(-1000, 1000);
-    motion_cycles_y_ = integer_editor(-1000, 1000);
-    motion_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    motion_center_x_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter, 4, 0.01);
+    motion_center_y_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter, 4, 0.01);
+    motion_travel_x_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
+    motion_travel_y_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
+    motion_cycles_x_ = integer_editor(kMinimumIntegerParameter,
+                                      kMaximumIntegerParameter);
+    motion_cycles_y_ = integer_editor(kMinimumIntegerParameter,
+                                      kMaximumIntegerParameter);
+    motion_phase_ = real_editor(-kMaximumRenderParameter,
+                                kMaximumRenderParameter, 3, 1.0);
     motion_phase_->setSuffix(QChar(0x00b0));
-    motion_rotations_ = integer_editor(-1000, 1000);
-    motion_rotation_offset_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    motion_rotations_ = integer_editor(kMinimumIntegerParameter,
+                                       kMaximumIntegerParameter);
+    motion_rotation_offset_ = real_editor(-kMaximumRenderParameter,
+                                          kMaximumRenderParameter, 3, 1.0);
     motion_rotation_offset_->setSuffix(QChar(0x00b0));
     motion_rotation_offset_->setToolTip(tr(
         "Static rotation applied before per-loop rotation. This can turn a still layer without adding animation."));
-    motion_scale_pulse_ = real_editor(0.0, 0.95, 4, 0.01);
+    motion_scale_pulse_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
     motion_paths_edit_ = new QPushButton(tr("Edit reusable paths and bindings…"));
     motion_paths_edit_->setObjectName(QStringLiteral("motionPathsEditorButton"));
     motion_paths_edit_->setToolTip(tr(
@@ -3866,10 +3911,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_obj_browse_ = new QPushButton(tr("Browse…"));
     obj_path_layout->addWidget(surface_obj_path_, 1);
     obj_path_layout->addWidget(surface_obj_browse_);
-    surface_rotations_ = integer_editor(-1000, 1000);
-    surface_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    surface_rotations_ = integer_editor(kMinimumIntegerParameter,
+                                        kMaximumIntegerParameter);
+    surface_phase_ = real_editor(-kMaximumRenderParameter,
+                                 kMaximumRenderParameter, 3, 1.0);
     surface_curvature_ = real_editor(0.0, 1.0);
-    surface_lighting_ = real_editor(0.0, 10.0);
+    surface_lighting_ = real_editor(0.0, kMaximumRenderParameter);
     surface->addRow(surface_enabled_);
     surface->addRow(tr("Surface"), surface_mapping_);
     surface->addRow(tr("OBJ file"), surface_obj_row_);
@@ -3907,8 +3954,10 @@ QWidget* MainWindow::createLayerSettingsPage() {
     height_layout->addWidget(surface_plane_displacement_path_, 1);
     height_layout->addWidget(surface_plane_displacement_browse_);
     height_layout->addWidget(surface_plane_displacement_clear_);
-    surface_plane_displacement_minimum_ = real_editor(-2.0, 0.0, 4, 0.01);
-    surface_plane_displacement_maximum_ = real_editor(0.0, 2.0, 4, 0.01);
+    surface_plane_displacement_minimum_ = real_editor(
+        -kMaximumRenderParameter, kMaximumRenderParameter, 4, 0.01);
+    surface_plane_displacement_maximum_ = real_editor(
+        -kMaximumRenderParameter, kMaximumRenderParameter, 4, 0.01);
     surface_plane_displacement_midpoint_ = real_editor(0.0, 1.0, 4, 0.01);
     surface_plane_displacement_ratio_ = integer_editor(
         1, (std::numeric_limits<int>::max)());
@@ -3986,7 +4035,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         QStringLiteral("postAntialiasThreshold"));
     post_antialias_threshold_->setToolTip(tr(
         "Minimum local contrast treated as an edge. Lower values smooth more pixels."));
-    post_antialias_passes_ = integer_editor(1, 4);
+    post_antialias_passes_ = integer_editor(1, kMaximumIntegerParameter);
     post_antialias_passes_->setObjectName(
         QStringLiteral("postAntialiasPasses"));
     post_antialias_passes_->setToolTip(tr(
@@ -4004,7 +4053,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* quantization_group = new QGroupBox(tr("Post-effects color quantization"));
     auto* quantization = new QFormLayout(quantization_group);
     quantization_enabled_ = new QCheckBox(tr("Quantization enabled"));
-    quantization_levels_ = integer_editor(2, 65536);
+    quantization_levels_ = integer_editor(2, kMaximumIntegerParameter);
     quantization_mix_ = real_editor(0.0, 1.0);
     quantization_mode_ = new QComboBox;
     add_enum_item(quantization_mode_, tr("RGB"), pvt::QuantizationMode::Rgb);
@@ -4024,9 +4073,11 @@ QWidget* MainWindow::createLayerSettingsPage() {
            "selection is configured separately in Export."));
     alpha_minimum_ = real_editor(0.0, 1.0);
     alpha_maximum_ = real_editor(0.0, 1.0);
-    alpha_frequency_ = real_editor(0.0, 1000.0);
-    alpha_cycles_ = integer_editor(-1000, 1000);
-    alpha_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
+    alpha_frequency_ = real_editor(0.0, kMaximumRenderParameter);
+    alpha_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                    kMaximumIntegerParameter);
+    alpha_phase_ = real_editor(-kMaximumRenderParameter,
+                               kMaximumRenderParameter, 3, 1.0);
     alpha_use_source_ = new QCheckBox(
         tr("Use alpha stored in starting palettes and PNG pixels"));
     alpha_use_source_->setToolTip(tr(
@@ -4289,7 +4340,8 @@ QWidget* MainWindow::createOutputPage() {
     block_size_ = integer_editor(1, (std::numeric_limits<int>::max)());
     frames_ = integer_editor(2, (std::numeric_limits<int>::max)());
     frames_->setObjectName(QStringLiteral("manualFrameCount"));
-    fps_ = real_editor(1.0, 240.0, 3, 1.0);
+    fps_ = real_editor(
+        kMinimumPositiveUiValue, kMaximumRenderParameter, 6, 1.0);
     effective_frames_ = new QLabel;
     effective_frames_->setObjectName(QStringLiteral("effectiveFrameCount"));
     effective_frames_->setWordWrap(true);
@@ -5301,7 +5353,8 @@ void MainWindow::setLiveMode(bool live) {
         || live_workspace_ == nullptr) {
         return;
     }
-    const bool already_live = live_workspace_->isLiveActive();
+    const bool showing_live = workspace_stack_->currentWidget()
+                              == live_workspace_;
     if (edit_mode_action_ != nullptr) {
         const QSignalBlocker blocker(edit_mode_action_);
         edit_mode_action_->setChecked(!live);
@@ -5310,10 +5363,15 @@ void MainWindow::setLiveMode(bool live) {
         const QSignalBlocker blocker(live_mode_action_);
         live_mode_action_->setChecked(live);
     }
-    if (already_live == live
-        && workspace_stack_->currentWidget()
-               == (live ? static_cast<QWidget*>(live_workspace_)
-                        : editor_workspace_)) {
+    if (showing_live == live) {
+        // The workspace selection and performance runtime are deliberately
+        // independent. Revisiting LIVE starts a stopped runtime, but revisiting
+        // Edit must never stop an active show.
+        if (live && !live_workspace_->isLiveActive()) {
+            live_workspace_->setProjectLiveConfig(project_.canvas.live);
+            live_workspace_->refreshProjectSnapshot();
+            live_workspace_->setLiveActive(true);
+        }
         return;
     }
 
@@ -5325,16 +5383,19 @@ void MainWindow::setLiveMode(bool live) {
         live_workspace_->setProjectLiveConfig(project_.canvas.live);
         live_workspace_->refreshProjectSnapshot();
         workspace_stack_->setCurrentWidget(live_workspace_);
-        live_workspace_->setLiveActive(true);
+        if (!live_workspace_->isLiveActive()) {
+            live_workspace_->setLiveActive(true);
+        }
         status_->setText(tr(
-            "Live mode — performance state is ephemeral; project mappings and scenes remain undoable."));
+            "Live workspace — performance state is ephemeral; switch to Edit Project at any time without stopping output."));
     } else {
-        live_workspace_->setLiveActive(false);
         workspace_stack_->setCurrentWidget(editor_workspace_);
         if (layers_dock_ != nullptr && layers_dock_visible_before_live_) {
             layers_dock_->show();
         }
-        status_->setText(tr("Edit mode — Flow Workbench ready."));
+        status_->setText(live_workspace_->isLiveActive()
+            ? tr("Editing the live project — input, rendering, and stage output remain active.")
+            : tr("Edit mode — Flow Workbench ready."));
     }
 }
 
@@ -5472,7 +5533,7 @@ void MainWindow::createToolbar() {
     live_mode_action_->setIcon(
         style()->standardIcon(QStyle::SP_MediaPlay));
     live_mode_action_->setToolTip(tr(
-        "Open the stage-focused Live workspace. Freeze, blackout, current scene, and captured input remain ephemeral."));
+        "Open the stage-focused Live workspace. The runtime can remain active while you edit the project; freeze, blackout, current scene, and captured input remain ephemeral."));
     auto* mode_group = new QActionGroup(this);
     mode_group->setExclusive(true);
     mode_group->addAction(edit_mode_action_);
@@ -5755,23 +5816,26 @@ void MainWindow::showMotionPathEditor() {
         consumer->addItem(
             tr("Effect center: %1")
                 .arg(QString::fromStdString(render.effects[index].name)),
-            static_cast<int>(10000U + index));
+            -1 - static_cast<int>(index));
     }
     auto* binding_enabled = new QCheckBox(tr("Follow a reusable path"));
     auto* binding_path = new QComboBox;
     auto* binding_sync = new QCheckBox(tr("Use synchronized project clock"));
     auto* binding_cycles = new QSpinBox;
-    binding_cycles->setRange(-1000, 1000);
+    binding_cycles->setRange(kMinimumIntegerParameter,
+                             kMaximumIntegerParameter);
     auto* binding_phase = new QDoubleSpinBox;
-    binding_phase->setRange(-36000.0, 36000.0);
     binding_phase->setDecimals(3);
+    binding_phase->setRange(-kMaximumRenderParameter,
+                            kMaximumRenderParameter);
     binding_phase->setSuffix(QChar(0x00b0));
     auto* binding_reverse = new QCheckBox(tr("Reverse direction"));
     auto* binding_offset_x = new QDoubleSpinBox;
     auto* binding_offset_y = new QDoubleSpinBox;
     for (auto* editor : {binding_offset_x, binding_offset_y}) {
-        editor->setRange(-10.0, 10.0);
         editor->setDecimals(4);
+        editor->setRange(-kMaximumRenderParameter,
+                         kMaximumRenderParameter);
         editor->setSingleStep(0.01);
     }
     auto* binding_tangent = new QCheckBox(tr("Follow tangent orientation"));
@@ -5803,12 +5867,12 @@ void MainWindow::showMotionPathEditor() {
     const auto current_binding = [&]() -> pvt::PathBinding* {
         const int code = consumer->currentData().toInt();
         if (code == 0) return &render.motion.custom_path;
-        if (code > 0 && code < 10000) {
+        if (code > 0) {
             const std::size_t index = static_cast<std::size_t>(code - 1);
             return index < render.waves.size() ? &render.waves[index].path : nullptr;
         }
-        if (code >= 10000) {
-            const std::size_t index = static_cast<std::size_t>(code - 10000);
+        if (code < 0) {
+            const std::size_t index = static_cast<std::size_t>(-1 - code);
             return index < render.effects.size() ? &render.effects[index].path : nullptr;
         }
         return nullptr;
@@ -5828,7 +5892,9 @@ void MainWindow::showMotionPathEditor() {
             for (int column = 1; column <= 6; ++column) {
                 bool ok = false;
                 const double value = nodes->item(row, column)->text().toDouble(&ok);
-                if (!ok || !std::isfinite(value) || value < -10.0 || value > 10.0) {
+                if (!ok || !std::isfinite(value)
+                    || value < -kMaximumRenderParameter
+                    || value > kMaximumRenderParameter) {
                     return false;
                 }
                 *destinations[static_cast<std::size_t>(column - 1)] = value;
@@ -5969,8 +6035,9 @@ void MainWindow::showMotionPathEditor() {
             [&](QTableWidgetItem*) { (void)commit_nodes(); });
     connect(add_ellipse, &QPushButton::clicked, &dialog, [&] {
         if (paths.size() >= pvt::kMaximumMotionPaths) {
-            QMessageBox::warning(&dialog, tr("Path limit reached"),
-                                 tr("A project can contain at most 32 reusable paths."));
+            QMessageBox::warning(
+                &dialog, tr("Path limit reached"),
+                tr("The signed-int UI/API path index is exhausted."));
             return;
         }
         std::uint64_t maximum = 0U;
@@ -6091,7 +6158,7 @@ void MainWindow::showMotionPathEditor() {
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         if (!commit_nodes()) {
             QMessageBox::warning(&dialog, tr("Invalid path node"),
-                                 tr("Every path coordinate and handle must be a number from -10 to 10."));
+                                 tr("Every path coordinate and handle must be finite within the renderer's numeric representation."));
             return;
         }
         if (auto* path = current_path(); path != nullptr) {
@@ -8108,7 +8175,6 @@ void MainWindow::addRecentProject(const QString& path) {
     entry.insert(QStringLiteral("name"), QString::fromStdString(project_.name));
     entry.insert(QStringLiteral("path"), absolute_path);
     entries.prepend(entry);
-    while (entries.size() > 100) entries.removeLast();
     settings.setValue(QStringLiteral("recentProjects/entries"),
                       QJsonDocument(entries).toJson(QJsonDocument::Compact));
     refreshRecentProjectsMenu();
@@ -8185,7 +8251,7 @@ void MainWindow::restoreUserSettings() {
     QSettings settings;
     recent_project_limit_ = (std::clamp)(
         settings.value(QStringLiteral("preferences/recentProjectLimit"), 10).toInt(),
-        0, 100);
+        0, (std::numeric_limits<int>::max)());
     const int saved_backend = settings.value(
         QStringLiteral("preferences/renderBackend"),
         static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
@@ -8685,13 +8751,11 @@ void MainWindow::updateSynchronizationState() {
                                                : tr("disabled")));
     if (const auto wave = selectedWaveIndex()) {
         wave_audio_response_->setEnabled(
-            layer_editable && music_audio_available
-            && config_.waves[*wave].synchronized);
+            layer_editable && music_audio_available);
     }
     if (const auto effect = selectedEffectIndex()) {
         effect_audio_response_->setEnabled(
-            layer_editable && music_audio_available
-            && config_.effects[*effect].synchronized);
+            layer_editable && music_audio_available);
     }
     clock_form_->setRowVisible(clock_frame_interval_, mode == pvt::ClockMode::Frame);
     clock_form_->setRowVisible(clock_time_interval_ms_, mode == pvt::ClockMode::Time);
@@ -8826,11 +8890,12 @@ void MainWindow::updateSynchronizationState() {
             ? config_.clock.music.duration_seconds
             : (master_frames > 0
                    ? static_cast<double>(master_frames) / config_.fps : 0.0);
-    const bool one_shot_allowed = !has_layer_music || master_duration <= 0.0
-        || local.clock.music.duration_seconds <= master_duration + 1.0e-9;
-    if (!one_shot_allowed) {
+    const bool one_shot_outlasts_project = has_layer_music
+        && master_duration > 0.0
+        && local.clock.music.duration_seconds > master_duration + 1.0e-9;
+    if (one_shot_outlasts_project) {
         duration_warning = tr(
-            "Play Once mappings are unavailable because this layer source is longer than the project timeline. Use Smart Loop Fit or Straight Fit for a seamless project loop.");
+            "This source outlasts the project. Play Once will show the available prefix; Play Once Then Project will not reach its project-clock transition before this project ends.");
     }
     if (auto* model = qobject_cast<QStandardItemModel*>(
             layer_clock_scale_->model())) {
@@ -8839,7 +8904,7 @@ void MainWindow::updateSynchronizationState() {
             const int index = layer_clock_scale_->findData(
                 static_cast<int>(value));
             if (index >= 0 && model->item(index) != nullptr) {
-                model->item(index)->setEnabled(one_shot_allowed);
+                model->item(index)->setEnabled(true);
             }
         }
     }
@@ -9182,7 +9247,7 @@ void MainWindow::loadSelectedWave() {
         wave_sync_->setChecked(wave.synchronized);
         select_enum(wave_audio_response_, wave.audio_response);
         wave_audio_response_->setEnabled(
-            wave.synchronized && effective_active_clock_is_music(config_));
+            effective_active_clock_is_music(config_));
         wave_x_->setValue(wave.x_percent);
         wave_y_->setValue(wave.y_percent);
         wave_amplitude_->setValue(wave.amplitude);
@@ -9269,9 +9334,10 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_blur_maximum_, is_blur);
 
     effect_radius_->setRange(
-        is_particles ? 0.01 : 0.0,
-        static_cast<double>((std::numeric_limits<int>::max)()));
-    effect_threshold_->setRange(0.0, is_particles ? 1.0 : 64.0);
+        is_particles ? kMinimumPositiveUiValue : 0.0,
+        kMaximumRenderParameter);
+    effect_threshold_->setRange(
+        0.0, is_particles ? 1.0 : kMaximumRenderParameter);
 
     effect_edge_->setToolTip(
         tr("Controls samples that move beyond the source image boundary."));
@@ -9288,14 +9354,17 @@ void MainWindow::updateEffectEditorVisibility() {
 
     if (is_block_scale) {
         effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(0.00001, 10.0);
-        effect_frequency_->setRange(effect_magnitude_->value(), 1000.0);
-        effect_secondary_->setRange(0.0, 100.0);
+        effect_magnitude_->setRange(
+            kMinimumPositiveUiValue, kMaximumRenderParameter);
+        effect_frequency_->setRange(effect_magnitude_->value(),
+                                    kMaximumRenderParameter);
+        effect_secondary_->setRange(
+            0.0, static_cast<double>(kMaximumIntegerParameter));
         effect_secondary_->setDecimals(0);
         effect_secondary_->setSingleStep(1.0);
     } else if (is_particles) {
-        effect_intensity_->setRange(0.0, 100.0);
-        effect_magnitude_->setRange(0.0, 10.0);
+        effect_intensity_->setRange(0.0, kMaximumRenderParameter);
+        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
         effect_frequency_->setRange(
             1.0, static_cast<double>((std::numeric_limits<int>::max)()));
         effect_frequency_->setDecimals(0);
@@ -9305,8 +9374,11 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_secondary_->setSingleStep(0.01);
     } else if (is_glitch || is_starburst) {
         effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(0.0, 10.0);
-        effect_frequency_->setRange(1.0, 1000.0);
+        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
+        effect_frequency_->setRange(
+            1.0, is_glitch
+                     ? static_cast<double>(kMaximumIntegerParameter)
+                     : kMaximumRenderParameter);
         effect_frequency_->setDecimals(0);
         effect_frequency_->setSingleStep(1.0);
         effect_secondary_->setRange(0.0, 1.0);
@@ -9314,20 +9386,21 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_secondary_->setSingleStep(0.01);
     } else if (is_lens) {
         effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(0.0, 10.0);
-        effect_frequency_->setRange(0.25, 64.0);
+        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
+        effect_frequency_->setRange(0.25, kMaximumRenderParameter);
         effect_frequency_->setDecimals(4);
         effect_frequency_->setSingleStep(0.05);
         effect_secondary_->setRange(-1.0, 1.0);
         effect_secondary_->setDecimals(4);
         effect_secondary_->setSingleStep(0.05);
     } else {
-        effect_intensity_->setRange(0.0, 100.0);
-        effect_magnitude_->setRange(0.0, 10.0);
-        effect_frequency_->setRange(0.0, 1000.0);
+        effect_intensity_->setRange(0.0, kMaximumRenderParameter);
+        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
+        effect_frequency_->setRange(0.0, kMaximumRenderParameter);
         effect_frequency_->setDecimals(4);
         effect_frequency_->setSingleStep(0.01);
-        effect_secondary_->setRange(-100.0, 100.0);
+        effect_secondary_->setRange(-kMaximumRenderParameter,
+                                    kMaximumRenderParameter);
         effect_secondary_->setDecimals(4);
         effect_secondary_->setSingleStep(0.01);
     }
@@ -9489,7 +9562,7 @@ void MainWindow::loadSelectedEffect() {
         effect_sync_->setChecked(effect.synchronized);
         select_enum(effect_audio_response_, effect.audio_response);
         effect_audio_response_->setEnabled(
-            effect.synchronized && effective_active_clock_is_music(config_));
+            effective_active_clock_is_music(config_));
         select_enum(effect_type_, effect.type);
         select_enum(effect_space_, effect.space);
         updateEffectEditorVisibility();
@@ -10313,7 +10386,7 @@ void MainWindow::generateRandomPalette() {
     dialog.setWindowTitle(tr("Generate constrained random palette"));
     auto* layout = new QVBoxLayout(&dialog);
     auto* form = new QFormLayout;
-    auto* count = integer_editor(1, 65536);
+    auto* count = integer_editor(1, kMaximumIntegerParameter);
     count->setValue(settings.value(QStringLiteral("paletteRandom/count"), 8).toInt());
     auto* seed_method = new QComboBox;
     seed_method->addItem(tr("Manual deterministic seed"), 0);
@@ -10327,7 +10400,7 @@ void MainWindow::generateRandomPalette() {
         settings.value(QStringLiteral("paletteRandom/manualSeed"),
                        QStringLiteral("1")).toString());
     seed->setPlaceholderText(tr("Unsigned 64-bit integer"));
-    auto* warmup = integer_editor(0, 1000000);
+    auto* warmup = integer_editor(0, kMaximumIntegerParameter);
     warmup->setValue(settings.value(QStringLiteral("paletteRandom/warmup"), 0).toInt());
     warmup->setToolTip(tr(
         "Discards this many generator outputs before palette creation. Each draw is "
@@ -11114,7 +11187,7 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             effect_blur_type_->currentData().toInt());
         if (effect.blur_type == pvt::BlurType::Gaussian
             && effect.blur_samples % 2 == 0) {
-            effect.blur_samples = (std::min)(129, effect.blur_samples + 1);
+            ++effect.blur_samples;
             const QSignalBlocker blocker(effect_blur_samples_);
             effect_blur_samples_->setValue(effect.blur_samples);
         }
@@ -11155,7 +11228,7 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_blur_samples_) {
         int samples = effect_blur_samples_->value();
         if (effect.blur_type == pvt::BlurType::Gaussian && samples % 2 == 0) {
-            samples = (std::min)(129, samples + 1);
+            ++samples;
             const QSignalBlocker blocker(effect_blur_samples_);
             effect_blur_samples_->setValue(samples);
         }
@@ -11485,9 +11558,27 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_plane_displacement_minimum_) {
         config_.surface.plane_displacement.minimum =
             surface_plane_displacement_minimum_->value();
+        if (config_.surface.plane_displacement.maximum
+            < config_.surface.plane_displacement.minimum) {
+            config_.surface.plane_displacement.maximum =
+                config_.surface.plane_displacement.minimum;
+            const QSignalBlocker blocker(
+                surface_plane_displacement_maximum_);
+            surface_plane_displacement_maximum_->setValue(
+                config_.surface.plane_displacement.maximum);
+        }
     } else if (changed_editor == surface_plane_displacement_maximum_) {
         config_.surface.plane_displacement.maximum =
             surface_plane_displacement_maximum_->value();
+        if (config_.surface.plane_displacement.minimum
+            > config_.surface.plane_displacement.maximum) {
+            config_.surface.plane_displacement.minimum =
+                config_.surface.plane_displacement.maximum;
+            const QSignalBlocker blocker(
+                surface_plane_displacement_minimum_);
+            surface_plane_displacement_minimum_->setValue(
+                config_.surface.plane_displacement.minimum);
+        }
     } else if (changed_editor == surface_plane_displacement_midpoint_) {
         config_.surface.plane_displacement.midpoint =
             surface_plane_displacement_midpoint_->value();
@@ -13228,6 +13319,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const auto* live_blackout = live_workspace_ != nullptr
         ? live_workspace_->findChild<QPushButton*>(
               QStringLiteral("blackoutButton")) : nullptr;
+    auto* edit_live_project = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("editLiveProjectButton")) : nullptr;
+    const auto* live_audio_period = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QSpinBox*>(
+              QStringLiteral("liveAudioPeriodFrames")) : nullptr;
+    const auto* live_audio_gain = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QDoubleSpinBox*>(
+              QStringLiteral("liveAudioGainValue")) : nullptr;
+    const auto* live_audio_sensitivity = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QDoubleSpinBox*>(
+              QStringLiteral("liveAudioSensitivityValue")) : nullptr;
     if (settings_action_ == nullptr || settings_menu == nullptr
         || edit_menu == nullptr || view_menu == nullptr || mode_menu == nullptr
         || project_toolbar == nullptr
@@ -13250,6 +13353,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_tabs->tabText(0) != tr("Rig")
         || live_tabs->tabText(1) != tr("Control Map")
         || live_tabs->tabText(2) != tr("Scenes")
+        || edit_live_project == nullptr
+        || live_audio_period == nullptr
+        || live_audio_period->minimum() != 1
+        || live_audio_period->maximum() <= 2048
+        || live_audio_gain == nullptr || live_audio_gain->maximum() <= 400.0
+        || live_audio_sensitivity == nullptr
+        || live_audio_sensitivity->minimum() != 0.0
+        || live_audio_sensitivity->maximum() <= 400.0
         || live_freeze == nullptr || !live_freeze->isCheckable()
         || live_blackout == nullptr || !live_blackout->isCheckable()
         || export_action_ == nullptr || current_frame_export_action_ == nullptr
@@ -13265,6 +13376,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+
+    // Authoring is a view change, not a transport stop. Exercise the actual
+    // Live-header button so a future UI refactor cannot quietly reintroduce
+    // the old teardown call while MIDI/OSC edits continue to work.
+    setLiveMode(true);
+    edit_live_project->click();
+    if (workspace_stack_->currentWidget() != editor_workspace_
+        || !live_workspace_->isLiveActive()) {
+        live_workspace_->setLiveActive(false);
+        if (error != nullptr) {
+            *error = tr("Opening the project editor interrupted the Live runtime.");
+        }
+        return false;
+    }
+    live_workspace_->setLiveActive(false);
 
     layers_dock_->setFloating(true);
     layers_dock_->hide();
@@ -14076,7 +14202,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_antialias_threshold_->minimum() != 0.0
         || post_antialias_threshold_->maximum() != 1.0
         || post_antialias_passes_->minimum() != 1
-        || post_antialias_passes_->maximum() != 4
+        || post_antialias_passes_->maximum() != kMaximumIntegerParameter
         || wave_audio_response_ == nullptr
         || effect_audio_response_ == nullptr
         || wave_audio_response_->count() < 13
@@ -14211,6 +14337,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     const int previous_effect_category = effect_category_filter_;
     bool effect_ranges_valid = true;
+    bool particle_ranges_valid = false;
+    bool glow_ranges_valid = false;
+    bool blur_ranges_valid = false;
+    bool block_ranges_valid = false;
     {
         const QSignalBlocker type_blocker(effect_type_);
         const QSignalBlocker intensity_blocker(effect_intensity_);
@@ -14224,49 +14354,56 @@ bool MainWindow::runSmokeChecks(QString* error) {
             static_cast<int>(pvt::EffectType::ParticleField));
         effect_type_->setCurrentIndex(particle_type);
         updateEffectEditorVisibility();
-        effect_ranges_valid = particle_type >= 0
-                              && effect_radius_->minimum() > 0.0
-                              && effect_threshold_->minimum() == 0.0
-                              && effect_threshold_->maximum() == 1.0;
+        particle_ranges_valid = particle_type >= 0
+                                && effect_radius_->minimum() > 0.0
+                                && effect_threshold_->minimum() == 0.0
+                                && effect_threshold_->maximum() == 1.0;
 
         populate_effect_types(effect_type_, LightAndEnergyEffects);
         const int glow_type = effect_type_->findData(
             static_cast<int>(pvt::EffectType::Glow));
         effect_type_->setCurrentIndex(glow_type);
         updateEffectEditorVisibility();
-        effect_ranges_valid = effect_ranges_valid
-                              && glow_type >= 0
-                              && effect_radius_->minimum() == 0.0
-                              && effect_threshold_->maximum() == 64.0;
+        glow_ranges_valid = glow_type >= 0
+                            && effect_radius_->minimum() == 0.0
+                            && std::abs(effect_threshold_->maximum()
+                                        - kMaximumRenderParameter)
+                                   < 0.0001;
 
         populate_effect_types(effect_type_, BlurEffects);
         const int blur_type = effect_type_->findData(
             static_cast<int>(pvt::EffectType::Blur));
         effect_type_->setCurrentIndex(blur_type);
         updateEffectEditorVisibility();
-        effect_ranges_valid = effect_ranges_valid
-                              && blur_type >= 0
-                              && effect_radius_->minimum() == 0.0
-                              && effect_blur_passes_->minimum() == 1
-                              && effect_blur_passes_->maximum() == 16
-                              && effect_blur_samples_->minimum() == 2
-                              && effect_blur_samples_->maximum() == 129;
+        blur_ranges_valid = blur_type >= 0
+                            && effect_radius_->minimum() == 0.0
+                            && effect_blur_passes_->minimum() == 1
+                            && effect_blur_passes_->maximum()
+                                   == kMaximumIntegerParameter
+                            && effect_blur_samples_->minimum() == 2
+                            && effect_blur_samples_->maximum()
+                                   == kMaximumIntegerParameter;
         double block_scale_maximum = 1.5;
         synchronize_block_scale_maximum_editor(
             effect_frequency_, 2.0, block_scale_maximum);
-        effect_ranges_valid = effect_ranges_valid
-                              && effect_frequency_->minimum() == 2.0
-                              && effect_frequency_->value() == 2.0
-                              && block_scale_maximum == 2.0;
+        block_ranges_valid = effect_frequency_->minimum() == 2.0
+                             && effect_frequency_->value() == 2.0
+                             && block_scale_maximum == 2.0;
         synchronize_block_scale_maximum_editor(
             effect_frequency_, 0.25, block_scale_maximum);
-        effect_ranges_valid = effect_ranges_valid
-                              && effect_frequency_->minimum() == 0.25;
+        block_ranges_valid = block_ranges_valid
+                             && effect_frequency_->minimum() == 0.25;
+        effect_ranges_valid = particle_ranges_valid && glow_ranges_valid
+                              && blur_ranges_valid && block_ranges_valid;
     }
     setEffectCategory(previous_effect_category);
     if (!effect_ranges_valid) {
         if (error != nullptr) {
-            *error = tr("Effect editor ranges do not match Particle Field, Glow, or Block Scale validation.");
+            *error = tr("Effect editor ranges do not match validation (particle %1, glow %2, blur %3, block %4).")
+                .arg(particle_ranges_valid)
+                .arg(glow_ranges_valid)
+                .arg(blur_ranges_valid)
+                .arg(block_ranges_valid);
         }
         return false;
     }
@@ -14595,22 +14732,23 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // Per-item routing is editable only for synchronized items while the
-    // effective active clock is Music.
+    // Per-item routing stays editable for free-running and synchronized items;
+    // synchronization is an independent timing choice. The profile's explicit
+    // synchronized-only switch remains available when that policy is wanted.
     if (const auto wave = selectedWaveIndex()) {
         const bool synchronized = config_.waves[*wave].synchronized;
         config_.waves[*wave].synchronized = false;
         loadSelectedWave();
-        const bool disabled_when_free = !wave_audio_response_->isEnabled();
+        const bool enabled_when_free = wave_audio_response_->isEnabled();
         config_.waves[*wave].synchronized = true;
         loadSelectedWave();
         const bool enabled_when_synchronized =
             wave_audio_response_->isEnabled();
         config_.waves[*wave].synchronized = synchronized;
         loadSelectedWave();
-        if (!disabled_when_free || !enabled_when_synchronized) {
+        if (!enabled_when_free || !enabled_when_synchronized) {
             if (error != nullptr) {
-                *error = tr("Wave Audio Response did not follow synchronization state.");
+                *error = tr("Wave Audio Response was artificially gated by synchronization state.");
             }
             return false;
         }
@@ -14619,16 +14757,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const bool synchronized = config_.effects[*effect].synchronized;
         config_.effects[*effect].synchronized = false;
         loadSelectedEffect();
-        const bool disabled_when_free = !effect_audio_response_->isEnabled();
+        const bool enabled_when_free = effect_audio_response_->isEnabled();
         config_.effects[*effect].synchronized = true;
         loadSelectedEffect();
         const bool enabled_when_synchronized =
             effect_audio_response_->isEnabled();
         config_.effects[*effect].synchronized = synchronized;
         loadSelectedEffect();
-        if (!disabled_when_free || !enabled_when_synchronized) {
+        if (!enabled_when_free || !enabled_when_synchronized) {
             if (error != nullptr) {
-                *error = tr("Effect Audio Response did not follow synchronization state.");
+                *error = tr("Effect Audio Response was artificially gated by synchronization state.");
             }
             return false;
         }

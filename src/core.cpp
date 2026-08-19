@@ -97,6 +97,21 @@ bool finite_in_range(double value, double minimum, double maximum) {
     return std::isfinite(value) && value >= minimum && value <= maximum;
 }
 
+bool finite_render_parameter(double value) {
+    const double maximum = maximum_render_parameter_magnitude();
+    return finite_in_range(value, -maximum, maximum);
+}
+
+bool nonnegative_render_parameter(double value) {
+    return finite_in_range(value, 0.0,
+                           maximum_render_parameter_magnitude());
+}
+
+bool positive_render_parameter(double value) {
+    return std::isfinite(value) && value > 0.0
+           && value <= maximum_render_parameter_magnitude();
+}
+
 bool valid_name(const std::string& value) {
     if (value.size() > kMaximumNameBytes) {
         return false;
@@ -295,12 +310,10 @@ bool valid_enum(PathHandleMode value) {
 
 bool valid_path_binding(const PathBinding& binding,
                         const std::vector<CubicMotionPath>& paths) {
-    if (binding.cycles_per_loop < -1000 || binding.cycles_per_loop > 1000
-        || !finite_in_range(binding.phase_degrees, -36000.0, 36000.0)
-        || !finite_in_range(binding.offset_x, -10.0, 10.0)
-        || !finite_in_range(binding.offset_y, -10.0, 10.0)
-        || !finite_in_range(binding.resolved_tangent_degrees,
-                            -360.0, 360.0)) {
+    if (!finite_render_parameter(binding.phase_degrees)
+        || !finite_render_parameter(binding.offset_x)
+        || !finite_render_parameter(binding.offset_y)
+        || !finite_render_parameter(binding.resolved_tangent_degrees)) {
         return false;
     }
     if (!binding.enabled) return true;
@@ -606,8 +619,8 @@ bool effective_frame_count_impl(int stored_count, double fps,
         message = "Frame count must be between 2 and INT_MAX.";
         return false;
     }
-    if (!finite_in_range(fps, 1.0, 240.0)) {
-        message = "FPS must be finite and between 1 and 240.";
+    if (!positive_render_parameter(fps)) {
+        message = "FPS must be finite and positive within the renderer's numeric representation.";
         return false;
     }
     if (clock.mode != ClockMode::Music) {
@@ -1118,13 +1131,9 @@ ResolvedAudioResponse resolve_item_audio_response(
         || (audio.synchronized_only && !synchronized)) {
         return resolved;
     }
-    // The per-item selector is deliberately available only to synchronized
-    // items. Free-running items continue to follow the profile's explicit
-    // synchronized-only/category routing policy and source.
-    if (!synchronized) {
-        resolved.enabled = category_default;
-        return resolved;
-    }
+    // Synchronization and audio response are independent artist controls.
+    // The profile's synchronized-only switch may deliberately exclude a free
+    // item, but otherwise its explicit per-item route is honored.
     switch (item_mode) {
         case AudioResponseMode::Default:
             resolved.enabled = category_default;
@@ -1182,9 +1191,9 @@ bool valid_audio_reactive(const AudioReactiveConfig& audio) {
     return valid_enum(audio.wave_source)
            && valid_enum(audio.effect_source)
            && valid_enum(audio.color_source)
-           && finite_in_range(audio.wave_amount, -1.0, 10.0)
-           && finite_in_range(audio.effect_amount, -1.0, 10.0)
-           && finite_in_range(audio.color_amount_degrees, -3600.0, 3600.0);
+           && finite_render_parameter(audio.wave_amount)
+           && finite_render_parameter(audio.effect_amount)
+           && finite_render_parameter(audio.color_amount_degrees);
 }
 
 bool effect_has_render_work(const EffectConfig& effect) {
@@ -2349,8 +2358,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (config.total_frames < 2 || config.total_frames > kMaximumFrames) {
         return invalid_result("Frame count must be between 2 and INT_MAX.");
     }
-    if (!finite_in_range(config.fps, 1.0, 240.0)) {
-        return invalid_result("FPS must be finite and between 1 and 240.");
+    if (!positive_render_parameter(config.fps)) {
+        return invalid_result("FPS must be finite and positive within the renderer's numeric representation.");
     }
     if (!valid_enum(config.clock.mode)
         || !valid_enum(config.clock.interpolation)
@@ -2369,13 +2378,12 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || config.clock.time_interval_microseconds < 1
         // These fields are persisted as int64 microseconds. Positivity is the
         // only additional semantic requirement for an interval.
-        || !finite_in_range(config.clock.phase_offset_degrees,
-                            -36000.0, 36000.0)) {
+        || !finite_render_parameter(config.clock.phase_offset_degrees)) {
         return invalid_result("Clock intervals, offset, or phase are outside their allowed range.");
     }
     ParsedMeter parsed_meter;
     std::string meter_error;
-    if (!finite_in_range(config.clock.meter.bpm, 1.0, 1000.0)
+    if (!positive_render_parameter(config.clock.meter.bpm)
         || config.clock.meter.tempo_note_denominator < 1
         || config.clock.meter.tempo_note_denominator > kMaximumMeterValue
         || !parse_meter_expression(config.clock.meter.expression,
@@ -2398,7 +2406,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || (!music.source_format.empty() && !valid_name(music.source_format))
         || !finite_in_range(music.duration_seconds, 0.0,
                             kMaximumMusicDurationSeconds)
-        || !finite_in_range(music.detected_bpm, 0.0, 1000.0)
+        || !nonnegative_render_parameter(music.detected_bpm)
         || !finite_in_range(music.tempo_confidence, 0.0, 1.0)
         || music.beat_times_seconds.size() > kMaximumMusicBeats
         || music.tempo_points.size() > kMaximumMusicTempoPoints
@@ -2420,7 +2428,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         if (!std::isfinite(tempo.time_seconds) || tempo.time_seconds < 0.0
             || tempo.time_seconds > music.duration_seconds
             || tempo.time_seconds <= previous_tempo_time
-            || !finite_in_range(tempo.bpm, 1.0, 1000.0)
+            || !positive_render_parameter(tempo.bpm)
             || !finite_in_range(tempo.confidence, 0.0, 1.0)) {
             return invalid_result(
                 "Music tempo points must be ordered and contain bounded time, BPM, and confidence values.");
@@ -2532,12 +2540,12 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         for (const CubicPathNode& node : path.nodes) {
             if (node.id == 0U || !node_identifiers.insert(node.id).second
                 || !valid_enum(node.handle_mode)
-                || !finite_in_range(node.x, -10.0, 10.0)
-                || !finite_in_range(node.y, -10.0, 10.0)
-                || !finite_in_range(node.in_x, -10.0, 10.0)
-                || !finite_in_range(node.in_y, -10.0, 10.0)
-                || !finite_in_range(node.out_x, -10.0, 10.0)
-                || !finite_in_range(node.out_y, -10.0, 10.0)) {
+                || !finite_render_parameter(node.x)
+                || !finite_render_parameter(node.y)
+                || !finite_render_parameter(node.in_x)
+                || !finite_render_parameter(node.in_y)
+                || !finite_render_parameter(node.out_x)
+                || !finite_render_parameter(node.out_y)) {
                 return invalid_result(
                     "A reusable motion path contains an invalid node, handle, or duplicate ID.");
             }
@@ -2559,12 +2567,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                   + " has an invalid or overlong name.");
         }
         if (!valid_enum(wave.audio_response)
-            || !finite_in_range(wave.x_percent, -100.0, 200.0)
-            || !finite_in_range(wave.y_percent, -100.0, 200.0)
-            || !finite_in_range(wave.amplitude, 0.0, 10.0)
-            || !finite_in_range(wave.spatial_frequency, 0.0, 1000.0)
-            || wave.cycles_per_loop < -1000 || wave.cycles_per_loop > 1000
-            || !finite_in_range(wave.phase_degrees, -36000.0, 36000.0)
+            || !finite_render_parameter(wave.x_percent)
+            || !finite_render_parameter(wave.y_percent)
+            || !finite_render_parameter(wave.amplitude)
+            || !nonnegative_render_parameter(wave.spatial_frequency)
+            || !finite_render_parameter(wave.phase_degrees)
             || !finite_in_range(wave.direction, 0.0, 1.0)
             || !valid_path_binding(wave.path, config.motion_paths)) {
             return invalid_result("Wave " + std::to_string(index + 1U)
@@ -2578,13 +2585,12 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             return invalid_result("Every wave, swing, and effect must have a unique nonzero ID.");
         }
         if (!valid_name(swing.name) || !valid_enum(swing.waveform)
-            || !finite_in_range(swing.amount, -2.0, 2.0)
-            || swing.cycles_per_loop < 0 || swing.cycles_per_loop > 1000
-            || !finite_in_range(swing.phase_degrees, -36000.0, 36000.0)
+            || !finite_render_parameter(swing.amount)
+            || !finite_render_parameter(swing.phase_degrees)
             || !finite_in_range(swing.shape, 0.0, 1.0)
-            || !finite_in_range(swing.center_x, -10.0, 10.0)
-            || !finite_in_range(swing.center_y, -10.0, 10.0)
-            || !finite_in_range(swing.radius, 0.0, 10.0)) {
+            || !finite_render_parameter(swing.center_x)
+            || !finite_render_parameter(swing.center_y)
+            || !nonnegative_render_parameter(swing.radius)) {
             return invalid_result("Swing " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -2608,31 +2614,24 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !valid_enum(effect.audio_response)
             || !valid_enum(effect.edge_mode)
             || !valid_enum(effect.blur_type)
-            || effect.cycles_per_loop < -1000 || effect.cycles_per_loop > 1000
-            || !finite_in_range(effect.phase_degrees, -36000.0, 36000.0)
-            || !finite_in_range(effect.intensity, 0.0, 100.0)
-            || !finite_in_range(effect.magnitude, 0.0, 10.0)
-            || !finite_in_range(
-                effect.frequency, 0.0,
-                effect.type == EffectType::ParticleField
-                    ? static_cast<double>((std::numeric_limits<int>::max)())
-                    : 1000.0)
-            || !finite_in_range(effect.secondary, -100.0, 100.0)
-            || !finite_in_range(effect.center_x, -10.0, 10.0)
-            || !finite_in_range(effect.center_y, -10.0, 10.0)
-            || !finite_in_range(effect.angle_degrees, -36000.0, 36000.0)
-            || !finite_in_range(effect.radius_pixels, 0.0,
-                                static_cast<double>(kMaximumDimension))
-            || !finite_in_range(effect.threshold, 0.0, 64.0)
+            || !finite_render_parameter(effect.phase_degrees)
+            || !nonnegative_render_parameter(effect.intensity)
+            || !nonnegative_render_parameter(effect.magnitude)
+            || !nonnegative_render_parameter(effect.frequency)
+            || !finite_render_parameter(effect.secondary)
+            || !finite_render_parameter(effect.center_x)
+            || !finite_render_parameter(effect.center_y)
+            || !finite_render_parameter(effect.angle_degrees)
+            || !nonnegative_render_parameter(effect.radius_pixels)
+            || !nonnegative_render_parameter(effect.threshold)
             || !finite_in_range(effect.soft_knee, 0.0, 1.0)
-            || !finite_in_range(effect.area_radius, 0.0, 10.0)
-            || effect.blur_passes < 1 || effect.blur_passes > 16
-            || effect.blur_samples < 2 || effect.blur_samples > 129
+            || !nonnegative_render_parameter(effect.area_radius)
+            || effect.blur_passes < 1
+            || effect.blur_samples < 2
             || !finite_in_range(effect.blur_minimum, 0.0, 1.0)
             || !finite_in_range(effect.blur_maximum, 0.0, 1.0)
             || effect.blur_minimum > effect.blur_maximum
             || effect.blur_pulses_per_cycle < 1
-            || effect.blur_pulses_per_cycle > 1000
             || !valid_path_binding(effect.path, config.motion_paths)) {
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
@@ -2642,11 +2641,13 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 || effect.magnitude <= 0.0
                 || effect.frequency < effect.magnitude
                 || effect.secondary < 0.0
+                || effect.secondary
+                       > static_cast<double>((std::numeric_limits<int>::max)())
                 || std::floor(effect.secondary) != effect.secondary)) {
             return invalid_result(
                 "Block scale effect " + std::to_string(index + 1U)
                 + " requires a mix from 0 to 1, positive ordered multipliers, "
-                  "and whole quantization steps from 0 to 100.");
+                  "and whole quantization steps fitting signed int.");
         }
         if (effect.type == EffectType::ParticleField
             && (effect.frequency < 1.0
@@ -2664,11 +2665,13 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         if (effect.type == EffectType::Glitch
             && (effect.intensity > 1.0
                 || effect.frequency < 1.0
+                || effect.frequency
+                       > static_cast<double>((std::numeric_limits<int>::max)())
                 || std::floor(effect.frequency) != effect.frequency
                 || effect.secondary < 0.0 || effect.secondary > 1.0)) {
             return invalid_result(
                 "Glitch effect " + std::to_string(index + 1U)
-                + " requires a mix from 0 to 1, a positive whole band count, "
+                + " requires a mix from 0 to 1, a positive whole band count fitting signed int, "
                   "and an RGB split from 0 to 1.");
         }
         if (effect.type == EffectType::Starburst
@@ -2746,16 +2749,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             "range; reduce effect intensity or the number of enabled effects.");
     }
 
-    if (!finite_in_range(config.phrase_warp, 0.0, 2.0)
+    if (!finite_render_parameter(config.phrase_warp)
         || !finite_in_range(config.ghost_mix, 0.0, 1.0)
-        || !finite_in_range(config.ghost_lag_degrees, -360.0, 360.0)
-        || !finite_in_range(config.displacement, 0.0, 1000.0)
-        || !finite_in_range(config.wave_depth, 0.0, 10.0)
-        || !finite_in_range(config.spiral_frequency, 0.0, 1000.0)
-        || config.spiral_arms < -100 || config.spiral_arms > 100
-        || !finite_in_range(config.wall_frequency, 0.0, 1000.0)
-        || !finite_in_range(config.wall_mix, 0.0, 5.0)
-        || config.hue_cycles < -100 || config.hue_cycles > 100
+        || !finite_render_parameter(config.ghost_lag_degrees)
+        || !nonnegative_render_parameter(config.displacement)
+        || !nonnegative_render_parameter(config.wave_depth)
+        || !nonnegative_render_parameter(config.spiral_frequency)
+        || !nonnegative_render_parameter(config.wall_frequency)
+        || !finite_render_parameter(config.wall_mix)
         || !finite_in_range(config.saturation, 0.0, 1.0)) {
         return invalid_result("One or more pattern, rhythm, or lighting values are out of range.");
     }
@@ -2815,10 +2816,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                         <= std::max(starting.reference_width,
                                                     starting.reference_height);
     if (!valid_enum(starting.mode)
-        || starting.red_steps < 1 || starting.red_steps > 65536
-        || starting.green_steps < 1 || starting.green_steps > 65536
-        || starting.blue_steps < 1 || starting.blue_steps > 65536
-        || starting.alpha_steps < 1 || starting.alpha_steps > 65536
+        || starting.red_steps < 1
+        || starting.green_steps < 1
+        || starting.blue_steps < 1
+        || starting.alpha_steps < 1
         || !finite_in_range(starting.red_minimum, 0.0, 1.0)
         || !finite_in_range(starting.red_maximum, 0.0, 1.0)
         || starting.red_minimum > starting.red_maximum
@@ -2832,16 +2833,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_in_range(starting.alpha_maximum, 0.0, 1.0)
         || starting.alpha_minimum > starting.alpha_maximum
         || starting.kaleidoscope.mirrored_segments < 2
-        || starting.kaleidoscope.mirrored_segments > 256
-        || !finite_in_range(starting.kaleidoscope.rotation_degrees,
-                            -36000.0, 36000.0)
+        || !finite_render_parameter(starting.kaleidoscope.rotation_degrees)
         || !finite_in_range(starting.kaleidoscope.mix, 0.0, 1.0)
-        || !finite_in_range(starting.domain_warp.strength, 0.0, 2.0)
-        || !finite_in_range(starting.domain_warp.scale, 0.01, 64.0)
+        || !nonnegative_render_parameter(starting.domain_warp.strength)
+        || !positive_render_parameter(starting.domain_warp.scale)
         || starting.domain_warp.octaves < 1
-        || starting.domain_warp.octaves > 8
-        || starting.domain_warp.cycles_per_loop < -1000
-        || starting.domain_warp.cycles_per_loop > 1000
         || (!no_reference && !valid_reference)) {
         return invalid_result(
             "Generated starting-color ranges, pattern shaping, compatibility values, or preview reference are invalid.");
@@ -2850,18 +2846,13 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result("The layer transform contains an unknown mirror mode.");
     }
     if (!valid_enum(config.motion.path)
-        || !finite_in_range(config.motion.center_x, -10.0, 10.0)
-        || !finite_in_range(config.motion.center_y, -10.0, 10.0)
-        || !finite_in_range(config.motion.travel_x, 0.0, 10.0)
-        || !finite_in_range(config.motion.travel_y, 0.0, 10.0)
-        || config.motion.cycles_x < -1000 || config.motion.cycles_x > 1000
-        || config.motion.cycles_y < -1000 || config.motion.cycles_y > 1000
-        || !finite_in_range(config.motion.phase_degrees, -36000.0, 36000.0)
-        || config.motion.rotations_per_loop < -1000
-        || config.motion.rotations_per_loop > 1000
-        || !finite_in_range(config.motion.rotation_offset_degrees,
-                            -36000.0, 36000.0)
-        || !finite_in_range(config.motion.scale_pulse, 0.0, 0.95)
+        || !finite_render_parameter(config.motion.center_x)
+        || !finite_render_parameter(config.motion.center_y)
+        || !nonnegative_render_parameter(config.motion.travel_x)
+        || !nonnegative_render_parameter(config.motion.travel_y)
+        || !finite_render_parameter(config.motion.phase_degrees)
+        || !finite_render_parameter(config.motion.rotation_offset_degrees)
+        || !nonnegative_render_parameter(config.motion.scale_pulse)
         || !valid_path_binding(config.motion.custom_path,
                                config.motion_paths)) {
         return invalid_result(
@@ -2871,13 +2862,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (!finite_in_range(config.alpha.minimum, 0.0, 1.0)
         || !finite_in_range(config.alpha.maximum, 0.0, 1.0)
         || config.alpha.minimum > config.alpha.maximum
-        || !finite_in_range(config.alpha.spatial_frequency, 0.0, 1000.0)
-        || config.alpha.cycles_per_loop < -1000
-        || config.alpha.cycles_per_loop > 1000
-        || !finite_in_range(config.alpha.phase_degrees, -36000.0, 36000.0)) {
+        || !nonnegative_render_parameter(config.alpha.spatial_frequency)
+        || !finite_render_parameter(config.alpha.phase_degrees)) {
         return invalid_result("Alpha modulation values are out of range.");
     }
-    if (config.quantization.levels < 2 || config.quantization.levels > 65536
+    if (config.quantization.levels < 2
         || !finite_in_range(config.quantization.mix, 0.0, 1.0)
         || !valid_enum(config.quantization.mode)) {
         return invalid_result("Quantization values are out of range.");
@@ -2886,17 +2875,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_in_range(config.post_process.invert_alpha_mix, 0.0, 1.0)
         || !finite_in_range(config.post_process.antialias_strength, 0.0, 1.0)
         || !finite_in_range(config.post_process.antialias_threshold, 0.0, 1.0)
-        || config.post_process.antialias_passes < 1
-        || config.post_process.antialias_passes > 4) {
+        || config.post_process.antialias_passes < 1) {
         return invalid_result(
             "Post-process inversion mixes, antialias strength/threshold, or pass count are out of range.");
     }
     if (!valid_enum(config.surface.mapping)
-        || config.surface.rotations_per_loop < -1000
-        || config.surface.rotations_per_loop > 1000
-        || !finite_in_range(config.surface.phase_degrees, -36000.0, 36000.0)
+        || !finite_render_parameter(config.surface.phase_degrees)
         || !finite_in_range(config.surface.curvature, 0.0, 1.0)
-        || !finite_in_range(config.surface.lighting, 0.0, 10.0)) {
+        || !nonnegative_render_parameter(config.surface.lighting)) {
         return invalid_result("Surface mapping values are out of range.");
     }
     if ((!config.surface.obj_path.empty()
@@ -2917,13 +2903,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
     const PlaneDisplacementConfig& plane =
         config.surface.plane_displacement;
-    if (!finite_in_range(plane.minimum, -2.0, 2.0)
-        || !finite_in_range(plane.maximum, -2.0, 2.0)
-        || plane.minimum > 0.0 || plane.maximum < 0.0
+    if (!finite_render_parameter(plane.minimum)
+        || !finite_render_parameter(plane.maximum)
         || plane.minimum > plane.maximum
         || !finite_in_range(plane.midpoint, 0.0, 1.0)
         || plane.pixels_per_node < 1
-        || plane.pixels_per_node > kMaximumDimension
         || (!plane.path.empty()
             && !valid_path_text(plane.path, kMaximumPathBytes, false))
         || (plane.sha256.empty() != plane.basename.empty())
@@ -3495,7 +3479,11 @@ std::array<double, 2U> shape_generated_coordinate(
         const double temporal =
             static_cast<double>(starting.domain_warp.cycles_per_loop)
             * loop_phase;
-        for (int octave = 0; octave < starting.domain_warp.octaves;
+        for (int octave = 0;
+             octave < starting.domain_warp.octaves
+                 && frequency
+                        <= static_cast<double>((std::numeric_limits<float>::max)())
+                 && amplitude > 0.0;
              ++octave) {
             const std::uint64_t octave_seed = generated_shape_hash(
                 starting.domain_warp.seed
@@ -4004,8 +3992,7 @@ void apply_coordinate_effect(const Image& source, Image& destination,
     const double perpendicular_x = -axis_y;
     const double perpendicular_y = axis_x;
 
-    const int shake_harmonic = std::max(1, std::min(1000,
-        static_cast<int>(std::lround(effect.frequency))));
+    const double shake_harmonic = std::max(1.0, std::round(effect.frequency));
     const double shake_x = displacement
         * (0.72 * std::sin(shake_harmonic * phase)
            + 0.20 * std::sin((shake_harmonic + 2) * phase + 1.234)
@@ -4025,7 +4012,8 @@ void apply_coordinate_effect(const Image& source, Image& destination,
     const double zoom_octaves = clamp_value(
         effect.magnitude * std::max(0.01, effect.frequency)
             * std::max(1.0, intensity),
-        0.0, 4.0);
+        0.0, static_cast<double>(
+                 (std::numeric_limits<float>::max_exponent) - 1));
     const double zoom_ratio = std::pow(2.0, zoom_octaves);
     const double zoom_scale_a = std::pow(zoom_ratio, zoom_fraction);
     const double zoom_scale_b = zoom_ratio > 1.0e-12

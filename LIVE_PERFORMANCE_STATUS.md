@@ -21,6 +21,9 @@ a device stream as if it were an analyzed music file.
   and last-good-frame contents remain runtime state.
 - Low-latency miniaudio capture with allocation-free callback analysis for
   energy, bands, onset/beat, tempo, centroid, flatness, and chroma features.
+- The complete project editor can be opened without stopping Live input,
+  clocks, rendering, or stage output; each frame uses the current authored
+  project snapshot.
 - Native CoreMIDI input and virtual 24-PPQN clock outputs on macOS, with a safe
   unsupported-platform stub; bounded OSC UDP parsing; full-screen stage output;
   a latest-request real-time frame controller; and scalable studio controls.
@@ -65,9 +68,10 @@ whose provenance was incomplete.
 
 1. Build a fresh Qt-enabled tree on macOS and run the GUI smoke test, including
    a screenshot at the smallest supported window and at increased text scale.
-2. Exercise audio capture at 32, 64, 128, 256, 512, 1024, and 2048 frame
-   periods with an actual interface; verify callback dropout counters and
-   signed latency calibration.
+2. Exercise audio capture at representative small and large user-selected
+   frame periods with an actual interface; verify unsupported device values
+   fail clearly rather than being silently clamped, and verify callback dropout
+   counters plus signed latency calibration.
 3. Test MIDI Learn, CC/note/program/pitch/pressure inputs, MIDI transport and
    24-PPQN clock in/out, OSC bundles, and a foot controller. Confirm project and
    individual layer routes independently.

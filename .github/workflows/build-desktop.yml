@@ -442,7 +442,9 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          Version 5.0.2 makes Wave output prerequisites explicit in the editor. The Wave page now exposes the same generated-pattern displacement and slope-lighting switches as Modifiers, keeps both views synchronized, and warns when an enabled wave cannot affect pixels because both outputs are off. GUI smoke also isolates render checks from a user's persisted strict-GPU preference after verifying that the preference restored correctly.
+          Version 5.0.3 keeps Live input, clocks, rendering, and stage output running while the complete project editor is open, with every live frame using the current authored project snapshot. It also removes artificial round-number ceilings from renderer fields, Live mappings and safety timing, audio buffers, recent-project history, one-shot source duration, and per-item audio routing. Semantic normalized ranges, protocol/format constraints, hostile-input defenses, deterministic real-time workload limits, and representation boundaries remain enforced.
+
+          Version 5.0.2 made Wave output prerequisites explicit in the editor. The Wave page exposes the same generated-pattern displacement and slope-lighting switches as Modifiers, keeps both views synchronized, and warns when an enabled wave cannot affect pixels because both outputs are off.
 
           Version 5.0.1 repaired Ubuntu minizip-ng 4 source-package compatibility and headless CLI OpenGL initialization/teardown. Portable GPU admission follows tested platform behavior: Windows includes flat Plane rotation plus Cylinder, Sphere, and Cube, while Linux retains the three curved primitives and keeps flat Plane rotation on CPU.
 

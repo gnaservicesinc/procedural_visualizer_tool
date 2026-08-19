@@ -116,7 +116,10 @@ float2 shape_generated_coordinate(constant FrameConstants& frame,
                                * frame.phases.x;
         const ulong seed = (ulong(frame.base_flags.w) << 32u)
                            | ulong(frame.shaping_uint.w);
-        for (uint octave = 0u; octave < frame.shaping_uint.y; ++octave) {
+        for (uint octave = 0u;
+             octave < frame.shaping_uint.y && isfinite(frequency)
+                 && amplitude > 0.0f;
+             ++octave) {
             const ulong octave_seed = generated_shape_hash(
                 seed ^ (ulong(octave) + 1ul) * 0xd1b54a32d192ed03ul);
             const float phase_x = kTau * generated_shape_unit(octave_seed);
@@ -1345,7 +1348,7 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
             const float octaves = clamp(
                 effect.primary.z * max(0.01f, effect.primary.w)
                     * max(1.0f, intensity),
-                0.0f, 4.0f);
+                0.0f, 127.0f); // largest finite base-2 float exponent
             const float ratio = pow(2.0f, octaves);
             const float scale_a = pow(ratio, fraction);
             const float scale_b = ratio > 1.0e-7f ? scale_a / ratio : scale_a;
@@ -1379,17 +1382,16 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
         sampled = sample_bilinear(source, sample_x, sample_y,
                                   width, height, effect.kind.z);
     } else if (effect.kind.x == 2u) {
-        const int harmonic = clamp(
-            int(floor(effect.primary.w + 0.5f)), 1, 1000);
+        const float harmonic = max(1.0f, floor(effect.primary.w + 0.5f));
         const float phase = effect.primary.x;
         const float shake_x = displacement
-            * (0.72f * sin(float(harmonic) * phase)
-               + 0.20f * sin(float(harmonic + 2) * phase + 1.234f)
-               + 0.08f * sin(float(harmonic + 4) * phase + 3.456f));
+            * (0.72f * sin(harmonic * phase)
+               + 0.20f * sin((harmonic + 2.0f) * phase + 1.234f)
+               + 0.08f * sin((harmonic + 4.0f) * phase + 3.456f));
         const float shake_y = displacement * effect.placement.x
-            * (0.70f * cos(float(harmonic + 1) * phase + 0.731f)
-               + 0.22f * sin(float(harmonic + 3) * phase + 2.718f)
-               + 0.08f * cos(float(harmonic + 5) * phase + 4.123f));
+            * (0.70f * cos((harmonic + 1.0f) * phase + 0.731f)
+               + 0.22f * sin((harmonic + 3.0f) * phase + 2.718f)
+               + 0.08f * cos((harmonic + 5.0f) * phase + 4.123f));
         const float rotated_x = axis_x * shake_x - axis_y * shake_y;
         const float rotated_y = axis_y * shake_x + axis_x * shake_y;
         sampled = sample_bilinear(source, x - rotated_x * area,

@@ -189,6 +189,20 @@ int main(int argc, char** argv) {
         return fail(5, "opaque nearest/exterior coverage is incorrect");
     }
 
+    // Custom OBJ lighting must honor authored values above the former hidden
+    // renderer clamp of 10, just like the analytic surfaces and editor.
+    pvt::Image lighting_ten;
+    pvt::Image lighting_eleven;
+    if (!pvt::detail::apply_obj_surface_mapping(
+            opaque, lighting_ten, right_edge,
+            0, 5.729577951, 1.0, 10.0, 0.0, &error)
+        || !pvt::detail::apply_obj_surface_mapping(
+            opaque, lighting_eleven, right_edge,
+            0, 5.729577951, 1.0, 11.0, 0.0, &error)
+        || lighting_ten.pixels == lighting_eleven.pixels) {
+        return fail(15, "custom OBJ lighting still clamps authored values at 10");
+    }
+
     // Integer rotations close at the loop endpoint.
     pvt::Image seam_start;
     pvt::Image seam_end;

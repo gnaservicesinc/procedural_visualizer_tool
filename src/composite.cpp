@@ -1116,15 +1116,10 @@ ValidationResult validate(const LiveConfig& live) {
         endpoints.reserve(live.endpoints.size());
         for (std::size_t index = 0U; index < live.endpoints.size(); ++index) {
             const LiveEndpointConfig& endpoint = live.endpoints[index];
-            constexpr std::int64_t maximum_latency = INT64_C(10000000);
             if (!valid_uuid(endpoint.uuid)
                 || !valid_live_text(endpoint.name)
                 || !valid_live_enum(endpoint.protocol)
-                || !valid_live_enum(endpoint.direction)
-                || endpoint.input_latency_microseconds < -maximum_latency
-                || endpoint.input_latency_microseconds > maximum_latency
-                || endpoint.output_latency_microseconds < -maximum_latency
-                || endpoint.output_latency_microseconds > maximum_latency) {
+                || !valid_live_enum(endpoint.direction)) {
                 return invalid_result(
                     "Live endpoint " + std::to_string(index + 1U)
                     + " has an invalid UUID, name, protocol, direction, or latency calibration.");
@@ -1141,8 +1136,7 @@ ValidationResult validate(const LiveConfig& live) {
         for (std::size_t index = 0U; index < live.scenes.size(); ++index) {
             const LiveSceneConfig& scene = live.scenes[index];
             if (!valid_uuid(scene.uuid) || !valid_live_text(scene.name)
-                || scene.transition_milliseconds < 0
-                || scene.transition_milliseconds > 60000) {
+                || scene.transition_milliseconds < 0) {
                 return invalid_result(
                     "Live scene " + std::to_string(index + 1U)
                     + " has an invalid UUID, name, or transition duration.");
@@ -1196,14 +1190,11 @@ ValidationResult validate(const LiveConfig& live) {
                 || mapping.input_minimum >= mapping.input_maximum
                 || !std::isfinite(mapping.output_minimum)
                 || !std::isfinite(mapping.output_maximum)
-                || std::fabs(mapping.output_minimum) > 1.0e12
-                || std::fabs(mapping.output_maximum) > 1.0e12
                 || !std::isfinite(mapping.curve)
-                || mapping.curve < 0.01 || mapping.curve > 100.0
+                || mapping.curve <= 0.0
                 || !std::isfinite(mapping.dead_zone)
                 || mapping.dead_zone < 0.0 || mapping.dead_zone >= 1.0
-                || mapping.smoothing_milliseconds < 0
-                || mapping.smoothing_milliseconds > 60000) {
+                || mapping.smoothing_milliseconds < 0) {
                 return invalid_result(
                     "Live mapping " + std::to_string(index + 1U)
                     + " has an invalid source, target, transform, or smoothing value.");
@@ -1285,9 +1276,8 @@ ValidationResult validate(const LiveConfig& live) {
             const LiveClockInputConfig& clock = live.clock_inputs[index];
             if (!valid_live_enum(clock.target)
                 || !valid_live_enum(clock.source)
-                || clock.audio_channel < 0 || clock.audio_channel > 256
+                || clock.audio_channel < 0
                 || clock.holdover_milliseconds < 0
-                || clock.holdover_milliseconds > 60000
                 || (clock.target == LiveClockTarget::Project
                     && !clock.layer_uuid.empty())
                 || (clock.target == LiveClockTarget::Layer
@@ -1359,11 +1349,8 @@ ValidationResult validate(const LiveConfig& live) {
 
         if (!valid_live_enum(live.safety.dropout_behavior)
             || live.safety.watchdog_timeout_milliseconds < 1
-            || live.safety.watchdog_timeout_milliseconds > 60000
             || live.safety.audio_dropout_grace_milliseconds < 0
-            || live.safety.audio_dropout_grace_milliseconds > 60000
-            || live.safety.last_good_frame_timeout_milliseconds < 0
-            || live.safety.last_good_frame_timeout_milliseconds > 600000) {
+            || live.safety.last_good_frame_timeout_milliseconds < 0) {
             return invalid_result(
                 "Live watchdog or dropout-safety preferences are outside their supported range.");
         }
@@ -1454,11 +1441,6 @@ ValidationResult validate(const ProjectConfig& project) {
                                       ? "The project clock has no renderable duration."
                                       : master_count_error);
         }
-        const double master_duration =
-            project.canvas.clock.mode == ClockMode::Music
-                    && project.canvas.clock.music.duration_seconds > 0.0
-                ? project.canvas.clock.music.duration_seconds
-                : static_cast<double>(master_frame_count) / project.canvas.fps;
         std::unordered_set<std::string> closed_groups;
         std::string open_group;
         for (std::size_t index = 0U; index < project.layers.size(); ++index) {
@@ -1524,20 +1506,6 @@ ValidationResult validate(const ProjectConfig& project) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " is invalid: " + layer_validation.message,
                                       layer_validation.estimated_peak_bytes);
-            }
-            const LayerClockConfig& layer_clock = layer.render.layer_clock;
-            if (layer_clock.enabled
-                && layer_clock.clock.mode == ClockMode::Music
-                && (layer_clock.scale == LayerClockScale::PlayOnce
-                    || layer_clock.scale
-                           == LayerClockScale::PlayOnceThenProject)
-                && layer_clock.clock.music.duration_seconds
-                       > master_duration + 1.0e-9) {
-                return invalid_result(
-                    "Layer " + std::to_string(index + 1U)
-                    + " uses a play-once clock source longer than the project. "
-                      "Choose Smart loop fit, Straight fit, or Original-speed loop "
-                      "to keep the project seam smooth.");
             }
             if (layer_effectively_enabled(project, layer)
                 && layer.opacity > 0.0) {

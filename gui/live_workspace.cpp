@@ -56,6 +56,20 @@ namespace {
 
 constexpr int kUiTickMilliseconds = 20;
 constexpr int kMaximumClockCatchupTicks = 8;
+constexpr int kMaximumUiInteger = (std::numeric_limits<int>::max)();
+constexpr double kMaximumLiveMappingMagnitude =
+    static_cast<double>((std::numeric_limits<float>::max)());
+constexpr double kMaximumAudioPercent =
+    kMaximumLiveMappingMagnitude * 100.0;
+
+int live_frame_interval_milliseconds(double fps) {
+    if (!std::isfinite(fps) || fps <= 0.0) return 1;
+    const double milliseconds = 1000.0 / fps;
+    if (milliseconds >= static_cast<double>(kMaximumUiInteger)) {
+        return kMaximumUiInteger;
+    }
+    return std::max(1, static_cast<int>(std::lround(milliseconds)));
+}
 
 QString uuid_text() {
     return QUuid::createUuid().toString(QUuid::WithoutBraces).toLower();
@@ -326,8 +340,10 @@ struct LiveWorkspace::Impl {
     QSpinBox* audio_grace = nullptr;
     QSpinBox* last_good_timeout = nullptr;
     StudioKnob* gain = nullptr;
+    QDoubleSpinBox* gain_value = nullptr;
     StudioKnob* sensitivity = nullptr;
-    QComboBox* audio_period = nullptr;
+    QDoubleSpinBox* sensitivity_value = nullptr;
+    QSpinBox* audio_period = nullptr;
     QSpinBox* latency = nullptr;
     QLabel* detected_tempo = nullptr;
     QComboBox* project_clock = nullptr;
@@ -505,7 +521,10 @@ void LiveWorkspace::Impl::buildUi() {
     live_button->setCheckable(true);
     live_button->setMinimumWidth(105);
     header_layout->addWidget(live_button);
-    auto* edit = new QPushButton(q->tr("Back to Edit"));
+    auto* edit = new QPushButton(q->tr("Edit Project"));
+    edit->setObjectName(QStringLiteral("editLiveProjectButton"));
+    edit->setToolTip(q->tr(
+        "Open the full project editor without stopping Live input, rendering, or stage output."));
     header_layout->addWidget(edit);
     root->addWidget(header);
 
@@ -577,10 +596,8 @@ void LiveWorkspace::Impl::buildUi() {
 
     QObject::connect(live_button, &QPushButton::toggled, q,
                      [this](bool checked) { setActive(checked); });
-    QObject::connect(edit, &QPushButton::clicked, q, [this] {
-        setActive(false);
-        emit q->requestEditMode();
-    });
+    QObject::connect(edit, &QPushButton::clicked, q,
+                     [this] { emit q->requestEditMode(); });
     QObject::connect(output_button, &QPushButton::clicked, q,
                      [this] { toggleOutput(); });
     QObject::connect(freeze_button, &QPushButton::toggled, q,
@@ -641,7 +658,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     form->addRow(q->tr("Foot role / source"), foot_row);
     osc_role = new QComboBox;
     osc_port = new QSpinBox;
-    osc_port->setRange(1024, 65535);
+    osc_port->setRange(1, 65535);
     osc_port->setValue(QSettings().value(QStringLiteral("live/oscPort"), 7000).toInt());
     osc_local = new QCheckBox(q->tr("Local only"));
     osc_local->setChecked(QSettings().value(QStringLiteral("live/oscLocalOnly"), true).toBool());
@@ -656,37 +673,69 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
 
     QFormLayout* audio_form = nullptr;
     QWidget* analysis = titled_group(q->tr("AUDIO ANALYSIS + CALIBRATION"), audio_form);
-    audio_period = new QComboBox;
-    for (const int frames : {32, 64, 128, 256, 512, 1024, 2048}) {
-        audio_period->addItem(q->tr("%1 frames").arg(frames), frames);
-    }
+    audio_period = new QSpinBox;
+    audio_period->setObjectName(QStringLiteral("liveAudioPeriodFrames"));
+    audio_period->setRange(1, kMaximumUiInteger);
+    audio_period->setSuffix(q->tr(" frames"));
     const int stored_period = QSettings().value(
         QStringLiteral("live/audioPeriodFrames"), 128).toInt();
-    audio_period->setCurrentIndex(std::max(0, audio_period->findData(stored_period)));
+    audio_period->setValue(std::max(1, stored_period));
     audio_period->setToolTip(q->tr(
         "Machine-local capture callback size. Smaller buffers reduce latency but demand steadier CPU scheduling."));
     audio_form->addRow(q->tr("Input buffer"), audio_period);
     auto* knob_row = new QWidget;
     auto* knob_layout = new QHBoxLayout(knob_row);
     knob_layout->setContentsMargins(0, 0, 0, 0);
+    const auto stored_percent = [](const QString& key) {
+        const double requested = QSettings().value(key, 100.0).toDouble();
+        return std::isfinite(requested)
+            ? std::clamp(requested, 0.0, kMaximumAudioPercent) : 100.0;
+    };
+    const double stored_gain = stored_percent(
+        QStringLiteral("live/audioGain"));
+    const double stored_sensitivity = stored_percent(
+        QStringLiteral("live/audioSensitivity"));
     gain = new StudioKnob;
     gain->setRange(0, 400);
-    gain->setValue(QSettings().value(QStringLiteral("live/audioGain"), 100).toInt());
+    gain->setValue(static_cast<int>(std::lround(
+        std::min(stored_gain, 400.0))));
     gain->setUnit(QStringLiteral("%"));
+    gain_value = new QDoubleSpinBox;
+    gain_value->setObjectName(QStringLiteral("liveAudioGainValue"));
+    gain_value->setDecimals(3);
+    gain_value->setRange(0.0, kMaximumAudioPercent);
+    gain_value->setSuffix(QStringLiteral("%"));
+    gain_value->setValue(stored_gain);
+    gain_value->setMaximumWidth(145);
     sensitivity = new StudioKnob;
-    sensitivity->setRange(10, 400);
-    sensitivity->setValue(QSettings().value(QStringLiteral("live/audioSensitivity"), 100).toInt());
+    sensitivity->setRange(0, 400);
+    sensitivity->setValue(static_cast<int>(std::lround(
+        std::min(stored_sensitivity, 400.0))));
     sensitivity->setUnit(QStringLiteral("%"));
+    sensitivity_value = new QDoubleSpinBox;
+    sensitivity_value->setObjectName(
+        QStringLiteral("liveAudioSensitivityValue"));
+    sensitivity_value->setDecimals(3);
+    sensitivity_value->setRange(0.0, kMaximumAudioPercent);
+    sensitivity_value->setSuffix(QStringLiteral("%"));
+    sensitivity_value->setValue(stored_sensitivity);
+    sensitivity_value->setMaximumWidth(145);
+    const QString direct_value_tooltip = q->tr(
+        "The knob provides a fast 0–400% performance range. Enter any larger finite value here when the input or response needs it.");
+    gain_value->setToolTip(direct_value_tooltip);
+    sensitivity_value->setToolTip(direct_value_tooltip);
     audio_meter = new LiveLevelMeter;
     audio_meter->setCaption(q->tr("INPUT"));
     knob_layout->addWidget(new QLabel(q->tr("GAIN")));
     knob_layout->addWidget(gain);
+    knob_layout->addWidget(gain_value);
     knob_layout->addWidget(new QLabel(q->tr("RESPONSE")));
     knob_layout->addWidget(sensitivity);
+    knob_layout->addWidget(sensitivity_value);
     knob_layout->addWidget(audio_meter, 1);
     audio_form->addRow(knob_row);
     latency = new QSpinBox;
-    latency->setRange(-500, 500);
+    latency->setRange((std::numeric_limits<int>::min)(), kMaximumUiInteger);
     latency->setSuffix(q->tr(" ms"));
     auto* calibrate = new QPushButton(q->tr("Tap beat to align"));
     auto* latency_row = new QWidget;
@@ -769,7 +818,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     output_form->addRow(q->tr("On dropout"), dropout_behavior);
     watchdog_enabled = new QCheckBox(q->tr("Enable frame-time watchdog"));
     watchdog_timeout = new QSpinBox;
-    watchdog_timeout->setRange(1, 60000);
+    watchdog_timeout->setRange(1, kMaximumUiInteger);
     watchdog_timeout->setSuffix(q->tr(" ms"));
     auto* watchdog_row = new QWidget;
     auto* watchdog_layout = new QHBoxLayout(watchdog_row);
@@ -778,10 +827,10 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     watchdog_layout->addWidget(watchdog_timeout);
     output_form->addRow(q->tr("Frame deadline"), watchdog_row);
     audio_grace = new QSpinBox;
-    audio_grace->setRange(0, 60000);
+    audio_grace->setRange(0, kMaximumUiInteger);
     audio_grace->setSuffix(q->tr(" ms"));
     last_good_timeout = new QSpinBox;
-    last_good_timeout->setRange(0, 600000);
+    last_good_timeout->setRange(0, kMaximumUiInteger);
     last_good_timeout->setSuffix(q->tr(" ms"));
     last_good_timeout->setSpecialValueText(q->tr("Hold indefinitely"));
     output_form->addRow(q->tr("Audio dropout grace"), audio_grace);
@@ -833,17 +882,41 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
         restartOsc();
     });
     QObject::connect(gain, &QDial::valueChanged, q, [this](int value) {
-        QSettings().setValue(QStringLiteral("live/audioGain"), value);
+        const QSignalBlocker blocker(gain_value);
+        gain_value->setValue(static_cast<double>(value));
+        QSettings().setValue(QStringLiteral("live/audioGain"),
+                             static_cast<double>(value));
         audio.set_gain(static_cast<double>(value) / 100.0);
     });
+    QObject::connect(gain_value, qOverload<double>(&QDoubleSpinBox::valueChanged),
+                     q, [this](double value) {
+        const QSignalBlocker blocker(gain);
+        gain->setValue(static_cast<int>(std::lround(
+            std::min(value, 400.0))));
+        QSettings().setValue(QStringLiteral("live/audioGain"), value);
+        audio.set_gain(value / 100.0);
+    });
     QObject::connect(sensitivity, &QDial::valueChanged, q, [this](int value) {
-        QSettings().setValue(QStringLiteral("live/audioSensitivity"), value);
+        const QSignalBlocker blocker(sensitivity_value);
+        sensitivity_value->setValue(static_cast<double>(value));
+        QSettings().setValue(QStringLiteral("live/audioSensitivity"),
+                             static_cast<double>(value));
         audio.set_sensitivity(static_cast<double>(value) / 100.0);
     });
-    QObject::connect(audio_period, qOverload<int>(&QComboBox::currentIndexChanged), q,
+    QObject::connect(
+        sensitivity_value,
+        qOverload<double>(&QDoubleSpinBox::valueChanged), q,
+        [this](double value) {
+            const QSignalBlocker blocker(sensitivity);
+            sensitivity->setValue(static_cast<int>(std::lround(
+                std::min(value, 400.0))));
+            QSettings().setValue(QStringLiteral("live/audioSensitivity"), value);
+            audio.set_sensitivity(value / 100.0);
+        });
+    QObject::connect(audio_period, &QSpinBox::valueChanged, q,
                      [this] {
         QSettings().setValue(QStringLiteral("live/audioPeriodFrames"),
-                             audio_period->currentData());
+                             audio_period->value());
         restartAudio();
     });
     QObject::connect(latency, qOverload<int>(&QSpinBox::valueChanged), q, [this](int value) {
@@ -992,7 +1065,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     auto* transition_row = new QHBoxLayout;
     transition_row->addWidget(new QLabel(q->tr("Transition")));
     scene_transition_ms = new QSpinBox;
-    scene_transition_ms->setRange(0, 60000);
+    scene_transition_ms->setRange(0, kMaximumUiInteger);
     scene_transition_ms->setSuffix(q->tr(" ms"));
     scene_transition_ms->setSingleStep(50);
     transition_row->addWidget(scene_transition_ms);
@@ -1458,8 +1531,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         startIo();
         const pvt::ProjectConfig project = project_provider
             ? project_provider() : pvt::default_project();
-        const double fps = std::clamp(project.canvas.fps, 1.0, 120.0);
-        render_timer.start(std::max(8, static_cast<int>(std::lround(1000.0 / fps))));
+        render_timer.start(live_frame_interval_milliseconds(project.canvas.fps));
         ui_timer.start();
         midi_clock_timer.start();
         if (!config.startup_scene_uuid.empty()) takeScene(config.startup_scene_uuid);
@@ -1536,13 +1608,13 @@ void LiveWorkspace::Impl::restartAudio() {
         audio_lamp->setToolTip(q->tr("Add or select an Audio input role."));
         return;
     }
-    audio.set_gain(static_cast<double>(gain->value()) / 100.0);
-    audio.set_sensitivity(static_cast<double>(sensitivity->value()) / 100.0);
+    audio.set_gain(gain_value->value() / 100.0);
+    audio.set_sensitivity(sensitivity_value->value() / 100.0);
     const QString device = audio_device->currentData().toString();
     std::string error;
     const int period = std::clamp(
         QSettings().value(QStringLiteral("live/audioPeriodFrames"), 128).toInt(),
-        32, 2048);
+        1, kMaximumUiInteger);
     if (!audio.start(narrow(device), static_cast<std::uint32_t>(period), &error)) {
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
@@ -1915,9 +1987,12 @@ void LiveWorkspace::Impl::calibrateLatency() {
     double phase = audio_snapshot.beat_phase;
     if (phase > 0.5) phase -= 1.0;
     const double beat_ms = 60000.0 / audio_snapshot.detected_bpm;
-    const int correction = std::clamp(
-        static_cast<int>(std::lround(audio_snapshot.estimated_input_latency_ms
-                                     - phase * beat_ms)), -500, 500);
+    const double requested = std::round(
+        audio_snapshot.estimated_input_latency_ms - phase * beat_ms);
+    const int correction = static_cast<int>(std::clamp(
+        requested,
+        static_cast<double>((std::numeric_limits<int>::min)()),
+        static_cast<double>(kMaximumUiInteger)));
     latency->setValue(correction);
 }
 
@@ -1932,7 +2007,7 @@ void LiveWorkspace::Impl::tapTempo() {
         total += static_cast<double>(tempo_taps[i] - tempo_taps[i - 1]);
     }
     const double interval = total / static_cast<double>(tempo_taps.size() - 1);
-    if (interval > 0.0) tapped_bpm = std::clamp(60000.0 / interval, 1.0, 1000.0);
+    if (interval > 0.0) tapped_bpm = 60000.0 / interval;
 }
 
 void LiveWorkspace::Impl::editMapping(int index) {
@@ -2049,7 +2124,8 @@ void LiveWorkspace::Impl::editMapping(int index) {
     auto* output_max = new QDoubleSpinBox;
     for (auto* spin : {input_min, input_max, output_min, output_max}) {
         spin->setDecimals(6);
-        spin->setRange(-1.0e9, 1.0e9);
+        spin->setRange(-kMaximumLiveMappingMagnitude,
+                       kMaximumLiveMappingMagnitude);
     }
     input_min->setValue(editing ? initial.input_minimum : 0.0);
     input_max->setValue(editing ? initial.input_maximum : 1.0);
@@ -2058,15 +2134,15 @@ void LiveWorkspace::Impl::editMapping(int index) {
     output_max->setValue(editing ? initial.output_maximum
                                  : setting->currentData(Qt::UserRole + 2).toDouble());
     auto* curve = new QDoubleSpinBox;
-    curve->setRange(0.01, 100.0);
-    curve->setDecimals(3);
+    curve->setDecimals(6);
+    curve->setRange(0.000001, kMaximumLiveMappingMagnitude);
     curve->setValue(editing ? initial.curve : 1.0);
     auto* dead = new QDoubleSpinBox;
-    dead->setRange(0.0, 0.99);
-    dead->setDecimals(3);
+    dead->setDecimals(6);
+    dead->setRange(0.0, 0.999999);
     dead->setValue(editing ? initial.dead_zone : 0.0);
     auto* smoothing = new QSpinBox;
-    smoothing->setRange(0, 60000);
+    smoothing->setRange(0, kMaximumUiInteger);
     smoothing->setSuffix(q->tr(" ms"));
     smoothing->setValue(editing ? initial.smoothing_milliseconds : 0);
     auto* input_range = new QWidget;
@@ -2505,9 +2581,12 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
 }
 
 pvt::ProjectConfig LiveWorkspace::Impl::runtimeProject() {
-    pvt::ProjectConfig project = project_cache_valid
-        ? project_cache
-        : (project_provider ? project_provider() : pvt::default_project());
+    // Authoring and performance are concurrent. Always take the latest
+    // project; the cached registry only supplies stable target paths/setters
+    // for transient overrides and must never freeze ordinary UI edits.
+    pvt::ProjectConfig project = project_provider
+        ? project_provider()
+        : (project_cache_valid ? project_cache : pvt::default_project());
     project.canvas.live = config;
     applyOverrides(project);
     return project;
@@ -2560,10 +2639,12 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
 }
 
 double LiveWorkspace::Impl::basePhase(const pvt::ProjectConfig& project) const {
+    const double fps = std::isfinite(project.canvas.fps)
+                           && project.canvas.fps > 0.0
+                       ? project.canvas.fps : 1.0;
     const double duration = std::max(
-        1.0 / std::max(1.0, project.canvas.fps),
-        static_cast<double>(project.canvas.total_frames)
-            / std::max(1.0, project.canvas.fps));
+        1.0 / fps,
+        static_cast<double>(project.canvas.total_frames) / fps);
     const double seconds = run_clock.isValid()
         ? static_cast<double>(run_clock.elapsed()) / 1000.0 : 0.0;
     double phase = std::fmod(seconds / duration, 1.0);
@@ -2574,10 +2655,12 @@ double LiveWorkspace::Impl::routedPhase(
     const pvt::ProjectConfig& project,
     const pvt::LiveClockInputConfig& input, double fallback) const {
     const auto* role = endpoint(input.endpoint_uuid);
+    const double fps = std::isfinite(project.canvas.fps)
+                           && project.canvas.fps > 0.0
+                       ? project.canvas.fps : 1.0;
     const double duration = std::max(
-        1.0 / std::max(1.0, project.canvas.fps),
-        static_cast<double>(project.canvas.total_frames)
-            / std::max(1.0, project.canvas.fps));
+        1.0 / fps,
+        static_cast<double>(project.canvas.total_frames) / fps);
     double result = fallback;
     if (input.source == pvt::LiveClockInputSource::MidiClock) {
         const auto snapshot = midi.clockSnapshot(boundSource(input.endpoint_uuid));
@@ -2625,7 +2708,8 @@ pvt::MusicAnalysis LiveWorkspace::Impl::ephemeralAnalysis(
     analysis.detected_bpm = std::clamp(
         audio_snapshot.detected_bpm > 0.0 ? audio_snapshot.detected_bpm
                                           : (tapped_bpm > 0.0 ? tapped_bpm : 120.0),
-        1.0, 1000.0);
+        std::numeric_limits<double>::min(),
+        pvt::maximum_render_parameter_magnitude());
     analysis.tempo_confidence = audio_snapshot.receiving ? 0.75 : 0.0;
     analysis.beat_times_seconds = {0.0};
     analysis.tempo_points = {{0.0, analysis.detected_bpm,
@@ -2748,7 +2832,9 @@ void LiveWorkspace::Impl::sendClockOutputs() {
     for (const auto& output : config.midi_clock_outputs) {
         if (!output.enabled) continue;
         if (runtime_index >= clock_outputs.size()) break;
-        const double bpm = std::clamp(outputBpm(project, output), 1.0, 1000.0);
+        const double bpm = std::clamp(
+            outputBpm(project, output), std::numeric_limits<double>::min(),
+            pvt::maximum_render_parameter_magnitude());
         const double period = 60.0 / (bpm * 24.0);
         int sent = 0;
         while (now >= clock_outputs[runtime_index].next_seconds
@@ -2883,9 +2969,8 @@ void LiveWorkspace::refreshProjectSnapshot() {
     if (impl_->active) {
         const pvt::ProjectConfig project = impl_->project_provider
             ? impl_->project_provider() : pvt::default_project();
-        const double fps = std::clamp(project.canvas.fps, 1.0, 120.0);
         impl_->render_timer.setInterval(
-            std::max(8, static_cast<int>(std::lround(1000.0 / fps))));
+            live_frame_interval_milliseconds(project.canvas.fps));
     }
 }
 
