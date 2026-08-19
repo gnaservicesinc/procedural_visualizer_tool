@@ -427,9 +427,10 @@ void test_project_validation() {
     invalid.output.write_alpha = true;
     CHECK(pvt::validate(invalid).ok);
 
-    // Authored/generated source alpha participates in the rendered layer even
-    // when procedural alpha modulation itself is disabled. The source-alpha
-    // switch is the only setting that makes those authored values inert.
+    // Authored source alpha participates in the rendered layer even when
+    // procedural alpha modulation itself is disabled. The source-alpha switch
+    // makes palette/PNG values inert, but explicitly generated alpha remains
+    // controlled by its adjacent include-alpha setting.
     invalid = pvt::default_project();
     make_small(invalid);
     invalid.layers[0U].render.palette.enabled = true;
@@ -447,8 +448,7 @@ void test_project_validation() {
     invalid.layers[0U].render.starting_colors.alpha_maximum = 1.0;
     CHECK(!pvt::validate(invalid).ok);
     invalid.layers[0U].render.alpha.use_source_alpha = false;
-    CHECK(pvt::validate(invalid).ok);
-    invalid.layers[0U].render.alpha.use_source_alpha = true;
+    CHECK(!pvt::validate(invalid).ok);
     invalid.output.write_alpha = true;
     CHECK(pvt::validate(invalid).ok);
 
@@ -578,9 +578,11 @@ void test_project_rendering_order_equivalence_and_seam() {
     pvt::LayerConfig top = pvt::default_layer(1U);
     top.render.hue_cycles = -3;
     top.render.saturation = 0.65;
-    top.render.alpha.enabled = true;
-    top.render.alpha.minimum = 0.5;
-    top.render.alpha.maximum = 0.5;
+    top.render.alpha.enabled = false;
+    top.render.alpha.use_source_alpha = false;
+    top.render.starting_colors.include_alpha = true;
+    top.render.starting_colors.alpha_minimum = 0.5;
+    top.render.starting_colors.alpha_maximum = 0.5;
     project.layers.push_back(top);
     project.output.write_alpha = true;
     CHECK(pvt::validate(project).ok);
@@ -595,6 +597,9 @@ void test_project_rendering_order_equivalence_and_seam() {
         pvt::apply_global_config(project.canvas, project.output,
                                  project.layers[1U].render),
         0.375, top_image, &error));
+    if (const float* top_pixel = top_image.pixel(0, 0)) {
+        CHECK(std::fabs(top_pixel[3] - 0.5F) < 0.0001F);
+    }
     pvt::Image expected = bottom_image;
     CHECK(pvt::composite_over(top_image, expected, pvt::BlendMode::Normal,
                               1.0, &error));

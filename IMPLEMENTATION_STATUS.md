@@ -1,10 +1,45 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-18
+Last updated: 2026-08-19
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 4.0.1 generated alpha reliability
+
+Version 4.0.1 fixes a first-layer-only transparency failure in the built-in
+Workbench template. That template explicitly disabled `alpha.use_source_alpha`
+on its original layer even though normally added layers inherited the public
+default of true. Because generated alpha was also incorrectly gated by that
+palette/PNG control, selecting **Include alpha as a generated color dimension**
+could still produce an opaque first layer.
+
+Generated alpha is now controlled directly by
+`StartingColorConfig::include_alpha`, while `AlphaConfig::use_source_alpha`
+continues to non-destructively suppress only starting-palette and embedded-PNG
+alpha. CPU and Metal constants/kernels, final-alpha reachability, export
+validation, GUI/CLI wording, Live target labels, and the built-in layer default
+use the same rule. The supplied two-layer project is an exact regression case:
+its top layer has generated alpha enabled, alpha range 0 through 0.5, and the
+legacy source-alpha flag off; a fixed render retains varying non-opaque alpha.
+
+This patch does not change public structure layout, SONAME 4, setup format 12,
+or project-bundle formats.
+
+Local 4.0.1 release validation passed all 22 native optimized tests, including
+real Metal and Cocoa GUI smoke, plus independent 21/21 optimized C++20 shared-
+library and 21/21 AddressSanitizer/UndefinedBehaviorSanitizer matrices. The
+supplied `alphabug.zip` rendered through the packaged strict-GPU CLI as RGBA;
+its first frame retained a varying 8-bit alpha range of 25 through 223 instead
+of becoming opaque. An external installed consumer linked and ran against
+`libProceduralVisualizerTool.4.dylib` with current version 4.0.1. The
+self-contained arm64 macOS application passed verification over 33 Mach-O
+files, deep strict code-sign verification, embedded CLI version/self-test, and
+GUI smoke before and after archive extraction. Its single-root archive contains
+only the application, README, and license and passes its generated SHA-256
+check. Remote platform packages remain the tag-triggered workflow's release
+gate.
 
 ## 4.0.0 Live performance and final post effects
 

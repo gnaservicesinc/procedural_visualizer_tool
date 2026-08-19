@@ -22,7 +22,7 @@ struct FrameConstants {
     float4 pattern0;         // displacement, wave depth, spiral freq, wall freq
     float4 pattern1;         // wall mix, saturation, audio hue, alpha spatial freq
     float4 alpha_quant;      // alpha min/max, alpha phase radians, quant mix
-    uint4 starting_flags;    // mode, include alpha, use source alpha, dither+1
+    uint4 starting_flags;    // mode, include alpha, effective source alpha, dither+1
     uint4 starting_reference; // full width/height/block size, auto levels
     float4 starting_minimum; // RGBA range minima
     float4 starting_maximum; // RGBA range maxima

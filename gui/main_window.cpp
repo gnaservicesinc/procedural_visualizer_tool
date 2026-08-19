@@ -949,10 +949,11 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
                            })) {
             return true;
         }
-        if (!config.palette.enabled && config.starting_colors.include_alpha
-            && config.starting_colors.alpha_minimum < 1.0) {
-            return true;
-        }
+    }
+    if (!config.starting_image.enabled && !config.palette.enabled
+        && config.starting_colors.include_alpha
+        && config.starting_colors.alpha_minimum < 1.0) {
+        return true;
     }
     if (config.surface.enabled && config.surface.mapping != pvt::SurfaceMapping::Plane
         && config.surface.curvature > 0.0) {
@@ -1621,7 +1622,7 @@ pvt::ProjectDocument built_in_workbench_project_document() {
     render.alpha.maximum = 1.0;
     render.alpha.spatial_frequency = 1.99;
     render.alpha.cycles_per_loop = 6;
-    render.alpha.use_source_alpha = false;
+    render.alpha.use_source_alpha = true;
     render.starting_colors = {};
     document.dirty = false;
     return document;
@@ -3541,8 +3542,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     starting_color_include_alpha_ = new QCheckBox(
         tr("Include alpha as a generated color dimension"));
     starting_color_include_alpha_->setToolTip(
-        tr("When no starting palette is active, generated RGBA tuples may differ "
-           "by alpha as well as RGB. Equal tuples are still represented only once."));
+        tr("When no starting image or palette is active, generated RGBA tuples "
+           "differ by alpha as well as RGB. This setting applies directly; the "
+           "separate palette/PNG source-alpha switch does not disable it."));
     starting_colors_form->addRow(tr("Pattern"), starting_color_mode_);
     starting_colors_form->addRow(starting_color_include_alpha_);
     starting_colors_layout->addLayout(starting_colors_form);
@@ -3927,10 +3929,11 @@ QWidget* MainWindow::createLayerSettingsPage() {
     alpha_cycles_ = integer_editor(-1000, 1000);
     alpha_phase_ = real_editor(-36000.0, 36000.0, 3, 1.0);
     alpha_use_source_ = new QCheckBox(
-        tr("Use alpha stored in starting colors and PNG pixels"));
+        tr("Use alpha stored in starting palettes and PNG pixels"));
     alpha_use_source_->setToolTip(tr(
-        "This does not change the layer opacity. Turning it off ignores source "
-        "alpha non-destructively; the authored values remain available when re-enabled."));
+        "This does not change generated alpha or layer opacity. Turning it off "
+        "ignores palette and PNG alpha non-destructively; those authored values "
+        "remain available when re-enabled."));
     alpha->addRow(alpha_use_source_);
     alpha->addRow(alpha_enabled_);
     alpha->addRow(tr("Minimum"), alpha_minimum_);
@@ -12868,6 +12871,25 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (!configuration_requires_alpha(alpha_probe)) {
         if (error != nullptr) {
             *error = tr("A source-alpha starting image did not request alpha output.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
+    alpha_probe.alpha.use_source_alpha = false;
+    alpha_probe.starting_colors.include_alpha = true;
+    alpha_probe.starting_colors.alpha_minimum = 0.5;
+    alpha_probe.starting_colors.alpha_maximum = 0.5;
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("Generated alpha was incorrectly disabled by the palette/PNG source-alpha switch.");
+        }
+        return false;
+    }
+    const pvt::ProjectDocument built_in = built_in_workbench_project_document();
+    if (built_in.project.layers.empty()
+        || !built_in.project.layers.front().render.alpha.use_source_alpha) {
+        if (error != nullptr) {
+            *error = tr("The built-in first layer disagrees with normal layer alpha defaults.");
         }
         return false;
     }

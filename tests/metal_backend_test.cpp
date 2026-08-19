@@ -196,7 +196,7 @@ void test_backend_contract() {
 
     // Generated colors use an output-scaled float32 lattice on both backends.
     // They must no longer make strict Metal fail, including authored ranges
-    // and source alpha.
+    // and explicit generated alpha with palette/PNG source alpha disabled.
     pvt::RenderConfig generated = parity_config();
     generated.width = 97;
     generated.height = 61;
@@ -212,7 +212,7 @@ void test_backend_contract() {
     generated.transform = {};
     generated.quantization.enabled = false;
     generated.alpha.enabled = false;
-    generated.alpha.use_source_alpha = true;
+    generated.alpha.use_source_alpha = false;
     generated.starting_colors.include_alpha = true;
     generated.starting_colors.red_minimum = 0.13;
     generated.starting_colors.red_maximum = 0.91;

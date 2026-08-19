@@ -528,10 +528,13 @@ GpuFrameConstants make_constants(const RenderConfig& config,
             ? static_cast<std::uint32_t>(
                   config.starting_image.palette_dither_method) + 1U
             : 0U;
+    const bool use_generated_alpha =
+        !config.starting_image.enabled && !config.palette.enabled
+        && starting.include_alpha;
     result.starting_flags = {
         static_cast<std::uint32_t>(starting.mode),
         starting.include_alpha ? 1U : 0U,
-        config.alpha.use_source_alpha ? 1U : 0U,
+        config.alpha.use_source_alpha || use_generated_alpha ? 1U : 0U,
         source_dither};
     result.starting_reference = {
         static_cast<std::uint32_t>(

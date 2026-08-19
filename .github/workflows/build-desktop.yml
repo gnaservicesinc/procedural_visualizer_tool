@@ -421,15 +421,13 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This release adds an artist-facing Live performance workspace with low-latency audio capture and causal analysis, CoreMIDI and OSC control, MIDI Learn, portable foot-controller mappings, project/layer MIDI or audio clock inputs, independent 24-PPQN MIDI clock outputs, scenes, secondary-display output, freeze, blackout, last-good-frame safety, adaptive quality, and an active frame-time watchdog.
+          This patch fixes generated alpha on the built-in first layer and in existing projects created from that template. "Include alpha as a generated color dimension" now applies directly instead of being silently disabled by a separate source-alpha setting.
 
-          Projects store portable logical endpoint roles, mappings, scenes, signed latency compensation, clock routes, display preferences, and safety policy. Operating-system device IDs, network and display bindings, captured samples, the current scene, freeze, blackout, and live analysis remain machine-local or ephemeral.
+          The source-alpha switch now has one clear purpose: it non-destructively ignores alpha stored in starting palettes and PNG pixels. Generated alpha remains independently controllable beside the generated color ranges.
 
-          Post Effects add independently mixed RGB inversion, alpha inversion, and premultiplied edge antialiasing before quantization, with CPU and Metal implementations plus GUI, CLI, persistence, and regression coverage.
+          CPU, Metal, project compositing, export-safety analysis, GUI defaults, Live mappings, and CLI wording share the corrected contract. Regression coverage includes generated alpha with palette/PNG alpha disabled and verifies CPU/Metal parity.
 
-          The desktop editor gains a cohesive dark studio theme, scalable vector-painted knobs, meters, and status lamps, familiar action icons, and a global fix for wrapped help text that could previously be clipped.
-
-          Setup format 12 persists the new portable state and remains compatible with older setups and project bundles. Public by-value configuration types grew, so this release advances the shared-library ABI to SONAME 4 and installed clients must rebuild.
+          This patch keeps SONAME 4, setup format 12, and all project-bundle formats unchanged.
 
           CoreMIDI is the first native MIDI backend. Linux and Windows packages retain the portable Live authoring model but currently report the unsupported runtime adapter clearly. Syphon, Spout, and NDI remain optional follow-up transports.
 

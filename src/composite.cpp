@@ -456,11 +456,13 @@ bool render_data_can_create_transparency(const RenderData& render) {
                 [](const PaletteColor& color) { return color.alpha < 1.0; })) {
             return true;
         }
-        if (!render.palette.enabled
-            && render.starting_colors.include_alpha
-            && render.starting_colors.alpha_minimum < 1.0) {
-            return true;
-        }
+    }
+    // Generated alpha is authored by the adjacent include-alpha control and
+    // is therefore independent of the palette/PNG source-alpha switch.
+    if (!render.starting_image.enabled && !render.palette.enabled
+        && render.starting_colors.include_alpha
+        && render.starting_colors.alpha_minimum < 1.0) {
+        return true;
     }
     if (render.alpha.enabled && render.alpha.minimum < 1.0) {
         return true;

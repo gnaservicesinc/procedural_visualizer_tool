@@ -106,6 +106,11 @@ file(WRITE "${interactive_input}"
     "8\n"
     "n\n"
     "\n\n\n\n\n\n"
+    # Generated alpha remains active independently of palette/PNG alpha, so
+    # select a compatible final RGBA channel before saving.
+    "9\n"
+    "y\n"
+    "\n\n\n\n\n\n\n\n\n"
     "10\n"
     "CliInteractive.zip\n"
     "0\n")

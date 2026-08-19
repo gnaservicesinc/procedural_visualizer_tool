@@ -2939,8 +2939,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 config.palette.colors.begin(), config.palette.colors.end(),
                 [](const PaletteColor& color) { return color.alpha < 1.0; });
         const bool has_transparent_generated_source =
-            config.alpha.use_source_alpha && !config.starting_image.enabled
-            && !config.palette.enabled
+            !config.starting_image.enabled && !config.palette.enabled
             && config.starting_colors.include_alpha
             && config.starting_colors.alpha_minimum < 1.0;
         if (!config.alpha.enabled && !config.output.write_alpha
@@ -3517,6 +3516,11 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     const std::uint64_t generated_color_count = generated_block_count(config);
     const std::uint64_t generated_levels = generated_channel_levels(
         generated_color_count, config.starting_colors.include_alpha);
+    const bool use_generated_alpha =
+        !config.starting_image.enabled && !config.palette.enabled
+        && config.starting_colors.include_alpha;
+    const bool use_base_alpha =
+        config.alpha.use_source_alpha || use_generated_alpha;
 
     std::size_t block_counter = 0U;
     for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
@@ -3761,9 +3765,12 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                 throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
                     Color output = base;
-                    const double source_alpha = config.alpha.use_source_alpha
-                                                    ? base.a
-                                                    : 1.0;
+                    // Generating an alpha dimension is an explicit source
+                    // choice, so it must not depend on the independent switch
+                    // that suppresses authored palette/PNG alpha. This also
+                    // repairs older GUI projects whose first layer inherited
+                    // a false source-alpha default.
+                    const double source_alpha = use_base_alpha ? base.a : 1.0;
                     output.a = source_alpha
                                * alpha_at(config, x, y, loop_phase);
                     store_color(image, x, y, output);

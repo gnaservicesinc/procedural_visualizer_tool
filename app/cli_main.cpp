@@ -1701,7 +1701,7 @@ void configure_surface(RenderConfig& config,
 void configure_alpha(RenderConfig& config) {
     std::cout << "\n-- Per-layer alpha modulation --\n"
               << "RGB remains present even where alpha is zero (straight/unassociated alpha).\n";
-    prompt_bool("Use alpha from starting images, palettes, and generated colors",
+    prompt_bool("Use alpha from starting images and palettes",
                 config.alpha.use_source_alpha);
     prompt_bool("Enable procedural alpha modulation", config.alpha.enabled);
     prompt_real("Minimum alpha", config.alpha.minimum, 0.0, 1.0);

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **4.0.0**. The version is read from `VERSION` by every
+Current product version: **4.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,22 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 4.0.1 generated alpha reliability
+
+Version 4.0.1 fixes generated alpha on the built-in first layer and in existing
+projects created from that template. **Include alpha as a generated color
+dimension** is now authoritative for generated sources; the separate source-
+alpha switch applies only to starting palettes and PNG pixels. This removes a
+hidden two-control dependency while preserving the ability to ignore authored
+image/palette alpha non-destructively.
+
+The CPU renderer, Metal renderer, project transparency analysis, export safety,
+Live target labels, CLI wording, and GUI defaults now share that contract.
+Regression coverage includes the reported saved-state combination—generated
+alpha enabled while palette/PNG alpha is disabled—and verifies real layer
+compositing as well as CPU/Metal parity. This patch does not change public
+structure layout, SONAME 4, setup format 12, or project-bundle formats.
 
 ## 4.0.0 Live performance and final post effects
 

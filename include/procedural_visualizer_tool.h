@@ -755,8 +755,10 @@ struct AlphaConfig {
     int cycles_per_loop = 1;
     double phase_degrees = 0.0;
     // Ignores alpha carried by starting-palette colors and embedded PNG pixels
-    // when false. It does not change LayerConfig::opacity and authored alpha
-    // values remain available when this is re-enabled.
+    // when false. Explicitly generated alpha remains controlled by
+    // StartingColorConfig::include_alpha. This does not change
+    // LayerConfig::opacity, and ignored authored alpha remains available when
+    // this is re-enabled.
     bool use_source_alpha = true;
 };
 

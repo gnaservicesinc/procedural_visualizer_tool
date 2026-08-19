@@ -559,7 +559,9 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(pvt::render_frame_at_phase(
         generated, 0.0, ignored_source_alpha, &error));
     if (const float* pixel = ignored_source_alpha.pixel(0, 0)) {
-        CHECK(pixel[3] == 1.0F);
+        // Generated alpha is controlled by its adjacent include-alpha setting;
+        // the palette/PNG source-alpha switch must not silently defeat it.
+        CHECK(std::fabs(pixel[3] - 0.25F) < 0.0001F);
     }
     generated.alpha.use_source_alpha = true;
     generated.starting_colors.include_alpha = false;
@@ -2940,7 +2942,8 @@ void test_validation_limits() {
     CHECK(!pvt::validate(config).ok);
 
     // RGB export must reject every active source of transparency, while
-    // explicitly ignoring source alpha must make image/palette alpha opaque.
+    // explicitly ignoring authored source alpha makes image/palette alpha
+    // opaque without disabling explicitly generated alpha.
     config = pvt::default_config();
     config.palette.enabled = true;
     config.palette.colors.front().alpha = 0.5;
@@ -2954,6 +2957,8 @@ void test_validation_limits() {
     config.starting_colors.alpha_maximum = 0.75;
     CHECK(!pvt::validate(config).ok);
     config.alpha.use_source_alpha = false;
+    CHECK(!pvt::validate(config).ok);
+    config.output.write_alpha = true;
     CHECK(pvt::validate(config).ok);
 
     config = pvt::default_config();
