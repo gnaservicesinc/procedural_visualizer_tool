@@ -489,6 +489,51 @@ public:
         return true;
     }
 
+    void shutdown() {
+        std::lock_guard<std::mutex> guard(mutex_);
+        ready_ = false;
+
+        if (render_thread_ != nullptr) {
+            QThread* const gui_thread = QThread::currentThread();
+            const auto release_gpu_objects = [this, gui_thread] {
+                if (context_ != nullptr) {
+                    if (context_->makeCurrent(surface_)) {
+                        QOpenGLExtraFunctions* gl = context_->extraFunctions();
+                        gl->initializeOpenGLFunctions();
+                        if (vertex_array_ != 0U) {
+                            gl->glDeleteVertexArrays(1, &vertex_array_);
+                            vertex_array_ = 0U;
+                        }
+                        if (program_ != 0U) {
+                            gl->glDeleteProgram(program_);
+                            program_ = 0U;
+                        }
+                        context_->doneCurrent();
+                    }
+                    context_->moveToThread(gui_thread);
+                }
+                if (worker_ != nullptr) worker_->moveToThread(gui_thread);
+            };
+            if (QThread::currentThread() == render_thread_) {
+                release_gpu_objects();
+            } else {
+                (void)QMetaObject::invokeMethod(
+                    worker_, release_gpu_objects, Qt::BlockingQueuedConnection);
+                render_thread_->quit();
+                render_thread_->wait();
+            }
+        }
+
+        delete context_;
+        context_ = nullptr;
+        delete worker_;
+        worker_ = nullptr;
+        delete render_thread_;
+        render_thread_ = nullptr;
+        delete surface_;
+        surface_ = nullptr;
+    }
+
 private:
     void ensure_initialized_locked() {
         if (ready_ || initialization_attempted_) return;
@@ -759,11 +804,22 @@ private:
     GLuint vertex_array_ = 0U;
 };
 
+OpenGLSurfaceService* g_service_instance = nullptr;
+
+void shutdown_service() {
+    if (g_service_instance != nullptr) g_service_instance->shutdown();
+}
+
 OpenGLSurfaceService& service() {
-    // The context service intentionally has process lifetime. Qt requires its
-    // native offscreen surface to be destroyed on the GUI thread, which may
-    // already be gone during C++ static destruction.
-    static OpenGLSurfaceService* instance = new OpenGLSurfaceService;
+    // Keep the C++ service itself alive through static destruction, but release
+    // Qt and native GL objects from QCoreApplication's GUI-thread destructor
+    // hook while the platform integration still exists.
+    static OpenGLSurfaceService* instance = [] {
+        auto* result = new OpenGLSurfaceService;
+        g_service_instance = result;
+        qAddPostRoutine(shutdown_service);
+        return result;
+    }();
     return *instance;
 }
 
