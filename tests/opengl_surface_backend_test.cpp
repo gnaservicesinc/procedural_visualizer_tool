@@ -21,16 +21,21 @@ int failures = 0;
         }                                                                      \
     } while (false)
 
-double maximum_difference(const pvt::Image& first, const pvt::Image& second) {
+double maximum_difference(const pvt::Image& first, const pvt::Image& second,
+                          std::size_t* maximum_index = nullptr) {
     if (first.width != second.width || first.height != second.height
         || first.pixels.size() != second.pixels.size()) {
         return 1.0e30;
     }
     double result = 0.0;
     for (std::size_t index = 0U; index < first.pixels.size(); ++index) {
-        result = (std::max)(result,
-                            std::fabs(static_cast<double>(first.pixels[index])
-                                      - second.pixels[index]));
+        const double difference =
+            std::fabs(static_cast<double>(first.pixels[index])
+                      - second.pixels[index]);
+        if (difference > result) {
+            result = difference;
+            if (maximum_index != nullptr) *maximum_index = index;
+        }
     }
     return result;
 }
@@ -87,14 +92,22 @@ int main(int argc, char** argv) {
         CHECK(pvt::render_frame(config, 5, hybrid, accelerated, nullptr,
                                 &error));
         CHECK(pvt::render_frame(config, 5, gpu, strict, nullptr, &error));
-        const double hybrid_difference =
-            maximum_difference(reference, accelerated);
-        const double strict_difference = maximum_difference(reference, strict);
+        std::size_t hybrid_index = 0U;
+        std::size_t strict_index = 0U;
+        const double hybrid_difference = maximum_difference(
+            reference, accelerated, &hybrid_index);
+        const double strict_difference = maximum_difference(
+            reference, strict, &strict_index);
         if (hybrid_difference > 0.0035 || strict_difference > 0.0035) {
             std::cerr << pvt::surface_mapping_name(mapping)
                       << " CPU/hybrid max difference " << hybrid_difference
-                      << ", CPU/GPU max difference " << strict_difference
-                      << '\n';
+                      << " at value " << hybrid_index << " (CPU "
+                      << reference.pixels[hybrid_index] << ", GPU "
+                      << accelerated.pixels[hybrid_index]
+                      << "), CPU/GPU max difference " << strict_difference
+                      << " at value " << strict_index << " (CPU "
+                      << reference.pixels[strict_index] << ", GPU "
+                      << strict.pixels[strict_index] << ")\n";
         }
         CHECK(hybrid_difference <= 0.0035);
         CHECK(strict_difference <= 0.0035);
