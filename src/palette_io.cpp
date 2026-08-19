@@ -1304,7 +1304,7 @@ bool read_kpl_xml(const std::string& path, std::string& xml, std::string* error)
     if (reader.handle == nullptr) return fail(error, "Could not allocate ZIP reader.");
     if (mz_zip_reader_open_buffer(
             reader.handle,
-            reinterpret_cast<const std::uint8_t*>(archive.data()),
+            reinterpret_cast<std::uint8_t*>(archive.data()),
             static_cast<std::int32_t>(archive.size()), 0) != MZ_OK) {
         return fail(error, "Could not open Krita KPL ZIP.");
     }
