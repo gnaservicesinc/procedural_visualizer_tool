@@ -179,9 +179,9 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
         explanatory_label(
             tr("This backend is used for both live preview and export. CPU + GPU "
                "is recommended for maximum throughput. On Windows and Linux, "
-               "OpenGL accelerates built-in Plane, Cylinder, Sphere, and Cube "
-               "surface mapping; displacement planes and imported OBJ meshes "
-               "remain ordered CPU raster stages."),
+               "OpenGL accelerates built-in Cylinder, Sphere, and Cube surface "
+               "mapping; flat/displacement planes and imported OBJ meshes "
+               "remain ordered CPU stages."),
             backend_group));
     rendering_layout->addWidget(backend_group);
     rendering_layout->addStretch(1);

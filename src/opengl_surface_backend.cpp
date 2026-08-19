@@ -828,11 +828,7 @@ bool surface_has_supported_work(const SurfaceConfig& surface) {
         return false;
     }
     if (surface.mapping == SurfaceMapping::Plane) {
-        if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
-            return false;
-        }
-        return surface.rotations_per_loop != 0
-               || std::fmod(surface.phase_degrees, 360.0) != 0.0;
+        return false;
     }
     return surface.curvature > 0.0;
 }
@@ -863,9 +859,13 @@ bool opengl_surface_backend_supports(const RenderConfig& config,
                    && config.surface.curvature > 0.0) {
             *reason = "Strict OpenGL GPU rendering does not accelerate "
                       "displacement-Plane mesh rasterization.";
+        } else if (config.surface.mapping == SurfaceMapping::Plane) {
+            *reason = "Strict OpenGL GPU rendering does not accelerate flat "
+                      "Plane rotation; that inexpensive 2D transform and "
+                      "displacement-Plane meshes remain ordered CPU stages.";
         } else {
             *reason = "Strict OpenGL GPU rendering requires an active analytic "
-                      "Plane, Cylinder, Sphere, or Cube surface mapping.";
+                      "Cylinder, Sphere, or Cube surface mapping.";
         }
     }
     return false;

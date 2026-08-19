@@ -81,8 +81,8 @@ int main(int argc, char** argv) {
     gpu.backend = pvt::RenderBackend::Gpu;
 
     for (const pvt::SurfaceMapping mapping : {
-             pvt::SurfaceMapping::Plane, pvt::SurfaceMapping::Cylinder,
-             pvt::SurfaceMapping::Sphere, pvt::SurfaceMapping::Cube}) {
+             pvt::SurfaceMapping::Cylinder, pvt::SurfaceMapping::Sphere,
+             pvt::SurfaceMapping::Cube}) {
         const pvt::RenderConfig config = analytic_config(mapping);
         pvt::Image reference;
         pvt::Image accelerated;
@@ -167,6 +167,10 @@ int main(int argc, char** argv) {
     CHECK(!pvt::render_frame(displaced, 0, gpu, rejected, nullptr, &error));
     CHECK(error.find("displacement-Plane") != std::string::npos);
 
+    pvt::RenderConfig flat_plane = analytic_config(pvt::SurfaceMapping::Plane);
+    CHECK(!pvt::render_frame(flat_plane, 0, gpu, rejected, nullptr, &error));
+    CHECK(error.find("flat Plane rotation") != std::string::npos);
+
     pvt::RenderConfig neutral = pvt::default_config();
     neutral.width = 32;
     neutral.height = 24;
@@ -177,8 +181,8 @@ int main(int argc, char** argv) {
         std::cerr << failures << " OpenGL surface backend test(s) failed.\n";
         return EXIT_FAILURE;
     }
-    std::cout << "OpenGL analytic Plane/Cylinder/Sphere/Cube acceleration and "
-                 "strict unsupported-mesh policy passed on "
+    std::cout << "OpenGL analytic Cylinder/Sphere/Cube acceleration and strict "
+                 "unsupported-Plane/mesh policy passed on "
               << capabilities.opengl_surface_device_name << ".\n";
     return EXIT_SUCCESS;
 }

@@ -42,8 +42,8 @@ rebuild. Older setups and project bundles remain migration inputs with plane
 displacement disabled by default.
 
 Windows and Linux product builds now include the first portable GPU stage: a
-public-Qt, offscreen OpenGL 3.3 renderer for the built-in analytic Plane,
-Cylinder, Sphere, and Cube mappings. CPU + GPU activates it when a suitable
+public-Qt, offscreen OpenGL 3.3 renderer for the built-in analytic Cylinder,
+Sphere, and Cube mappings. CPU + GPU activates it when a suitable
 runtime context exists; strict GPU requires a supported active analytic surface
 and reports context, shader, displacement-mesh, or imported-OBJ limitations
 directly. The rest of the frame and final project compositing remain on the
@@ -462,11 +462,11 @@ sudo apt install procedural-visualizer-tool
   Metal lanes, with Metal covering the broad parallel pixel pipeline and CPU
   handling ordered dependencies such as mesh rasterization. On Windows and
   Linux it keeps the reference frame pipeline on CPU and dispatches supported
-  analytic Plane/Cylinder/Sphere/Cube mapping through a serialized offscreen
+  analytic Cylinder/Sphere/Cube mapping through a serialized offscreen
   OpenGL 3.3 shader stage. An admitted GPU-stage failure is reported instead of
   silently repeating that stage on CPU. Strict GPU requires Metal on macOS or an
-  active supported analytic surface on Windows/Linux; imported OBJ and
-  displacement-Plane rasterization are not accepted by the strict OpenGL path.
+  active supported curved analytic surface on Windows/Linux; flat/displacement
+  Plane and imported-OBJ stages are not accepted by the strict OpenGL path.
 
 The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
@@ -657,7 +657,7 @@ peeling, and displacement-Plane rasterization are ordered CPU stages inside
 the accelerated pipeline rather than whole-layer fallbacks. An unexpected
 Metal error is surfaced immediately instead of being hidden behind an
 unacceptably slow CPU retry. On Windows and Linux, the Qt-hosted OpenGL service
-accelerates the analytic 3D surface stage for Plane, Cylinder, Sphere, and Cube;
+accelerates the analytic 3D surface stage for Cylinder, Sphere, and Cube;
 strict **GPU** rejects frames without one of those supported active stages.
 Final linear-light project compositing remains on the CPU on every platform. The
 installed library's

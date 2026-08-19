@@ -26,14 +26,15 @@ Use Qt's public OpenGL integration in the existing GUI and
 2. Extract the current Metal kernel inputs into backend-neutral packed
    parameters and explicit passes. The CPU renderer remains the reference.
 3. **First stage implemented:** an OpenGL float-texture/framebuffer pass covers
-   analytic Plane, closed Cylinder, Sphere, and Cube mapping. Procedural sources,
+   analytic closed Cylinder, Sphere, and Cube mapping. Flat/displacement Plane,
+   procedural sources,
    effects, quantization, mesh surfaces, and final layer compositing remain on
    CPU for the portable path. CPU + GPU accelerates an eligible stage; strict
    GPU gives an actionable error when no supported analytic stage exists.
 4. Reuse the current bounded admission, cancellation, straight-alpha, linear
    light, half-open loop, and ordered-compositing contracts. Do not read a GPU
    result into the CPU between every effect.
-5. **CI stage implemented:** run CPU/OpenGL image and alpha parity for all four
+5. **CI stage implemented:** run CPU/OpenGL image and alpha parity for all three
    analytic mappings with Mesa under Xvfb, plus native compilation/package smoke
    on Windows. Cancellation expansion and real Intel, AMD, and NVIDIA driver
    qualification remain required before calling the complete portable backend
