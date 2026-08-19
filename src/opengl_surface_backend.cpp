@@ -856,7 +856,10 @@ bool opengl_surface_backend_supports(const RenderConfig& config,
         return true;
     }
     if (reason != nullptr) {
-        if (config.surface.mapping == SurfaceMapping::CustomObj) {
+        if (!config.surface.enabled) {
+            *reason = "Strict OpenGL GPU rendering requires an active analytic "
+                      "surface mapping.";
+        } else if (config.surface.mapping == SurfaceMapping::CustomObj) {
             *reason = "Strict OpenGL GPU rendering does not accelerate imported "
                       "OBJ mesh rasterization.";
         } else if (config.surface.mapping == SurfaceMapping::Plane
