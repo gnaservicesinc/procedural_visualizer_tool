@@ -99,12 +99,13 @@ bool document_version(const std::string& serialized,
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 15U> prefixes{{
+    constexpr std::array<std::string_view, 16U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
         "starting_colors.",
+        "post_process.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -117,7 +118,8 @@ bool is_render_key(std::string_view key) {
 bool is_output_key(std::string_view key) {
     return starts_with(key, "canvas.") || starts_with(key, "timing.")
            || starts_with(key, "output.") || starts_with(key, "paths.")
-           || starts_with(key, "audio_response_defaults.");
+           || starts_with(key, "audio_response_defaults.")
+           || starts_with(key, "live.");
 }
 
 bool is_setup_v5_key(std::string_view key) {
@@ -205,6 +207,10 @@ bool is_setup_v11_key(std::string_view key) {
                    || has_suffix(key, ".encoding")));
 }
 
+bool is_setup_v12_key(std::string_view key) {
+    return starts_with(key, "post_process.") || starts_with(key, "live.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -219,7 +225,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 5U ? 7U
                     : layer_version == 6U ? 8U
                     : layer_version == 7U ? 9U
-                    : layer_version == 8U ? 10U : 11U;
+                    : layer_version == 8U ? 10U
+                    : layer_version == 9U ? 11U : 12U;
     return true;
 }
 
@@ -236,7 +243,8 @@ bool supported_render_output_version(const std::string& serialized,
     setup_version = output_version == 1U ? 4U
                     : output_version == 2U ? 5U
                     : output_version == 3U ? 6U
-                    : output_version == 4U ? 7U : 8U;
+                    : output_version == 4U ? 7U
+                    : output_version == 5U ? 8U : 12U;
     return true;
 }
 
@@ -469,6 +477,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 11U && is_setup_v11_key(key)) {
+            continue;
+        }
+        if (setup_version < 12U && is_setup_v12_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
@@ -760,6 +771,7 @@ bool deserialize_render_output_config(const std::string& serialized,
         candidate_canvas.clock = std::move(loaded.clock);
         candidate_canvas.audio_reactive_defaults =
             loaded.audio_reactive_defaults;
+        candidate_canvas.live = std::move(loaded.live);
         candidate_canvas.motion_paths = std::move(loaded.motion_paths);
         candidate_canvas.output_compatibility =
             std::move(loaded.output_compatibility);
@@ -962,7 +974,8 @@ bool deserialize_split_render_output_config(
     try {
         std::uint32_t split_version = 0U;
         if (!document_version(serialized, "PVT_RENDER_OUTPUT_SPLIT",
-                              split_version)) {
+                              split_version)
+            || split_version > kSplitRenderOutputConfigFormatVersion) {
             return fail(error,
                         "Unsupported or malformed split render/output header.");
         }
@@ -1028,6 +1041,7 @@ bool deserialize_split_render_output_config(
         combined.append(std::to_string(
             split_version == 1U ? 3U
             : split_version == 2U ? 4U
+            : split_version == 3U ? 5U
                                   : kRenderOutputConfigFormatVersion));
         combined.push_back('\n');
         for (const std::string_view line : usable_split_records) {

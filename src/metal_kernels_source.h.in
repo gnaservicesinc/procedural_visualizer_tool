@@ -1,11 +1,14 @@
 #ifndef PVT_METAL_KERNELS_SOURCE_H
 #define PVT_METAL_KERNELS_SOURCE_H
 
+#include <cstddef>
+
 namespace pvt::detail {
 
-inline constexpr char kMetalKernelSource[] = R"PVT_METAL(
-@PVT_METAL_KERNEL_SOURCE@
-)PVT_METAL";
+inline constexpr const char* kMetalKernelSourceChunks[] = {
+@PVT_METAL_KERNEL_SOURCE_LITERALS@};
+inline constexpr std::size_t kMetalKernelSourceLength =
+    @PVT_METAL_KERNEL_SOURCE_LENGTH@U;
 
 } // namespace pvt::detail
 

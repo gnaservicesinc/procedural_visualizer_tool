@@ -23,7 +23,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 11;
+constexpr std::uint32_t kSetupFormatVersion = 12;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -51,6 +51,16 @@ constexpr std::size_t kMaximumAttachmentBasenameBytes = 255;
 constexpr std::size_t kMaximumOutputFilenameBytes = 255;
 // Bundle entries are materialized by APIs with signed-int interoperability.
 constexpr std::size_t kMaximumEmbeddedAssetBytes = kMaximumUiItems;
+// Live routing is visited on latency-sensitive paths. These limits are high
+// enough for large stage rigs while keeping hostile projects from creating an
+// unbounded amount of per-event or scene-switch work.
+constexpr std::size_t kMaximumLiveEndpoints = 256;
+constexpr std::size_t kMaximumLiveMappings = 16384;
+constexpr std::size_t kMaximumLiveClockInputs = 4096;
+constexpr std::size_t kMaximumLiveClockOutputs = 4096;
+constexpr std::size_t kMaximumLiveScenes = 2048;
+constexpr std::size_t kMaximumLiveSceneValues = 16384;
+constexpr std::size_t kMaximumLiveTextBytes = 4096;
 constexpr std::size_t kDefaultSequenceMemoryBudgetBytes =
     std::size_t{2} << 30U;
 
@@ -264,6 +274,80 @@ enum class LayerClockMixMode : std::uint8_t {
     Difference,
     SoftXor,
     BitwiseXor
+};
+
+// Live endpoints are logical, project-portable roles. A host application binds
+// their UUIDs to CoreAudio/ALSA/WASAPI, MIDI, OSC, or controller devices in
+// machine-local preferences. Projects deliberately contain no device UID,
+// filesystem path, IP address, display identity, or captured stream data.
+enum class LiveEndpointProtocol : std::uint8_t {
+    Audio = 0,
+    Midi,
+    Osc,
+    FootController
+};
+
+enum class LiveEndpointDirection : std::uint8_t {
+    Input = 0,
+    Output,
+    Bidirectional
+};
+
+enum class LiveControlInput : std::uint8_t {
+    MidiControlChange = 0,
+    MidiNote,
+    MidiProgramChange,
+    MidiPitchBend,
+    MidiChannelPressure,
+    OscValue,
+    Footswitch
+};
+
+enum class LiveMappingMode : std::uint8_t {
+    Absolute = 0,
+    Relative,
+    Toggle,
+    Momentary,
+    Trigger
+};
+
+enum class LiveMappingTarget : std::uint8_t {
+    Setting = 0,
+    Action,
+    Scene
+};
+
+enum class LiveAction : std::uint8_t {
+    Freeze = 0,
+    Blackout,
+    NextScene,
+    PreviousScene,
+    RestartScene,
+    // A useful foot-controller fallback when no external clock is present.
+    TapTempo
+};
+
+enum class LiveClockTarget : std::uint8_t {
+    Project = 0,
+    Layer
+};
+
+enum class LiveClockInputSource : std::uint8_t {
+    MidiClock = 0,
+    AudioStream
+};
+
+enum class LiveSceneValueType : std::uint8_t {
+    Boolean = 0,
+    Integer,
+    Real,
+    EnumToken,
+    String
+};
+
+enum class LiveDropoutBehavior : std::uint8_t {
+    LastGoodFrame = 0,
+    Blackout
 };
 
 // Compact, seamless alternatives to the deferred hand-authored Bezier path
@@ -729,6 +813,21 @@ struct QuantizationConfig {
     QuantizationMode mode = QuantizationMode::Rgb;
 };
 
+// Bounded, layer-local finishing controls. These run after mapped-object
+// effects and before final color quantization. RGB is stored as straight-alpha
+// linear light throughout the renderer; the antialias pass temporarily
+// premultiplies its neighborhood so transparent edges cannot leak hidden RGB.
+struct PostProcessConfig {
+    bool invert_rgb_enabled = false;
+    double invert_rgb_mix = 1.0;
+    bool invert_alpha_enabled = false;
+    double invert_alpha_mix = 1.0;
+    bool antialias_enabled = false;
+    double antialias_strength = 0.75;
+    double antialias_threshold = 0.08;
+    int antialias_passes = 1;
+};
+
 struct SurfaceConfig {
     bool enabled = false;
     SurfaceMapping mapping = SurfaceMapping::Plane;
@@ -766,6 +865,124 @@ struct StartingImageConfig {
     DitherMethod palette_dither_method = DitherMethod::BlueNoise;
 };
 
+struct LiveEndpointConfig {
+    // Project-local identity for a logical role such as "Stage MIDI". The
+    // actual OS/device identity belongs in host preferences, keyed by uuid.
+    std::string uuid;
+    std::string name = "Live input";
+    LiveEndpointProtocol protocol = LiveEndpointProtocol::Midi;
+    LiveEndpointDirection direction = LiveEndpointDirection::Input;
+    // Signed compensation permits either an early or late measured path. It
+    // describes the logical rig and remains useful when moving the project;
+    // the host may layer machine-specific compensation on top at runtime.
+    std::int64_t input_latency_microseconds = 0;
+    std::int64_t output_latency_microseconds = 0;
+};
+
+struct LiveControlMapping {
+    bool enabled = true;
+    std::string name = "Live control";
+    std::string endpoint_uuid;
+    LiveControlInput input = LiveControlInput::MidiControlChange;
+    // Zero means omni; 1-16 selects a MIDI channel. Non-MIDI sources keep 0.
+    int midi_channel = 0;
+    // CC/note/program number, or the logical footswitch index. Sources that do
+    // not address a numbered control keep zero.
+    int control_number = 0;
+    std::string osc_address;
+
+    LiveMappingTarget target = LiveMappingTarget::Setting;
+    // Opaque, stable registry key supplied by the host (for example a layer
+    // UUID plus an effect ID and property). Unknown keys remain portable and
+    // are reported as unresolved at runtime rather than discarded on load.
+    std::string target_path;
+    LiveAction action = LiveAction::Freeze;
+    std::string scene_uuid;
+    LiveMappingMode mode = LiveMappingMode::Absolute;
+
+    // Backends normalize source data before this transform. Descending output
+    // ranges intentionally support inversion. Values outside a setting's own
+    // range are left to that setting's existing validation/clamping policy.
+    double input_minimum = 0.0;
+    double input_maximum = 1.0;
+    double output_minimum = 0.0;
+    double output_maximum = 1.0;
+    double curve = 1.0;
+    double dead_zone = 0.0;
+    int smoothing_milliseconds = 0;
+};
+
+struct LiveClockInputConfig {
+    bool enabled = false;
+    LiveClockTarget target = LiveClockTarget::Project;
+    // Empty for Project; a canonical layer UUID for Layer.
+    std::string layer_uuid;
+    LiveClockInputSource source = LiveClockInputSource::MidiClock;
+    std::string endpoint_uuid;
+    // Zero mixes all audio channels; positive values are one-based logical
+    // channel hints and never OS device channel IDs.
+    int audio_channel = 0;
+    bool follow_midi_transport = true;
+    int holdover_milliseconds = 500;
+};
+
+struct LiveMidiClockOutputConfig {
+    bool enabled = false;
+    LiveClockTarget source = LiveClockTarget::Project;
+    // Empty for Project; a canonical layer UUID for Layer.
+    std::string layer_uuid;
+    std::string endpoint_uuid;
+    bool send_transport = true;
+    bool send_song_position = true;
+};
+
+struct LiveSceneValue {
+    std::string target_path;
+    LiveSceneValueType type = LiveSceneValueType::Real;
+    // Deterministic text avoids a public ABI dependency on std::variant and is
+    // parsed according to type. Reals use locale-independent decimal syntax.
+    std::string value = "0";
+};
+
+struct LiveSceneConfig {
+    std::string uuid;
+    std::string name = "Scene";
+    // Hosts interpolate numeric values when meaningful and switch discrete
+    // values at the end of this transition.
+    int transition_milliseconds = 0;
+    std::vector<LiveSceneValue> values;
+};
+
+struct LiveOutputConfig {
+    bool fullscreen = true;
+    bool prefer_secondary_display = true;
+    bool hide_cursor = true;
+};
+
+struct LiveSafetyConfig {
+    LiveDropoutBehavior dropout_behavior =
+        LiveDropoutBehavior::LastGoodFrame;
+    bool frame_time_watchdog_enabled = true;
+    int watchdog_timeout_milliseconds = 100;
+    int audio_dropout_grace_milliseconds = 250;
+    // When LastGoodFrame is selected, zero holds indefinitely and a positive
+    // value transitions to blackout after this much time.
+    int last_good_frame_timeout_milliseconds = 0;
+};
+
+struct LiveConfig {
+    bool enabled = false;
+    std::vector<LiveEndpointConfig> endpoints;
+    std::vector<LiveControlMapping> mappings;
+    std::vector<LiveClockInputConfig> clock_inputs;
+    std::vector<LiveMidiClockOutputConfig> midi_clock_outputs;
+    std::vector<LiveSceneConfig> scenes;
+    // Saved startup choice, not transient currently-playing state.
+    std::string startup_scene_uuid;
+    LiveOutputConfig output;
+    LiveSafetyConfig safety;
+};
+
 struct ExportConfig {
     int bit_depth = 8; // 8/16 write PNG; 32 writes full-float EXR.
     // libpng/zlib compression level: 0 stores without deflate compression and
@@ -796,6 +1013,10 @@ struct CanvasLoopConfig {
     // block. It is appended for aggregate-initializer compatibility and is
     // disabled by default until music response is intentionally enabled.
     AudioReactiveConfig audio_reactive_defaults;
+    // Portable authoring state only. Captured samples, incremental analysis,
+    // current freeze/blackout state, and resolved device/display handles are
+    // ephemeral runtime data and must never be written here.
+    LiveConfig live;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live
@@ -839,6 +1060,9 @@ struct RenderData {
     // changes it to false so project layers inherit the project-wide defaults.
     bool audio_reactive_override_enabled = true;
     StartingColorConfig starting_colors;
+    // Appended so older aggregate initializers retain their field ordering and
+    // receive a fully neutral finishing stage.
+    PostProcessConfig post_process;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -857,6 +1081,9 @@ struct RenderConfig : RenderData {
     // Appended so aggregate initializers written against earlier releases keep
     // their field ordering and receive the neutral project-wide default.
     AudioReactiveConfig audio_reactive_defaults;
+    // Appended project-global Live configuration. Offline rendering ignores
+    // it; the setup codec retains it so a standalone setup remains portable.
+    LiveConfig live;
 };
 
 struct LayerConfig {
@@ -903,8 +1130,9 @@ struct ProjectConfig {
 struct PVT_API Image {
     int width = 0;
     int height = 0;
-    // Linear-light, straight-alpha RGBA in row-major order. RGB may exceed 1.0
-    // (notably after Glow); alpha is constrained to [0, 1].
+    // Linear-light, straight-alpha RGBA in row-major order. RGB may fall
+    // outside [0, 1] (notably after Glow or HDR inversion); alpha is
+    // constrained to [0, 1].
     std::vector<float> pixels;
 
     // Returns nullptr for out-of-bounds coordinates or inconsistent metadata.
@@ -986,6 +1214,7 @@ PVT_API RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
 
 PVT_API ValidationResult validate(const RenderConfig& config);
 PVT_API ValidationResult validate(const ProjectConfig& project);
+PVT_API ValidationResult validate(const LiveConfig& live);
 // Returns the stored manual count except for a render-ready Music clock, where
 // it returns ceil(audio duration * FPS). A negative result indicates an invalid
 // or unprepared clock and is accompanied by `error` when supplied.
@@ -1127,6 +1356,16 @@ PVT_API const char* layer_motion_path_name(LayerMotionPath value);
 PVT_API const char* music_feature_name(MusicFeature value);
 PVT_API const char* audio_response_mode_name(AudioResponseMode value);
 PVT_API const char* music_swing_policy_name(MusicSwingPolicy value);
+PVT_API const char* live_endpoint_protocol_name(LiveEndpointProtocol value);
+PVT_API const char* live_endpoint_direction_name(LiveEndpointDirection value);
+PVT_API const char* live_control_input_name(LiveControlInput value);
+PVT_API const char* live_mapping_mode_name(LiveMappingMode value);
+PVT_API const char* live_mapping_target_name(LiveMappingTarget value);
+PVT_API const char* live_action_name(LiveAction value);
+PVT_API const char* live_clock_target_name(LiveClockTarget value);
+PVT_API const char* live_clock_input_source_name(LiveClockInputSource value);
+PVT_API const char* live_scene_value_type_name(LiveSceneValueType value);
+PVT_API const char* live_dropout_behavior_name(LiveDropoutBehavior value);
 
 } // namespace pvt
 

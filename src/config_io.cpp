@@ -70,7 +70,10 @@ namespace {
 // later. Version 10 adds source RGBA, generated source-color ordering,
 // image-to-palette dithering, and configurable blur fields. Version 11 adds
 // active-layer/project clock mixing, generated pattern shaping, and Glitch,
-// Starburst, and Lens distortion effect types.
+// Starburst, and Lens distortion effect types. Version 12 adds bounded,
+// layer-local RGB/alpha inversion and edge antialiasing post-process controls,
+// plus portable Live endpoints, mappings, scenes, clock routes, calibration,
+// output preferences, and watchdog/dropout safety.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -82,8 +85,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 11U,
-              "config_io.cpp implements setup format version 11");
+static_assert(kSetupFormatVersion == 12U,
+              "config_io.cpp implements setup format version 12");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -95,12 +98,13 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool render_record_key(std::string_view key) {
-    constexpr std::array<std::string_view, 15U> prefixes{{
+    constexpr std::array<std::string_view, 16U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
         "starting_colors.",
+        "post_process.",
     }};
     return std::any_of(prefixes.begin(), prefixes.end(),
                        [key](std::string_view prefix) {
@@ -199,6 +203,10 @@ bool setup_v11_record(std::string_view key) {
            || key == "palette.columns"
            || (starts_with(key, "palette.colors.")
                && (suffix(".name") || suffix(".encoding")));
+}
+
+bool setup_v12_record(std::string_view key) {
+    return starts_with(key, "post_process.") || starts_with(key, "live.");
 }
 
 void clear_error(std::string* error) {
@@ -959,6 +967,85 @@ constexpr std::array<std::pair<std::string_view, MusicSwingPolicy>, 3U>
         {"keep_all", MusicSwingPolicy::KeepAll},
     }};
 
+constexpr std::array<std::pair<std::string_view, LiveEndpointProtocol>, 4U>
+    kLiveEndpointProtocols{{
+        {"audio", LiveEndpointProtocol::Audio},
+        {"midi", LiveEndpointProtocol::Midi},
+        {"osc", LiveEndpointProtocol::Osc},
+        {"foot_controller", LiveEndpointProtocol::FootController},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveEndpointDirection>, 3U>
+    kLiveEndpointDirections{{
+        {"input", LiveEndpointDirection::Input},
+        {"output", LiveEndpointDirection::Output},
+        {"bidirectional", LiveEndpointDirection::Bidirectional},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveControlInput>, 7U>
+    kLiveControlInputs{{
+        {"midi_cc", LiveControlInput::MidiControlChange},
+        {"midi_note", LiveControlInput::MidiNote},
+        {"midi_program", LiveControlInput::MidiProgramChange},
+        {"midi_pitch_bend", LiveControlInput::MidiPitchBend},
+        {"midi_channel_pressure", LiveControlInput::MidiChannelPressure},
+        {"osc_value", LiveControlInput::OscValue},
+        {"footswitch", LiveControlInput::Footswitch},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveMappingMode>, 5U>
+    kLiveMappingModes{{
+        {"absolute", LiveMappingMode::Absolute},
+        {"relative", LiveMappingMode::Relative},
+        {"toggle", LiveMappingMode::Toggle},
+        {"momentary", LiveMappingMode::Momentary},
+        {"trigger", LiveMappingMode::Trigger},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveMappingTarget>, 3U>
+    kLiveMappingTargets{{
+        {"setting", LiveMappingTarget::Setting},
+        {"action", LiveMappingTarget::Action},
+        {"scene", LiveMappingTarget::Scene},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveAction>, 6U>
+    kLiveActions{{
+        {"freeze", LiveAction::Freeze},
+        {"blackout", LiveAction::Blackout},
+        {"next_scene", LiveAction::NextScene},
+        {"previous_scene", LiveAction::PreviousScene},
+        {"restart_scene", LiveAction::RestartScene},
+        {"tap_tempo", LiveAction::TapTempo},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveClockTarget>, 2U>
+    kLiveClockTargets{{
+        {"project", LiveClockTarget::Project},
+        {"layer", LiveClockTarget::Layer},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveClockInputSource>, 2U>
+    kLiveClockInputSources{{
+        {"midi_clock", LiveClockInputSource::MidiClock},
+        {"audio_stream", LiveClockInputSource::AudioStream},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveSceneValueType>, 5U>
+    kLiveSceneValueTypes{{
+        {"boolean", LiveSceneValueType::Boolean},
+        {"integer", LiveSceneValueType::Integer},
+        {"real", LiveSceneValueType::Real},
+        {"enum", LiveSceneValueType::EnumToken},
+        {"string", LiveSceneValueType::String},
+    }};
+
+constexpr std::array<std::pair<std::string_view, LiveDropoutBehavior>, 2U>
+    kLiveDropoutBehaviors{{
+        {"last_good_frame", LiveDropoutBehavior::LastGoodFrame},
+        {"blackout", LiveDropoutBehavior::Blackout},
+    }};
+
 std::string indexed_key(std::string_view collection,
                         std::size_t index,
                         std::string_view field) {
@@ -1206,6 +1293,182 @@ void add_audio_reactive_records(SetupBuilder& builder,
                        audio.color_amount_degrees);
 }
 
+void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
+    builder.add_bool("live.enabled", live.enabled);
+    builder.add_integer("live.endpoints.count", live.endpoints.size());
+    for (std::size_t index = 0U; index < live.endpoints.size(); ++index) {
+        const LiveEndpointConfig& endpoint = live.endpoints[index];
+        builder.add_string(indexed_key("live.endpoints", index, "uuid"),
+                           endpoint.uuid);
+        builder.add_string(indexed_key("live.endpoints", index, "name"),
+                           endpoint.name);
+        builder.add_enum(indexed_key("live.endpoints", index, "protocol"),
+                         endpoint.protocol, kLiveEndpointProtocols);
+        builder.add_enum(indexed_key("live.endpoints", index, "direction"),
+                         endpoint.direction, kLiveEndpointDirections);
+        builder.add_integer(
+            indexed_key("live.endpoints", index,
+                        "input_latency_microseconds"),
+            endpoint.input_latency_microseconds);
+        builder.add_integer(
+            indexed_key("live.endpoints", index,
+                        "output_latency_microseconds"),
+            endpoint.output_latency_microseconds);
+    }
+
+    builder.add_integer("live.mappings.count", live.mappings.size());
+    for (std::size_t index = 0U; index < live.mappings.size(); ++index) {
+        const LiveControlMapping& mapping = live.mappings[index];
+        builder.add_bool(indexed_key("live.mappings", index, "enabled"),
+                         mapping.enabled);
+        builder.add_string(indexed_key("live.mappings", index, "name"),
+                           mapping.name);
+        builder.add_string(
+            indexed_key("live.mappings", index, "endpoint_uuid"),
+            mapping.endpoint_uuid);
+        builder.add_enum(indexed_key("live.mappings", index, "input"),
+                         mapping.input, kLiveControlInputs);
+        builder.add_integer(
+            indexed_key("live.mappings", index, "midi_channel"),
+            mapping.midi_channel);
+        builder.add_integer(
+            indexed_key("live.mappings", index, "control_number"),
+            mapping.control_number);
+        builder.add_string(
+            indexed_key("live.mappings", index, "osc_address"),
+            mapping.osc_address);
+        builder.add_enum(indexed_key("live.mappings", index, "target"),
+                         mapping.target, kLiveMappingTargets);
+        builder.add_string(
+            indexed_key("live.mappings", index, "target_path"),
+            mapping.target_path);
+        builder.add_enum(indexed_key("live.mappings", index, "action"),
+                         mapping.action, kLiveActions);
+        builder.add_string(
+            indexed_key("live.mappings", index, "scene_uuid"),
+            mapping.scene_uuid);
+        builder.add_enum(indexed_key("live.mappings", index, "mode"),
+                         mapping.mode, kLiveMappingModes);
+        builder.add_double(
+            indexed_key("live.mappings", index, "input_minimum"),
+            mapping.input_minimum);
+        builder.add_double(
+            indexed_key("live.mappings", index, "input_maximum"),
+            mapping.input_maximum);
+        builder.add_double(
+            indexed_key("live.mappings", index, "output_minimum"),
+            mapping.output_minimum);
+        builder.add_double(
+            indexed_key("live.mappings", index, "output_maximum"),
+            mapping.output_maximum);
+        builder.add_double(indexed_key("live.mappings", index, "curve"),
+                           mapping.curve);
+        builder.add_double(indexed_key("live.mappings", index, "dead_zone"),
+                           mapping.dead_zone);
+        builder.add_integer(
+            indexed_key("live.mappings", index, "smoothing_milliseconds"),
+            mapping.smoothing_milliseconds);
+    }
+
+    builder.add_integer("live.clock_inputs.count", live.clock_inputs.size());
+    for (std::size_t index = 0U; index < live.clock_inputs.size(); ++index) {
+        const LiveClockInputConfig& clock = live.clock_inputs[index];
+        builder.add_bool(
+            indexed_key("live.clock_inputs", index, "enabled"),
+            clock.enabled);
+        builder.add_enum(indexed_key("live.clock_inputs", index, "target"),
+                         clock.target, kLiveClockTargets);
+        builder.add_string(
+            indexed_key("live.clock_inputs", index, "layer_uuid"),
+            clock.layer_uuid);
+        builder.add_enum(indexed_key("live.clock_inputs", index, "source"),
+                         clock.source, kLiveClockInputSources);
+        builder.add_string(
+            indexed_key("live.clock_inputs", index, "endpoint_uuid"),
+            clock.endpoint_uuid);
+        builder.add_integer(
+            indexed_key("live.clock_inputs", index, "audio_channel"),
+            clock.audio_channel);
+        builder.add_bool(
+            indexed_key("live.clock_inputs", index,
+                        "follow_midi_transport"),
+            clock.follow_midi_transport);
+        builder.add_integer(
+            indexed_key("live.clock_inputs", index,
+                        "holdover_milliseconds"),
+            clock.holdover_milliseconds);
+    }
+
+    builder.add_integer("live.midi_clock_outputs.count",
+                        live.midi_clock_outputs.size());
+    for (std::size_t index = 0U;
+         index < live.midi_clock_outputs.size(); ++index) {
+        const LiveMidiClockOutputConfig& output =
+            live.midi_clock_outputs[index];
+        builder.add_bool(
+            indexed_key("live.midi_clock_outputs", index, "enabled"),
+            output.enabled);
+        builder.add_enum(
+            indexed_key("live.midi_clock_outputs", index, "source"),
+            output.source, kLiveClockTargets);
+        builder.add_string(
+            indexed_key("live.midi_clock_outputs", index, "layer_uuid"),
+            output.layer_uuid);
+        builder.add_string(
+            indexed_key("live.midi_clock_outputs", index, "endpoint_uuid"),
+            output.endpoint_uuid);
+        builder.add_bool(
+            indexed_key("live.midi_clock_outputs", index,
+                        "send_transport"),
+            output.send_transport);
+        builder.add_bool(
+            indexed_key("live.midi_clock_outputs", index,
+                        "send_song_position"),
+            output.send_song_position);
+    }
+
+    builder.add_integer("live.scenes.count", live.scenes.size());
+    for (std::size_t index = 0U; index < live.scenes.size(); ++index) {
+        const LiveSceneConfig& scene = live.scenes[index];
+        builder.add_string(indexed_key("live.scenes", index, "uuid"),
+                           scene.uuid);
+        builder.add_string(indexed_key("live.scenes", index, "name"),
+                           scene.name);
+        builder.add_integer(
+            indexed_key("live.scenes", index, "transition_milliseconds"),
+            scene.transition_milliseconds);
+        const std::string values =
+            indexed_key("live.scenes", index, "values");
+        builder.add_integer(values + ".count", scene.values.size());
+        for (std::size_t value_index = 0U;
+             value_index < scene.values.size(); ++value_index) {
+            const LiveSceneValue& value = scene.values[value_index];
+            builder.add_string(indexed_key(values, value_index, "target_path"),
+                               value.target_path);
+            builder.add_enum(indexed_key(values, value_index, "type"),
+                             value.type, kLiveSceneValueTypes);
+            builder.add_string(indexed_key(values, value_index, "value"),
+                               value.value);
+        }
+    }
+    builder.add_string("live.startup_scene_uuid", live.startup_scene_uuid);
+    builder.add_bool("live.output.fullscreen", live.output.fullscreen);
+    builder.add_bool("live.output.prefer_secondary_display",
+                     live.output.prefer_secondary_display);
+    builder.add_bool("live.output.hide_cursor", live.output.hide_cursor);
+    builder.add_enum("live.safety.dropout_behavior",
+                     live.safety.dropout_behavior, kLiveDropoutBehaviors);
+    builder.add_bool("live.safety.frame_time_watchdog_enabled",
+                     live.safety.frame_time_watchdog_enabled);
+    builder.add_integer("live.safety.watchdog_timeout_milliseconds",
+                        live.safety.watchdog_timeout_milliseconds);
+    builder.add_integer("live.safety.audio_dropout_grace_milliseconds",
+                        live.safety.audio_dropout_grace_milliseconds);
+    builder.add_integer(
+        "live.safety.last_good_frame_timeout_milliseconds",
+        live.safety.last_good_frame_timeout_milliseconds);
+}
+
 bool validate_persistence_bounds(const RenderConfig& config,
                                  std::string* error) {
     const MusicAnalysis& music = config.clock.music;
@@ -1303,6 +1566,7 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_bool("timing.clock.data_only", config.clock.data_only);
     add_audio_reactive_records(builder, "audio_response_defaults.",
                                config.audio_reactive_defaults);
+    add_live_records(builder, config.live);
 
     builder.add_integer("paths.count", config.motion_paths.size());
     for (std::size_t path_index = 0U;
@@ -1564,6 +1828,23 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("quantization.mix", config.quantization.mix);
     builder.add_enum("quantization.mode", config.quantization.mode, kQuantizationModes);
 
+    builder.add_bool("post_process.invert_rgb_enabled",
+                     config.post_process.invert_rgb_enabled);
+    builder.add_double("post_process.invert_rgb_mix",
+                       config.post_process.invert_rgb_mix);
+    builder.add_bool("post_process.invert_alpha_enabled",
+                     config.post_process.invert_alpha_enabled);
+    builder.add_double("post_process.invert_alpha_mix",
+                       config.post_process.invert_alpha_mix);
+    builder.add_bool("post_process.antialias_enabled",
+                     config.post_process.antialias_enabled);
+    builder.add_double("post_process.antialias_strength",
+                       config.post_process.antialias_strength);
+    builder.add_double("post_process.antialias_threshold",
+                       config.post_process.antialias_threshold);
+    builder.add_integer("post_process.antialias_passes",
+                        config.post_process.antialias_passes);
+
     builder.add_bool("surface.enabled", config.surface.enabled);
     builder.add_enum("surface.mapping", config.surface.mapping, kSurfaceMappings);
     builder.add_integer("surface.rotations_per_loop", config.surface.rotations_per_loop);
@@ -1811,6 +2092,278 @@ bool consume_audio_reactive_records(Records& records,
                              audio.color_amount_degrees, error);
 }
 
+bool consume_live_records(Records& records, LiveConfig& live,
+                          std::string* error) {
+    if (!consume_bool(records, "live.enabled", live.enabled, error)) {
+        return false;
+    }
+
+    std::size_t endpoint_count = 0U;
+    if (!consume_count(records, "live.endpoints.count", kMaximumLiveEndpoints,
+                       endpoint_count, error)) {
+        return false;
+    }
+    live.endpoints.assign(endpoint_count, {});
+    for (std::size_t index = 0U; index < endpoint_count; ++index) {
+        LiveEndpointConfig& endpoint = live.endpoints[index];
+        if (!consume_bounded_string(
+                records, indexed_key("live.endpoints", index, "uuid"),
+                kMaximumLiveTextBytes, endpoint.uuid, error)
+            || !consume_bounded_string(
+                records, indexed_key("live.endpoints", index, "name"),
+                kMaximumLiveTextBytes, endpoint.name, error)
+            || !consume_enum(
+                records, indexed_key("live.endpoints", index, "protocol"),
+                endpoint.protocol, kLiveEndpointProtocols, error)
+            || !consume_enum(
+                records, indexed_key("live.endpoints", index, "direction"),
+                endpoint.direction, kLiveEndpointDirections, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.endpoints", index,
+                            "input_latency_microseconds"),
+                endpoint.input_latency_microseconds, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.endpoints", index,
+                            "output_latency_microseconds"),
+                endpoint.output_latency_microseconds, error)) {
+            return false;
+        }
+    }
+
+    std::size_t mapping_count = 0U;
+    if (!consume_count(records, "live.mappings.count", kMaximumLiveMappings,
+                       mapping_count, error)) {
+        return false;
+    }
+    live.mappings.assign(mapping_count, {});
+    for (std::size_t index = 0U; index < mapping_count; ++index) {
+        LiveControlMapping& mapping = live.mappings[index];
+        if (!consume_bool(
+                records, indexed_key("live.mappings", index, "enabled"),
+                mapping.enabled, error)
+            || !consume_bounded_string(
+                records, indexed_key("live.mappings", index, "name"),
+                kMaximumLiveTextBytes, mapping.name, error)
+            || !consume_bounded_string(
+                records,
+                indexed_key("live.mappings", index, "endpoint_uuid"),
+                kMaximumLiveTextBytes, mapping.endpoint_uuid, error)
+            || !consume_enum(
+                records, indexed_key("live.mappings", index, "input"),
+                mapping.input, kLiveControlInputs, error)
+            || !consume_integer(
+                records, indexed_key("live.mappings", index, "midi_channel"),
+                mapping.midi_channel, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.mappings", index, "control_number"),
+                mapping.control_number, error)
+            || !consume_bounded_string(
+                records, indexed_key("live.mappings", index, "osc_address"),
+                kMaximumLiveTextBytes, mapping.osc_address, error)
+            || !consume_enum(
+                records, indexed_key("live.mappings", index, "target"),
+                mapping.target, kLiveMappingTargets, error)
+            || !consume_bounded_string(
+                records, indexed_key("live.mappings", index, "target_path"),
+                kMaximumLiveTextBytes, mapping.target_path, error)
+            || !consume_enum(
+                records, indexed_key("live.mappings", index, "action"),
+                mapping.action, kLiveActions, error)
+            || !consume_bounded_string(
+                records, indexed_key("live.mappings", index, "scene_uuid"),
+                kMaximumLiveTextBytes, mapping.scene_uuid, error)
+            || !consume_enum(
+                records, indexed_key("live.mappings", index, "mode"),
+                mapping.mode, kLiveMappingModes, error)
+            || !consume_double(
+                records,
+                indexed_key("live.mappings", index, "input_minimum"),
+                mapping.input_minimum, error)
+            || !consume_double(
+                records,
+                indexed_key("live.mappings", index, "input_maximum"),
+                mapping.input_maximum, error)
+            || !consume_double(
+                records,
+                indexed_key("live.mappings", index, "output_minimum"),
+                mapping.output_minimum, error)
+            || !consume_double(
+                records,
+                indexed_key("live.mappings", index, "output_maximum"),
+                mapping.output_maximum, error)
+            || !consume_double(
+                records, indexed_key("live.mappings", index, "curve"),
+                mapping.curve, error)
+            || !consume_double(
+                records, indexed_key("live.mappings", index, "dead_zone"),
+                mapping.dead_zone, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.mappings", index,
+                            "smoothing_milliseconds"),
+                mapping.smoothing_milliseconds, error)) {
+            return false;
+        }
+    }
+
+    std::size_t input_count = 0U;
+    if (!consume_count(records, "live.clock_inputs.count",
+                       kMaximumLiveClockInputs, input_count, error)) {
+        return false;
+    }
+    live.clock_inputs.assign(input_count, {});
+    for (std::size_t index = 0U; index < input_count; ++index) {
+        LiveClockInputConfig& clock = live.clock_inputs[index];
+        if (!consume_bool(
+                records, indexed_key("live.clock_inputs", index, "enabled"),
+                clock.enabled, error)
+            || !consume_enum(
+                records, indexed_key("live.clock_inputs", index, "target"),
+                clock.target, kLiveClockTargets, error)
+            || !consume_bounded_string(
+                records,
+                indexed_key("live.clock_inputs", index, "layer_uuid"),
+                kMaximumLiveTextBytes, clock.layer_uuid, error)
+            || !consume_enum(
+                records, indexed_key("live.clock_inputs", index, "source"),
+                clock.source, kLiveClockInputSources, error)
+            || !consume_bounded_string(
+                records,
+                indexed_key("live.clock_inputs", index, "endpoint_uuid"),
+                kMaximumLiveTextBytes, clock.endpoint_uuid, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.clock_inputs", index, "audio_channel"),
+                clock.audio_channel, error)
+            || !consume_bool(
+                records,
+                indexed_key("live.clock_inputs", index,
+                            "follow_midi_transport"),
+                clock.follow_midi_transport, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.clock_inputs", index,
+                            "holdover_milliseconds"),
+                clock.holdover_milliseconds, error)) {
+            return false;
+        }
+    }
+
+    std::size_t output_count = 0U;
+    if (!consume_count(records, "live.midi_clock_outputs.count",
+                       kMaximumLiveClockOutputs, output_count, error)) {
+        return false;
+    }
+    live.midi_clock_outputs.assign(output_count, {});
+    for (std::size_t index = 0U; index < output_count; ++index) {
+        LiveMidiClockOutputConfig& output = live.midi_clock_outputs[index];
+        if (!consume_bool(
+                records,
+                indexed_key("live.midi_clock_outputs", index, "enabled"),
+                output.enabled, error)
+            || !consume_enum(
+                records,
+                indexed_key("live.midi_clock_outputs", index, "source"),
+                output.source, kLiveClockTargets, error)
+            || !consume_bounded_string(
+                records,
+                indexed_key("live.midi_clock_outputs", index, "layer_uuid"),
+                kMaximumLiveTextBytes, output.layer_uuid, error)
+            || !consume_bounded_string(
+                records,
+                indexed_key("live.midi_clock_outputs", index,
+                            "endpoint_uuid"),
+                kMaximumLiveTextBytes, output.endpoint_uuid, error)
+            || !consume_bool(
+                records,
+                indexed_key("live.midi_clock_outputs", index,
+                            "send_transport"),
+                output.send_transport, error)
+            || !consume_bool(
+                records,
+                indexed_key("live.midi_clock_outputs", index,
+                            "send_song_position"),
+                output.send_song_position, error)) {
+            return false;
+        }
+    }
+
+    std::size_t scene_count = 0U;
+    if (!consume_count(records, "live.scenes.count", kMaximumLiveScenes,
+                       scene_count, error)) {
+        return false;
+    }
+    live.scenes.assign(scene_count, {});
+    std::size_t remaining_values = kMaximumLiveSceneValues;
+    for (std::size_t index = 0U; index < scene_count; ++index) {
+        LiveSceneConfig& scene = live.scenes[index];
+        const std::string values = indexed_key("live.scenes", index, "values");
+        std::size_t value_count = 0U;
+        if (!consume_bounded_string(
+                records, indexed_key("live.scenes", index, "uuid"),
+                kMaximumLiveTextBytes, scene.uuid, error)
+            || !consume_bounded_string(
+                records, indexed_key("live.scenes", index, "name"),
+                kMaximumLiveTextBytes, scene.name, error)
+            || !consume_integer(
+                records,
+                indexed_key("live.scenes", index, "transition_milliseconds"),
+                scene.transition_milliseconds, error)
+            || !consume_count(records, values + ".count", remaining_values,
+                              value_count, error)) {
+            return false;
+        }
+        remaining_values -= value_count;
+        scene.values.assign(value_count, {});
+        for (std::size_t value_index = 0U;
+             value_index < value_count; ++value_index) {
+            LiveSceneValue& value = scene.values[value_index];
+            if (!consume_bounded_string(
+                    records,
+                    indexed_key(values, value_index, "target_path"),
+                    kMaximumLiveTextBytes, value.target_path, error)
+                || !consume_enum(
+                    records, indexed_key(values, value_index, "type"),
+                    value.type, kLiveSceneValueTypes, error)
+                || !consume_bounded_string(
+                    records, indexed_key(values, value_index, "value"),
+                    kMaximumLiveTextBytes, value.value, error)) {
+                return false;
+            }
+        }
+    }
+
+    return consume_bounded_string(
+               records, "live.startup_scene_uuid", kMaximumLiveTextBytes,
+               live.startup_scene_uuid, error)
+           && consume_bool(records, "live.output.fullscreen",
+                           live.output.fullscreen, error)
+           && consume_bool(records, "live.output.prefer_secondary_display",
+                           live.output.prefer_secondary_display, error)
+           && consume_bool(records, "live.output.hide_cursor",
+                           live.output.hide_cursor, error)
+           && consume_enum(records, "live.safety.dropout_behavior",
+                           live.safety.dropout_behavior,
+                           kLiveDropoutBehaviors, error)
+           && consume_bool(records,
+                           "live.safety.frame_time_watchdog_enabled",
+                           live.safety.frame_time_watchdog_enabled, error)
+           && consume_integer(records,
+                              "live.safety.watchdog_timeout_milliseconds",
+                              live.safety.watchdog_timeout_milliseconds,
+                              error)
+           && consume_integer(
+               records, "live.safety.audio_dropout_grace_milliseconds",
+               live.safety.audio_dropout_grace_milliseconds, error)
+           && consume_integer(
+               records,
+               "live.safety.last_good_frame_timeout_milliseconds",
+               live.safety.last_good_frame_timeout_milliseconds, error);
+}
+
 bool consume_path_binding_records(Records& records,
                                   std::string_view prefix,
                                   PathBinding& binding,
@@ -1851,6 +2404,10 @@ bool deserialize_setup(Records& records,
         && !consume_audio_reactive_records(
             records, "audio_response_defaults.",
             candidate.audio_reactive_defaults, true, error)) {
+        return false;
+    }
+    if (setup_version >= 12U
+        && !consume_live_records(records, candidate.live, error)) {
         return false;
     }
 
@@ -2352,6 +2909,27 @@ bool deserialize_setup(Records& records,
         || !consume_double(records, "surface.lighting", candidate.surface.lighting, error)) {
         return false;
     }
+    if (setup_version >= 12U) {
+        PostProcessConfig& post = candidate.post_process;
+        if (!consume_bool(records, "post_process.invert_rgb_enabled",
+                          post.invert_rgb_enabled, error)
+            || !consume_double(records, "post_process.invert_rgb_mix",
+                               post.invert_rgb_mix, error)
+            || !consume_bool(records, "post_process.invert_alpha_enabled",
+                             post.invert_alpha_enabled, error)
+            || !consume_double(records, "post_process.invert_alpha_mix",
+                               post.invert_alpha_mix, error)
+            || !consume_bool(records, "post_process.antialias_enabled",
+                             post.antialias_enabled, error)
+            || !consume_double(records, "post_process.antialias_strength",
+                               post.antialias_strength, error)
+            || !consume_double(records, "post_process.antialias_threshold",
+                               post.antialias_threshold, error)
+            || !consume_integer(records, "post_process.antialias_passes",
+                                post.antialias_passes, error)) {
+            return false;
+        }
+    }
     if (setup_version >= 10U) {
         StartingColorConfig& starting = candidate.starting_colors;
         if (!consume_bool(records, "alpha.use_source_alpha",
@@ -2694,7 +3272,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 7U && setup_v7_record(key))
              || (setup_version < 8U && setup_v8_record(key))
              || (setup_version < 10U && setup_v10_record(key))
-             || (setup_version < 11U && setup_v11_record(key)));
+             || (setup_version < 11U && setup_v11_record(key))
+             || (setup_version < 12U && setup_v12_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -2808,13 +3387,15 @@ RecoveryAttempt decode_with_record_repair(
 }
 
 std::string recovery_group(std::string_view key) {
-    constexpr std::array<std::string_view, 21U> groups{{
+    constexpr std::array<std::string_view, 23U> groups{{
         "paths.", "timing.music.", "timing.clock.", "canvas.",
         "output.", "waves.", "swings.", "effects.", "layer_clock.",
         "palette.", "surface.", "source_image.", "motion.", "alpha.",
         "quantization.", "transform.", "audio_reactive.", "appearance.",
         "rhythm.", "audio_response_defaults.",
         "starting_colors.",
+        "post_process.",
+        "live.",
     }};
     for (const std::string_view group : groups) {
         if (starts_with(key, group)) return std::string(group);
@@ -2825,7 +3406,8 @@ std::string recovery_group(std::string_view key) {
 bool collection_recovery_group(std::string_view group) {
     return group == "paths." || group == "waves." || group == "swings."
            || group == "effects." || group == "palette."
-           || group == "timing.music." || group == "layer_clock.";
+           || group == "timing.music." || group == "layer_clock."
+           || group == "live.";
 }
 
 bool recover_setup_records(Records records,

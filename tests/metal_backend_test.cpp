@@ -498,6 +498,23 @@ void test_backend_contract() {
                     label.c_str());
     }
 
+    pvt::RenderConfig post_processed = parity_config();
+    post_processed.quantization.enabled = false;
+    post_processed.post_process.invert_rgb_enabled = true;
+    post_processed.post_process.invert_rgb_mix = 0.73;
+    post_processed.post_process.invert_alpha_enabled = true;
+    post_processed.post_process.invert_alpha_mix = 0.41;
+    post_processed.post_process.antialias_enabled = true;
+    post_processed.post_process.antialias_strength = 0.68;
+    post_processed.post_process.antialias_threshold = 0.0;
+    post_processed.post_process.antialias_passes = 2;
+    CHECK(pvt::render_frame(post_processed, 8, cpu_options,
+                            cpu, nullptr, &error));
+    CHECK(pvt::render_frame(post_processed, 8, gpu_options,
+                            gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.003, 0.0003,
+                "post-process inversion/straight-alpha antialias");
+
     // Coordinate stages and glow exercise every shared-buffer direction and
     // retain straight-alpha coverage through the Metal blur pipeline.
     config = parity_config();

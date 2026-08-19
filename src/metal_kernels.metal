@@ -28,6 +28,8 @@ struct FrameConstants {
     float4 starting_maximum; // RGBA range maxima
     uint4 shaping_uint; // segments, octaves, signed cycles, seed low 32 bits
     float4 shaping_values; // kaleido rotation/mix, warp strength/scale
+    uint4 post_flags; // invert RGB, invert alpha, antialias, passes
+    float4 post_values; // invert mixes, antialias strength, threshold
 };
 
 struct GpuWave {
@@ -1670,6 +1672,82 @@ kernel void transform_image(constant FrameConstants& frame [[buffer(0)]],
         y = int(height - 1u) - y;
     }
     output[gid.y * width + gid.x] = source[uint(y) * width + uint(x)];
+}
+
+kernel void post_process_invert(
+    constant FrameConstants& frame [[buffer(0)]],
+    device float4* image [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    if (gid.x >= width || gid.y >= frame.dimensions_counts.y) return;
+    const uint offset = gid.y * width + gid.x;
+    float4 color = image[offset];
+    if (frame.post_flags.x != 0u && frame.post_values.x > 0.0f) {
+        color.rgb = mix(color.rgb, 1.0f - color.rgb,
+                        frame.post_values.x);
+    }
+    if (frame.post_flags.y != 0u && frame.post_values.y > 0.0f) {
+        color.a = mix(color.a, 1.0f - color.a, frame.post_values.y);
+    }
+    image[offset] = color;
+}
+
+float4 post_premultiply(float4 color) {
+    color.rgb *= color.a;
+    return color;
+}
+
+float post_contrast(float4 first, float4 second) {
+    const float4 difference = fabs(first - second);
+    return max(max(difference.r, difference.g),
+               max(difference.b, difference.a));
+}
+
+kernel void post_process_antialias(
+    constant FrameConstants& frame [[buffer(0)]],
+    const device float4* source [[buffer(1)]],
+    device float4* destination [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    if (gid.x >= width || gid.y >= height) return;
+    const int2 coordinate = int2(gid);
+    const int2 maximum = int2(int(width) - 1, int(height) - 1);
+    const int2 neighbor_coordinates[4] = {
+        clamp(coordinate + int2(-1, 0), int2(0), maximum),
+        clamp(coordinate + int2(1, 0), int2(0), maximum),
+        clamp(coordinate + int2(0, -1), int2(0), maximum),
+        clamp(coordinate + int2(0, 1), int2(0), maximum)};
+    const uint offset = gid.y * width + gid.x;
+    const float4 center = source[offset];
+    const float4 center_premultiplied = post_premultiply(center);
+    float4 filtered = 0.5f * center_premultiplied;
+    float contrast = 0.0f;
+    for (uint index = 0u; index < 4u; ++index) {
+        const int2 sample_coordinate = neighbor_coordinates[index];
+        const uint sample_offset = uint(sample_coordinate.y) * width
+                                   + uint(sample_coordinate.x);
+        const float4 sample = post_premultiply(source[sample_offset]);
+        contrast = max(contrast,
+                       post_contrast(center_premultiplied, sample));
+        filtered += 0.125f * sample;
+    }
+    const float threshold = frame.post_values.w;
+    if (contrast <= threshold) {
+        destination[offset] = center;
+        return;
+    }
+    const float transition = max(1.0e-12f, 1.0f - threshold);
+    const float amount = frame.post_values.z
+        * clamp((contrast - threshold) / transition, 0.0f, 1.0f);
+    const float4 mixed_premultiplied = mix(
+        center_premultiplied, filtered, amount);
+    float4 output = float4(0.0f, 0.0f, 0.0f,
+                           mixed_premultiplied.a);
+    if (output.a > 1.0e-7f) {
+        output.rgb = mixed_premultiplied.rgb / output.a;
+    }
+    destination[offset] = output;
 }
 
 float3 rgb_to_hsv(float3 rgb) {

@@ -157,6 +157,248 @@ bool write_test_png16(const fs::path& path, png_uint_32 width,
                                       pixels.data(), 0, nullptr) != 0;
 }
 
+void test_post_process_effects(const fs::path& directory) {
+    const fs::path source = directory / "post-process-edge.png";
+    std::vector<unsigned char> source_pixels(16U * 16U * 4U);
+    for (std::size_t y = 0U; y < 16U; ++y) {
+        for (std::size_t x = 0U; x < 16U; ++x) {
+            const std::size_t offset = (y * 16U + x) * 4U;
+            const bool opaque = x < 8U;
+            source_pixels[offset] = opaque ? 255U : 0U;
+            source_pixels[offset + 1U] = 0U;
+            source_pixels[offset + 2U] = opaque ? 0U : 255U;
+            source_pixels[offset + 3U] = opaque ? 255U : 0U;
+        }
+    }
+    CHECK(write_test_png(source, 16U, 16U, source_pixels));
+
+    pvt::RenderConfig config = pvt::default_config();
+    config.width = 16;
+    config.height = 16;
+    config.block_size = 1;
+    config.output.write_alpha = true;
+    config.starting_image.enabled = true;
+    config.starting_image.path = source.string();
+    config.starting_image.fit = pvt::StartingImageFit::Stretch;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.quantization.enabled = false;
+
+    std::string error;
+    pvt::Image baseline;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, baseline, &error));
+
+    config.post_process.invert_rgb_enabled = true;
+    config.post_process.invert_alpha_enabled = true;
+    pvt::Image inverted;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, inverted, &error));
+    CHECK(inverted.pixels.size() == baseline.pixels.size());
+    for (std::size_t offset = 0U;
+         offset + 3U < baseline.pixels.size(); offset += 4U) {
+        for (std::size_t channel = 0U; channel < 4U; ++channel) {
+            CHECK(std::fabs(inverted.pixels[offset + channel]
+                            - (1.0F - baseline.pixels[offset + channel]))
+                  < 1.0e-6F);
+        }
+    }
+
+    config.post_process = {};
+    config.post_process.invert_rgb_enabled = true;
+    config.post_process.invert_rgb_mix = 0.25;
+    config.post_process.invert_alpha_enabled = true;
+    config.post_process.invert_alpha_mix = 0.25;
+    pvt::Image partially_inverted;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.0, partially_inverted, &error));
+    if (const float* pixel = partially_inverted.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[0] - 0.75F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[1] - 0.25F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[2] - 0.25F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[3] - 0.75F) < 1.0e-6F);
+    }
+
+    config.post_process = {};
+    config.post_process.antialias_enabled = true;
+    config.post_process.antialias_strength = 1.0;
+    config.post_process.antialias_threshold = 0.0;
+    config.post_process.antialias_passes = 1;
+    pvt::Image antialiased;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, antialiased, &error));
+    // The transparent blue texel next to opaque red receives red coverage,
+    // not a blue fringe: filtering occurs in premultiplied space and the
+    // public image remains straight alpha.
+    if (const float* edge = antialiased.pixel(8, 8)) {
+        CHECK(std::fabs(edge[3] - 0.125F) < 1.0e-6F);
+        CHECK(edge[0] > 0.999F);
+        CHECK(edge[1] < 1.0e-6F);
+        CHECK(edge[2] < 1.0e-6F);
+    }
+    if (const float* untouched = antialiased.pixel(9, 8)) {
+        CHECK(untouched[3] == 0.0F);
+        if (const float* original = baseline.pixel(9, 8)) {
+            CHECK(std::equal(untouched, untouched + 4, original));
+        }
+    }
+
+    pvt::RenderConfig invalid = config;
+    invalid.post_process.antialias_passes = 5;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.antialias_threshold =
+        std::numeric_limits<double>::quiet_NaN();
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.invert_rgb_mix = -0.01;
+    CHECK(!pvt::validate(invalid).ok);
+}
+
+void test_live_control_model_and_setup_codec() {
+    const std::string midi_uuid =
+        "71111111-1111-4111-8111-111111111111";
+    const std::string audio_uuid =
+        "72222222-2222-4222-8222-222222222222";
+    const std::string osc_uuid =
+        "73333333-3333-4333-8333-333333333333";
+    const std::string scene_uuid =
+        "74444444-4444-4444-8444-444444444444";
+    const std::string layer_midi_output_uuid =
+        "76666666-6666-4666-8666-666666666666";
+
+    pvt::ProjectConfig project = pvt::default_project();
+    CHECK(!project.layers.empty());
+    if (project.layers.empty()) return;
+    pvt::LiveConfig& live = project.canvas.live;
+    live.enabled = true;
+    live.endpoints = {
+        {midi_uuid, "Keys and clock", pvt::LiveEndpointProtocol::Midi,
+         pvt::LiveEndpointDirection::Bidirectional, 2300, -400},
+        {audio_uuid, "Front-of-house mix", pvt::LiveEndpointProtocol::Audio,
+         pvt::LiveEndpointDirection::Input, 18750, 0},
+        {osc_uuid, "Stage OSC", pvt::LiveEndpointProtocol::Osc,
+         pvt::LiveEndpointDirection::Input, 0, 0},
+        {layer_midi_output_uuid, "Layer MIDI out",
+         pvt::LiveEndpointProtocol::Midi,
+         pvt::LiveEndpointDirection::Output, 0, 900},
+    };
+
+    pvt::LiveSceneConfig scene;
+    scene.uuid = scene_uuid;
+    scene.name = "Drop";
+    scene.transition_milliseconds = 90;
+    scene.values = {
+        {"layers/lead/opacity", pvt::LiveSceneValueType::Real, "1.25"},
+        {"project/live/output/fullscreen",
+         pvt::LiveSceneValueType::Boolean, "1"},
+        {"layers/lead/blend", pvt::LiveSceneValueType::EnumToken,
+         "color_dodge"},
+    };
+    live.scenes.push_back(scene);
+    live.startup_scene_uuid = scene_uuid;
+
+    pvt::LiveControlMapping midi;
+    midi.name = "Expression to glow";
+    midi.endpoint_uuid = midi_uuid;
+    midi.midi_channel = 1;
+    midi.control_number = 11;
+    midi.target_path = "layers/lead/effects/glow/intensity";
+    midi.output_minimum = -4.0;
+    midi.output_maximum = 12.0;
+    midi.curve = 1.75;
+    midi.smoothing_milliseconds = 24;
+    pvt::LiveControlMapping osc;
+    osc.name = "Freeze button";
+    osc.endpoint_uuid = osc_uuid;
+    osc.input = pvt::LiveControlInput::OscValue;
+    osc.osc_address = "/visuals/freeze";
+    osc.target = pvt::LiveMappingTarget::Action;
+    osc.target_path.clear();
+    osc.action = pvt::LiveAction::Freeze;
+    osc.mode = pvt::LiveMappingMode::Toggle;
+    live.mappings = {midi, osc};
+
+    live.clock_inputs = {
+        {true, pvt::LiveClockTarget::Project, {},
+         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 600},
+        {true, pvt::LiveClockTarget::Layer, project.layers.front().uuid,
+         pvt::LiveClockInputSource::AudioStream, audio_uuid, 1, false, 250},
+    };
+    live.midi_clock_outputs = {
+        {true, pvt::LiveClockTarget::Project, {}, midi_uuid, true, true},
+        {true, pvt::LiveClockTarget::Layer, project.layers.front().uuid,
+         layer_midi_output_uuid, false, false},
+    };
+    live.safety.watchdog_timeout_milliseconds = 75;
+    live.safety.audio_dropout_grace_milliseconds = 325;
+    live.safety.last_good_frame_timeout_milliseconds = 3000;
+
+    CHECK(pvt::validate(live).ok);
+    CHECK(pvt::validate(project).ok);
+    CHECK(std::string(pvt::live_endpoint_protocol_name(
+                          pvt::LiveEndpointProtocol::Midi)) == "MIDI");
+    CHECK(std::string(pvt::live_action_name(pvt::LiveAction::Blackout))
+          == "Blackout");
+    CHECK(std::string(pvt::live_clock_input_source_name(
+                          pvt::LiveClockInputSource::AudioStream))
+          == "Audio stream");
+
+    pvt::RenderConfig setup = pvt::default_config();
+    setup.live = live;
+    std::string serialized;
+    std::string error;
+    CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
+    CHECK(serialized.rfind("PVT_SETUP\t12\n", 0U) == 0U);
+    CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
+          != std::string::npos);
+    CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
+          != std::string::npos);
+    CHECK(serialized.find("device_id") == std::string::npos);
+    CHECK(serialized.find("device_uid") == std::string::npos);
+    CHECK(serialized.find("stream_data") == std::string::npos);
+
+    pvt::RenderConfig loaded;
+    CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
+    CHECK(loaded.live.enabled);
+    CHECK(loaded.live.endpoints.size() == 4U);
+    CHECK(loaded.live.endpoints[1].input_latency_microseconds == 18750);
+    CHECK(loaded.live.mappings.size() == 2U);
+    CHECK(loaded.live.mappings[0].target_path
+          == "layers/lead/effects/glow/intensity");
+    CHECK(loaded.live.clock_inputs.size() == 2U);
+    CHECK(loaded.live.midi_clock_outputs.size() == 2U);
+    CHECK(loaded.live.scenes.front().values.size() == 3U);
+    CHECK(loaded.live.safety.dropout_behavior
+          == pvt::LiveDropoutBehavior::LastGoodFrame);
+
+    pvt::LiveConfig invalid = live;
+    invalid.clock_inputs[0].endpoint_uuid = audio_uuid;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = live;
+    invalid.clock_inputs.push_back(invalid.clock_inputs.front());
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = live;
+    invalid.midi_clock_outputs[1].endpoint_uuid = midi_uuid;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = live;
+    invalid.scenes.front().values.front().value = "nan";
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = live;
+    invalid.mappings.front().osc_address = "/wrong/source";
+    CHECK(!pvt::validate(invalid).ok);
+
+    pvt::ProjectConfig missing_layer = project;
+    missing_layer.canvas.live.clock_inputs[1].layer_uuid =
+        "75555555-5555-4555-8555-555555555555";
+    CHECK(pvt::validate(missing_layer.canvas.live).ok);
+    CHECK(!pvt::validate(missing_layer).ok);
+    missing_layer.canvas.live.clock_inputs[1].enabled = false;
+    CHECK(pvt::validate(missing_layer).ok);
+}
+
 void test_starting_images_and_reusable_paths(const fs::path& directory) {
     const fs::path source = directory / "starting-image.png";
     CHECK(write_test_png(
@@ -2984,6 +3226,14 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         pvt::DitherMethod::OrderedBayer;
     original.quantization.enabled = true;
     original.quantization.mode = pvt::QuantizationMode::Hue;
+    original.post_process.invert_rgb_enabled = true;
+    original.post_process.invert_rgb_mix = 0.61;
+    original.post_process.invert_alpha_enabled = true;
+    original.post_process.invert_alpha_mix = 0.37;
+    original.post_process.antialias_enabled = true;
+    original.post_process.antialias_strength = 0.82;
+    original.post_process.antialias_threshold = 0.14;
+    original.post_process.antialias_passes = 3;
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
     original.surface.obj_path = "mesh folder/test.obj";
@@ -3151,6 +3401,14 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.starting_colors.domain_warp.cycles_per_loop == -4);
     CHECK(loaded.starting_colors.domain_warp.seed
           == UINT64_C(0xfedcba9876543210));
+    CHECK(loaded.post_process.invert_rgb_enabled);
+    CHECK(loaded.post_process.invert_rgb_mix == 0.61);
+    CHECK(loaded.post_process.invert_alpha_enabled);
+    CHECK(loaded.post_process.invert_alpha_mix == 0.37);
+    CHECK(loaded.post_process.antialias_enabled);
+    CHECK(loaded.post_process.antialias_strength == 0.82);
+    CHECK(loaded.post_process.antialias_threshold == 0.14);
+    CHECK(loaded.post_process.antialias_passes == 3);
 
     // New radial spirals serialize under their own token. The former
     // `subtractive` token migrates to the explicitly named square spiral so
@@ -3333,11 +3591,27 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_eleven_bytes = read_bytes(first);
-    CHECK(std::string(version_eleven_bytes.begin(), version_eleven_bytes.end())
-              .rfind("PVT_SETUP\t11\n", 0U) == 0U);
-    std::string version_ten(version_eleven_bytes.begin(),
-                            version_eleven_bytes.end());
+    const auto version_twelve_bytes = read_bytes(first);
+    CHECK(std::string(version_twelve_bytes.begin(), version_twelve_bytes.end())
+              .rfind("PVT_SETUP\t12\n", 0U) == 0U);
+    std::string version_eleven(version_twelve_bytes.begin(),
+                               version_twelve_bytes.end());
+    version_eleven.replace(0U, std::string("PVT_SETUP\t12").size(),
+                           "PVT_SETUP\t11");
+    erase_records_with_prefix(version_eleven, "post_process.");
+    erase_records_with_prefix(version_eleven, "live.");
+    pvt::RenderConfig loaded_version_eleven;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_eleven, loaded_version_eleven, &error));
+    CHECK(!loaded_version_eleven.post_process.invert_rgb_enabled);
+    CHECK(!loaded_version_eleven.post_process.invert_alpha_enabled);
+    CHECK(!loaded_version_eleven.post_process.antialias_enabled);
+    CHECK(loaded_version_eleven.post_process.antialias_passes == 1);
+    CHECK(!loaded_version_eleven.live.enabled);
+    CHECK(loaded_version_eleven.live.endpoints.empty());
+    CHECK(loaded_version_eleven.live.mappings.empty());
+
+    std::string version_ten(version_eleven.begin(), version_eleven.end());
     version_ten.replace(0U, std::string("PVT_SETUP\t11").size(),
                         "PVT_SETUP\t10");
     erase_record(version_ten, "layer_clock.mix");
@@ -4270,10 +4544,12 @@ int main(int argc, char** argv) {
     CHECK(!ignored);
 
     test_defaults_and_dynamic_collections();
+    test_live_control_model_and_setup_codec();
     test_synchronized_clocks_and_music();
     test_layer_clock_mixing_and_generated_shaping();
     test_image_access_and_transactional_render();
     test_cancellable_single_layer_render();
+    test_post_process_effects(test_directory);
     test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
     test_new_procedural_effects();

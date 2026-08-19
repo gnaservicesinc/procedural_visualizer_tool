@@ -2256,6 +2256,7 @@ ProjectConfig default_project() {
     project.canvas.fps = legacy.fps;
     project.canvas.clock = legacy.clock;
     project.canvas.audio_reactive_defaults = legacy.audio_reactive_defaults;
+    project.canvas.live = legacy.live;
     project.canvas.motion_paths = legacy.motion_paths;
     project.canvas.output_compatibility = legacy.output_compatibility;
     project.output = legacy.output;
@@ -2275,6 +2276,7 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
     config.fps = canvas.fps;
     config.clock = canvas.clock;
     config.audio_reactive_defaults = canvas.audio_reactive_defaults;
+    config.live = canvas.live;
     config.motion_paths = canvas.motion_paths;
     config.output = output;
     config.output_compatibility = canvas.output_compatibility;
@@ -2352,6 +2354,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !valid_enum(config.clock.music_tempo)
         || !valid_enum(config.clock.music_swing_policy)) {
         return invalid_result("The synchronized clock contains an unknown mode or policy.");
+    }
+    const ValidationResult live_validation = validate(config.live);
+    if (!live_validation.ok) {
+        return invalid_result("Live configuration is invalid: "
+                              + live_validation.message);
     }
     if (config.clock.frame_interval < 1
         || config.clock.frame_interval > kMaximumFrames
@@ -2871,6 +2878,15 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !valid_enum(config.quantization.mode)) {
         return invalid_result("Quantization values are out of range.");
     }
+    if (!finite_in_range(config.post_process.invert_rgb_mix, 0.0, 1.0)
+        || !finite_in_range(config.post_process.invert_alpha_mix, 0.0, 1.0)
+        || !finite_in_range(config.post_process.antialias_strength, 0.0, 1.0)
+        || !finite_in_range(config.post_process.antialias_threshold, 0.0, 1.0)
+        || config.post_process.antialias_passes < 1
+        || config.post_process.antialias_passes > 4) {
+        return invalid_result(
+            "Post-process inversion mixes, antialias strength/threshold, or pass count are out of range.");
+    }
     if (!valid_enum(config.surface.mapping)
         || config.surface.rotations_per_loop < -1000
         || config.surface.rotations_per_loop > 1000
@@ -2988,8 +3004,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     // Rendering is transactional: a previously rendered destination remains
     // alive until the new frame succeeds and is swapped into it.
     std::size_t buffer_count = 2U;
+    const bool has_post_antialias =
+        config.post_process.antialias_enabled
+        && config.post_process.antialias_strength > 0.0;
     if (has_enabled_effect || surface_has_render_work(config.surface)
-        || motion_has_render_work(config.motion)) {
+        || motion_has_render_work(config.motion) || has_post_antialias) {
         ++buffer_count;
     }
     if (has_enabled_glow || has_enabled_blur) {
@@ -4973,6 +4992,126 @@ void apply_quantization(Image& image, const QuantizationConfig& quantization,
     }
 }
 
+void apply_channel_inversion(Image& image,
+                             const PostProcessConfig& post_process,
+                             const std::atomic_bool* cancel) {
+    const double rgb_amount = post_process.invert_rgb_enabled
+                                  ? post_process.invert_rgb_mix : 0.0;
+    const double alpha_amount = post_process.invert_alpha_enabled
+                                    ? post_process.invert_alpha_mix : 0.0;
+    if (rgb_amount <= 0.0 && alpha_amount <= 0.0) return;
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            Color color = load_color(image, x, y);
+            if (rgb_amount > 0.0) {
+                // Do not clamp HDR input before inversion. The normalized
+                // channel operation 1-x remains reversible and intentionally
+                // allows artist-authored out-of-range working colors.
+                color.r = mix_value(color.r, 1.0 - color.r, rgb_amount);
+                color.g = mix_value(color.g, 1.0 - color.g, rgb_amount);
+                color.b = mix_value(color.b, 1.0 - color.b, rgb_amount);
+            }
+            if (alpha_amount > 0.0) {
+                color.a = mix_value(color.a, 1.0 - color.a, alpha_amount);
+            }
+            store_color(image, x, y, color);
+        }
+    }
+}
+
+Color premultiplied(Color color) {
+    color.r *= color.a;
+    color.g *= color.a;
+    color.b *= color.a;
+    return color;
+}
+
+double premultiplied_contrast(const Color& first, const Color& second) {
+    return std::max(
+        std::max(std::fabs(first.r - second.r),
+                 std::fabs(first.g - second.g)),
+        std::max(std::fabs(first.b - second.b),
+                 std::fabs(first.a - second.a)));
+}
+
+void apply_antialias_pass(const Image& source, Image& destination,
+                          const PostProcessConfig& post_process,
+                          const std::atomic_bool* cancel) {
+    ensure_image(destination, source.width, source.height);
+    constexpr std::array<std::array<int, 2>, 4> offsets{{
+        {{-1, 0}}, {{1, 0}}, {{0, -1}}, {{0, 1}},
+    }};
+    for (int y = 0; y < source.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < source.width; ++x) {
+            const Color center = load_color(source, x, y);
+            const Color center_premultiplied = premultiplied(center);
+            Color filtered{
+                0.5 * center_premultiplied.r,
+                0.5 * center_premultiplied.g,
+                0.5 * center_premultiplied.b,
+                0.5 * center_premultiplied.a};
+            double contrast = 0.0;
+            for (const auto& offset : offsets) {
+                const int sample_x = std::clamp(
+                    x + offset[0], 0, source.width - 1);
+                const int sample_y = std::clamp(
+                    y + offset[1], 0, source.height - 1);
+                const Color sample = premultiplied(
+                    load_color(source, sample_x, sample_y));
+                contrast = std::max(
+                    contrast,
+                    premultiplied_contrast(center_premultiplied, sample));
+                filtered.r += 0.125 * sample.r;
+                filtered.g += 0.125 * sample.g;
+                filtered.b += 0.125 * sample.b;
+                filtered.a += 0.125 * sample.a;
+            }
+            if (contrast <= post_process.antialias_threshold) {
+                store_color(destination, x, y, center);
+                continue;
+            }
+            const double transition = std::max(
+                1.0e-12, 1.0 - post_process.antialias_threshold);
+            const double edge_amount = post_process.antialias_strength
+                * clamp_value(
+                    (contrast - post_process.antialias_threshold)
+                        / transition,
+                    0.0, 1.0);
+            Color output;
+            output.a = mix_value(center_premultiplied.a, filtered.a,
+                                 edge_amount);
+            const double premultiplied_r = mix_value(
+                center_premultiplied.r, filtered.r, edge_amount);
+            const double premultiplied_g = mix_value(
+                center_premultiplied.g, filtered.g, edge_amount);
+            const double premultiplied_b = mix_value(
+                center_premultiplied.b, filtered.b, edge_amount);
+            if (output.a > 1.0e-7) {
+                output.r = premultiplied_r / output.a;
+                output.g = premultiplied_g / output.a;
+                output.b = premultiplied_b / output.a;
+            }
+            store_color(destination, x, y, output);
+        }
+    }
+}
+
+void apply_post_process(Image& image, Image& scratch,
+                        const PostProcessConfig& post_process,
+                        const std::atomic_bool* cancel) {
+    apply_channel_inversion(image, post_process, cancel);
+    if (!post_process.antialias_enabled
+        || post_process.antialias_strength <= 0.0) {
+        return;
+    }
+    for (int pass = 0; pass < post_process.antialias_passes; ++pass) {
+        apply_antialias_pass(image, scratch, post_process, cancel);
+        image.pixels.swap(scratch.pixels);
+    }
+}
+
 void copy_pixel(Image& image, int source_x, int source_y,
                 int destination_x, int destination_y) {
     const std::size_t source = pixel_offset_unchecked(image, source_x, source_y);
@@ -5459,6 +5598,7 @@ bool render_frame_at_timeline_sample_cancellable(
             current.pixels.swap(scratch.pixels);
         }
         apply_effect_stage(EffectSpace::Surface);
+        apply_post_process(current, scratch, render.post_process, cancel);
         apply_quantization(current, render.quantization, cancel);
         throw_if_cancelled(cancel);
 

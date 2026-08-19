@@ -421,23 +421,17 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This correctness patch fixes Play once then project fallback when project/layer clock mixing is enabled, so the project phase is adopted exactly once under Replace, Add, Difference, Soft XOR, and exact 24-bit XOR instead of being mixed with a copied project phase.
+          This release adds an artist-facing Live performance workspace with low-latency audio capture and causal analysis, CoreMIDI and OSC control, MIDI Learn, portable foot-controller mappings, project/layer MIDI or audio clock inputs, independent 24-PPQN MIDI clock outputs, scenes, secondary-display output, freeze, blackout, last-good-frame safety, adaptive quality, and an active frame-time watchdog.
 
-          Flow Workbench group selection and authoring locks now protect every layer-owned stage, Synchronization control, and audio override without trapping users away from the project-wide Project and Export workspaces. Layer music-analysis cancellation also remains reachable while its clock editor is disabled.
+          Projects store portable logical endpoint roles, mappings, scenes, signed latency compensation, clock routes, display preferences, and safety policy. Operating-system device IDs, network and display bindings, captured samples, the current scene, freeze, blackout, and live analysis remain machine-local or ephemeral.
 
-          A Lens Distortion effect with zero distortion is once again a true no-op: it does not request effect work or intermediate memory and does not incorrectly force RGBA output in the renderer or editor.
+          Post Effects add independently mixed RGB inversion, alpha inversion, and premultiplied edge antialiasing before quantization, with CPU and Metal implementations plus GUI, CLI, persistence, and regression coverage.
 
-          This release includes the Flow Workbench overhaul: seven focused Project, Starting Colors, Modifiers, Movement, Layer Effects, Post Effects, and Export workspaces with direct project settings and a compact collapsible Synchronization strip.
+          The desktop editor gains a cohesive dark studio theme, scalable vector-painted knobs, meters, and status lamps, familiar action icons, and a global fix for wrapped help text that could previously be clipped.
 
-          The single ordered Layer Effects editor separates its catalog into Movement & Distortion, Light & Energy, Stylize, Particles, and Blur. New and randomized effects start on Texture; mapped-surface placement remains an explicit advanced per-effect choice rather than a duplicated Object FX workspace.
+          Setup format 12 persists the new portable state and remains compatible with older setups and project bundles. Public by-value configuration types grew, so this release advances the shared-library ABI to SONAME 4 and installed clients must rebuild.
 
-          Generated sources add Kaleidoscope and seamless deterministic Domain Warp controls. The ordered effect stack adds Glitch, Starburst, and Lens Distortion with CPU and Metal implementations, CLI controls, persistence, and parity coverage.
-
-          Project/layer clock mixing is an explicit advanced opt-in and remains off for every old and new project. With mixing off, an active layer clock preserves the historical replace behavior. Deliberate mixing offers Replace, Add, Difference, continuous Soft XOR, and exact 24-bit XOR.
-
-          Starting palettes now interoperate with GIMP GPL, Krita KPL, CSS, Python, PHP, Java, hex text, PNG, and FLOAT OpenEXR. Image imports ignore fully transparent pixels and exact decoded duplicates, retain first-occurrence order, and summarize accepted, skipped, unsupported, and lossy conversions. Code-style palette files are parsed as bounded data and never executed.
-
-          Setup format 11 and project layer format 9 persist the new controls and palette metadata while retaining migration support for older projects. The public by-value configuration types grew, so this release advances the shared-library ABI to SONAME 3 and installed clients must rebuild.
+          CoreMIDI is the first native MIDI backend. Linux and Windows packages retain the portable Live authoring model but currently report the unsupported runtime adapter clearly. Syphon, Spout, and NDI remain optional follow-up transports.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 

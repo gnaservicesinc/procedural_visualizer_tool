@@ -34,12 +34,14 @@ class QPushButton;
 class QPlainTextEdit;
 class QSlider;
 class QSpinBox;
+class QStackedWidget;
 class QTabWidget;
 class QTabBar;
 class QTimer;
 class QUndoStack;
 class QWidget;
 class PreviewWidget;
+class LiveWorkspace;
 
 namespace pvt::audio {
 class AudioPlayback;
@@ -52,6 +54,7 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
     void openProject(const QString& path);
+    void openLiveMode();
     bool runSmokeChecks(QString* error = nullptr);
 
 protected:
@@ -138,6 +141,9 @@ private:
     void createLayerDock();
     void restoreLayersDock(bool makeVisible = true);
     void createToolbar();
+    void setLiveMode(bool live);
+    void applyAuthoredLiveConfig(const pvt::LiveConfig& live,
+                                 const QString& reason);
     void connectEditors();
     void setWorkflowStage(int stage);
     void setEffectCategory(int category);
@@ -162,6 +168,7 @@ private:
     void loadSelectedSwing();
     void loadSelectedEffect();
     void loadGlobalEditors();
+    void updatePostProcessEditorState();
     void applyWaveEditor(const QObject* changedEditor);
     void applySwingEditor(const QObject* changedEditor);
     void applyEffectEditor(const QObject* changedEditor);
@@ -397,6 +404,9 @@ private:
     std::unique_ptr<pvt::audio::AudioPlayback> audio_playback_;
 
     PreviewWidget* preview_ = nullptr;
+    QStackedWidget* workspace_stack_ = nullptr;
+    QWidget* editor_workspace_ = nullptr;
+    LiveWorkspace* live_workspace_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QWidget* wave_page_ = nullptr;
     QWidget* synchronization_page_ = nullptr;
@@ -462,7 +472,10 @@ private:
     QAction* settings_action_ = nullptr;
     QAction* about_action_ = nullptr;
     QAction* restore_layers_dock_action_ = nullptr;
+    QAction* edit_mode_action_ = nullptr;
+    QAction* live_mode_action_ = nullptr;
     QMenu* recent_projects_menu_ = nullptr;
+    bool layers_dock_visible_before_live_ = true;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;
@@ -706,6 +719,14 @@ private:
     QDoubleSpinBox* starting_blue_maximum_ = nullptr;
     QDoubleSpinBox* starting_alpha_minimum_ = nullptr;
     QDoubleSpinBox* starting_alpha_maximum_ = nullptr;
+    QCheckBox* post_invert_rgb_enabled_ = nullptr;
+    QDoubleSpinBox* post_invert_rgb_mix_ = nullptr;
+    QCheckBox* post_invert_alpha_enabled_ = nullptr;
+    QDoubleSpinBox* post_invert_alpha_mix_ = nullptr;
+    QCheckBox* post_antialias_enabled_ = nullptr;
+    QDoubleSpinBox* post_antialias_strength_ = nullptr;
+    QDoubleSpinBox* post_antialias_threshold_ = nullptr;
+    QSpinBox* post_antialias_passes_ = nullptr;
     QCheckBox* quantization_enabled_ = nullptr;
     QSpinBox* quantization_levels_ = nullptr;
     QDoubleSpinBox* quantization_mix_ = nullptr;

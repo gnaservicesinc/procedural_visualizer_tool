@@ -148,6 +148,32 @@ if(APPLE AND PVT_ENABLE_METAL)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/metal_kernels.metal")
         file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/metal_kernels.metal"
              PVT_METAL_KERNEL_SOURCE)
+        # C++ only requires implementations to accept string literals through
+        # 65,536 characters. Keep the embedded Metal source portable and avoid
+        # AppleClang's overlength warning by emitting adjacent raw literals.
+        set(PVT_METAL_KERNEL_SOURCE_LITERALS "")
+        string(LENGTH "${PVT_METAL_KERNEL_SOURCE}"
+            PVT_METAL_KERNEL_SOURCE_LENGTH)
+        set(PVT_METAL_KERNEL_SOURCE_OFFSET 0)
+        while(PVT_METAL_KERNEL_SOURCE_OFFSET LESS
+              PVT_METAL_KERNEL_SOURCE_LENGTH)
+            math(EXPR PVT_METAL_KERNEL_SOURCE_REMAINING
+                "${PVT_METAL_KERNEL_SOURCE_LENGTH} - ${PVT_METAL_KERNEL_SOURCE_OFFSET}")
+            if(PVT_METAL_KERNEL_SOURCE_REMAINING GREATER 60000)
+                set(PVT_METAL_KERNEL_SOURCE_CHUNK_LENGTH 60000)
+            else()
+                set(PVT_METAL_KERNEL_SOURCE_CHUNK_LENGTH
+                    ${PVT_METAL_KERNEL_SOURCE_REMAINING})
+            endif()
+            string(SUBSTRING "${PVT_METAL_KERNEL_SOURCE}"
+                ${PVT_METAL_KERNEL_SOURCE_OFFSET}
+                ${PVT_METAL_KERNEL_SOURCE_CHUNK_LENGTH}
+                PVT_METAL_KERNEL_SOURCE_CHUNK)
+            string(APPEND PVT_METAL_KERNEL_SOURCE_LITERALS
+                "    R\"PVT_METAL(${PVT_METAL_KERNEL_SOURCE_CHUNK})PVT_METAL\",\n")
+            math(EXPR PVT_METAL_KERNEL_SOURCE_OFFSET
+                "${PVT_METAL_KERNEL_SOURCE_OFFSET} + ${PVT_METAL_KERNEL_SOURCE_CHUNK_LENGTH}")
+        endwhile()
         configure_file(
             "${CMAKE_CURRENT_SOURCE_DIR}/src/metal_kernels_source.h.in"
             "${CMAKE_CURRENT_BINARY_DIR}/generated/metal_kernels_source.h"
@@ -264,6 +290,8 @@ if(PVT_NEEDS_AUDIO_SUPPORT)
     add_library(ProceduralVisualizerAudio STATIC
         src/audio_analysis.cpp
         src/audio_analysis.h
+        src/live_audio_capture.cpp
+        src/live_audio_capture.h
         src/audio_playback.cpp
         src/audio_playback.h)
     add_library(ProceduralVisualizerTool::Audio ALIAS ProceduralVisualizerAudio)
@@ -425,13 +453,15 @@ if(PVT_BUILD_EXAMPLES)
 endif()
 
 if(PVT_BUILD_QT_GUI)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Network)
     qt_standard_project_setup()
 
     set(PVT_GUI_VIDEO_SOURCES gui/video_export_stub.cpp)
+    set(PVT_GUI_MIDI_SOURCES gui/live_midi_stub.cpp)
     if(APPLE)
         enable_language(OBJCXX)
         set(PVT_GUI_VIDEO_SOURCES gui/macos_video_export.mm)
+        set(PVT_GUI_MIDI_SOURCES gui/live_midi_mac.mm)
         set_source_files_properties(gui/macos_video_export.mm PROPERTIES
             COMPILE_OPTIONS "-fobjc-arc")
     endif()
@@ -466,6 +496,20 @@ if(PVT_BUILD_QT_GUI)
         gui/main.cpp
         gui/main_window.cpp
         gui/main_window.h
+        gui/live_midi.h
+        ${PVT_GUI_MIDI_SOURCES}
+        gui/live_frame_controller.cpp
+        gui/live_frame_controller.h
+        gui/live_osc.cpp
+        gui/live_osc.h
+        gui/live_target_registry.cpp
+        gui/live_target_registry.h
+        gui/live_workspace.cpp
+        gui/live_workspace.h
+        gui/stage_output_window.cpp
+        gui/stage_output_window.h
+        gui/studio_widgets.cpp
+        gui/studio_widgets.h
         gui/preview_widget.cpp
         gui/preview_widget.h
         gui/video_export.h
@@ -483,7 +527,9 @@ if(PVT_BUILD_QT_GUI)
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.gnaservices.proceduralvisualizertool"
             MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
             MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-            MACOSX_BUNDLE_ICON_FILE "ProceduralVisualizerTool.icns")
+            MACOSX_BUNDLE_ICON_FILE "ProceduralVisualizerTool.icns"
+            MACOSX_BUNDLE_INFO_PLIST
+                "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in")
         if(PVT_ENABLE_DISTRIBUTION)
             # Keep the linker's bare build-tree bundle visibly separate from
             # the verified distributable. The final app occupies the obvious
@@ -507,12 +553,14 @@ if(PVT_BUILD_QT_GUI)
         ProceduralVisualizerTool::Audio
         PNG::PNG
         Qt6::Concurrent
+        Qt6::Network
         Qt6::Widgets
     )
     if(APPLE)
         target_link_libraries(ProceduralVisualizerToolGui PRIVATE
             "-framework AVFoundation"
             "-framework AudioToolbox"
+            "-framework CoreMIDI"
             "-framework CoreMedia"
             "-framework CoreVideo"
             "-framework Foundation"

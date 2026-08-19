@@ -1365,7 +1365,7 @@ void configure_swings(RenderConfig& config) {
 }
 
 void configure_color(RenderConfig& config) {
-    std::cout << "\n-- Starting colors and post-effects quantization --\n";
+    std::cout << "\n-- Starting colors and post effects --\n";
     if (!prompt_real("Phrase warp amount", config.phrase_warp, 0.0, 2.0)
         || !prompt_real("Ghost mix", config.ghost_mix, 0.0, 1.0)
         || !prompt_real("Ghost lag (degrees)", config.ghost_lag_degrees, -360.0, 360.0)
@@ -1424,6 +1424,22 @@ void configure_color(RenderConfig& config) {
                        -1000, 1000)
         || !prompt_uint64("Domain warp deterministic seed",
                           config.starting_colors.domain_warp.seed)
+        || !prompt_bool("Invert colors (RGB)",
+                        config.post_process.invert_rgb_enabled)
+        || !prompt_real("Invert colors mix",
+                        config.post_process.invert_rgb_mix, 0.0, 1.0)
+        || !prompt_bool("Invert alpha",
+                        config.post_process.invert_alpha_enabled)
+        || !prompt_real("Invert alpha mix",
+                        config.post_process.invert_alpha_mix, 0.0, 1.0)
+        || !prompt_bool("Edge antialiasing enabled",
+                        config.post_process.antialias_enabled)
+        || !prompt_real("Edge antialiasing strength",
+                        config.post_process.antialias_strength, 0.0, 1.0)
+        || !prompt_real("Edge antialiasing threshold",
+                        config.post_process.antialias_threshold, 0.0, 1.0)
+        || !prompt_int("Edge antialiasing passes",
+                       config.post_process.antialias_passes, 1, 4)
         || !prompt_bool("Post-effects quantization enabled", config.quantization.enabled)
         || !prompt_int("Post-effects quantization levels", config.quantization.levels, 2, 65536)
         || !prompt_real("Post-effects quantization mix", config.quantization.mix, 0.0, 1.0)
@@ -2356,7 +2372,7 @@ void print_summary(const CliState& state) {
               << "4) Waves for active layer\n"
               << "5) Effects for active layer\n"
               << "6) Surface, transforms, and procedural features for active layer\n"
-              << "7) Palette, color, and quantization for active layer\n"
+              << "7) Palette, color, and post effects for active layer\n"
               << "8) Procedural alpha modulation for active layer\n"
               << "9) Export settings (global)\n"
               << "10) Save project bundle\n"

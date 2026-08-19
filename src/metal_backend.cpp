@@ -68,6 +68,8 @@ struct alignas(16) GpuFrameConstants {
     Float4 starting_maximum;
     UInt4 shaping_uint; // segments, octaves, signed cycles, seed low 32 bits
     Float4 shaping_values; // rotation, mix, warp strength, warp scale
+    UInt4 post_flags; // invert RGB, invert alpha, antialias, passes
+    Float4 post_values; // invert mixes, antialias strength, threshold
 };
 
 struct alignas(16) GpuWave {
@@ -114,7 +116,7 @@ struct alignas(16) GpuParticleGrid {
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
-static_assert(sizeof(GpuFrameConstants) == 288U);
+static_assert(sizeof(GpuFrameConstants) == 320U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 80U);
@@ -176,6 +178,8 @@ enum class Pipeline : std::size_t {
     BlurCombine,
     Transform,
     Motion,
+    PostInvert,
+    PostAntialias,
     Quantize,
     Count
 };
@@ -195,6 +199,8 @@ constexpr const char* kPipelineNames[] = {
     "blur_combine",
     "transform_image",
     "layer_motion",
+    "post_process_invert",
+    "post_process_antialias",
     "quantize_image"};
 static_assert(sizeof(kPipelineNames) / sizeof(*kPipelineNames)
               == static_cast<std::size_t>(Pipeline::Count));
@@ -227,9 +233,14 @@ public:
         // trigonometry. Safe IEEE-oriented compilation keeps the GPU close to
         // the double-precision CPU reference while still using float storage.
         compile_options->setFastMathEnabled(false);
+        std::string kernel_source;
+        kernel_source.reserve(kMetalKernelSourceLength);
+        for (const char* chunk : kMetalKernelSourceChunks) {
+            kernel_source += chunk;
+        }
         NS::Error* raw_error = nullptr;
         NS::String* source = NS::String::string(
-            kMetalKernelSource, NS::UTF8StringEncoding);
+            kernel_source.c_str(), NS::UTF8StringEncoding);
         library_ = take_metal_ownership(
             device_->newLibrary(source, compile_options.get(), &raw_error));
         if (!library_) {
@@ -556,6 +567,16 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<float>(starting.domain_warp.enabled
                                ? starting.domain_warp.strength : 0.0),
         static_cast<float>(starting.domain_warp.scale)};
+    result.post_flags = {
+        config.post_process.invert_rgb_enabled ? 1U : 0U,
+        config.post_process.invert_alpha_enabled ? 1U : 0U,
+        config.post_process.antialias_enabled ? 1U : 0U,
+        static_cast<std::uint32_t>(config.post_process.antialias_passes)};
+    result.post_values = {
+        static_cast<float>(config.post_process.invert_rgb_mix),
+        static_cast<float>(config.post_process.invert_alpha_mix),
+        static_cast<float>(config.post_process.antialias_strength),
+        static_cast<float>(config.post_process.antialias_threshold)};
     return result;
 }
 
@@ -1329,6 +1350,32 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     if (effect_buffer_failure) {
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
+    }
+    if ((config.post_process.invert_rgb_enabled
+         && config.post_process.invert_rgb_mix > 0.0)
+        || (config.post_process.invert_alpha_enabled
+            && config.post_process.invert_alpha_mix > 0.0)) {
+        encode_grid(command_buffer, context.pipeline(Pipeline::PostInvert),
+                    pixel_grid,
+                    [&](MTL::ComputeCommandEncoder* encoder) {
+                        encoder->setBytes(&constants, sizeof(constants), 0U);
+                        encoder->setBuffer(current, 0U, 1U);
+                    });
+    }
+    if (config.post_process.antialias_enabled
+        && config.post_process.antialias_strength > 0.0) {
+        for (int pass = 0;
+             pass < config.post_process.antialias_passes; ++pass) {
+            encode_grid(
+                command_buffer, context.pipeline(Pipeline::PostAntialias),
+                pixel_grid,
+                [&](MTL::ComputeCommandEncoder* encoder) {
+                    encoder->setBytes(&constants, sizeof(constants), 0U);
+                    encoder->setBuffer(current, 0U, 1U);
+                    encoder->setBuffer(scratch, 0U, 2U);
+                });
+            std::swap(current, scratch);
+        }
     }
     if (config.quantization.enabled && config.quantization.mix > 0.0) {
         encode_grid(command_buffer, context.pipeline(Pipeline::Quantize),

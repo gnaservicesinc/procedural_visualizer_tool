@@ -8,6 +8,7 @@ set(_pvt_required_items
     "Contents/Resources/ProceduralVisualizerTool.icns"
     "Contents/Frameworks/QtCore.framework/Versions/A/QtCore"
     "Contents/Frameworks/QtGui.framework/Versions/A/QtGui"
+    "Contents/Frameworks/QtNetwork.framework/Versions/A/QtNetwork"
     "Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets"
     "Contents/Frameworks/QtConcurrent.framework/Versions/A/QtConcurrent"
     "Contents/PlugIns/platforms/libqcocoa.dylib"

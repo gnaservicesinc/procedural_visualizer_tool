@@ -5,13 +5,16 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <locale>
 #include <new>
 #include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -161,6 +164,202 @@ bool valid_uuid(const std::string& value) {
     return has_nonzero_digit && value[14U] == '4'
            && (variant == '8' || variant == '9' || variant == 'a'
                || variant == 'b');
+}
+
+template <typename Enum>
+bool valid_live_enum(Enum) {
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveEndpointProtocol value) {
+    switch (value) {
+        case LiveEndpointProtocol::Audio:
+        case LiveEndpointProtocol::Midi:
+        case LiveEndpointProtocol::Osc:
+        case LiveEndpointProtocol::FootController:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveEndpointDirection value) {
+    switch (value) {
+        case LiveEndpointDirection::Input:
+        case LiveEndpointDirection::Output:
+        case LiveEndpointDirection::Bidirectional:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveControlInput value) {
+    switch (value) {
+        case LiveControlInput::MidiControlChange:
+        case LiveControlInput::MidiNote:
+        case LiveControlInput::MidiProgramChange:
+        case LiveControlInput::MidiPitchBend:
+        case LiveControlInput::MidiChannelPressure:
+        case LiveControlInput::OscValue:
+        case LiveControlInput::Footswitch:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveMappingMode value) {
+    switch (value) {
+        case LiveMappingMode::Absolute:
+        case LiveMappingMode::Relative:
+        case LiveMappingMode::Toggle:
+        case LiveMappingMode::Momentary:
+        case LiveMappingMode::Trigger:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveMappingTarget value) {
+    switch (value) {
+        case LiveMappingTarget::Setting:
+        case LiveMappingTarget::Action:
+        case LiveMappingTarget::Scene:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveAction value) {
+    switch (value) {
+        case LiveAction::Freeze:
+        case LiveAction::Blackout:
+        case LiveAction::NextScene:
+        case LiveAction::PreviousScene:
+        case LiveAction::RestartScene:
+        case LiveAction::TapTempo:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveClockTarget value) {
+    switch (value) {
+        case LiveClockTarget::Project:
+        case LiveClockTarget::Layer:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveClockInputSource value) {
+    switch (value) {
+        case LiveClockInputSource::MidiClock:
+        case LiveClockInputSource::AudioStream:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveSceneValueType value) {
+    switch (value) {
+        case LiveSceneValueType::Boolean:
+        case LiveSceneValueType::Integer:
+        case LiveSceneValueType::Real:
+        case LiveSceneValueType::EnumToken:
+        case LiveSceneValueType::String:
+            return true;
+    }
+    return false;
+}
+
+template <>
+bool valid_live_enum(LiveDropoutBehavior value) {
+    switch (value) {
+        case LiveDropoutBehavior::LastGoodFrame:
+        case LiveDropoutBehavior::Blackout:
+            return true;
+    }
+    return false;
+}
+
+bool live_direction_has_input(LiveEndpointDirection value) {
+    return value == LiveEndpointDirection::Input
+           || value == LiveEndpointDirection::Bidirectional;
+}
+
+bool live_direction_has_output(LiveEndpointDirection value) {
+    return value == LiveEndpointDirection::Output
+           || value == LiveEndpointDirection::Bidirectional;
+}
+
+bool valid_live_text(const std::string& value, bool allow_empty = false) {
+    return (allow_empty || !value.empty())
+           && value.size() <= kMaximumLiveTextBytes
+           && valid_utf8_without_controls(value, false);
+}
+
+bool valid_osc_address(const std::string& value) {
+    if (value.empty() || value.size() > kMaximumLiveTextBytes
+        || value.front() != '/') {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(), [](char raw) {
+        const unsigned char byte = static_cast<unsigned char>(raw);
+        return byte >= 0x21U && byte <= 0x7eU;
+    });
+}
+
+bool valid_scene_value(const LiveSceneValue& value) {
+    if (!valid_live_enum(value.type)
+        || value.value.size() > kMaximumLiveTextBytes
+        || !valid_utf8_without_controls(value.value, false)) {
+        return false;
+    }
+    switch (value.type) {
+        case LiveSceneValueType::Boolean:
+            return value.value == "0" || value.value == "1";
+        case LiveSceneValueType::Integer: {
+            if (value.value.empty()) return false;
+            std::int64_t parsed = 0;
+            const auto result = std::from_chars(
+                value.value.data(), value.value.data() + value.value.size(),
+                parsed, 10);
+            return result.ec == std::errc{}
+                   && result.ptr == value.value.data() + value.value.size();
+        }
+        case LiveSceneValueType::Real: {
+            if (value.value.empty()) return false;
+            std::istringstream stream(value.value);
+            stream.imbue(std::locale::classic());
+            stream >> std::noskipws;
+            double parsed = 0.0;
+            stream >> parsed;
+            return stream && stream.peek() == std::char_traits<char>::eof()
+                   && std::isfinite(parsed);
+        }
+        case LiveSceneValueType::EnumToken:
+            return !value.value.empty()
+                   && std::all_of(
+                       value.value.begin(), value.value.end(), [](char raw) {
+                           const unsigned char byte =
+                               static_cast<unsigned char>(raw);
+                           return (byte >= 'a' && byte <= 'z')
+                                  || (byte >= '0' && byte <= '9')
+                                  || byte == '_' || byte == '-'
+                                  || byte == '.';
+                       });
+        case LiveSceneValueType::String:
+            return true;
+    }
+    return false;
 }
 
 bool valid_blend_mode(BlendMode mode) {
@@ -882,6 +1081,288 @@ std::string generate_uuid() {
     return result;
 }
 
+ValidationResult validate(const LiveConfig& live) {
+    try {
+        if (live.endpoints.size() > kMaximumLiveEndpoints
+            || live.mappings.size() > kMaximumLiveMappings
+            || live.clock_inputs.size() > kMaximumLiveClockInputs
+            || live.midi_clock_outputs.size() > kMaximumLiveClockOutputs
+            || live.scenes.size() > kMaximumLiveScenes) {
+            return invalid_result(
+                "A Live collection exceeds its deterministic real-time work limit.");
+        }
+
+        std::unordered_map<std::string, const LiveEndpointConfig*> endpoints;
+        endpoints.reserve(live.endpoints.size());
+        for (std::size_t index = 0U; index < live.endpoints.size(); ++index) {
+            const LiveEndpointConfig& endpoint = live.endpoints[index];
+            constexpr std::int64_t maximum_latency = INT64_C(10000000);
+            if (!valid_uuid(endpoint.uuid)
+                || !valid_live_text(endpoint.name)
+                || !valid_live_enum(endpoint.protocol)
+                || !valid_live_enum(endpoint.direction)
+                || endpoint.input_latency_microseconds < -maximum_latency
+                || endpoint.input_latency_microseconds > maximum_latency
+                || endpoint.output_latency_microseconds < -maximum_latency
+                || endpoint.output_latency_microseconds > maximum_latency) {
+                return invalid_result(
+                    "Live endpoint " + std::to_string(index + 1U)
+                    + " has an invalid UUID, name, protocol, direction, or latency calibration.");
+            }
+            if (!endpoints.emplace(endpoint.uuid, &endpoint).second) {
+                return invalid_result(
+                    "Every Live endpoint must have a unique UUID.");
+            }
+        }
+
+        std::unordered_map<std::string, const LiveSceneConfig*> scenes;
+        scenes.reserve(live.scenes.size());
+        std::size_t total_scene_values = 0U;
+        for (std::size_t index = 0U; index < live.scenes.size(); ++index) {
+            const LiveSceneConfig& scene = live.scenes[index];
+            if (!valid_uuid(scene.uuid) || !valid_live_text(scene.name)
+                || scene.transition_milliseconds < 0
+                || scene.transition_milliseconds > 60000) {
+                return invalid_result(
+                    "Live scene " + std::to_string(index + 1U)
+                    + " has an invalid UUID, name, or transition duration.");
+            }
+            if (!scenes.emplace(scene.uuid, &scene).second) {
+                return invalid_result("Every Live scene must have a unique UUID.");
+            }
+            if (scene.values.size()
+                    > kMaximumLiveSceneValues - total_scene_values) {
+                return invalid_result(
+                    "The total Live scene-value count exceeds its deterministic switching limit.");
+            }
+            total_scene_values += scene.values.size();
+            std::unordered_set<std::string> targets;
+            targets.reserve(scene.values.size());
+            for (std::size_t value_index = 0U;
+                 value_index < scene.values.size(); ++value_index) {
+                const LiveSceneValue& value = scene.values[value_index];
+                if (!valid_live_text(value.target_path)
+                    || !valid_scene_value(value)) {
+                    return invalid_result(
+                        "Live scene " + std::to_string(index + 1U)
+                        + " contains an invalid target or typed value at position "
+                        + std::to_string(value_index + 1U) + ".");
+                }
+                if (!targets.insert(value.target_path).second) {
+                    return invalid_result(
+                        "A Live scene cannot assign the same setting target more than once.");
+                }
+            }
+        }
+        if (!live.startup_scene_uuid.empty()
+            && (!valid_uuid(live.startup_scene_uuid)
+                || scenes.find(live.startup_scene_uuid) == scenes.end())) {
+            return invalid_result(
+                "The Live startup scene must reference a saved scene UUID.");
+        }
+
+        for (std::size_t index = 0U; index < live.mappings.size(); ++index) {
+            const LiveControlMapping& mapping = live.mappings[index];
+            if (!valid_live_text(mapping.name)
+                || !valid_live_enum(mapping.input)
+                || !valid_live_enum(mapping.target)
+                || !valid_live_enum(mapping.action)
+                || !valid_live_enum(mapping.mode)
+                || mapping.midi_channel < 0 || mapping.midi_channel > 16
+                || mapping.control_number < 0
+                || mapping.control_number > 127
+                || !std::isfinite(mapping.input_minimum)
+                || !std::isfinite(mapping.input_maximum)
+                || mapping.input_minimum >= mapping.input_maximum
+                || !std::isfinite(mapping.output_minimum)
+                || !std::isfinite(mapping.output_maximum)
+                || std::fabs(mapping.output_minimum) > 1.0e12
+                || std::fabs(mapping.output_maximum) > 1.0e12
+                || !std::isfinite(mapping.curve)
+                || mapping.curve < 0.01 || mapping.curve > 100.0
+                || !std::isfinite(mapping.dead_zone)
+                || mapping.dead_zone < 0.0 || mapping.dead_zone >= 1.0
+                || mapping.smoothing_milliseconds < 0
+                || mapping.smoothing_milliseconds > 60000) {
+                return invalid_result(
+                    "Live mapping " + std::to_string(index + 1U)
+                    + " has an invalid source, target, transform, or smoothing value.");
+            }
+
+            const bool midi =
+                mapping.input == LiveControlInput::MidiControlChange
+                || mapping.input == LiveControlInput::MidiNote
+                || mapping.input == LiveControlInput::MidiProgramChange
+                || mapping.input == LiveControlInput::MidiPitchBend
+                || mapping.input == LiveControlInput::MidiChannelPressure;
+            const bool numbered_midi =
+                mapping.input == LiveControlInput::MidiControlChange
+                || mapping.input == LiveControlInput::MidiNote
+                || mapping.input == LiveControlInput::MidiProgramChange;
+            if ((midi && !mapping.osc_address.empty())
+                || (!midi && mapping.input != LiveControlInput::OscValue
+                    && mapping.midi_channel != 0)
+                || (!numbered_midi
+                    && mapping.input != LiveControlInput::Footswitch
+                    && mapping.control_number != 0)
+                || (mapping.input == LiveControlInput::OscValue
+                    && (mapping.midi_channel != 0
+                        || mapping.control_number != 0
+                        || !valid_osc_address(mapping.osc_address)))
+                || (mapping.input != LiveControlInput::OscValue
+                    && !mapping.osc_address.empty())) {
+                return invalid_result(
+                    "A Live mapping contains source fields that do not match its input type.");
+            }
+
+            if (mapping.target == LiveMappingTarget::Setting) {
+                if (!valid_live_text(mapping.target_path)
+                    || !mapping.scene_uuid.empty()) {
+                    return invalid_result(
+                        "A Live setting mapping requires one portable target path.");
+                }
+            } else if (mapping.target == LiveMappingTarget::Action) {
+                if (!mapping.target_path.empty() || !mapping.scene_uuid.empty()) {
+                    return invalid_result(
+                        "A Live action mapping cannot also contain a setting or scene target.");
+                }
+            } else {
+                if (!mapping.target_path.empty()
+                    || !valid_uuid(mapping.scene_uuid)
+                    || (mapping.enabled
+                        && scenes.find(mapping.scene_uuid) == scenes.end())) {
+                    return invalid_result(
+                        "An enabled Live scene mapping must reference a saved scene UUID.");
+                }
+            }
+
+            if (!mapping.endpoint_uuid.empty()
+                && !valid_uuid(mapping.endpoint_uuid)) {
+                return invalid_result(
+                    "A Live mapping endpoint reference is not a canonical UUID.");
+            }
+            if (mapping.enabled) {
+                const auto found = endpoints.find(mapping.endpoint_uuid);
+                if (found == endpoints.end()
+                    || !live_direction_has_input(found->second->direction)
+                    || (midi
+                        && found->second->protocol
+                               != LiveEndpointProtocol::Midi)
+                    || (mapping.input == LiveControlInput::OscValue
+                        && found->second->protocol
+                               != LiveEndpointProtocol::Osc)
+                    || (mapping.input == LiveControlInput::Footswitch
+                        && found->second->protocol
+                               != LiveEndpointProtocol::FootController)) {
+                    return invalid_result(
+                        "An enabled Live mapping requires a compatible logical input endpoint.");
+                }
+            }
+        }
+
+        std::unordered_set<std::string> active_clock_targets;
+        for (std::size_t index = 0U; index < live.clock_inputs.size(); ++index) {
+            const LiveClockInputConfig& clock = live.clock_inputs[index];
+            if (!valid_live_enum(clock.target)
+                || !valid_live_enum(clock.source)
+                || clock.audio_channel < 0 || clock.audio_channel > 256
+                || clock.holdover_milliseconds < 0
+                || clock.holdover_milliseconds > 60000
+                || (clock.target == LiveClockTarget::Project
+                    && !clock.layer_uuid.empty())
+                || (clock.target == LiveClockTarget::Layer
+                    && !valid_uuid(clock.layer_uuid))
+                || (clock.source == LiveClockInputSource::MidiClock
+                    && clock.audio_channel != 0)
+                || (!clock.endpoint_uuid.empty()
+                    && !valid_uuid(clock.endpoint_uuid))) {
+                return invalid_result(
+                    "Live clock input " + std::to_string(index + 1U)
+                    + " has an invalid target, source, channel, endpoint, or holdover.");
+            }
+            if (!clock.enabled) continue;
+            const std::string target_key =
+                clock.target == LiveClockTarget::Project
+                    ? std::string("project")
+                    : std::string("layer:") + clock.layer_uuid;
+            if (!active_clock_targets.insert(target_key).second) {
+                return invalid_result(
+                    "Only one enabled Live input may drive each project or layer clock.");
+            }
+            const auto endpoint = endpoints.find(clock.endpoint_uuid);
+            const LiveEndpointProtocol required =
+                clock.source == LiveClockInputSource::MidiClock
+                    ? LiveEndpointProtocol::Midi
+                    : LiveEndpointProtocol::Audio;
+            if (endpoint == endpoints.end()
+                || endpoint->second->protocol != required
+                || !live_direction_has_input(endpoint->second->direction)) {
+                return invalid_result(
+                    "An enabled Live clock input requires a compatible logical input endpoint.");
+            }
+        }
+
+        std::unordered_set<std::string> active_clock_outputs;
+        for (std::size_t index = 0U;
+             index < live.midi_clock_outputs.size(); ++index) {
+            const LiveMidiClockOutputConfig& output =
+                live.midi_clock_outputs[index];
+            if (!valid_live_enum(output.source)
+                || (output.source == LiveClockTarget::Project
+                    && !output.layer_uuid.empty())
+                || (output.source == LiveClockTarget::Layer
+                    && !valid_uuid(output.layer_uuid))
+                || (!output.endpoint_uuid.empty()
+                    && !valid_uuid(output.endpoint_uuid))) {
+                return invalid_result(
+                    "Live MIDI clock output " + std::to_string(index + 1U)
+                    + " has an invalid clock source or endpoint reference.");
+            }
+            if (!output.enabled) continue;
+            const auto endpoint = endpoints.find(output.endpoint_uuid);
+            if (endpoint == endpoints.end()
+                || endpoint->second->protocol != LiveEndpointProtocol::Midi
+                || !live_direction_has_output(endpoint->second->direction)) {
+                return invalid_result(
+                    "An enabled Live MIDI clock output requires a logical MIDI output endpoint.");
+            }
+            // MIDI Clock is a system real-time stream with no channel or
+            // source identifier. Interleaving project and layer ticks on one
+            // port would be undecodable, so each logical endpoint carries at
+            // most one enabled clock. Use separate output roles/ports when a
+            // rig needs several clocks.
+            if (!active_clock_outputs.insert(output.endpoint_uuid).second) {
+                return invalid_result(
+                    "A logical MIDI endpoint can carry only one enabled Live clock output.");
+            }
+        }
+
+        if (!valid_live_enum(live.safety.dropout_behavior)
+            || live.safety.watchdog_timeout_milliseconds < 1
+            || live.safety.watchdog_timeout_milliseconds > 60000
+            || live.safety.audio_dropout_grace_milliseconds < 0
+            || live.safety.audio_dropout_grace_milliseconds > 60000
+            || live.safety.last_good_frame_timeout_milliseconds < 0
+            || live.safety.last_good_frame_timeout_milliseconds > 600000) {
+            return invalid_result(
+                "Live watchdog or dropout-safety preferences are outside their supported range.");
+        }
+
+        ValidationResult result;
+        result.ok = true;
+        result.message = "Live configuration is valid.";
+        return result;
+    } catch (const std::bad_alloc&) {
+        return invalid_result("Live configuration validation ran out of memory.");
+    } catch (const std::exception& exception) {
+        return invalid_result("Live configuration validation failed: "
+                              + std::string(exception.what()));
+    } catch (...) {
+        return invalid_result(
+            "Live configuration validation failed with an unknown error.");
+    }
+}
+
 ValidationResult validate(const ProjectConfig& project) {
     try {
         if (!valid_uuid(project.uuid)) {
@@ -1012,8 +1493,12 @@ ValidationResult validate(const ProjectConfig& project) {
                                       + " opacity must be finite and between 0 and 1.");
             }
 
-            const RenderConfig render =
+            RenderConfig render =
                 apply_global_config(project.canvas, structural_output, layer.render);
+            // The global probe above already validated the same project-wide
+            // Live block once. It never affects offline layer pixels, so avoid
+            // multiplying its bounded routing/scene scan by the layer count.
+            render.live = {};
             const ValidationResult layer_validation = validate(render);
             if (!layer_validation.ok) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
@@ -1072,6 +1557,30 @@ ValidationResult validate(const ProjectConfig& project) {
             if (group.second == 0U) {
                 return invalid_result(
                     "Every layer group must contain at least one layer.");
+            }
+        }
+
+        const auto live_layer_exists = [&project](const std::string& uuid) {
+            return std::any_of(
+                project.layers.begin(), project.layers.end(),
+                [&uuid](const LayerConfig& layer) {
+                    return layer.uuid == uuid;
+                });
+        };
+        for (const LiveClockInputConfig& input :
+             project.canvas.live.clock_inputs) {
+            if (input.enabled && input.target == LiveClockTarget::Layer
+                && !live_layer_exists(input.layer_uuid)) {
+                return invalid_result(
+                    "An enabled Live clock input references a layer that is not in this project.");
+            }
+        }
+        for (const LiveMidiClockOutputConfig& output :
+             project.canvas.live.midi_clock_outputs) {
+            if (output.enabled && output.source == LiveClockTarget::Layer
+                && !live_layer_exists(output.layer_uuid)) {
+                return invalid_result(
+                    "An enabled Live MIDI clock output references a layer that is not in this project.");
             }
         }
 
@@ -1310,6 +1819,106 @@ const char* alpha_mode_name(AlphaMode value) {
         case AlphaMode::AlphaUnder: return "Alpha Under";
     }
     return "Unknown alpha mode";
+}
+
+const char* live_endpoint_protocol_name(LiveEndpointProtocol value) {
+    switch (value) {
+        case LiveEndpointProtocol::Audio: return "Audio stream";
+        case LiveEndpointProtocol::Midi: return "MIDI";
+        case LiveEndpointProtocol::Osc: return "OSC";
+        case LiveEndpointProtocol::FootController: return "Foot controller";
+    }
+    return "Unknown";
+}
+
+const char* live_endpoint_direction_name(LiveEndpointDirection value) {
+    switch (value) {
+        case LiveEndpointDirection::Input: return "Input";
+        case LiveEndpointDirection::Output: return "Output";
+        case LiveEndpointDirection::Bidirectional: return "Input and output";
+    }
+    return "Unknown";
+}
+
+const char* live_control_input_name(LiveControlInput value) {
+    switch (value) {
+        case LiveControlInput::MidiControlChange: return "MIDI CC";
+        case LiveControlInput::MidiNote: return "MIDI note";
+        case LiveControlInput::MidiProgramChange: return "MIDI program";
+        case LiveControlInput::MidiPitchBend: return "MIDI pitch bend";
+        case LiveControlInput::MidiChannelPressure:
+            return "MIDI channel pressure";
+        case LiveControlInput::OscValue: return "OSC value";
+        case LiveControlInput::Footswitch: return "Footswitch";
+    }
+    return "Unknown";
+}
+
+const char* live_mapping_mode_name(LiveMappingMode value) {
+    switch (value) {
+        case LiveMappingMode::Absolute: return "Absolute";
+        case LiveMappingMode::Relative: return "Relative";
+        case LiveMappingMode::Toggle: return "Toggle";
+        case LiveMappingMode::Momentary: return "Momentary";
+        case LiveMappingMode::Trigger: return "Trigger";
+    }
+    return "Unknown";
+}
+
+const char* live_mapping_target_name(LiveMappingTarget value) {
+    switch (value) {
+        case LiveMappingTarget::Setting: return "Setting";
+        case LiveMappingTarget::Action: return "Live action";
+        case LiveMappingTarget::Scene: return "Scene";
+    }
+    return "Unknown";
+}
+
+const char* live_action_name(LiveAction value) {
+    switch (value) {
+        case LiveAction::Freeze: return "Freeze";
+        case LiveAction::Blackout: return "Blackout";
+        case LiveAction::NextScene: return "Next scene";
+        case LiveAction::PreviousScene: return "Previous scene";
+        case LiveAction::RestartScene: return "Restart scene";
+        case LiveAction::TapTempo: return "Tap tempo";
+    }
+    return "Unknown";
+}
+
+const char* live_clock_target_name(LiveClockTarget value) {
+    switch (value) {
+        case LiveClockTarget::Project: return "Project clock";
+        case LiveClockTarget::Layer: return "Layer clock";
+    }
+    return "Unknown";
+}
+
+const char* live_clock_input_source_name(LiveClockInputSource value) {
+    switch (value) {
+        case LiveClockInputSource::MidiClock: return "MIDI clock";
+        case LiveClockInputSource::AudioStream: return "Audio stream";
+    }
+    return "Unknown";
+}
+
+const char* live_scene_value_type_name(LiveSceneValueType value) {
+    switch (value) {
+        case LiveSceneValueType::Boolean: return "Boolean";
+        case LiveSceneValueType::Integer: return "Integer";
+        case LiveSceneValueType::Real: return "Number";
+        case LiveSceneValueType::EnumToken: return "Choice";
+        case LiveSceneValueType::String: return "Text";
+    }
+    return "Unknown";
+}
+
+const char* live_dropout_behavior_name(LiveDropoutBehavior value) {
+    switch (value) {
+        case LiveDropoutBehavior::LastGoodFrame: return "Last good frame";
+        case LiveDropoutBehavior::Blackout: return "Blackout";
+    }
+    return "Unknown";
 }
 
 } // namespace pvt

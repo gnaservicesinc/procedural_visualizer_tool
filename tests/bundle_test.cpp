@@ -293,6 +293,14 @@ void test_layer_codec_backward_compatibility() {
     original.starting_colors.domain_warp.enabled = true;
     original.starting_colors.domain_warp.strength = 0.21;
     original.starting_colors.domain_warp.seed = UINT64_C(0x123456789abcdef0);
+    original.post_process.invert_rgb_enabled = true;
+    original.post_process.invert_rgb_mix = 0.67;
+    original.post_process.invert_alpha_enabled = true;
+    original.post_process.invert_alpha_mix = 0.42;
+    original.post_process.antialias_enabled = true;
+    original.post_process.antialias_strength = 0.81;
+    original.post_process.antialias_threshold = 0.11;
+    original.post_process.antialias_passes = 2;
     const std::vector<pvt::CubicMotionPath> motion_paths{
         pvt::default_ellipse_path(91U, 100U, "Layer ellipse")};
     const auto has_suffix = [](const std::string& value,
@@ -306,7 +314,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t9\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t10\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -362,12 +370,43 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.starting_colors.domain_warp.strength == 0.21);
     CHECK(current_round_trip.starting_colors.domain_warp.seed
           == UINT64_C(0x123456789abcdef0));
+    CHECK(current_round_trip.post_process.invert_rgb_enabled);
+    CHECK(current_round_trip.post_process.invert_rgb_mix == 0.67);
+    CHECK(current_round_trip.post_process.invert_alpha_enabled);
+    CHECK(current_round_trip.post_process.invert_alpha_mix == 0.42);
+    CHECK(current_round_trip.post_process.antialias_enabled);
+    CHECK(current_round_trip.post_process.antialias_strength == 0.81);
+    CHECK(current_round_trip.post_process.antialias_threshold == 0.11);
+    CHECK(current_round_trip.post_process.antialias_passes == 2);
+
+    // Layer v9/setup v11 predates the post-process block. Missing records
+    // recover a completely bypassed finishing stage.
+    std::istringstream current_v10_input(current_layer);
+    std::ostringstream version_nine_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_v10_input, line)));
+    CHECK(line == "PVT_LAYER\t10");
+    version_nine_output << "PVT_LAYER\t9\n";
+    while (std::getline(current_v10_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        if (key.rfind("post_process.", 0U) != 0U) {
+            version_nine_output << line << '\n';
+        }
+    }
+    const std::string version_nine = version_nine_output.str();
+    pvt::RenderData loaded_version_nine;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_nine, loaded_version_nine, &error, &motion_paths));
+    CHECK(!loaded_version_nine.post_process.invert_rgb_enabled);
+    CHECK(!loaded_version_nine.post_process.invert_alpha_enabled);
+    CHECK(!loaded_version_nine.post_process.antialias_enabled);
+    CHECK(loaded_version_nine.post_process.antialias_passes == 1);
 
     // Layer v8/setup v10 predates layer-clock mixing and generated pattern
     // shaping. Missing records recover the neutral, legacy behavior.
-    std::istringstream current_v9_input(current_layer);
+    std::istringstream current_v9_input(version_nine);
     std::ostringstream version_eight_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(current_v9_input, line)));
     CHECK(line == "PVT_LAYER\t9");
     version_eight_output << "PVT_LAYER\t8\n";
@@ -617,13 +656,102 @@ void test_render_output_codec_backward_compatibility() {
     canvas.audio_reactive_defaults.color_enabled = false;
     canvas.motion_paths.push_back(
         pvt::default_ellipse_path(91U, 100U, "Codec ellipse"));
+    const std::string midi_uuid =
+        "11111111-1111-4111-8111-111111111111";
+    const std::string audio_uuid =
+        "22222222-2222-4222-8222-222222222222";
+    const std::string osc_uuid =
+        "33333333-3333-4333-8333-333333333333";
+    const std::string foot_uuid =
+        "44444444-4444-4444-8444-444444444444";
+    const std::string layer_uuid =
+        "55555555-5555-4555-8555-555555555555";
+    const std::string scene_uuid =
+        "66666666-6666-4666-8666-666666666666";
+    const std::string layer_midi_output_uuid =
+        "77777777-7777-4777-8777-777777777777";
+    canvas.live.enabled = true;
+    canvas.live.endpoints = {
+        {midi_uuid, "Stage MIDI", pvt::LiveEndpointProtocol::Midi,
+         pvt::LiveEndpointDirection::Bidirectional, 1700, -800},
+        {audio_uuid, "Band mix", pvt::LiveEndpointProtocol::Audio,
+         pvt::LiveEndpointDirection::Input, 23000, 0},
+        {osc_uuid, "Lighting desk", pvt::LiveEndpointProtocol::Osc,
+         pvt::LiveEndpointDirection::Input, 0, 0},
+        {foot_uuid, "Pedal board", pvt::LiveEndpointProtocol::FootController,
+         pvt::LiveEndpointDirection::Input, 4000, 0},
+        {layer_midi_output_uuid, "Layer MIDI out",
+         pvt::LiveEndpointProtocol::Midi,
+         pvt::LiveEndpointDirection::Output, 0, 1200},
+    };
+    pvt::LiveSceneConfig chorus;
+    chorus.uuid = scene_uuid;
+    chorus.name = "Chorus blast";
+    chorus.transition_milliseconds = 125;
+    chorus.values = {
+        {"project.canvas.fps", pvt::LiveSceneValueType::Real, "59.94"},
+        {"project.output.write_alpha", pvt::LiveSceneValueType::Boolean, "1"},
+        {"layers/primary/effects/glow/enabled",
+         pvt::LiveSceneValueType::Boolean, "1"},
+    };
+    canvas.live.scenes.push_back(chorus);
+    canvas.live.startup_scene_uuid = scene_uuid;
+    pvt::LiveControlMapping midi_mapping;
+    midi_mapping.name = "Glow pedal";
+    midi_mapping.endpoint_uuid = midi_uuid;
+    midi_mapping.midi_channel = 2;
+    midi_mapping.control_number = 64;
+    midi_mapping.target_path = "layers/primary/effects/glow/intensity";
+    midi_mapping.output_minimum = -3.0;
+    midi_mapping.output_maximum = 7.5;
+    midi_mapping.curve = 1.4;
+    midi_mapping.dead_zone = 0.02;
+    midi_mapping.smoothing_milliseconds = 18;
+    pvt::LiveControlMapping osc_mapping;
+    osc_mapping.name = "Desk blackout";
+    osc_mapping.endpoint_uuid = osc_uuid;
+    osc_mapping.input = pvt::LiveControlInput::OscValue;
+    osc_mapping.osc_address = "/pvt/blackout";
+    osc_mapping.target = pvt::LiveMappingTarget::Action;
+    osc_mapping.target_path.clear();
+    osc_mapping.action = pvt::LiveAction::Blackout;
+    osc_mapping.mode = pvt::LiveMappingMode::Momentary;
+    pvt::LiveControlMapping foot_mapping;
+    foot_mapping.name = "Recall chorus";
+    foot_mapping.endpoint_uuid = foot_uuid;
+    foot_mapping.input = pvt::LiveControlInput::Footswitch;
+    foot_mapping.control_number = 3;
+    foot_mapping.target = pvt::LiveMappingTarget::Scene;
+    foot_mapping.target_path.clear();
+    foot_mapping.scene_uuid = scene_uuid;
+    foot_mapping.mode = pvt::LiveMappingMode::Trigger;
+    canvas.live.mappings = {midi_mapping, osc_mapping, foot_mapping};
+    canvas.live.clock_inputs = {
+        {true, pvt::LiveClockTarget::Project, {},
+         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 750},
+        {true, pvt::LiveClockTarget::Layer, layer_uuid,
+         pvt::LiveClockInputSource::AudioStream, audio_uuid, 2, false, 300},
+    };
+    canvas.live.midi_clock_outputs = {
+        {true, pvt::LiveClockTarget::Project, {}, midi_uuid, true, true},
+        {true, pvt::LiveClockTarget::Layer, layer_uuid,
+         layer_midi_output_uuid, false, false},
+    };
+    canvas.live.output.fullscreen = true;
+    canvas.live.output.prefer_secondary_display = true;
+    canvas.live.output.hide_cursor = false;
+    canvas.live.safety.dropout_behavior =
+        pvt::LiveDropoutBehavior::LastGoodFrame;
+    canvas.live.safety.watchdog_timeout_milliseconds = 83;
+    canvas.live.safety.audio_dropout_grace_milliseconds = 410;
+    canvas.live.safety.last_good_frame_timeout_milliseconds = 5000;
     output.filename_prefix = "music-sync_";
 
     std::string version_two;
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t5\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t6\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -644,7 +772,55 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(!round_trip.audio_reactive_defaults.color_enabled);
     CHECK(round_trip.motion_paths.size() == 1U);
     CHECK(round_trip.motion_paths.front().nodes.size() == 4U);
+    CHECK(round_trip.live.enabled);
+    CHECK(round_trip.live.endpoints.size() == 5U);
+    CHECK(round_trip.live.endpoints[0].name == "Stage MIDI");
+    CHECK(round_trip.live.endpoints[1].input_latency_microseconds == 23000);
+    CHECK(round_trip.live.mappings.size() == 3U);
+    CHECK(round_trip.live.mappings[0].output_minimum == -3.0);
+    CHECK(round_trip.live.mappings[1].osc_address == "/pvt/blackout");
+    CHECK(round_trip.live.mappings[2].scene_uuid == scene_uuid);
+    CHECK(round_trip.live.clock_inputs.size() == 2U);
+    CHECK(round_trip.live.clock_inputs[0].source
+          == pvt::LiveClockInputSource::MidiClock);
+    CHECK(round_trip.live.clock_inputs[1].source
+          == pvt::LiveClockInputSource::AudioStream);
+    CHECK(round_trip.live.midi_clock_outputs.size() == 2U);
+    CHECK(round_trip.live.midi_clock_outputs[1].source
+          == pvt::LiveClockTarget::Layer);
+    CHECK(round_trip.live.scenes.size() == 1U);
+    CHECK(round_trip.live.scenes.front().values.size() == 3U);
+    CHECK(round_trip.live.startup_scene_uuid == scene_uuid);
+    CHECK(round_trip.live.safety.watchdog_timeout_milliseconds == 83);
+    CHECK(!round_trip.live.output.hide_cursor);
     CHECK(round_trip_output.filename_prefix == "music-sync_");
+    CHECK(version_two.find("device_id") == std::string::npos);
+    CHECK(version_two.find("device_uid") == std::string::npos);
+    CHECK(version_two.find("captured_stream") == std::string::npos);
+
+    // Render/output v5 is setup-v8 data. Loading it must keep the historical
+    // project settings and supply a neutral Live block rather than requiring
+    // any of the v6 live.* records.
+    std::istringstream version_six_input(version_two);
+    std::ostringstream version_five_output;
+    std::string version_line;
+    CHECK(static_cast<bool>(std::getline(version_six_input, version_line)));
+    version_five_output << "PVT_RENDER_OUTPUT\t5\n";
+    while (std::getline(version_six_input, version_line)) {
+        const std::string key =
+            version_line.substr(0U, version_line.find('\t'));
+        if (key.rfind("live.", 0U) != 0U) {
+            version_five_output << version_line << '\n';
+        }
+    }
+    pvt::CanvasLoopConfig version_five_canvas;
+    pvt::ExportConfig version_five_export;
+    CHECK(pvt::detail::deserialize_render_output_config(
+        version_five_output.str(), version_five_canvas,
+        version_five_export, &error));
+    CHECK(!version_five_canvas.live.enabled);
+    CHECK(version_five_canvas.live.endpoints.empty());
+    CHECK(version_five_canvas.clock.mode == pvt::ClockMode::Music);
 
     std::string analysis;
     std::string split_output;
@@ -653,7 +829,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t1\n", 0U) == 0U);
     CHECK(pvt::detail::serialize_split_render_output_config(
         canvas, output, split_output, &error));
-    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t3\n", 0U) == 0U);
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t4\n", 0U) == 0U);
     CHECK(split_output.find("timing.music.") == std::string::npos);
     CHECK(split_output.size() < version_two.size());
     pvt::CanvasLoopConfig combined_canvas;
@@ -664,6 +840,26 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(pvt::detail::serialize_render_output_config(
         combined_canvas, combined_output, combined_canonical, &error));
     CHECK(combined_canonical == version_two);
+
+    std::istringstream split_version_four_input(split_output);
+    std::ostringstream split_version_three_output;
+    CHECK(static_cast<bool>(
+        std::getline(split_version_four_input, version_line)));
+    split_version_three_output << "PVT_RENDER_OUTPUT_SPLIT\t3\n";
+    while (std::getline(split_version_four_input, version_line)) {
+        const std::string key =
+            version_line.substr(0U, version_line.find('\t'));
+        if (key.rfind("live.", 0U) != 0U) {
+            split_version_three_output << version_line << '\n';
+        }
+    }
+    pvt::CanvasLoopConfig split_version_three_canvas;
+    pvt::ExportConfig split_version_three_export;
+    CHECK(pvt::detail::deserialize_split_render_output_config(
+        split_version_three_output.str(), analysis,
+        split_version_three_canvas, split_version_three_export, &error));
+    CHECK(!split_version_three_canvas.live.enabled);
+    CHECK(split_version_three_canvas.live.mappings.empty());
 
     const std::string split_with_misplaced_music =
         split_output + "timing.music.duration_seconds\t999\n";
@@ -691,7 +887,8 @@ void test_render_output_codec_backward_compatibility() {
     while (std::getline(split_input, split_line)) {
         const std::string key = split_line.substr(0U, split_line.find('\t'));
         if (key.rfind("paths.", 0U) != 0U
-            && key.rfind("audio_response_defaults.", 0U) != 0U) {
+            && key.rfind("audio_response_defaults.", 0U) != 0U
+            && key.rfind("live.", 0U) != 0U) {
             legacy_split << split_line << '\n';
         }
     }
@@ -733,7 +930,7 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t5");
+    CHECK(line == "PVT_RENDER_OUTPUT\t6");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');
@@ -742,7 +939,8 @@ void test_render_output_codec_backward_compatibility() {
                              || key.rfind("timing.music.", 0U) == 0U
                              || key.rfind("paths.", 0U) == 0U
                              || key.rfind("audio_response_defaults.", 0U)
-                                    == 0U;
+                                    == 0U
+                             || key.rfind("live.", 0U) == 0U;
         if (!v2_only) legacy << line << '\n';
     }
 

@@ -6,7 +6,48 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
-## Outcome of this pass
+## 4.0.0 Live performance and final post effects
+
+Version 4.0.0 adds the first integrated Live performance surface and final
+post-processing expansion. Portable authored state now covers logical
+audio/MIDI/OSC/foot endpoints, mappings, project/layer
+clock inputs, project/layer 24-PPQN MIDI outputs, scenes, latency compensation,
+display preferences, and watchdog/dropout policy. The Qt runtime adds causal
+low-latency audio analysis, CoreMIDI and OSC routing, MIDI Learn, full-screen
+secondary output, scene recall, freeze/blackout, and latest-frame/last-good
+safety. Device identities, OSC address/port bindings, display identities,
+captured buffers, current scene, freeze, and blackout remain machine-local or
+ephemeral. `LIVE_PERFORMANCE_STATUS.md` records deferred routing and the exact
+hardware/release handoff.
+
+Layer-local Post Effects now include independently mixed RGB inversion, alpha
+inversion, and premultiplied edge antialiasing before quantization, with CPU and
+Metal parity paths and Qt controls. The editor also has a scalable dark studio
+theme and custom vector-painted knobs/meters/lamps inspired by the supplied UI
+references. A height-for-width policy bug that collapsed wrapped help labels
+was fixed globally. Setup persistence advances to format 12 while compatible
+layer/render/split wrappers route older formats to neutral defaults.
+
+The new public Live and post-processing members change exported C++ struct
+layout, so Version 4.0.0 advances the shared-library ABI to SONAME 4 and
+installed clients must rebuild. Existing setup and project data remain
+compatible migration inputs. Native controller/interface and venue soak testing
+remains documented in `LIVE_PERFORMANCE_STATUS.md`; non-Apple MIDI backends and
+Syphon/Spout/NDI routing remain explicit follow-up work rather than hidden
+fallback behavior.
+
+Local 4.0.0 release validation passed all 22 native optimized tests, including
+real Metal and Cocoa GUI smoke, plus independent 21/21 optimized C++20 shared-
+library and 21/21 AddressSanitizer/UndefinedBehaviorSanitizer matrices. An
+external installed consumer linked and ran against
+`libProceduralVisualizerTool.4.dylib`. The self-contained arm64 macOS app
+passed the distribution verifier over 33 Mach-O files, deep strict code-sign
+verification, privacy-plist and Qt Network checks, embedded `pvt-render 4.0.0`
+version/self-test, and GUI smoke both before and after archive extraction. The
+single-root archive contains only the app, README, and license beneath its
+package directory and passes its generated SHA-256 check. Physical audio/MIDI,
+display hot-plug, and long-running venue soak checks remain explicitly
+unperformed hardware qualification.
 
 Version 3.0.2 is a logic-correctness patch for Flow Workbench timing, editing
 scope, and neutral effects. Play-once-then-project layer clocks now fall back to
@@ -358,10 +399,11 @@ are silent. Music import/clear, seeking, beat navigation, pause, looping, and
 project replacement all resynchronize safely. The new setup, layer, and
 render-output records retain compatibility defaults for older files.
 
-The live-performance architecture is also bounded: pre-analyzed clips work now,
-but low-latency device input does not. It should become a Live mode or sibling
-front end in this repository, sharing the renderer and project model rather
-than becoming a divergent fork.
+The live-performance architecture is bounded and integrated as a sibling Qt
+mode in this repository. Low-latency device input and incremental features are
+ephemeral renderer inputs; projects retain logical roles, mappings, scenes,
+clock routes, calibration, and safety policy without storing hardware identity,
+captured buffers, or active freeze/blackout/scene state.
 
 Application Settings can store the complete current project as the per-user
 template for future new documents or reactivate the built-in default; each new
@@ -602,7 +644,7 @@ consumers do not inherit minizip requirements.
 | 40 | macOS icon and self-contained distribution | Complete | The supplied PNG generates a full ICNS resource; public and local `make distribution` targets stage Qt/plugins, statically build pinned libpng, embed license notices, enforce the macOS deployment baseline across every Mach-O, reject build-machine paths, sign, and verify the app. |
 | 41 | vImage/NEON assessment | Complete - no vImage integration | The workload is dominated by custom float procedural/effect/projection code; compiler NEON vectorization plus Metal is a better fit than extra vImage format passes without measured benefit. |
 | 42 | Active-layer clocks | Complete | Each layer may locally override the project clock while retaining the master duration; Smart loop fit, Straight fit, Play once, Play once then project, and Original-speed loop are validated, persisted, previewed, and exported. |
-| 43 | Live performance mode | Designed, not implemented | Keep one repository and shared core; add an ephemeral low-latency input/front-end path with device capture, MIDI/OSC, stage output, and fail-safe controls rather than forking the project. |
+| 43 | Live performance mode | Implemented; hardware/release validation pending | A sibling Qt performance surface shares the renderer and project model; bounded capture/incremental analysis, portable MIDI/OSC/foot mappings, project/layer clocks and MIDI clock output, scenes, full-screen output, freeze/blackout, last-good behavior, and a watchdog are integrated. Machine bindings and active performance state stay local/ephemeral. See `LIVE_PERFORMANCE_STATUS.md`. |
 | 44 | Destination-out eraser blends | Complete | Alpha erase, soft linear-light tone erase, and brightness-threshold erase affect only the accumulated lower stack; serialization, CLI, GUI descriptions, alpha validation, and composite tests cover them. |
 | 45 | Projected source/UV editing | Complete | Texture-effect and localized-Swing handles move and render inside an explicit labelled unwrapped source/UV inset for non-plane surfaces; mapped-object controls remain in final screen space. |
 | 46 | Encoder cancellation and GUI install | Complete | PNG/EXR writers abort between scanlines and discard their temporary file. `cmake --install` installs the Qt application when enabled; `PVT_DEPLOY_QT_RUNTIME` optionally stages Qt dependencies, while system-Qt installs remain the Linux default. |
@@ -610,6 +652,7 @@ consumers do not inherit minizip requirements.
 | 48 | Export current frame | Complete | The GUI renders the current timeline frame at full canvas resolution through the selected backend and transactionally writes the configured 8/16-bit PNG or 32-bit FLOAT EXR quality, independent of preview scaling. |
 | 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
+| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and 1–4 passes before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and bounded controls. |
 
 ## Important implementation map
 
@@ -685,12 +728,14 @@ consumers do not inherit minizip requirements.
   edge; Glow's pixel blur radius is not reused as its influence radius.
 - The explicit pipeline is procedural base generation, optional starting-palette
   selection, Texture effects, surface mapping, layer mirror/flips,
-  Mapped-object effects, then explicit post-effects quantization. A later
+  Mapped-object effects, post-effects RGB/alpha inversion and premultiplied
+  edge antialiasing, then explicit quantization. A later
   localized mapped effect can intentionally break earlier mirror symmetry;
   neither starting-palette selection nor transforms rewrite alpha.
-- Version 4.0.1 intentionally reinterprets the existing v4 `palette.enabled`
-  field as source-stage enablement. No schema or ABI layout changed, but 4.0.0
-  projects affected by the final-palette bug render differently after correction.
+- A pre-product renderer revision called 4.0.1 intentionally reinterpreted the
+  existing v4 `palette.enabled` field as source-stage enablement. Those
+  revision numbers predate the product SemVer line. No schema or ABI layout
+  changed, but affected legacy projects render differently after correction.
 - Project layers are stored bottom-to-top; the GUI reverses that order for a
   conventional topmost-first list. Rendering skips disabled layers and composites
   enabled layers sequentially into one accumulator.
@@ -1028,13 +1073,11 @@ target.
 
 ## Post-1.0 / 1.1.x roadmap
 
-1. **Live performance mode:** keep this repository and shared renderer/project
-   model; add a focused Live mode or sibling front end rather than a fork. Feed
-   ephemeral, bounded low-latency device input into incremental clock/feature
-   data without serializing it as a fake file analysis. Add input selection and
-   latency calibration, MIDI/OSC/tap-tempo scene control, full-screen display
-   routing, freeze/blackout, dropout-safe last-good behavior, and a frame-time
-   watchdog. Persist portable mappings, not machine-specific device identities.
+1. **Live performance validation and routing:** exercise the integrated sibling
+   Live mode with actual audio interfaces, controllers, secondary displays, and
+   long venue-style soak tests. Add native Linux/Windows MIDI adapters, then
+   optional Syphon/Spout/NDI transports without serializing machine identities
+   or making those transports dependencies of the shared renderer.
 2. **Snapcraft distribution:** create, test, publish, and debug the Snap in an
    Ubuntu VM. Snap confinement, plugs, desktop integration, and store behavior
    require a real target environment; do not infer success from macOS.

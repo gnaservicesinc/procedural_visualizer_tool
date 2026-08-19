@@ -95,6 +95,8 @@ file(WRITE "${interactive_input}"
     # Keep the new Kaleidoscope and Domain Warp controls at their defaults.
     "\n\n\n\n"
     "\n\n\n\n\n\n"
+    # Keep RGB/alpha inversion and edge antialiasing at their neutral defaults.
+    "\n\n\n\n\n\n\n\n"
     # Preserve the existing post-effects quantization defaults.
     "\n\n\n\n"
     "1\n"

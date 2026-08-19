@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "application_settings_dialog.h"
+#include "live_workspace.h"
 #include "preview_widget.h"
 #include "video_export.h"
 #include "video_export_dialog.h"
@@ -14,6 +15,7 @@
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
@@ -63,8 +65,10 @@
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStyle>
 #include <QStandardPaths>
 #include <QStandardItemModel>
 #include <QTabBar>
@@ -932,6 +936,10 @@ bool layer_visible_in_project(const pvt::ProjectConfig& project,
                               const pvt::LayerConfig& layer);
 
 bool configuration_requires_alpha(const pvt::RenderConfig& config) {
+    if (config.post_process.invert_alpha_enabled
+        && config.post_process.invert_alpha_mix > 0.0) {
+        return true;
+    }
     if (config.alpha.use_source_alpha) {
         if (config.starting_image.enabled) return true;
         if (config.palette.enabled
@@ -1497,12 +1505,23 @@ void preserve_control_text_width(QWidget* widget) {
 
 void update_wrapped_label_height(QLabel* label) {
     if (label == nullptr || !label->wordWrap()) return;
-    label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    // The two-argument QSizePolicy constructor clears height-for-width. That
+    // made the very next hasHeightForWidth() test false and left long help
+    // labels one line tall inside otherwise correctly resizable scroll pages.
+    // Preserve the wrapping contract explicitly and let the label contribute
+    // its natural width to a horizontally scrolling fallback at extreme zoom.
+    QSizePolicy policy = label->sizePolicy();
+    policy.setHorizontalPolicy(QSizePolicy::Preferred);
+    policy.setVerticalPolicy(QSizePolicy::Minimum);
+    policy.setHeightForWidth(true);
+    label->setSizePolicy(policy);
     const int width = label->contentsRect().width();
     if (width <= 0 || !label->hasHeightForWidth()) return;
     const int required = label->heightForWidth(width);
     if (required > 0 && label->minimumHeight() != required) {
         label->setMinimumHeight(required);
+        label->updateGeometry();
+        if (QWidget* parent = label->parentWidget()) parent->updateGeometry();
     }
 }
 
@@ -1653,8 +1672,9 @@ MainWindow::MainWindow(QWidget* parent)
     preview_cancel_ = std::make_shared<std::atomic_bool>(false);
     music_analysis_cancel_ = std::make_shared<std::atomic_bool>(false);
 
-    auto* central = new QWidget;
-    auto* outer = new QVBoxLayout(central);
+    editor_workspace_ = new QWidget;
+    editor_workspace_->setObjectName(QStringLiteral("flowWorkbench"));
+    auto* outer = new QVBoxLayout(editor_workspace_);
     auto* splitter = new QSplitter(Qt::Horizontal);
     preview_ = new PreviewWidget;
     wave_page_ = createWavePage();
@@ -1758,7 +1778,28 @@ MainWindow::MainWindow(QWidget* parent)
     splitter->setSizes({720, 520});
     outer->addWidget(splitter, 1);
     outer->addWidget(createTimeline());
-    setCentralWidget(central);
+    workspace_stack_ = new QStackedWidget;
+    workspace_stack_->setObjectName(QStringLiteral("applicationModeHost"));
+    live_workspace_ = new LiveWorkspace(
+        [this] { return project_; },
+        [this] { return active_layer_uuid_; },
+        [this](const pvt::LiveConfig& live, const QString& reason) {
+            applyAuthoredLiveConfig(live, reason);
+        });
+    live_workspace_->setObjectName(QStringLiteral("livePerformanceWorkspace"));
+    connect(live_workspace_, &LiveWorkspace::requestEditMode,
+            this, [this] { setLiveMode(false); });
+    connect(live_workspace_, &LiveWorkspace::runtimeStatusChanged,
+            this, [this](const QString& summary) {
+                if (status_ != nullptr && live_workspace_ != nullptr
+                    && live_workspace_->isLiveActive()) {
+                    status_->setText(summary);
+                }
+            });
+    workspace_stack_->addWidget(editor_workspace_);
+    workspace_stack_->addWidget(live_workspace_);
+    workspace_stack_->setCurrentWidget(editor_workspace_);
+    setCentralWidget(workspace_stack_);
     createLayerDock();
 
     status_ = new QLabel(tr("Ready"));
@@ -2062,6 +2103,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
+    if (live_workspace_ != nullptr) live_workspace_->setLiveActive(false);
     if (audio_playback_ != nullptr) audio_playback_->stop();
     if (preview_cancel_ != nullptr) {
         preview_cancel_->store(true, std::memory_order_relaxed);
@@ -2272,9 +2314,24 @@ void MainWindow::updateWorkflowSummaries() {
         workflow_stage_buttons_[4]->setStatusTip(
             tr("%1 categorized layer effects")
                 .arg(static_cast<qulonglong>(config_.effects.size())));
+        QStringList active_post_effects;
+        if (config_.post_process.invert_rgb_enabled) {
+            active_post_effects.append(tr("color invert"));
+        }
+        if (config_.post_process.invert_alpha_enabled) {
+            active_post_effects.append(tr("alpha invert"));
+        }
+        if (config_.post_process.antialias_enabled) {
+            active_post_effects.append(tr("edge antialiasing"));
+        }
+        if (config_.quantization.enabled) {
+            active_post_effects.append(tr("quantization"));
+        }
         workflow_stage_buttons_[5]->setStatusTip(
-            config_.quantization.enabled ? tr("Post-effects quantization enabled")
-                                         : tr("Post-effects quantization bypassed"));
+            active_post_effects.isEmpty()
+                ? tr("Post effects bypassed")
+                : tr("Active: %1").arg(
+                      active_post_effects.join(QStringLiteral(" · "))));
         workflow_stage_buttons_[6]->setStatusTip(
             tr("%1-bit output · %2")
                 .arg(project_.output.bit_depth)
@@ -2391,6 +2448,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     }
     cancelMusicAnalysis();
     stopPlayback();
+    if (live_workspace_ != nullptr) live_workspace_->setLiveActive(false);
     saveUserSettings();
     QMainWindow::closeEvent(event);
 }
@@ -2422,7 +2480,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
         auto* key = static_cast<QKeyEvent*>(event);
         auto* target = qobject_cast<QWidget*>(watched);
         if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier
-            && target != nullptr && target->window() == this) {
+            && target != nullptr && target->window() == this
+            && (live_workspace_ == nullptr
+                || !live_workspace_->isLiveActive())) {
             QWidget* const focus = QApplication::focusWidget();
             const bool editing_text = qobject_cast<QLineEdit*>(focus) != nullptr
                                       || qobject_cast<QPlainTextEdit*>(focus) != nullptr;
@@ -3394,7 +3454,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         tr("Combine local waves, seamless whole-layer movement, and reusable paths. Movement and distortion effect types are separated in Layer Effects instead of duplicated by mapping location."));
     add_stage_intro(
         finish_layout, tr("Post Effects"),
-        tr("Post-effects quantization is the final layer-local operation before compositing. Export encoding and destination settings are always available from the Export category above."));
+        tr("Finish the active layer with channel inversion, alpha-aware edge antialiasing, and optional color quantization. They run in that order before compositing; export encoding and destination settings remain in Export."));
 
     auto* rhythm_group = new QGroupBox(tr("Rhythm and color timing"));
     auto* rhythm = new QFormLayout(rhythm_group);
@@ -3515,6 +3575,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "through effects and compositing; only the chosen output format "
         "quantizes them. Preview and export use the same full-resolution "
         "coordinates."));
+    starting_colors_help->setObjectName(QStringLiteral("startingColorsHelp"));
     starting_colors_help->setWordWrap(true);
     starting_colors_layout->addWidget(starting_colors_help);
     source_layout->addWidget(starting_colors_group);
@@ -3779,6 +3840,65 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface->addRow(tr("Curvature"), surface_curvature_);
     surface->addRow(tr("Lighting"), surface_lighting_);
     surface_layout->addWidget(surface_group);
+
+    auto* post_process_group = new QGroupBox(
+        tr("Inversion and edge antialiasing"));
+    post_process_group->setObjectName(QStringLiteral("postProcessGroup"));
+    post_process_group->setToolTip(tr(
+        "Layer-local finishing effects. Inversion runs first, followed by "
+        "alpha-aware edge antialiasing and then color quantization."));
+    auto* post_process = new QFormLayout(post_process_group);
+    post_invert_rgb_enabled_ = new QCheckBox(tr("Invert colors"));
+    post_invert_rgb_enabled_->setObjectName(
+        QStringLiteral("postInvertColors"));
+    post_invert_rgb_enabled_->setToolTip(tr(
+        "Invert each linear-light RGB channel around reference white. HDR and "
+        "out-of-range working values remain unclamped."));
+    post_invert_rgb_mix_ = real_editor(0.0, 1.0, 4, 0.01);
+    post_invert_rgb_mix_->setObjectName(
+        QStringLiteral("postInvertColorMix"));
+    post_invert_rgb_mix_->setToolTip(tr(
+        "Crossfade from the original color at 0 to fully inverted color at 1."));
+    post_invert_alpha_enabled_ = new QCheckBox(tr("Invert alpha"));
+    post_invert_alpha_enabled_->setObjectName(
+        QStringLiteral("postInvertAlpha"));
+    post_invert_alpha_enabled_->setToolTip(tr(
+        "Invert layer transparency independently from its RGB channels."));
+    post_invert_alpha_mix_ = real_editor(0.0, 1.0, 4, 0.01);
+    post_invert_alpha_mix_->setObjectName(
+        QStringLiteral("postInvertAlphaMix"));
+    post_invert_alpha_mix_->setToolTip(tr(
+        "Crossfade from the original alpha at 0 to fully inverted alpha at 1."));
+    post_antialias_enabled_ = new QCheckBox(tr("Edge antialiasing"));
+    post_antialias_enabled_->setObjectName(
+        QStringLiteral("postEdgeAntialiasing"));
+    post_antialias_enabled_->setToolTip(tr(
+        "Smooth high-contrast edges in premultiplied-alpha space so hidden RGB "
+        "cannot bleed through transparent pixels."));
+    post_antialias_strength_ = real_editor(0.0, 1.0, 4, 0.01);
+    post_antialias_strength_->setObjectName(
+        QStringLiteral("postAntialiasStrength"));
+    post_antialias_strength_->setToolTip(tr(
+        "Amount of edge-aware neighborhood smoothing."));
+    post_antialias_threshold_ = real_editor(0.0, 1.0, 4, 0.01);
+    post_antialias_threshold_->setObjectName(
+        QStringLiteral("postAntialiasThreshold"));
+    post_antialias_threshold_->setToolTip(tr(
+        "Minimum local contrast treated as an edge. Lower values smooth more pixels."));
+    post_antialias_passes_ = integer_editor(1, 4);
+    post_antialias_passes_->setObjectName(
+        QStringLiteral("postAntialiasPasses"));
+    post_antialias_passes_->setToolTip(tr(
+        "Repeat the antialias pass for stronger smoothing. Additional passes cost frame time."));
+    post_process->addRow(post_invert_rgb_enabled_);
+    post_process->addRow(tr("Color invert mix"), post_invert_rgb_mix_);
+    post_process->addRow(post_invert_alpha_enabled_);
+    post_process->addRow(tr("Alpha invert mix"), post_invert_alpha_mix_);
+    post_process->addRow(post_antialias_enabled_);
+    post_process->addRow(tr("Strength"), post_antialias_strength_);
+    post_process->addRow(tr("Edge threshold"), post_antialias_threshold_);
+    post_process->addRow(tr("Passes"), post_antialias_passes_);
+    finish_layout->addWidget(post_process_group);
 
     auto* quantization_group = new QGroupBox(tr("Post-effects color quantization"));
     auto* quantization = new QFormLayout(quantization_group);
@@ -5040,12 +5160,91 @@ void MainWindow::startProjectAudioPlayback() {
             ? static_cast<double>(audio_volume_->value()) / 100.0 : 0.8);
 }
 
+void MainWindow::openLiveMode() {
+    setLiveMode(true);
+}
+
+void MainWindow::setLiveMode(bool live) {
+    if (workspace_stack_ == nullptr || editor_workspace_ == nullptr
+        || live_workspace_ == nullptr) {
+        return;
+    }
+    const bool already_live = live_workspace_->isLiveActive();
+    if (edit_mode_action_ != nullptr) {
+        const QSignalBlocker blocker(edit_mode_action_);
+        edit_mode_action_->setChecked(!live);
+    }
+    if (live_mode_action_ != nullptr) {
+        const QSignalBlocker blocker(live_mode_action_);
+        live_mode_action_->setChecked(live);
+    }
+    if (already_live == live
+        && workspace_stack_->currentWidget()
+               == (live ? static_cast<QWidget*>(live_workspace_)
+                        : editor_workspace_)) {
+        return;
+    }
+
+    if (live) {
+        stopPlayback();
+        layers_dock_visible_before_live_ =
+            layers_dock_ != nullptr && layers_dock_->isVisible();
+        if (layers_dock_ != nullptr) layers_dock_->hide();
+        live_workspace_->setProjectLiveConfig(project_.canvas.live);
+        live_workspace_->refreshProjectSnapshot();
+        workspace_stack_->setCurrentWidget(live_workspace_);
+        live_workspace_->setLiveActive(true);
+        status_->setText(tr(
+            "Live mode — performance state is ephemeral; project mappings and scenes remain undoable."));
+    } else {
+        live_workspace_->setLiveActive(false);
+        workspace_stack_->setCurrentWidget(editor_workspace_);
+        if (layers_dock_ != nullptr && layers_dock_visible_before_live_) {
+            layers_dock_->show();
+        }
+        status_->setText(tr("Edit mode — Flow Workbench ready."));
+    }
+}
+
+void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
+                                         const QString& reason) {
+    pvt::ProjectConfig candidate = project_;
+    candidate.canvas.live = live;
+    const pvt::ValidationResult validation = pvt::validate(candidate);
+    if (!validation.ok) {
+        if (status_ != nullptr) {
+            status_->setText(
+                tr("Live setting was not applied: %1")
+                    .arg(QString::fromStdString(validation.message)));
+        }
+        if (live_workspace_ != nullptr) {
+            live_workspace_->setProjectLiveConfig(project_.canvas.live);
+        }
+        return;
+    }
+
+    ProjectDocumentState before = captureProjectState();
+    const std::string before_active = active_layer_uuid_;
+    config_.live = live;
+    syncProjectGlobals();
+    if (document_ != nullptr) document_->project = project_;
+    recordProjectStateChange(
+        reason.isEmpty() ? tr("Edit Live performance settings") : reason,
+        std::move(before), before_active);
+    if (live_workspace_ != nullptr) {
+        live_workspace_->setProjectLiveConfig(project_.canvas.live);
+        live_workspace_->refreshProjectSnapshot();
+    }
+}
+
 void MainWindow::createToolbar() {
     auto* file_menu = menuBar()->addMenu(tr("&File"));
     auto* edit_menu = menuBar()->addMenu(tr("&Edit"));
     edit_menu->setObjectName(QStringLiteral("editMenu"));
     auto* view_menu = menuBar()->addMenu(tr("&View"));
     view_menu->setObjectName(QStringLiteral("viewMenu"));
+    auto* mode_menu = menuBar()->addMenu(tr("&Mode"));
+    mode_menu->setObjectName(QStringLiteral("modeMenu"));
     auto* settings_menu = menuBar()->addMenu(tr("&Settings"));
     settings_menu->setObjectName(QStringLiteral("settingsMenu"));
     auto* help_menu = menuBar()->addMenu(tr("&Help"));
@@ -5053,11 +5252,15 @@ void MainWindow::createToolbar() {
     auto* toolbar = addToolBar(tr("Project"));
     toolbar->setObjectName(QStringLiteral("projectToolbar"));
     toolbar->setMovable(false);
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     new_action_ = new QAction(tr("New Project"), this);
     open_action_ = new QAction(tr("Open / Import…"), this);
     open_folder_action_ = new QAction(tr("Open Bundle Folder…"), this);
     save_action_ = new QAction(tr("Save…"), this);
     save_as_action_ = new QAction(tr("Save As…"), this);
+    new_action_->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
+    open_action_->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
+    save_action_->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
     open_action_->setObjectName(QStringLiteral("openImportAction"));
     open_folder_action_->setObjectName(
         QStringLiteral("openBundleFolderAction"));
@@ -5097,6 +5300,16 @@ void MainWindow::createToolbar() {
     export_action_ = toolbar->addAction(tr("Export Frames"));
     video_export_action_ = toolbar->addAction(tr("Export Video…"));
     cancel_export_action_ = toolbar->addAction(tr("Cancel export"));
+    export_settings_action_->setIcon(
+        style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    current_frame_export_action_->setIcon(
+        style()->standardIcon(QStyle::SP_DesktopIcon));
+    export_action_->setIcon(
+        style()->standardIcon(QStyle::SP_DialogApplyButton));
+    video_export_action_->setIcon(
+        style()->standardIcon(QStyle::SP_MediaPlay));
+    cancel_export_action_->setIcon(
+        style()->standardIcon(QStyle::SP_DialogCancelButton));
     cancel_export_action_->setEnabled(false);
     file_menu->addSeparator();
     file_menu->addAction(export_settings_action_);
@@ -5110,11 +5323,44 @@ void MainWindow::createToolbar() {
     redo_action_->setShortcut(QKeySequence::Redo);
     edit_menu->addAction(undo_action_);
     edit_menu->addAction(redo_action_);
+
+    edit_mode_action_ = new QAction(tr("Edit Workbench"), this);
+    live_mode_action_ = new QAction(tr("LIVE"), this);
+    edit_mode_action_->setObjectName(QStringLiteral("editModeAction"));
+    live_mode_action_->setObjectName(QStringLiteral("liveModeAction"));
+    edit_mode_action_->setCheckable(true);
+    live_mode_action_->setCheckable(true);
+    edit_mode_action_->setChecked(true);
+    edit_mode_action_->setShortcut(
+        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+    live_mode_action_->setShortcut(
+        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
+    edit_mode_action_->setIcon(
+        style()->standardIcon(QStyle::SP_FileDialogContentsView));
+    live_mode_action_->setIcon(
+        style()->standardIcon(QStyle::SP_MediaPlay));
+    live_mode_action_->setToolTip(tr(
+        "Open the stage-focused Live workspace. Freeze, blackout, current scene, and captured input remain ephemeral."));
+    auto* mode_group = new QActionGroup(this);
+    mode_group->setExclusive(true);
+    mode_group->addAction(edit_mode_action_);
+    mode_group->addAction(live_mode_action_);
+    mode_menu->addActions({edit_mode_action_, live_mode_action_});
+    toolbar->addSeparator();
+    toolbar->addAction(edit_mode_action_);
+    toolbar->addAction(live_mode_action_);
+    connect(edit_mode_action_, &QAction::triggered,
+            this, [this] { setLiveMode(false); });
+    connect(live_mode_action_, &QAction::triggered,
+            this, [this] { setLiveMode(true); });
+
     settings_action_ = new QAction(tr("Application Settings…"), this);
     settings_action_->setObjectName(QStringLiteral("applicationSettingsAction"));
     settings_action_->setShortcut(QKeySequence::Preferences);
     settings_action_->setToolTip(
         tr("Configure preferences that apply to every project and persist across relaunches."));
+    settings_action_->setIcon(
+        style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     settings_menu->addAction(settings_action_);
     toolbar->addSeparator();
     toolbar->addAction(settings_action_);
@@ -5997,7 +6243,8 @@ void MainWindow::connectEditors() {
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          kaleidoscope_segments_, domain_warp_octaves_,
                          domain_warp_cycles_,
-                         surface_rotations_, quantization_levels_, alpha_cycles_, first_frame_,
+                         surface_rotations_, post_antialias_passes_,
+                         quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
                          motion_cycles_y_, motion_rotations_}) {
         connect(editor, &QSpinBox::valueChanged, this,
@@ -6007,7 +6254,9 @@ void MainWindow::connectEditors() {
                          wall_frequency_, wall_mix_, saturation_, surface_curvature_,
                          kaleidoscope_rotation_, kaleidoscope_mix_,
                          domain_warp_strength_, domain_warp_scale_,
-                         surface_lighting_, quantization_mix_, alpha_minimum_,
+                         surface_lighting_, post_invert_rgb_mix_,
+                         post_invert_alpha_mix_, post_antialias_strength_,
+                         post_antialias_threshold_, quantization_mix_, alpha_minimum_,
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
                          surface_phase_, alpha_phase_, motion_center_x_, motion_center_y_,
                          motion_travel_x_, motion_travel_y_, motion_phase_,
@@ -6021,7 +6270,9 @@ void MainWindow::connectEditors() {
                 [this, editor] { applyGlobalEditor(editor); });
     }
     for (auto* editor : {displacement_enabled_, lighting_enabled_, spiral_enabled_,
-                         wall_enabled_, surface_enabled_, quantization_enabled_,
+                         wall_enabled_, surface_enabled_, post_invert_rgb_enabled_,
+                         post_invert_alpha_enabled_, post_antialias_enabled_,
+                         quantization_enabled_,
                          alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
                          transform_flip_horizontal_, transform_flip_vertical_,
                          palette_enabled_, starting_image_palette_dither_,
@@ -6323,6 +6574,7 @@ void MainWindow::syncProjectGlobals() {
     project_.canvas.clock = config_.clock;
     project_.canvas.audio_reactive_defaults =
         config_.audio_reactive_defaults;
+    project_.canvas.live = config_.live;
     project_.canvas.motion_paths = config_.motion_paths;
     project_.canvas.output_compatibility = config_.output_compatibility;
     project_.output = config_.output;
@@ -7904,6 +8156,10 @@ void MainWindow::refreshAll() {
     updateSynchronizationState();
     updateExportAvailability();
     preview_->setConfiguration(config_);
+    if (live_workspace_ != nullptr) {
+        live_workspace_->setProjectLiveConfig(project_.canvas.live);
+        live_workspace_->refreshProjectSnapshot();
+    }
 }
 
 void MainWindow::updateTimelineState() {
@@ -9057,6 +9313,20 @@ void MainWindow::loadGlobalEditors() {
     starting_blue_maximum_->setValue(config_.starting_colors.blue_maximum);
     starting_alpha_minimum_->setValue(config_.starting_colors.alpha_minimum);
     starting_alpha_maximum_->setValue(config_.starting_colors.alpha_maximum);
+    post_invert_rgb_enabled_->setChecked(
+        config_.post_process.invert_rgb_enabled);
+    post_invert_rgb_mix_->setValue(config_.post_process.invert_rgb_mix);
+    post_invert_alpha_enabled_->setChecked(
+        config_.post_process.invert_alpha_enabled);
+    post_invert_alpha_mix_->setValue(config_.post_process.invert_alpha_mix);
+    post_antialias_enabled_->setChecked(
+        config_.post_process.antialias_enabled);
+    post_antialias_strength_->setValue(
+        config_.post_process.antialias_strength);
+    post_antialias_threshold_->setValue(
+        config_.post_process.antialias_threshold);
+    post_antialias_passes_->setValue(config_.post_process.antialias_passes);
+    updatePostProcessEditorState();
     quantization_enabled_->setChecked(config_.quantization.enabled);
     quantization_levels_->setValue(config_.quantization.levels);
     quantization_mix_->setValue(config_.quantization.mix);
@@ -9090,6 +9360,26 @@ void MainWindow::loadGlobalEditors() {
     populating_ = false;
     updateOutputEditorValidity();
     updateSynchronizationState();
+}
+
+void MainWindow::updatePostProcessEditorState() {
+    if (post_invert_rgb_enabled_ == nullptr
+        || post_invert_rgb_mix_ == nullptr
+        || post_invert_alpha_enabled_ == nullptr
+        || post_invert_alpha_mix_ == nullptr
+        || post_antialias_enabled_ == nullptr
+        || post_antialias_strength_ == nullptr
+        || post_antialias_threshold_ == nullptr
+        || post_antialias_passes_ == nullptr) {
+        return;
+    }
+    post_invert_rgb_mix_->setEnabled(post_invert_rgb_enabled_->isChecked());
+    post_invert_alpha_mix_->setEnabled(
+        post_invert_alpha_enabled_->isChecked());
+    const bool antialiasing = post_antialias_enabled_->isChecked();
+    post_antialias_strength_->setEnabled(antialiasing);
+    post_antialias_threshold_->setEnabled(antialiasing);
+    post_antialias_passes_->setEnabled(antialiasing);
 }
 
 void MainWindow::refreshPaletteEditor() {
@@ -10687,6 +10977,28 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.surface.curvature = surface_curvature_->value();
     } else if (changed_editor == surface_lighting_) {
         config_.surface.lighting = surface_lighting_->value();
+    } else if (changed_editor == post_invert_rgb_enabled_) {
+        config_.post_process.invert_rgb_enabled =
+            post_invert_rgb_enabled_->isChecked();
+    } else if (changed_editor == post_invert_rgb_mix_) {
+        config_.post_process.invert_rgb_mix = post_invert_rgb_mix_->value();
+    } else if (changed_editor == post_invert_alpha_enabled_) {
+        config_.post_process.invert_alpha_enabled =
+            post_invert_alpha_enabled_->isChecked();
+    } else if (changed_editor == post_invert_alpha_mix_) {
+        config_.post_process.invert_alpha_mix = post_invert_alpha_mix_->value();
+    } else if (changed_editor == post_antialias_enabled_) {
+        config_.post_process.antialias_enabled =
+            post_antialias_enabled_->isChecked();
+    } else if (changed_editor == post_antialias_strength_) {
+        config_.post_process.antialias_strength =
+            post_antialias_strength_->value();
+    } else if (changed_editor == post_antialias_threshold_) {
+        config_.post_process.antialias_threshold =
+            post_antialias_threshold_->value();
+    } else if (changed_editor == post_antialias_passes_) {
+        config_.post_process.antialias_passes =
+            post_antialias_passes_->value();
     } else if (changed_editor == quantization_enabled_) {
         config_.quantization.enabled = quantization_enabled_->isChecked();
     } else if (changed_editor == quantization_levels_) {
@@ -10774,7 +11086,14 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
                                && config_.output.dither_enabled);
     starting_image_palette_dither_method_->setEnabled(
         config_.starting_image.palette_dither_enabled);
+    updatePostProcessEditorState();
     png_compression_->setEnabled(config_.output.bit_depth != 32);
+    if (changed_editor == post_invert_rgb_enabled_
+        || changed_editor == post_invert_alpha_enabled_
+        || changed_editor == post_antialias_enabled_
+        || changed_editor == quantization_enabled_) {
+        updateWorkflowSummaries();
+    }
     if (changed_editor == frames_ || changed_editor == fps_) {
         updateTimelineState();
         updateSynchronizationState();
@@ -12371,16 +12690,41 @@ bool MainWindow::runSmokeChecks(QString* error) {
         findChild<QMenu*>(QStringLiteral("settingsMenu"));
     const auto* edit_menu = findChild<QMenu*>(QStringLiteral("editMenu"));
     const auto* view_menu = findChild<QMenu*>(QStringLiteral("viewMenu"));
+    const auto* mode_menu = findChild<QMenu*>(QStringLiteral("modeMenu"));
     const auto* project_toolbar =
         findChild<QToolBar*>(QStringLiteral("projectToolbar"));
+    const auto* live_tabs = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QTabWidget*>() : nullptr;
+    const auto* live_freeze = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("freezeButton")) : nullptr;
+    const auto* live_blackout = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("blackoutButton")) : nullptr;
     if (settings_action_ == nullptr || settings_menu == nullptr
-        || edit_menu == nullptr || view_menu == nullptr
+        || edit_menu == nullptr || view_menu == nullptr || mode_menu == nullptr
         || project_toolbar == nullptr
         || !settings_menu->actions().contains(settings_action_)
         || !project_toolbar->actions().contains(settings_action_)
         || randomize_values_action_ == nullptr || randomize_mix_action_ == nullptr
         || layers_dock_ == nullptr || restore_layers_dock_action_ == nullptr
         || !view_menu->actions().contains(restore_layers_dock_action_)
+        || edit_mode_action_ == nullptr || live_mode_action_ == nullptr
+        || !mode_menu->actions().contains(edit_mode_action_)
+        || !mode_menu->actions().contains(live_mode_action_)
+        || !project_toolbar->actions().contains(live_mode_action_)
+        || workspace_stack_ == nullptr || workspace_stack_->count() != 2
+        || editor_workspace_ == nullptr || live_workspace_ == nullptr
+        || workspace_stack_->indexOf(editor_workspace_) < 0
+        || workspace_stack_->indexOf(live_workspace_) < 0
+        || workspace_stack_->currentWidget() != editor_workspace_
+        || live_workspace_->isLiveActive()
+        || live_tabs == nullptr || live_tabs->count() != 3
+        || live_tabs->tabText(0) != tr("Rig")
+        || live_tabs->tabText(1) != tr("Control Map")
+        || live_tabs->tabText(2) != tr("Scenes")
+        || live_freeze == nullptr || !live_freeze->isCheckable()
+        || live_blackout == nullptr || !live_blackout->isCheckable()
         || export_action_ == nullptr || current_frame_export_action_ == nullptr
         || video_export_action_ == nullptr
         || cancel_export_action_ == nullptr || export_progress_ == nullptr
@@ -12390,7 +12734,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || project_toolbar->actions().contains(randomize_values_action_)
         || project_toolbar->actions().contains(randomize_mix_action_)) {
         if (error != nullptr) {
-            *error = tr("Application Settings or guarded randomization actions are exposed in the wrong place.");
+            *error = tr("The toolbar, Edit/LIVE mode host, or guarded settings actions are incomplete or exposed in the wrong place.");
         }
         return false;
     }
@@ -12957,6 +13301,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         && categorized_effect_types.size() == 11U
         && categorized_effects_start_on_texture;
 
+    auto* const starting_colors_help = findChild<QLabel*>(
+        QStringLiteral("startingColorsHelp"));
+    if (starting_colors_help != nullptr) {
+        starting_colors_help->resize(420, starting_colors_help->height());
+        update_wrapped_label_height(starting_colors_help);
+    }
+    const int starting_colors_help_width = starting_colors_help != nullptr
+        ? starting_colors_help->contentsRect().width() : 0;
+    const int starting_colors_help_height =
+        starting_colors_help != nullptr && starting_colors_help_width > 0
+        ? starting_colors_help->heightForWidth(starting_colors_help_width) : 0;
+
     if (tabs_ == nullptr || tabs_->count() != 9
         || !tabs_->tabBar()->isHidden()
         || tabs_->indexOf(source_page_) < 0
@@ -13020,7 +13376,31 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || starting_color_mode_->findData(
                static_cast<int>(pvt::StartingColorMode::SquareSpiralRainbow)) < 0
         || starting_color_include_alpha_ == nullptr
+        || starting_colors_help == nullptr
+        || !starting_colors_help->wordWrap()
+        || !starting_colors_help->sizePolicy().hasHeightForWidth()
+        || starting_colors_help_height <= 0
+        || starting_colors_help->minimumHeight()
+               < starting_colors_help_height
         || alpha_use_source_ == nullptr
+        || post_invert_rgb_enabled_ == nullptr
+        || post_invert_rgb_mix_ == nullptr
+        || post_invert_alpha_enabled_ == nullptr
+        || post_invert_alpha_mix_ == nullptr
+        || post_antialias_enabled_ == nullptr
+        || post_antialias_strength_ == nullptr
+        || post_antialias_threshold_ == nullptr
+        || post_antialias_passes_ == nullptr
+        || post_invert_rgb_mix_->minimum() != 0.0
+        || post_invert_rgb_mix_->maximum() != 1.0
+        || post_invert_alpha_mix_->minimum() != 0.0
+        || post_invert_alpha_mix_->maximum() != 1.0
+        || post_antialias_strength_->minimum() != 0.0
+        || post_antialias_strength_->maximum() != 1.0
+        || post_antialias_threshold_->minimum() != 0.0
+        || post_antialias_threshold_->maximum() != 1.0
+        || post_antialias_passes_->minimum() != 1
+        || post_antialias_passes_->maximum() != 4
         || wave_audio_response_ == nullptr
         || effect_audio_response_ == nullptr
         || wave_audio_response_->count() < 13
@@ -13054,6 +13434,64 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || audio_wave_source_->count() != audio_color_source_->count()) {
         if (error != nullptr) {
             *error = tr("The Flow Workbench stages, persistent Drivers strip, or project settings navigation were not constructed correctly.");
+        }
+        return false;
+    }
+
+    auto* const finish_scroll = qobject_cast<QScrollArea*>(finish_page_);
+    auto* const finish_contents = finish_scroll != nullptr
+                                      ? finish_scroll->widget() : nullptr;
+    auto* const finish_groups = finish_contents != nullptr
+                                    ? qobject_cast<QVBoxLayout*>(
+                                          finish_contents->layout())
+                                    : nullptr;
+    QWidget* const post_process_group =
+        post_invert_rgb_enabled_->parentWidget();
+    QWidget* const quantization_group = quantization_enabled_->parentWidget();
+    if (finish_groups == nullptr || post_process_group == nullptr
+        || quantization_group == nullptr
+        || finish_groups->indexOf(post_process_group) < 0
+        || finish_groups->indexOf(quantization_group) < 0
+        || finish_groups->indexOf(post_process_group)
+               >= finish_groups->indexOf(quantization_group)) {
+        if (error != nullptr) {
+            *error = tr("Post effects are not arranged in renderer order before quantization.");
+        }
+        return false;
+    }
+
+    bool bypass_dependencies = false;
+    bool active_dependencies = false;
+    {
+        const QSignalBlocker rgb_blocker(post_invert_rgb_enabled_);
+        const QSignalBlocker alpha_blocker(post_invert_alpha_enabled_);
+        const QSignalBlocker antialias_blocker(post_antialias_enabled_);
+        post_invert_rgb_enabled_->setChecked(false);
+        post_invert_alpha_enabled_->setChecked(false);
+        post_antialias_enabled_->setChecked(false);
+        updatePostProcessEditorState();
+        bypass_dependencies = !post_invert_rgb_mix_->isEnabled()
+                              && !post_invert_alpha_mix_->isEnabled()
+                              && !post_antialias_strength_->isEnabled()
+                              && !post_antialias_threshold_->isEnabled()
+                              && !post_antialias_passes_->isEnabled();
+        post_invert_rgb_enabled_->setChecked(true);
+        post_invert_alpha_enabled_->setChecked(true);
+        post_antialias_enabled_->setChecked(true);
+        updatePostProcessEditorState();
+        active_dependencies = post_invert_rgb_mix_->isEnabled()
+                              && post_invert_alpha_mix_->isEnabled()
+                              && post_antialias_strength_->isEnabled()
+                              && post_antialias_threshold_->isEnabled()
+                              && post_antialias_passes_->isEnabled();
+    }
+    loadGlobalEditors();
+    pvt::RenderConfig alpha_invert_probe = pvt::default_config();
+    alpha_invert_probe.post_process.invert_alpha_enabled = true;
+    if (!bypass_dependencies || !active_dependencies
+        || !configuration_requires_alpha(alpha_invert_probe)) {
+        if (error != nullptr) {
+            *error = tr("Post-effect controls, dependencies, or alpha-output safety are not wired correctly.");
         }
         return false;
     }

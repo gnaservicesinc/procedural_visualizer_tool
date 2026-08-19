@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **3.0.2**. The version is read from `VERSION` by every
+Current product version: **4.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,32 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 4.0.0 Live performance and final post effects
+
+Version 4.0.0 adds an artist-facing sibling **Live mode** with low-latency
+audio capture and causal analysis, CoreMIDI and OSC control, MIDI Learn,
+portable foot-controller mappings, independent project/layer live clocks,
+24-PPQN MIDI clock outputs, scenes, secondary-display program output, freeze,
+blackout, last-good-frame safety, and an active frame-time watchdog. Logical
+roles, mappings, scenes, signed latency compensation, clock routes, and safety
+preferences travel with a project; device IDs, network bindings, screen
+identities, captured samples, current scene, freeze, and blackout remain local
+or ephemeral.
+
+The editor now uses a cohesive dark studio theme with resolution-independent
+knobs, meters, and status lamps, and wrapped help text correctly expands instead
+of being clipped. Layer-local Post Effects add independently mixed RGB
+inversion, alpha inversion, and premultiplied edge antialiasing before final
+quantization on both CPU and Metal.
+
+Setup persistence advances to format 12. Public by-value renderer and project
+configuration types grew, so 4.0.0 advances the shared-library ABI to SONAME 4
+and installed clients must rebuild. Existing setup files and project bundles
+remain supported migration inputs. CoreMIDI is the first native MIDI backend;
+other platforms currently expose the portable model and UI with a clear runtime
+stub while native adapters are developed. Syphon, Spout, and NDI remain optional
+follow-up transports rather than renderer dependencies.
 
 ## 3.0.0 Flow Workbench and procedural expansion
 
@@ -84,7 +110,8 @@ phase, should be reviewed once after opening in 2.0.
   playback without a Qt Multimedia or system-installed audio dependency. WAV
   (including IEEE 32-bit float), FLAC, and MP3 are accepted. These private
   targets are omitted from a core-library-only build.
-- Qt 6.5 or newer with Widgets and Concurrent components for the optional GUI.
+- Qt 6.5 or newer with Widgets, Concurrent, and Network components for the
+  optional GUI and its bounded OSC listener.
 - On Apple platforms, the optional Metal backend uses Apple's header-only
   [metal-cpp](https://developer.apple.com/metal/cpp/) from
   `../3rd_party/metal-cpp` plus the system Foundation and Metal frameworks. Set
@@ -346,9 +373,10 @@ sudo apt install procedural-visualizer-tool
   (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
 - Independent feature toggles for displacement, slope lighting, spiral, and
   wall reflection.
-- Post-effects RGB, luminance, or hue quantization with 2-65,536 levels and
-  adjustable mix. This is the explicit final color-reduction control and is
-  independent of the starting palette.
+- Post-effects linear RGB inversion and alpha inversion with independent mixes,
+  premultiplied edge antialiasing with strength/threshold/pass controls, then
+  RGB, luminance, or hue quantization with 2-65,536 levels and adjustable mix.
+  This final pipeline remains independent of the starting palette.
 - Plane, cylinder, sphere, ray-cast cube, and custom Wavefront OBJ mappings.
   OBJ files may provide texture coordinates and normals; automatic box UVs and
   geometric normals cover meshes that omit them.
@@ -376,6 +404,13 @@ section rather than a primary workspace. The Layer Effects workspace filters
 the single ordered effect stack into five type-based catalogs; Texture versus
 mapped-surface placement remains editable on each effect without duplicating
 the stack into separate windows.
+An Edit/LIVE mode switch keeps those seven authoring categories intact while
+opening a purpose-built performance surface. A matte charcoal studio theme,
+familiar action icons, teal/amber/red operating states, and original scalable
+knob/meter/lamp controls provide an analog-digital instrument feel without
+stretching bitmap controls on Retina or UHD displays. Wrapped explanatory text
+uses real height-for-width layout, including at narrow widths and enlarged text
+sizes.
 It includes project naming, per-layer blend,
 alpha-order, group, and opacity controls, session-only layer/group **Solo**
 preview, draggable center handles for
@@ -822,8 +857,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-10 remain importable;
-current explicit legacy output is setup format 11. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-11 remain importable;
+current explicit legacy output is setup format 12. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -836,7 +871,10 @@ ignore meanings. Format 10 adds RGBA generated colors, source-alpha policy,
 starting-image dithering, and Blur controls. Format 11 adds the disabled-by-
 default clock-mixing switch and mode, Kaleidoscope and Domain Warp shaping,
 Glitch/Starburst/Lens Distortion settings, and palette column/name/encoding
-metadata. Project layer records use the corresponding current layer format 9.
+metadata. Format 12 adds layer-local RGB/alpha inversion and edge antialiasing,
+plus project-portable Live roles, mappings, clock routes, scenes, calibration,
+output preferences, and fail-safe policy. Project layer records use the
+corresponding current layer format 10.
 Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
@@ -850,10 +888,12 @@ formats 1 through 4 remain readable and load as ungrouped Alpha Over layers,
 preserving their historical rendering. This manifest version is independent of
 the legacy one-layer `.pvt` setup format described above.
 
-Version 4.0.1 corrected the 4.0.0 palette-stage bug without changing its schema:
-an enabled v4 palette selects starting colors instead of rewriting the final
-effected image. Versions 5 through 8 add the synchronization/music/asset,
-local clock/motion/particle, starting-image, reusable-path, and hierarchical
+A pre-product renderer revision also called 4.0.1 corrected its older 4.0.0
+palette-stage bug without changing the setup schema: an enabled v4 palette
+selects starting colors instead of rewriting the final effected image. Those
+historical renderer revision numbers predate the product SemVer line. Setup
+versions 5 through 8 add the synchronization/music/asset, local
+clock/motion/particle, starting-image, reusable-path, and hierarchical
 audio-routing data above.
 
 ## Scripted rendering
@@ -1062,7 +1102,8 @@ make check
 The suite covers dynamic zero/one/ten-item configurations, deterministic frames,
 exact and near-seam continuity for every effect in both synchronization modes,
 texture/mapped-object stages, local effect and swing influence, starting
-palette ordering and toggle bypass, post-effects quantization,
+palette ordering and toggle bypass, post-effects inversion/edge antialiasing/
+quantization,
 embedded starting-image decode/fitting/cache and CLI rendering, transforms,
 closed presets plus reusable cubic-path geometry/bindings/loop closure,
 particles, direction modes, alpha range and
@@ -1099,35 +1140,35 @@ PVT and the reusable-path editor, and checks adaptive UI layout behavior.
 
 ## Live performance direction
 
-A laptop can already use pre-analyzed project and layer clips for synchronized
-visual/audio playback, including short experimental samples used only as clock
-data. The program does **not** yet capture a microphone, audio-interface input,
-pedalboard return, MIDI, or OSC stream, so it is not yet a low-latency live-input
-instrument.
+The Qt application includes a sibling **Live mode** that shares the renderer,
+effects, project schema, validation, and undoable authoring state with the Flow
+Workbench. It adds bounded low-latency audio-device capture and causal feature
+analysis, CoreMIDI control and 24-PPQN clock routing on macOS, OSC input, stable
+setting mappings with MIDI Learn, project/layer live clocks, scene recall,
+full-screen secondary-display output, freeze/blackout, last-good-frame safety,
+and a frame-time watchdog. Machine-only audio, MIDI, OSC, and screen bindings
+are kept in local application preferences.
 
-That instrument should stay in this repository. The preferred shape is a
-focused **Live mode** or sibling `pvt-live` front end that shares the renderer,
-effects, project schema, presets, and validation with the editor. A long-lived
-fork would duplicate fixes and make projects drift. Live analysis should be an
-ephemeral bounded stream feeding the existing clock/audio-response concepts;
-persist device-independent mappings and calibration, not a pretend music file
-or machine-specific device identity.
+Projects persist logical endpoint roles, portable mappings, scenes, signed
+latency compensation, clock routes, and safety preferences. They never persist
+an operating-system device ID, network address, display identity, captured
+buffer, current scene, freeze state, or blackout state. Incremental analysis is
+an ephemeral renderer overlay rather than a fabricated analyzed music file.
+This boundary lets the same show file move between rigs without silently
+binding to the wrong hardware.
 
-A stage-ready pass should add selectable low-latency audio capture, an input
-ring buffer and incremental features, latency calibration, tap tempo plus
-MIDI/OSC/foot-controller scene control, full-screen output/display routing,
-freeze/blackout controls, dropout-safe last-good behavior, and a frame-time
-watchdog. An audio-interface aux or post-effects send would let a performer
-choose whether the visuals react to the acoustic instrument, the effected
-pedal/looper chain, or both. NDI/Syphon/Spout-style output can follow after the
-local performance path is dependable.
+An audio-interface aux or post-effects send lets a performer choose whether
+the visuals react to the acoustic instrument, the effected pedal/looper chain,
+or both. Syphon/Spout/NDI-style routing remains a later optional adapter after
+the local performance path has completed real-device and venue soak testing;
+see `LIVE_PERFORMANCE_STATUS.md` for the exact handoff checklist.
 
 ## Post-1.0 roadmap
 
-- **PVT-Live / 1.1.x:** remain in this repository with the shared renderer and
-  project model while artist feedback defines a stage-focused mode or sibling
-  front end. Device input, incremental analysis, MIDI/OSC, display routing,
-  freeze/blackout, and watchdog behavior must be bounded and fail-safe.
+- **PVT-Live routing follow-up:** keep the shared renderer and project model;
+  validate the integrated Live mode on stage hardware, add native MIDI adapters
+  beyond macOS, then add optional Syphon/Spout/NDI routing without making those
+  transports renderer dependencies.
 - **Linux distribution / 1.1.x:** build and debug Snapcraft packages in an
   Ubuntu VM, then Debian packages and a Launchpad PPA in appropriate Debian and
   Ubuntu test systems. These formats should not be guessed from macOS.
