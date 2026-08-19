@@ -99,6 +99,19 @@ int main(int argc, char** argv) {
         const double strict_difference = maximum_difference(
             reference, strict, &strict_index);
         if (hybrid_difference > 0.0035 || strict_difference > 0.0035) {
+            pvt::RenderConfig identity_config = config;
+            identity_config.surface.enabled = false;
+            pvt::Image identity;
+            CHECK(pvt::render_frame(identity_config, 5, cpu, identity, nullptr,
+                                    &error));
+            pvt::RenderConfig inverse_config = config;
+            inverse_config.surface.rotations_per_loop =
+                -inverse_config.surface.rotations_per_loop;
+            inverse_config.surface.phase_degrees =
+                -inverse_config.surface.phase_degrees;
+            pvt::Image inverse;
+            CHECK(pvt::render_frame(inverse_config, 5, cpu, inverse, nullptr,
+                                    &error));
             std::cerr << pvt::surface_mapping_name(mapping)
                       << " CPU/hybrid max difference " << hybrid_difference
                       << " at value " << hybrid_index << " (CPU "
@@ -107,7 +120,10 @@ int main(int argc, char** argv) {
                       << "), CPU/GPU max difference " << strict_difference
                       << " at value " << strict_index << " (CPU "
                       << reference.pixels[strict_index] << ", GPU "
-                      << strict.pixels[strict_index] << ")\n";
+                      << strict.pixels[strict_index] << "); GPU/identity "
+                      << maximum_difference(strict, identity)
+                      << ", GPU/inverse "
+                      << maximum_difference(strict, inverse) << '\n';
         }
         CHECK(hybrid_difference <= 0.0035);
         CHECK(strict_difference <= 0.0035);
