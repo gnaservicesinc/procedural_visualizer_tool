@@ -90,6 +90,12 @@ int main(int argc, char** argv) {
         const double hybrid_difference =
             maximum_difference(reference, accelerated);
         const double strict_difference = maximum_difference(reference, strict);
+        if (hybrid_difference > 0.0035 || strict_difference > 0.0035) {
+            std::cerr << pvt::surface_mapping_name(mapping)
+                      << " CPU/hybrid max difference " << hybrid_difference
+                      << ", CPU/GPU max difference " << strict_difference
+                      << '\n';
+        }
         CHECK(hybrid_difference <= 0.0035);
         CHECK(strict_difference <= 0.0035);
     }

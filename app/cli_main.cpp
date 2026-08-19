@@ -56,7 +56,13 @@ std::unique_ptr<QGuiApplication> make_graphics_application(int& argc,
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     }
 #  endif
-    return std::make_unique<QGuiApplication>(argc, argv);
+    auto application = std::make_unique<QGuiApplication>(argc, argv);
+    // The sequence renderer may begin on worker threads while the CLI main
+    // thread waits for them and does not run Qt's event loop.  Initialize the
+    // graphics service here so a worker never has to make a blocking dispatch
+    // back to that non-pumping main thread.
+    (void)pvt::renderer_capabilities();
+    return application;
 }
 #endif
 
