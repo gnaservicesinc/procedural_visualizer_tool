@@ -44,7 +44,6 @@ public:
 
 signals:
     void requestEditMode();
-    void requestPopOut();
     void runtimeStatusChanged(const QString& summary);
     void livePreviewFrame(const QImage& image);
 

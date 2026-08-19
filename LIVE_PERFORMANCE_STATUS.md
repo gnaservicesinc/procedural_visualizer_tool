@@ -5,6 +5,19 @@ pass. It separates portable authored project state from machine-local bindings
 and ephemeral performance state so future work does not accidentally serialize
 a device stream as if it were an analyzed music file.
 
+## Corrected in 6.0.1
+
+- Choosing LIVE opens the performance surface immediately in a separate
+  companion window while preserving the editor in the main window. The hidden
+  central-widget state that produced a blank 6.0.0 pop-out is explicitly
+  reversed after reparenting, and the redundant manual Pop Out button is gone.
+- **Edit Project** brings the editor forward without interrupting the runtime.
+  Closing the companion window is an explicit stop and releases capture,
+  rendering, stage output, and the native device-sleep assertion before the
+  workspace is restored for a clean subsequent open.
+- GUI smoke verifies visible content, editor continuity, close cleanup, and a
+  complete second open/close cycle through the real LIVE action.
+
 ## Implemented in 6.0.0
 
 - Live audio has optional high-pass and low-pass filtering plus graphical
@@ -16,7 +29,7 @@ a device stream as if it were an analyzed music file.
   customize it afterward.
 - The control-map target chooser is a searchable grouped tree with current
   values and retained unresolved paths rather than a project-sized combo box.
-- Live can detach into a separate window. Its routed frames feed the editor
+- Live has a separate companion window. Its routed frames feed the editor
   preview while active, keeping authoring feedback synchronized with stage
   output.
 - A portable safety preference can prevent system sleep for the duration of an

@@ -143,8 +143,8 @@ private:
     void restoreLayersDock(bool makeVisible = true);
     void createToolbar();
     void setLiveMode(bool live);
-    void toggleLivePopOut();
-    void restoreLiveWorkspace(bool showLiveWorkspace);
+    void showLiveWindow();
+    void restoreLiveWorkspace(bool resumeEditorPreview);
     void applyAuthoredLiveConfig(const pvt::LiveConfig& live,
                                  const QString& reason);
     void connectEditors();
@@ -486,7 +486,6 @@ private:
     QAction* edit_mode_action_ = nullptr;
     QAction* live_mode_action_ = nullptr;
     QMenu* recent_projects_menu_ = nullptr;
-    bool layers_dock_visible_before_live_ = true;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;

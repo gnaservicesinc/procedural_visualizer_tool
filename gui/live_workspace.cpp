@@ -550,13 +550,8 @@ void LiveWorkspace::Impl::buildUi() {
     auto* edit = new QPushButton(q->tr("Edit Project"));
     edit->setObjectName(QStringLiteral("editLiveProjectButton"));
     edit->setToolTip(q->tr(
-        "Open the full project editor without stopping Live input, rendering, or stage output."));
+        "Bring the full project editor forward without stopping Live input, rendering, or stage output."));
     header_layout->addWidget(edit);
-    auto* pop_out = new QPushButton(q->tr("Pop Out"));
-    pop_out->setObjectName(QStringLiteral("popOutLiveButton"));
-    pop_out->setToolTip(q->tr(
-        "Open Live in its own window so the full project editor remains visible."));
-    header_layout->addWidget(pop_out);
     root->addWidget(header);
 
     auto* splitter = new QSplitter(Qt::Horizontal);
@@ -629,8 +624,6 @@ void LiveWorkspace::Impl::buildUi() {
                      [this](bool checked) { setActive(checked); });
     QObject::connect(edit, &QPushButton::clicked, q,
                      [this] { emit q->requestEditMode(); });
-    QObject::connect(pop_out, &QPushButton::clicked, q,
-                     [this] { emit q->requestPopOut(); });
     QObject::connect(output_button, &QPushButton::clicked, q,
                      [this] { toggleOutput(); });
     QObject::connect(freeze_button, &QPushButton::toggled, q,

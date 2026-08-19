@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **6.0.0**. The version is read from `VERSION` by every
+Current product version: **6.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,19 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 6.0.1 automatic Live companion window
+
+Choosing **LIVE** now opens the performance controls immediately in their own
+window while leaving the complete editor visible and usable. The Live workspace
+is explicitly reparented and shown after leaving its internal stack, fixing the
+blank detached window introduced in 6.0.0. **Edit Project** brings the editor
+forward without stopping input, rendering, or stage output; closing the Live
+window stops the runtime, releases sleep prevention, and allows it to reopen
+cleanly. No prompt or intermediate in-editor Live screen is used.
+
+This patch does not change the public API, SONAME 6 ABI, setup format, layer
+format, or project-bundle format.
 
 ## 6.0.0 audio routing and creative-control expansion
 
@@ -1358,11 +1371,12 @@ kept in local application preferences.
 
 Live audio applies the same authored high-pass, low-pass, and graphical EQ model
 before causal analysis, then analyzes each named frequency range independently.
-Project and layer routes can select those streams explicitly. The workspace can
-detach into a dedicated window; while it is active, its routed renderer frames
-also feed the ordinary editor preview. A portable **Prevent device sleep while
-Live is active** safety option uses the native macOS or Windows power assertion
-when available and releases it immediately when Live stops.
+Project and layer routes can select those streams explicitly. Choosing **LIVE**
+opens the workspace automatically in a dedicated companion window instead of
+replacing the editor; while it is active, its routed renderer frames also feed
+the ordinary editor preview. A portable **Prevent device sleep while Live is
+active** safety option uses the native macOS or Windows power assertion when
+available and releases it immediately when Live stops or its window closes.
 
 Projects persist logical endpoint roles, portable mappings, scenes, signed
 latency compensation, clock routes, and safety preferences. They never persist

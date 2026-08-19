@@ -6,6 +6,35 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 6.0.1 automatic Live window reliability
+
+The LIVE action now opens the performance surface immediately in a companion
+window while the main window remains on the editor. The 6.0.0 manual pop-out
+path removed the workspace from `QStackedWidget`, which deliberately hid it,
+but never restored the central widget's visibility after reparenting; the
+result was a valid top-level shell with blank content. The corrected lifecycle
+detaches ownership explicitly, shows the adopted central widget, brings an
+existing Live window forward, and removes the now-redundant Pop Out button.
+
+**Edit Project** brings the main editor forward without stopping the active
+runtime. Closing the Live companion is an explicit stop: capture, rendering,
+stage output, and the device-sleep assertion are released before the workspace
+is returned to its private stack slot. Cocoa smoke drives the actual LIVE
+action, requires a visible non-empty central workspace while the editor remains
+selected, verifies uninterrupted authoring, closes and restores the workspace,
+then opens and closes it a second time. This patch leaves the public API,
+SONAME 6 ABI, setup format 14, layer format 12, and bundle formats unchanged.
+
+Local 6.0.1 release validation on macOS arm64 passes all 23 native tests,
+including Cocoa GUI smoke, all 22 strict C++20 tests, and all 22 AddressSanitizer
+plus UndefinedBehaviorSanitizer tests. The self-contained distribution verifier
+checks 26 Mach-O files; independent deep code-signing, GUI smoke, embedded CLI
+version/self-test, arm64, plist-version, and `/usr/lib` LC_RPATH checks also
+pass. A freshly archived and extracted package has one expected package root
+with only the application, README, and license, and its SHA-256 check passes.
+Linux and Windows packages remain the responsibility of the tag-triggered CI
+release matrix and are not claimed by these local results.
+
 ## 6.0.0 audio routing and creative controls
 
 Music and Live sources now share an `AudioInputProcessingConfig`: optional
@@ -880,7 +909,7 @@ consumers do not inherit minizip requirements.
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
 | 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and representation-bounded controls. |
 | 52 | Pre-analysis audio processing and named clock streams | Complete; hardware qualification pending | Music and Live apply optional HP/LP plus graphical EQ before analysis, then expose stable named frequency-range analyses to project and active-layer clocks. Defaults are flat/full-band; validation, transactional reanalysis, setup-14 persistence, and causal/offline tests cover routing. |
-| 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, Live can detach, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
+| 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, LIVE opens automatically in a visible companion window while the editor remains available, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
 | 54 | Edge/Twirl effects and particle shapes | Complete | Linear-light Edge Detect, seamless Twirl, and five deterministic procedural particle shapes share CPU/Metal, GUI, CLI, randomization, validation, and persistence semantics. Custom PNG sprites remain deferred. |
 
 ## Important implementation map

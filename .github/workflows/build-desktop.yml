@@ -442,6 +442,8 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          Version 6.0.1 fixes the blank Live pop-out introduced in 6.0.0. Choosing LIVE now opens a populated companion window immediately while the editor remains available, with no prompt or intermediate screen. Edit Project brings the editor forward without stopping the active runtime; closing the Live window stops capture/render/output, releases sleep prevention, restores the workspace, and supports a clean subsequent reopen. The public API, SONAME 6 ABI, setup format 14, layer format 12, and bundle formats are unchanged.
+
           Version 6.0.0 adds pre-analysis high-pass and low-pass filters, a ten-band graphical EQ, and stable named frequency streams for Music and Live audio. The full band or any named stream can drive the project clock or an active-layer clock, while flat processing and the full-band route remain the compatibility defaults.
 
           Live setup now provides a smart audio-beat route when the input role is unambiguous, a searchable grouped control-map target browser, a detachable workspace, editor preview driven by the same routed Live clocks, and optional native sleep prevention for active sessions. Edge Detect and Twirl join the CPU/Metal effect pipeline, and Particle Field gains five procedural shapes. Custom PNG particle sprites remain an asset-backed follow-up.

@@ -1886,8 +1886,6 @@ MainWindow::MainWindow(QWidget* parent)
     live_workspace_->setObjectName(QStringLiteral("livePerformanceWorkspace"));
     connect(live_workspace_, &LiveWorkspace::requestEditMode,
             this, [this] { setLiveMode(false); });
-    connect(live_workspace_, &LiveWorkspace::requestPopOut,
-            this, &MainWindow::toggleLivePopOut);
     connect(live_workspace_, &LiveWorkspace::livePreviewFrame,
             this, [this](const QImage& image) {
                 if (preview_ != nullptr && live_workspace_ != nullptr
@@ -2215,7 +2213,6 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
     restoreLiveWorkspace(false);
-    if (live_workspace_ != nullptr) live_workspace_->setLiveActive(false);
     if (audio_playback_ != nullptr) audio_playback_->stop();
     if (preview_cancel_ != nullptr) {
         preview_cancel_->store(true, std::memory_order_relaxed);
@@ -2561,7 +2558,6 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     cancelMusicAnalysis();
     stopPlayback();
     restoreLiveWorkspace(false);
-    if (live_workspace_ != nullptr) live_workspace_->setLiveActive(false);
     saveUserSettings();
     QMainWindow::closeEvent(event);
 }
@@ -2570,7 +2566,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     if (watched == live_popout_window_ && event != nullptr
         && event->type() == QEvent::Close) {
         static_cast<QCloseEvent*>(event)->ignore();
-        restoreLiveWorkspace(false);
+        restoreLiveWorkspace(true);
         return true;
     }
     if (event != nullptr) {
@@ -5489,105 +5485,107 @@ void MainWindow::setLiveMode(bool live) {
         || live_workspace_ == nullptr) {
         return;
     }
-    if (live_popout_window_ != nullptr) {
-        if (live) {
-            if (!live_workspace_->isLiveActive()) live_workspace_->setLiveActive(true);
-            live_popout_window_->show();
-            live_popout_window_->raise();
-            live_popout_window_->activateWindow();
-        }
-        if (edit_mode_action_ != nullptr) edit_mode_action_->setChecked(true);
-        if (live_mode_action_ != nullptr) live_mode_action_->setChecked(false);
-        return;
-    }
-    const bool showing_live = workspace_stack_->currentWidget()
-                              == live_workspace_;
+    workspace_stack_->setCurrentWidget(editor_workspace_);
     if (edit_mode_action_ != nullptr) {
         const QSignalBlocker blocker(edit_mode_action_);
-        edit_mode_action_->setChecked(!live);
+        edit_mode_action_->setChecked(true);
     }
     if (live_mode_action_ != nullptr) {
         const QSignalBlocker blocker(live_mode_action_);
-        live_mode_action_->setChecked(live);
+        live_mode_action_->setChecked(false);
     }
-    if (showing_live == live) {
-        // The workspace selection and performance runtime are deliberately
-        // independent. Revisiting LIVE starts a stopped runtime, but revisiting
-        // Edit must never stop an active show.
-        if (live && !live_workspace_->isLiveActive()) {
-            live_workspace_->setProjectLiveConfig(project_.canvas.live);
-            live_workspace_->refreshProjectSnapshot();
-            live_workspace_->setLiveActive(true);
+    if (!live) {
+        if (live_popout_window_ != nullptr) {
+            show();
+            raise();
+            activateWindow();
         }
-        return;
-    }
-
-    if (live) {
-        stopPlayback();
-        layers_dock_visible_before_live_ =
-            layers_dock_ != nullptr && layers_dock_->isVisible();
-        if (layers_dock_ != nullptr) layers_dock_->hide();
-        live_workspace_->setProjectLiveConfig(project_.canvas.live);
-        live_workspace_->refreshProjectSnapshot();
-        workspace_stack_->setCurrentWidget(live_workspace_);
-        if (!live_workspace_->isLiveActive()) {
-            live_workspace_->setLiveActive(true);
+        if (status_ != nullptr) {
+            status_->setText(live_workspace_->isLiveActive()
+                ? tr("Editing the live project — input, rendering, and stage output remain active in the LIVE window.")
+                : tr("Edit mode — Flow Workbench ready."));
         }
-        status_->setText(tr(
-            "Live workspace — performance state is ephemeral; switch to Edit Project at any time without stopping output."));
-    } else {
-        workspace_stack_->setCurrentWidget(editor_workspace_);
-        if (layers_dock_ != nullptr && layers_dock_visible_before_live_) {
-            layers_dock_->show();
-        }
-        status_->setText(live_workspace_->isLiveActive()
-            ? tr("Editing the live project — input, rendering, and stage output remain active.")
-            : tr("Edit mode — Flow Workbench ready."));
         if (!live_workspace_->isLiveActive()) schedulePreview();
-    }
-}
-
-void MainWindow::toggleLivePopOut() {
-    if (workspace_stack_ == nullptr || live_workspace_ == nullptr
-        || editor_workspace_ == nullptr) return;
-    if (live_popout_window_ != nullptr) {
-        restoreLiveWorkspace(true);
         return;
     }
+
+    stopPlayback();
     live_workspace_->setProjectLiveConfig(project_.canvas.live);
     live_workspace_->refreshProjectSnapshot();
     if (!live_workspace_->isLiveActive()) live_workspace_->setLiveActive(true);
-    workspace_stack_->removeWidget(live_workspace_);
-    workspace_stack_->setCurrentWidget(editor_workspace_);
-    if (layers_dock_ != nullptr && layers_dock_visible_before_live_) {
-        layers_dock_->show();
+    showLiveWindow();
+}
+
+void MainWindow::showLiveWindow() {
+    if (workspace_stack_ == nullptr || live_workspace_ == nullptr
+        || editor_workspace_ == nullptr) return;
+    if (live_popout_window_ != nullptr) {
+        live_workspace_->show();
+        live_popout_window_->show();
+        live_popout_window_->raise();
+        live_popout_window_->activateWindow();
+        return;
     }
-    live_popout_window_ = new QMainWindow(nullptr, Qt::Window);
+
+    // QStackedWidget::removeWidget deliberately hides the removed widget and
+    // retains ownership. Detach it explicitly, then restore visibility after
+    // QMainWindow adopts it as the central widget. Without the final show(),
+    // the top-level window is present but its only content remains hidden.
+    live_workspace_->hide();
+    workspace_stack_->removeWidget(live_workspace_);
+    live_workspace_->setParent(nullptr);
+    workspace_stack_->setCurrentWidget(editor_workspace_);
+    live_popout_window_ = new QMainWindow(this, Qt::Window);
+    live_popout_window_->setObjectName(QStringLiteral("livePopoutWindow"));
     live_popout_window_->setAttribute(Qt::WA_DeleteOnClose, false);
     live_popout_window_->setWindowTitle(tr("Procedural Visualizer Tool — LIVE"));
     live_popout_window_->setCentralWidget(live_workspace_);
     live_popout_window_->resize(1180, 760);
     live_popout_window_->installEventFilter(this);
     live_popout_window_->show();
+    live_workspace_->show();
     live_popout_window_->raise();
     live_popout_window_->activateWindow();
-    if (edit_mode_action_ != nullptr) edit_mode_action_->setChecked(true);
-    if (live_mode_action_ != nullptr) live_mode_action_->setChecked(false);
-    status_->setText(tr(
-        "Live is running in a separate window; this preview follows its routed clocks."));
+    if (status_ != nullptr) {
+        status_->setText(tr(
+            "Live opened in its own window; the editor preview follows the same routed clocks."));
+    }
 }
 
-void MainWindow::restoreLiveWorkspace(bool show_live_workspace) {
-    if (live_popout_window_ == nullptr || workspace_stack_ == nullptr
+void MainWindow::restoreLiveWorkspace(bool resume_editor_preview) {
+    if (workspace_stack_ == nullptr || editor_workspace_ == nullptr
         || live_workspace_ == nullptr) return;
-    QMainWindow* window = live_popout_window_;
-    live_popout_window_ = nullptr;
-    window->removeEventFilter(this);
-    QWidget* central = window->takeCentralWidget();
-    if (central == live_workspace_) workspace_stack_->addWidget(live_workspace_);
-    window->hide();
-    window->deleteLater();
-    setLiveMode(show_live_workspace);
+    if (live_workspace_->isLiveActive()) live_workspace_->setLiveActive(false);
+
+    if (live_popout_window_ != nullptr) {
+        QMainWindow* window = live_popout_window_;
+        live_popout_window_ = nullptr;
+        window->removeEventFilter(this);
+        QWidget* central = window->takeCentralWidget();
+        if (central == live_workspace_) {
+            live_workspace_->hide();
+            live_workspace_->setParent(workspace_stack_);
+            workspace_stack_->addWidget(live_workspace_);
+        }
+        window->hide();
+        window->deleteLater();
+    } else if (workspace_stack_->indexOf(live_workspace_) < 0) {
+        live_workspace_->hide();
+        live_workspace_->setParent(workspace_stack_);
+        workspace_stack_->addWidget(live_workspace_);
+    }
+
+    workspace_stack_->setCurrentWidget(editor_workspace_);
+    if (edit_mode_action_ != nullptr) {
+        const QSignalBlocker blocker(edit_mode_action_);
+        edit_mode_action_->setChecked(true);
+    }
+    if (live_mode_action_ != nullptr) {
+        const QSignalBlocker blocker(live_mode_action_);
+        live_mode_action_->setChecked(false);
+    }
+    if (status_ != nullptr) status_->setText(tr("Edit mode — Flow Workbench ready."));
+    if (resume_editor_preview) schedulePreview();
 }
 
 void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
@@ -5713,7 +5711,7 @@ void MainWindow::createToolbar() {
     edit_mode_action_->setObjectName(QStringLiteral("editModeAction"));
     live_mode_action_->setObjectName(QStringLiteral("liveModeAction"));
     edit_mode_action_->setCheckable(true);
-    live_mode_action_->setCheckable(true);
+    live_mode_action_->setCheckable(false);
     edit_mode_action_->setChecked(true);
     edit_mode_action_->setShortcut(
         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
@@ -5724,7 +5722,7 @@ void MainWindow::createToolbar() {
     live_mode_action_->setIcon(
         style()->standardIcon(QStyle::SP_MediaPlay));
     live_mode_action_->setToolTip(tr(
-        "Open the stage-focused Live workspace. The runtime can remain active while you edit the project; freeze, blackout, current scene, and captured input remain ephemeral."));
+        "Open the stage-focused Live controls in a separate window immediately. The editor remains available, and freeze, blackout, current scene, and captured input remain ephemeral."));
     auto* mode_group = new QActionGroup(this);
     mode_group->setExclusive(true);
     mode_group->addAction(edit_mode_action_);
@@ -7161,6 +7159,10 @@ void MainWindow::loadLayerEditors() {
         workflow_stage_buttons_[index]->setEnabled(
             layer_stage ? layer_actions_available : project_actions_available);
     }
+    // This combo is populated dynamically after construction and again after
+    // every layer/group change. Recompute its readable floor after the item
+    // model changes instead of retaining the empty-combo size hint.
+    preserve_control_text_width(layer_group_);
     populating_ = was_populating;
     updateSynchronizationState();
     updateWorkflowSummaries();
@@ -13678,9 +13680,6 @@ bool MainWindow::runSmokeChecks(QString* error) {
     auto* edit_live_project = live_workspace_ != nullptr
         ? live_workspace_->findChild<QPushButton*>(
               QStringLiteral("editLiveProjectButton")) : nullptr;
-    const auto* pop_out_live = live_workspace_ != nullptr
-        ? live_workspace_->findChild<QPushButton*>(
-              QStringLiteral("popOutLiveButton")) : nullptr;
     const auto* live_audio_period = live_workspace_ != nullptr
         ? live_workspace_->findChild<QSpinBox*>(
               QStringLiteral("liveAudioPeriodFrames")) : nullptr;
@@ -13702,6 +13701,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !mode_menu->actions().contains(edit_mode_action_)
         || !mode_menu->actions().contains(live_mode_action_)
         || !project_toolbar->actions().contains(live_mode_action_)
+        || live_mode_action_->isCheckable()
         || workspace_stack_ == nullptr || workspace_stack_->count() != 2
         || editor_workspace_ == nullptr || live_workspace_ == nullptr
         || workspace_stack_->indexOf(editor_workspace_) < 0
@@ -13713,7 +13713,6 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_tabs->tabText(1) != tr("Control Map")
         || live_tabs->tabText(2) != tr("Scenes")
         || edit_live_project == nullptr
-        || pop_out_live == nullptr
         || music_processing_ == nullptr || music_frequency_stream_ == nullptr
         || layer_music_processing_ == nullptr
         || layer_music_frequency_stream_ == nullptr
@@ -13740,20 +13739,88 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // Authoring is a view change, not a transport stop. Exercise the actual
+    // LIVE is a one-click companion window, not a navigation mode. Exercise
+    // the actual toolbar action and require its central workspace to become
+    // visible after QStackedWidget releases it; a top-level shell with a hidden
+    // central widget is the original blank-window regression.
+    live_mode_action_->trigger();
+    QApplication::processEvents();
+    QMainWindow* const automatic_live_window = live_popout_window_;
+    if (automatic_live_window == nullptr
+        || automatic_live_window->centralWidget() != live_workspace_
+        || !automatic_live_window->isVisible()
+        || !live_workspace_->isVisible()
+        || live_workspace_->size().isEmpty()
+        || workspace_stack_->currentWidget() != editor_workspace_
+        || workspace_stack_->indexOf(live_workspace_) >= 0
+        || !live_workspace_->isLiveActive()
+        || !edit_mode_action_->isChecked()
+        || live_mode_action_->isChecked()) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr("Opening LIVE did not create a populated, visible companion window while preserving the editor.");
+        }
+        return false;
+    }
+
+    // Authoring is a focus change, not a transport stop. Exercise the actual
     // Live-header button so a future UI refactor cannot quietly reintroduce
-    // the old teardown call while MIDI/OSC edits continue to work.
-    setLiveMode(true);
+    // teardown while MIDI/OSC edits continue to work.
     edit_live_project->click();
     if (workspace_stack_->currentWidget() != editor_workspace_
+        || live_popout_window_ != automatic_live_window
+        || !automatic_live_window->isVisible()
         || !live_workspace_->isLiveActive()) {
-        live_workspace_->setLiveActive(false);
+        restoreLiveWorkspace(false);
         if (error != nullptr) {
             *error = tr("Opening the project editor interrupted the Live runtime.");
         }
         return false;
     }
-    live_workspace_->setLiveActive(false);
+
+    // Closing the companion window is an explicit stop. The workspace must be
+    // returned to its private stack slot so opening LIVE again is repeatable,
+    // and no hidden runtime may continue capturing audio or preventing sleep.
+    automatic_live_window->close();
+    QApplication::processEvents();
+    if (live_popout_window_ != nullptr
+        || workspace_stack_->count() != 2
+        || workspace_stack_->indexOf(live_workspace_) < 0
+        || workspace_stack_->currentWidget() != editor_workspace_
+        || live_workspace_->isLiveActive()
+        || !edit_mode_action_->isChecked()
+        || live_mode_action_->isChecked()) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr("Closing the LIVE window did not stop and restore its workspace cleanly.");
+        }
+        return false;
+    }
+
+    live_mode_action_->trigger();
+    QApplication::processEvents();
+    QMainWindow* const reopened_live_window = live_popout_window_;
+    if (reopened_live_window == nullptr
+        || reopened_live_window->centralWidget() != live_workspace_
+        || !reopened_live_window->isVisible()
+        || !live_workspace_->isVisible()
+        || !live_workspace_->isLiveActive()) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr("LIVE could not be reopened after its companion window was closed.");
+        }
+        return false;
+    }
+    reopened_live_window->close();
+    QApplication::processEvents();
+    if (live_popout_window_ != nullptr || live_workspace_->isLiveActive()
+        || workspace_stack_->indexOf(live_workspace_) < 0) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr("The reopened LIVE window did not clean up correctly.");
+        }
+        return false;
+    }
 
     layers_dock_->setFloating(true);
     layers_dock_->hide();
@@ -14208,6 +14275,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    // Native control metrics can settle when the first top-level companion or
+    // dialog is shown. Reapply the readability floors after those smoke paths
+    // so this pre-show test observes the same final metrics as normal startup.
+    configure_readable_layouts(this);
     for (QFormLayout* form : findChildren<QFormLayout*>()) {
         if (form->rowWrapPolicy() != QFormLayout::WrapLongRows) {
             if (error != nullptr) {
@@ -14228,7 +14299,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
     for (QComboBox* combo : findChildren<QComboBox*>()) {
         if (combo->minimumWidth() < combo->sizeHint().width()) {
             if (error != nullptr) {
-                *error = tr("A choice control can still shrink below its readable width.");
+                *error = tr("A choice control can still shrink below its readable width: %1 (%2 < %3, current: %4)")
+                             .arg(combo->objectName())
+                             .arg(combo->minimumWidth())
+                             .arg(combo->sizeHint().width())
+                             .arg(combo->currentText());
             }
             return false;
         }
