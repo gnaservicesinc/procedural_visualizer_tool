@@ -1,5 +1,7 @@
 #include "audio_analysis.h"
 
+#include "audio_input_processing.h"
+
 #include "BTT.h"
 #include "miniaudio.h"
 #include "path_utf8.h"
@@ -15,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <new>
 #include <numeric>
 #include <string>
@@ -53,7 +56,7 @@ constexpr std::uint64_t kHashProgressEnd = 150U;
 constexpr std::uint64_t kDecodeProgressEnd = 750U;
 constexpr std::size_t kHopFrames = 441U; // 10 ms at the canonical rate.
 constexpr double kPi = 3.141592653589793238462643383279502884;
-constexpr char kAnalyzerVersion[] = "pvt-adaptive-spectral-audio-3";
+constexpr char kAnalyzerVersion[] = "pvt-adaptive-spectral-audio-4";
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -958,6 +961,38 @@ private:
     std::uint64_t output_index_ = 0U;
 };
 
+class FrequencyAnalysisPipeline final {
+public:
+    FrequencyAnalysisPipeline(const AudioFrequencyStreamConfig& authored,
+                              std::uint32_t source_rate,
+                              std::string* error)
+        : authored_(authored), accumulator_(observer_),
+          resampler_(source_rate, accumulator_) {
+        valid_ = observer_.valid()
+            && filter_.configure(authored.low_hz, authored.high_hz,
+                                 source_rate, error);
+    }
+
+    bool valid() const noexcept { return valid_; }
+    void push(float sample) { resampler_.push(filter_.process(sample)); }
+    void finish(std::uint64_t source_frames) {
+        resampler_.finish(source_frames);
+        accumulator_.finish();
+    }
+    bool finish_observer() { return observer_.finish(); }
+    const AudioFrequencyStreamConfig& authored() const { return authored_; }
+    const HopAccumulator& accumulator() const { return accumulator_; }
+    const AdaptiveBeatObserver& observer() const { return observer_; }
+
+private:
+    AudioFrequencyStreamConfig authored_;
+    AudioFrequencyRangeProcessor filter_;
+    AdaptiveBeatObserver observer_;
+    HopAccumulator accumulator_;
+    LinearResampler resampler_;
+    bool valid_ = false;
+};
+
 double percentile(std::vector<float> values, double proportion) {
     values.erase(std::remove_if(values.begin(), values.end(), [](float value) {
                      return !(value > 0.0F) || !std::isfinite(value);
@@ -1768,6 +1803,7 @@ bool build_features(const std::vector<HopRecord>& records,
 }
 
 bool analyze_impl(const std::string& path,
+                  const AudioInputProcessingConfig& processing,
                   MusicAnalysis& destination,
                   const AudioProgressCallback& callback,
                   const std::atomic_bool* cancel,
@@ -1854,12 +1890,33 @@ bool analyze_impl(const std::string& path,
     }
 
     std::vector<float> decoded(static_cast<std::size_t>(kDecodeChunkFrames));
+    AudioInputProcessor input_processor;
+    if (!input_processor.configure(processing, source_rate, error)) {
+        return false;
+    }
     AdaptiveBeatObserver beat_observer;
     if (!beat_observer.valid()) {
         return fail(error, "Could not initialize the adaptive beat tracker.");
     }
     HopAccumulator accumulator(beat_observer);
     LinearResampler resampler(source_rate, accumulator);
+    if (processing.frequency_streams.size()
+        > kMaximumAudioFrequencyStreams) {
+        return fail(error, "The frequency-stream table exceeds its analysis limit.");
+    }
+    std::vector<std::unique_ptr<FrequencyAnalysisPipeline>> stream_pipelines;
+    stream_pipelines.reserve(processing.frequency_streams.size());
+    for (const auto& stream : processing.frequency_streams) {
+        auto pipeline = std::make_unique<FrequencyAnalysisPipeline>(
+            stream, source_rate, error);
+        if (!pipeline->valid()) {
+            if (error != nullptr && error->empty()) {
+                *error = "Could not initialize a named frequency-stream analyzer.";
+            }
+            return false;
+        }
+        stream_pipelines.push_back(std::move(pipeline));
+    }
     std::uint64_t source_frames = 0U;
     while (true) {
         ma_uint64 frames_read = 0U;
@@ -1880,8 +1937,12 @@ bool analyze_impl(const std::string& path,
                             "The music source contains a non-finite audio sample.");
             }
             sample = (std::max)(-1.0F, (std::min)(1.0F, sample));
+            sample = input_processor.process(sample);
             decoded[static_cast<std::size_t>(index)] = sample;
             resampler.push(sample);
+            for (const auto& pipeline : stream_pipelines) {
+                pipeline->push(sample);
+            }
         }
         source_frames += frames_read;
         const std::uint64_t progress_total = declared_frames != 0U
@@ -1904,6 +1965,9 @@ bool analyze_impl(const std::string& path,
     }
     resampler.finish(source_frames);
     accumulator.finish();
+    for (const auto& pipeline : stream_pipelines) {
+        pipeline->finish(source_frames);
+    }
     if (!beat_observer.finish()) {
         return fail(error,
                     "The adaptive beat tracker could not allocate additional event storage.");
@@ -1921,6 +1985,7 @@ bool analyze_impl(const std::string& path,
     analysis.source_frame_count = source_frames;
     analysis.source_sample_rate = source_rate;
     analysis.source_channel_count = source_channels;
+    analysis.input_processing = processing;
     analysis.duration_seconds = static_cast<double>(source_frames)
                                 / static_cast<double>(source_rate);
 
@@ -1928,6 +1993,31 @@ bool analyze_impl(const std::string& path,
                       analysis, progress, error)
         || !build_features(accumulator.records(), analysis, progress)) {
         return false;
+    }
+    analysis.frequency_streams.reserve(stream_pipelines.size());
+    for (const auto& pipeline : stream_pipelines) {
+        if (!pipeline->finish_observer()) {
+            return fail(error,
+                        "A named frequency-stream beat tracker could not finish.");
+        }
+        MusicAnalysis derived;
+        derived.duration_seconds = analysis.duration_seconds;
+        if (!detect_beats(pipeline->accumulator().records(),
+                          pipeline->observer(), derived, progress, error)
+            || !build_features(pipeline->accumulator().records(),
+                               derived, progress)) {
+            return false;
+        }
+        MusicFrequencyStreamAnalysis cached;
+        cached.uuid = pipeline->authored().uuid;
+        cached.low_hz = pipeline->authored().low_hz;
+        cached.high_hz = pipeline->authored().high_hz;
+        cached.detected_bpm = derived.detected_bpm;
+        cached.tempo_confidence = derived.tempo_confidence;
+        cached.beat_times_seconds = std::move(derived.beat_times_seconds);
+        cached.tempo_points = std::move(derived.tempo_points);
+        cached.feature_samples = std::move(derived.feature_samples);
+        analysis.frequency_streams.push_back(std::move(cached));
     }
     if (analysis.feature_samples.size() > kMaximumMusicFeatureSamples
         || analysis.beat_times_seconds.size() > kMaximumMusicBeats
@@ -1968,11 +2058,31 @@ bool analyze_music_file(const std::string& path,
                         const std::atomic_bool* cancel,
                         std::string* error) {
     try {
-        return analyze_impl(path, destination, progress, cancel, error);
+        return analyze_impl(path, AudioInputProcessingConfig{}, destination,
+                            progress, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Audio analysis ran out of memory.");
     } catch (const std::exception& exception) {
         return fail(error, "Audio analysis failed: " + std::string(exception.what()));
+    } catch (...) {
+        return fail(error, "Audio analysis failed with an unknown error.");
+    }
+}
+
+bool analyze_music_file(const std::string& path,
+                        const AudioInputProcessingConfig& processing,
+                        MusicAnalysis& destination,
+                        const AudioProgressCallback& progress,
+                        const std::atomic_bool* cancel,
+                        std::string* error) {
+    try {
+        return analyze_impl(path, processing, destination, progress, cancel,
+                            error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Audio analysis ran out of memory.");
+    } catch (const std::exception& exception) {
+        return fail(error, "Audio analysis failed: "
+                               + std::string(exception.what()));
     } catch (...) {
         return fail(error, "Audio analysis failed with an unknown error.");
     }

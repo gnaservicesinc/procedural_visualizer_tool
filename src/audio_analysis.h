@@ -26,6 +26,13 @@ bool analyze_music_file(const std::string& path,
                         const std::atomic_bool* cancel = nullptr,
                         std::string* error = nullptr);
 
+bool analyze_music_file(const std::string& path,
+                        const AudioInputProcessingConfig& processing,
+                        MusicAnalysis& destination,
+                        const AudioProgressCallback& progress = {},
+                        const std::atomic_bool* cancel = nullptr,
+                        std::string* error = nullptr);
+
 // Re-hashes a linked source without decoding it. expected_sha256 must be 64
 // lowercase or uppercase hexadecimal characters. A mismatch is a normal false
 // result and includes a concise diagnostic when error is supplied.

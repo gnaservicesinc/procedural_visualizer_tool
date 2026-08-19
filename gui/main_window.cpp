@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "application_settings_dialog.h"
+#include "audio_processing_dialog.h"
 #include "live_target_registry.h"
 #include "live_workspace.h"
 #include "preview_widget.h"
@@ -477,12 +478,14 @@ int effect_ui_category(pvt::EffectType type) {
         case pvt::EffectType::Shake:
         case pvt::EffectType::FlagWave:
         case pvt::EffectType::LensDistortion:
+        case pvt::EffectType::Twirl:
             return MovementEffects;
         case pvt::EffectType::Glow:
         case pvt::EffectType::Starburst:
             return LightAndEnergyEffects;
         case pvt::EffectType::BlockScale:
         case pvt::EffectType::Glitch:
+        case pvt::EffectType::EdgeDetect:
             return StylizeEffects;
         case pvt::EffectType::ParticleField:
             return ParticleEffects;
@@ -515,6 +518,7 @@ void populate_effect_types(QComboBox* combo, int category) {
             add(pvt::EffectType::Shake);
             add(pvt::EffectType::FlagWave);
             add(pvt::EffectType::LensDistortion);
+            add(pvt::EffectType::Twirl);
             break;
         case LightAndEnergyEffects:
             add(pvt::EffectType::Glow);
@@ -523,6 +527,7 @@ void populate_effect_types(QComboBox* combo, int category) {
         case StylizeEffects:
             add(pvt::EffectType::BlockScale);
             add(pvt::EffectType::Glitch);
+            add(pvt::EffectType::EdgeDetect);
             break;
         case ParticleEffects:
             add(pvt::EffectType::ParticleField);
@@ -638,7 +643,19 @@ std::vector<double> music_beats_for_ui(const pvt::ClockConfig& clock) {
     std::vector<double> beats;
     const double offset = static_cast<double>(clock.beat_offset_microseconds)
                           / 1000000.0;
-    const auto& source = clock.music.beat_times_seconds;
+    const std::vector<double>* source_ptr = &clock.music.beat_times_seconds;
+    if (!clock.frequency_stream_uuid.empty()) {
+        const auto stream = std::find_if(
+            clock.music.frequency_streams.cbegin(),
+            clock.music.frequency_streams.cend(),
+            [&clock](const pvt::MusicFrequencyStreamAnalysis& candidate) {
+                return candidate.uuid == clock.frequency_stream_uuid;
+            });
+        if (stream != clock.music.frequency_streams.cend()) {
+            source_ptr = &stream->beat_times_seconds;
+        }
+    }
+    const auto& source = *source_ptr;
     if (clock.music_tempo == pvt::MusicTempoMode::Half) {
         beats.reserve((source.size() + 1U) / 2U);
         for (std::size_t index = 0U; index < source.size(); index += 2U) {
@@ -740,6 +757,52 @@ std::size_t estimated_compatibility_bytes(
     return bytes;
 }
 
+std::size_t estimated_audio_processing_bytes(
+    const pvt::AudioInputProcessingConfig& processing) {
+    std::size_t bytes = processing.equalizer_bands.capacity()
+                        * sizeof(pvt::AudioEqualizerBandConfig);
+    bytes = saturating_add(
+        bytes, processing.frequency_streams.capacity()
+                   * sizeof(pvt::AudioFrequencyStreamConfig));
+    for (const auto& stream : processing.frequency_streams) {
+        bytes = saturating_add(bytes, estimated_string_bytes(stream.uuid));
+        bytes = saturating_add(bytes, estimated_string_bytes(stream.name));
+    }
+    return bytes;
+}
+
+std::size_t estimated_music_analysis_bytes(const pvt::MusicAnalysis& music) {
+    std::size_t bytes = 0U;
+    for (const std::string* value : {
+             &music.analyzer_version, &music.source_sha256,
+             &music.source_basename, &music.source_format}) {
+        bytes = saturating_add(bytes, estimated_string_bytes(*value));
+    }
+    bytes = saturating_add(
+        bytes, music.beat_times_seconds.capacity() * sizeof(double));
+    bytes = saturating_add(
+        bytes, music.tempo_points.capacity() * sizeof(pvt::MusicTempoPoint));
+    bytes = saturating_add(
+        bytes, music.feature_samples.capacity() * sizeof(pvt::MusicFeatureSample));
+    bytes = saturating_add(
+        bytes, music.frequency_streams.capacity()
+                   * sizeof(pvt::MusicFrequencyStreamAnalysis));
+    for (const auto& stream : music.frequency_streams) {
+        bytes = saturating_add(bytes, estimated_string_bytes(stream.uuid));
+        bytes = saturating_add(
+            bytes, stream.beat_times_seconds.capacity() * sizeof(double));
+        bytes = saturating_add(
+            bytes, stream.tempo_points.capacity() * sizeof(pvt::MusicTempoPoint));
+        bytes = saturating_add(
+            bytes, stream.feature_samples.capacity()
+                       * sizeof(pvt::MusicFeatureSample));
+    }
+    bytes = saturating_add(
+        bytes, estimated_audio_processing_bytes(music.input_processing));
+    return saturating_add(
+        bytes, estimated_compatibility_bytes(music.compatibility));
+}
+
 std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     std::size_t bytes = sizeof(pvt::RenderData);
     bytes = saturating_add(bytes,
@@ -784,28 +847,21 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     bytes = saturating_add(
         bytes, estimated_compatibility_bytes(render.source_compatibility));
     bytes = saturating_add(
-        bytes, estimated_compatibility_bytes(
-                   render.layer_clock.clock.music.compatibility));
+        bytes, estimated_music_analysis_bytes(render.layer_clock.clock.music));
+    bytes = saturating_add(
+        bytes, estimated_audio_processing_bytes(
+                   render.layer_clock.clock.audio_processing));
     return bytes;
 }
 
 std::size_t estimated_canvas_bytes(const pvt::CanvasLoopConfig& canvas) {
     const auto& music = canvas.clock.music;
     std::size_t bytes = sizeof(pvt::CanvasLoopConfig);
-    for (const std::string* value : {
-             &canvas.clock.meter.expression, &music.analyzer_version,
-             &music.source_sha256, &music.source_basename,
-             &music.source_format}) {
-        bytes = saturating_add(bytes, estimated_string_bytes(*value));
-    }
     bytes = saturating_add(
-        bytes, music.beat_times_seconds.capacity() * sizeof(double));
+        bytes, estimated_string_bytes(canvas.clock.meter.expression));
+    bytes = saturating_add(bytes, estimated_music_analysis_bytes(music));
     bytes = saturating_add(
-        bytes, music.tempo_points.capacity() * sizeof(pvt::MusicTempoPoint));
-    bytes = saturating_add(
-        bytes, music.feature_samples.capacity() * sizeof(pvt::MusicFeatureSample));
-    bytes = saturating_add(
-        bytes, estimated_compatibility_bytes(music.compatibility));
+        bytes, estimated_audio_processing_bytes(canvas.clock.audio_processing));
     bytes = saturating_add(
         bytes, estimated_compatibility_bytes(canvas.output_compatibility));
     bytes = saturating_add(
@@ -1005,8 +1061,10 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
         const bool active_coordinate = effect.intensity > 0.0
                                        && effect.magnitude > 0.0
                                        && effect.type != pvt::EffectType::Blur
-                                       && (effect.type
-                                               != pvt::EffectType::LensDistortion
+                                       && ((effect.type
+                                                != pvt::EffectType::LensDistortion
+                                            && effect.type
+                                                   != pvt::EffectType::Twirl)
                                            || effect.secondary != 0.0);
         return effect.enabled && (active_blur || active_coordinate)
                && effect.type != pvt::EffectType::Glow
@@ -1454,6 +1512,8 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
                                    : static_cast<double>(random_integer(random, 1, 6));
             break;
         case pvt::EffectType::ParticleField:
+            effect.particle_shape = static_cast<pvt::ParticleShape>(
+                random_integer(random, 0, 4));
             effect.intensity = random_real(random, 0.45, 2.2);
             effect.magnitude = random_real(random, 0.05, 0.55);
             effect.frequency = static_cast<double>(random_integer(random, 24, 256));
@@ -1500,6 +1560,22 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.intensity = random_real(random, 0.3, 0.9);
             effect.magnitude = random_real(random, 0.04, 0.35);
             effect.frequency = random_real(random, 1.0, 4.0);
+            effect.secondary = random_chance(random, 0.5) ? -1.0 : 1.0;
+            effect.center_x = random_real(random, 0.3, 0.7);
+            effect.center_y = random_real(random, 0.3, 0.7);
+            break;
+        case pvt::EffectType::EdgeDetect:
+            effect.intensity = random_real(random, 0.35, 1.0);
+            effect.magnitude = random_real(random, 0.6, 3.0);
+            effect.frequency = static_cast<double>(random_integer(random, 1, 4));
+            effect.secondary = random_real(random, 0.0, 0.25);
+            effect.center_x = random_real(random, 0.3, 0.7);
+            effect.center_y = random_real(random, 0.3, 0.7);
+            break;
+        case pvt::EffectType::Twirl:
+            effect.intensity = random_real(random, 0.3, 0.95);
+            effect.magnitude = random_real(random, 0.08, 0.75);
+            effect.frequency = random_real(random, 0.5, 3.5);
             effect.secondary = random_chance(random, 0.5) ? -1.0 : 1.0;
             effect.center_x = random_real(random, 0.3, 0.7);
             effect.center_y = random_real(random, 0.3, 0.7);
@@ -1810,6 +1886,17 @@ MainWindow::MainWindow(QWidget* parent)
     live_workspace_->setObjectName(QStringLiteral("livePerformanceWorkspace"));
     connect(live_workspace_, &LiveWorkspace::requestEditMode,
             this, [this] { setLiveMode(false); });
+    connect(live_workspace_, &LiveWorkspace::requestPopOut,
+            this, &MainWindow::toggleLivePopOut);
+    connect(live_workspace_, &LiveWorkspace::livePreviewFrame,
+            this, [this](const QImage& image) {
+                if (preview_ != nullptr && live_workspace_ != nullptr
+                    && live_workspace_->isLiveActive()
+                    && (workspace_stack_ == nullptr
+                        || workspace_stack_->currentWidget() != live_workspace_)) {
+                    preview_->setPreview(image);
+                }
+            });
     connect(live_workspace_, &LiveWorkspace::runtimeStatusChanged,
             this, [this](const QString& summary) {
                 if (status_ != nullptr && live_workspace_ != nullptr
@@ -1886,7 +1973,10 @@ MainWindow::MainWindow(QWidget* parent)
                     playback_preview_advanced_ = true;
                 }
                 last_previewed_frame_ = result.frame;
-                preview_->setPreview(result.image);
+                if (live_workspace_ == nullptr
+                    || !live_workspace_->isLiveActive()) {
+                    preview_->setPreview(result.image);
+                }
                 const int frame_count = std::max(1, effectiveFrameCount());
                 status_->setText(tr("Preview frame %1/%2")
                                      .arg(result.frame + 1)
@@ -2124,6 +2214,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
+    restoreLiveWorkspace(false);
     if (live_workspace_ != nullptr) live_workspace_->setLiveActive(false);
     if (audio_playback_ != nullptr) audio_playback_->stop();
     if (preview_cancel_ != nullptr) {
@@ -2469,12 +2560,19 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     }
     cancelMusicAnalysis();
     stopPlayback();
+    restoreLiveWorkspace(false);
     if (live_workspace_ != nullptr) live_workspace_->setLiveActive(false);
     saveUserSettings();
     QMainWindow::closeEvent(event);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == live_popout_window_ && event != nullptr
+        && event->type() == QEvent::Close) {
+        static_cast<QCloseEvent*>(event)->ignore();
+        restoreLiveWorkspace(false);
+        return true;
+    }
     if (event != nullptr) {
         if (auto* label = qobject_cast<QLabel*>(watched)) {
             if (event->type() == QEvent::Resize
@@ -2755,6 +2853,14 @@ QWidget* MainWindow::createSynchronizationPage() {
     music_source_->setReadOnly(true);
     music_source_->setPlaceholderText(tr("No analyzed music source"));
     music_layout->addWidget(music_source_);
+    auto* music_processing_form = new QFormLayout;
+    music_processing_ = new QPushButton(tr("Filters, EQ + Frequency Streams…"));
+    music_frequency_stream_ = new QComboBox;
+    music_frequency_stream_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    music_frequency_stream_->setMinimumContentsLength(24);
+    music_processing_form->addRow(tr("Input processing"), music_processing_);
+    music_processing_form->addRow(tr("Clock stream"), music_frequency_stream_);
+    music_layout->addLayout(music_processing_form);
     auto* music_buttons = new QHBoxLayout;
     music_choose_ = new QPushButton(tr("Choose…"));
     music_relink_ = new QPushButton(tr("Relink…"));
@@ -2917,6 +3023,18 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_music_source_->setReadOnly(true);
     layer_music_source_->setPlaceholderText(tr("No analyzed layer music source"));
     layer_music_layout->addWidget(layer_music_source_);
+    auto* layer_music_processing_form = new QFormLayout;
+    layer_music_processing_ = new QPushButton(
+        tr("Filters, EQ + Frequency Streams…"));
+    layer_music_frequency_stream_ = new QComboBox;
+    layer_music_frequency_stream_->setSizeAdjustPolicy(
+        QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    layer_music_frequency_stream_->setMinimumContentsLength(24);
+    layer_music_processing_form->addRow(
+        tr("Input processing"), layer_music_processing_);
+    layer_music_processing_form->addRow(
+        tr("Clock stream"), layer_music_frequency_stream_);
+    layer_music_layout->addLayout(layer_music_processing_form);
     auto* layer_music_buttons = new QHBoxLayout;
     layer_music_choose_ = new QPushButton(tr("Choose…"));
     layer_music_relink_ = new QPushButton(tr("Relink…"));
@@ -3119,6 +3237,10 @@ QWidget* MainWindow::createSynchronizationPage() {
     connect(music_cancel_, &QPushButton::clicked, this, [this] {
         cancelMusicAnalysis(tr("Cancelling music analysis…"));
     });
+    connect(music_processing_, &QPushButton::clicked, this,
+            [this] { editMusicInputProcessing(false); });
+    connect(music_frequency_stream_, &QComboBox::currentIndexChanged, this,
+            [this] { applyClockEditor(music_frequency_stream_); });
     connect(layer_music_choose_, &QPushButton::clicked,
             this, &MainWindow::chooseLayerMusicSource);
     connect(layer_music_relink_, &QPushButton::clicked,
@@ -3130,6 +3252,10 @@ QWidget* MainWindow::createSynchronizationPage() {
     connect(layer_music_cancel_, &QPushButton::clicked, this, [this] {
         cancelMusicAnalysis(tr("Cancelling layer music analysis…"));
     });
+    connect(layer_music_processing_, &QPushButton::clicked, this,
+            [this] { editMusicInputProcessing(true); });
+    connect(layer_music_frequency_stream_, &QComboBox::currentIndexChanged, this,
+            [this] { applyClockEditor(layer_music_frequency_stream_); });
     return scroll;
 }
 
@@ -3360,6 +3486,15 @@ QWidget* MainWindow::createEffectPage() {
     effect_knee_ = real_editor(0.0, 1.0);
     effect_area_radius_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
     effect_area_radius_->setSpecialValueText(tr("Whole layer (0)"));
+    effect_particle_shape_ = new QComboBox;
+    for (const auto shape : {pvt::ParticleShape::Spark,
+                             pvt::ParticleShape::SoftOrb,
+                             pvt::ParticleShape::Ring,
+                             pvt::ParticleShape::Diamond,
+                             pvt::ParticleShape::Star}) {
+        add_enum_item(effect_particle_shape_,
+                      QString::fromUtf8(pvt::particle_shape_name(shape)), shape);
+    }
     effect_blur_type_ = new QComboBox;
     for (const auto type : {pvt::BlurType::Gaussian, pvt::BlurType::Box,
                             pvt::BlurType::Directional, pvt::BlurType::Radial,
@@ -3391,6 +3526,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Glow threshold"), effect_threshold_);
     effect_form_->addRow(tr("Glow soft knee"), effect_knee_);
     effect_form_->addRow(tr("Local area radius"), effect_area_radius_);
+    effect_form_->addRow(tr("Particle shape"), effect_particle_shape_);
     effect_form_->addRow(tr("Blur algorithm"), effect_blur_type_);
     effect_form_->addRow(tr("Blur passes"), effect_blur_passes_);
     effect_form_->addRow(tr("Samples per pass"), effect_blur_samples_);
@@ -5353,6 +5489,17 @@ void MainWindow::setLiveMode(bool live) {
         || live_workspace_ == nullptr) {
         return;
     }
+    if (live_popout_window_ != nullptr) {
+        if (live) {
+            if (!live_workspace_->isLiveActive()) live_workspace_->setLiveActive(true);
+            live_popout_window_->show();
+            live_popout_window_->raise();
+            live_popout_window_->activateWindow();
+        }
+        if (edit_mode_action_ != nullptr) edit_mode_action_->setChecked(true);
+        if (live_mode_action_ != nullptr) live_mode_action_->setChecked(false);
+        return;
+    }
     const bool showing_live = workspace_stack_->currentWidget()
                               == live_workspace_;
     if (edit_mode_action_ != nullptr) {
@@ -5396,7 +5543,51 @@ void MainWindow::setLiveMode(bool live) {
         status_->setText(live_workspace_->isLiveActive()
             ? tr("Editing the live project — input, rendering, and stage output remain active.")
             : tr("Edit mode — Flow Workbench ready."));
+        if (!live_workspace_->isLiveActive()) schedulePreview();
     }
+}
+
+void MainWindow::toggleLivePopOut() {
+    if (workspace_stack_ == nullptr || live_workspace_ == nullptr
+        || editor_workspace_ == nullptr) return;
+    if (live_popout_window_ != nullptr) {
+        restoreLiveWorkspace(true);
+        return;
+    }
+    live_workspace_->setProjectLiveConfig(project_.canvas.live);
+    live_workspace_->refreshProjectSnapshot();
+    if (!live_workspace_->isLiveActive()) live_workspace_->setLiveActive(true);
+    workspace_stack_->removeWidget(live_workspace_);
+    workspace_stack_->setCurrentWidget(editor_workspace_);
+    if (layers_dock_ != nullptr && layers_dock_visible_before_live_) {
+        layers_dock_->show();
+    }
+    live_popout_window_ = new QMainWindow(nullptr, Qt::Window);
+    live_popout_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+    live_popout_window_->setWindowTitle(tr("Procedural Visualizer Tool — LIVE"));
+    live_popout_window_->setCentralWidget(live_workspace_);
+    live_popout_window_->resize(1180, 760);
+    live_popout_window_->installEventFilter(this);
+    live_popout_window_->show();
+    live_popout_window_->raise();
+    live_popout_window_->activateWindow();
+    if (edit_mode_action_ != nullptr) edit_mode_action_->setChecked(true);
+    if (live_mode_action_ != nullptr) live_mode_action_->setChecked(false);
+    status_->setText(tr(
+        "Live is running in a separate window; this preview follows its routed clocks."));
+}
+
+void MainWindow::restoreLiveWorkspace(bool show_live_workspace) {
+    if (live_popout_window_ == nullptr || workspace_stack_ == nullptr
+        || live_workspace_ == nullptr) return;
+    QMainWindow* window = live_popout_window_;
+    live_popout_window_ = nullptr;
+    window->removeEventFilter(this);
+    QWidget* central = window->takeCentralWidget();
+    if (central == live_workspace_) workspace_stack_->addWidget(live_workspace_);
+    window->hide();
+    window->deleteLater();
+    setLiveMode(show_live_workspace);
 }
 
 void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
@@ -6304,6 +6495,8 @@ void MainWindow::connectEditors() {
             [this] { applyEffectEditor(effect_type_); });
     connect(effect_blur_type_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_blur_type_); });
+    connect(effect_particle_shape_, &QComboBox::currentIndexChanged, this,
+            [this] { applyEffectEditor(effect_particle_shape_); });
     connect(effect_space_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_space_); });
     connect(effect_edge_, &QComboBox::currentIndexChanged, this,
@@ -8710,6 +8903,10 @@ void MainWindow::updateSynchronizationState() {
                              || mode == pvt::ClockMode::Music;
     clock_mode_->setEnabled(editable);
     music_data_only_->setEnabled(editable);
+    music_processing_->setEnabled(editable);
+    music_frequency_stream_->setEnabled(
+        editable && !config_.clock.music.source_sha256.empty()
+        && !config_.clock.audio_processing.frequency_streams.empty());
     clock_interpolation_->setEnabled(editable && pulse_clock);
     clock_fit_->setEnabled(editable
                            && (mode == pvt::ClockMode::Frame
@@ -8819,6 +9016,10 @@ void MainWindow::updateSynchronizationState() {
     const auto local_mode = local.clock.mode;
     const bool local_enabled = local.enabled && layer_editable;
     layer_clock_group_->setEnabled(layer_editable);
+    layer_music_processing_->setEnabled(layer_editable);
+    layer_music_frequency_stream_->setEnabled(
+        layer_editable && !local.clock.music.source_sha256.empty()
+        && !local.clock.audio_processing.frequency_streams.empty());
     layer_clock_mix_enabled_->setEnabled(local_enabled);
     layer_clock_mix_mode_->setEnabled(local_enabled && local.mix_enabled);
     layer_clock_form_->setRowVisible(
@@ -9306,6 +9507,8 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_glitch = type == pvt::EffectType::Glitch;
     const bool is_starburst = type == pvt::EffectType::Starburst;
     const bool is_lens = type == pvt::EffectType::LensDistortion;
+    const bool is_edge_detect = type == pvt::EffectType::EdgeDetect;
+    const bool is_twirl = type == pvt::EffectType::Twirl;
     const bool coordinate_effect = !is_glow && !is_block_scale && !is_particles && !is_blur;
     const bool has_center = !is_block_scale;
     const auto blur_type = static_cast<pvt::BlurType>(
@@ -9327,6 +9530,7 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_threshold_, is_glow || is_particles);
     effect_form_->setRowVisible(effect_knee_, is_glow || is_particles);
     effect_form_->setRowVisible(effect_area_radius_, !is_block_scale);
+    effect_form_->setRowVisible(effect_particle_shape_, is_particles);
     effect_form_->setRowVisible(effect_blur_type_, is_blur);
     effect_form_->setRowVisible(effect_blur_passes_, is_blur);
     effect_form_->setRowVisible(effect_blur_samples_, is_blur);
@@ -9372,7 +9576,7 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_secondary_->setRange(0.0, 1.0);
         effect_secondary_->setDecimals(4);
         effect_secondary_->setSingleStep(0.01);
-    } else if (is_glitch || is_starburst) {
+    } else if (is_glitch || is_starburst || is_edge_detect) {
         effect_intensity_->setRange(0.0, 1.0);
         effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
         effect_frequency_->setRange(
@@ -9384,7 +9588,7 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_secondary_->setRange(0.0, 1.0);
         effect_secondary_->setDecimals(4);
         effect_secondary_->setSingleStep(0.01);
-    } else if (is_lens) {
+    } else if (is_lens || is_twirl) {
         effect_intensity_->setRange(0.0, 1.0);
         effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
         effect_frequency_->setRange(0.25, kMaximumRenderParameter);
@@ -9513,6 +9717,30 @@ void MainWindow::updateEffectEditorVisibility() {
         set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
         effect_secondary_->setToolTip(
             tr("Negative values bow outward (barrel); positive values pinch inward."));
+    } else if (is_edge_detect) {
+        set_form_label(effect_form_, effect_intensity_, tr("Edge mix"));
+        set_form_label(effect_form_, effect_magnitude_, tr("Edge gain"));
+        set_form_label(effect_form_, effect_frequency_, tr("Sampling radius (pixels)"));
+        set_form_label(effect_form_, effect_secondary_, tr("Edge threshold"));
+        set_form_label(effect_form_, effect_center_x_, tr("Area center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Area center Y (0–1)"));
+        effect_magnitude_->setToolTip(
+            tr("Amplifies Sobel edges in linear light; HDR edges remain available."));
+        effect_frequency_->setToolTip(
+            tr("Whole pixel distance used by the edge detector."));
+        effect_secondary_->setToolTip(
+            tr("Suppresses gradients below this threshold."));
+    } else if (is_twirl) {
+        set_form_label(effect_form_, effect_intensity_, tr("Twirl mix"));
+        set_form_label(effect_form_, effect_magnitude_, tr("Maximum turns"));
+        set_form_label(effect_form_, effect_frequency_, tr("Radial falloff"));
+        set_form_label(effect_form_, effect_secondary_, tr("Direction / depth"));
+        set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
+        effect_magnitude_->setToolTip(
+            tr("Maximum rotation near the center, measured in turns."));
+        effect_secondary_->setToolTip(
+            tr("Negative values reverse direction; zero is neutral."));
     } else {
         set_form_label(effect_form_, effect_intensity_, tr("Spark brightness"));
         set_form_label(effect_form_, effect_magnitude_, tr("Travel per loop"));
@@ -9551,7 +9779,7 @@ void MainWindow::loadSelectedEffect() {
              effect_phase_, effect_edge_, effect_intensity_, effect_magnitude_,
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
              effect_angle_, effect_radius_, effect_threshold_, effect_knee_,
-             effect_area_radius_, effect_blur_type_, effect_blur_passes_,
+             effect_area_radius_, effect_particle_shape_, effect_blur_type_, effect_blur_passes_,
              effect_blur_samples_, effect_blur_minimum_, effect_blur_maximum_}) {
         widget->setEnabled(enabled);
     }
@@ -9584,6 +9812,7 @@ void MainWindow::loadSelectedEffect() {
         effect_threshold_->setValue(effect.threshold);
         effect_knee_->setValue(effect.soft_knee);
         effect_area_radius_->setValue(effect.area_radius);
+        select_enum(effect_particle_shape_, effect.particle_shape);
         select_enum(effect_blur_type_, effect.blur_type);
         effect_blur_passes_->setValue(effect.blur_passes);
         effect_blur_samples_->setValue(effect.blur_samples);
@@ -9617,6 +9846,23 @@ void MainWindow::loadGlobalEditors() {
     music_beat_offset_ms_->setValue(
         static_cast<double>(config_.clock.beat_offset_microseconds) / 1000.0);
     music_data_only_->setChecked(config_.clock.data_only);
+    const auto load_frequency_stream = [](QComboBox* combo,
+                                          const pvt::ClockConfig& clock) {
+        combo->clear();
+        combo->addItem(QObject::tr("Full filtered signal"), QString{});
+        for (const auto& stream : clock.audio_processing.frequency_streams) {
+            combo->addItem(
+                QObject::tr("%1 (%2–%3 Hz)")
+                    .arg(QString::fromStdString(stream.name))
+                    .arg(stream.low_hz, 0, 'g', 6)
+                    .arg(stream.high_hz, 0, 'g', 6),
+                QString::fromStdString(stream.uuid));
+        }
+        const int selected = combo->findData(
+            QString::fromStdString(clock.frequency_stream_uuid));
+        combo->setCurrentIndex(selected >= 0 ? selected : 0);
+    };
+    load_frequency_stream(music_frequency_stream_, config_.clock);
     layer_clock_group_->setChecked(config_.layer_clock.enabled);
     layer_clock_mix_enabled_->setChecked(config_.layer_clock.mix_enabled);
     select_enum(layer_clock_mix_mode_, config_.layer_clock.mix);
@@ -9645,6 +9891,8 @@ void MainWindow::loadGlobalEditors() {
             config_.layer_clock.clock.beat_offset_microseconds) / 1000.0);
     layer_music_data_only_->setChecked(
         config_.layer_clock.clock.data_only);
+    load_frequency_stream(layer_music_frequency_stream_,
+                          config_.layer_clock.clock);
     swings_group_->setChecked(config_.swings_enabled);
     project_audio_response_group_->setChecked(
         config_.audio_reactive_defaults.enabled);
@@ -10864,7 +11112,8 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
         || changed_editor == layer_clock_phase_offset_
         || changed_editor == layer_music_tempo_mode_
         || changed_editor == layer_music_beat_offset_ms_
-        || changed_editor == layer_music_data_only_;
+        || changed_editor == layer_music_data_only_
+        || changed_editor == layer_music_frequency_stream_;
     if (layer_editor) {
         auto& local = config_.layer_clock;
         auto& clock = local.clock;
@@ -10936,6 +11185,9 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
                 std::llround(layer_music_beat_offset_ms_->value() * 1000.0));
         } else if (changed_editor == layer_music_data_only_) {
             clock.data_only = layer_music_data_only_->isChecked();
+        } else if (changed_editor == layer_music_frequency_stream_) {
+            clock.frequency_stream_uuid =
+                layer_music_frequency_stream_->currentData().toString().toStdString();
         }
         syncActiveRender();
         updateSynchronizationState();
@@ -11010,6 +11262,9 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
             std::llround(music_beat_offset_ms_->value() * 1000.0));
     } else if (changed_editor == music_data_only_) {
         config_.clock.data_only = music_data_only_->isChecked();
+    } else if (changed_editor == music_frequency_stream_) {
+        config_.clock.frequency_stream_uuid =
+            music_frequency_stream_->currentData().toString().toStdString();
     } else {
         return;
     }
@@ -11191,6 +11446,9 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
             const QSignalBlocker blocker(effect_blur_samples_);
             effect_blur_samples_->setValue(effect.blur_samples);
         }
+    } else if (changed_editor == effect_particle_shape_) {
+        effect.particle_shape = static_cast<pvt::ParticleShape>(
+            effect_particle_shape_->currentData().toInt());
     } else if (changed_editor == effect_cycles_) {
         effect.cycles_per_loop = effect_cycles_->value();
     } else if (changed_editor == effect_phase_) {
@@ -11920,12 +12178,13 @@ void MainWindow::randomizeStackComposition() {
         config_.swings.front().enabled = true;
     }
 
-    std::array<pvt::EffectType, 11> effect_types = {
+    std::array<pvt::EffectType, 13> effect_types = {
         pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
         pvt::EffectType::Shake, pvt::EffectType::FlagWave, pvt::EffectType::Glow,
         pvt::EffectType::BlockScale, pvt::EffectType::ParticleField,
         pvt::EffectType::Blur, pvt::EffectType::Glitch,
-        pvt::EffectType::Starburst, pvt::EffectType::LensDistortion};
+        pvt::EffectType::Starburst, pvt::EffectType::LensDistortion,
+        pvt::EffectType::EdgeDetect, pvt::EffectType::Twirl};
     constexpr int kMaximumRandomEffects = 6;
     const int effect_count = random_integer(random, 1, kMaximumRandomEffects);
     bool has_enabled_effect = false;
@@ -12054,6 +12313,9 @@ void MainWindow::chooseMusicSource() {
             }
             const bool first_source = config_.clock.music.source_sha256.empty();
             config_.clock.music = source.render.layer_clock.clock.music;
+            config_.clock.audio_processing =
+                source.render.layer_clock.clock.audio_processing;
+            config_.clock.frequency_stream_uuid.clear();
             config_.clock.mode = pvt::ClockMode::Music;
             config_.clock.music_swing_policy = pvt::MusicSwingPolicy::KeepAll;
             if (first_source) config_.audio_reactive_defaults.enabled = true;
@@ -12163,6 +12425,9 @@ void MainWindow::chooseLayerMusicSource() {
                 return;
             }
             config_.layer_clock.clock.music = *source.analysis;
+            config_.layer_clock.clock.audio_processing =
+                source.analysis->input_processing;
+            config_.layer_clock.clock.frequency_stream_uuid.clear();
             config_.layer_clock.clock.mode = pvt::ClockMode::Music;
             config_.layer_clock.clock.music_swing_policy =
                 pvt::MusicSwingPolicy::KeepAll;
@@ -12223,9 +12488,74 @@ void MainWindow::reanalyzeLayerMusicSource() {
     (void)startMusicAnalysis(path, MusicAnalysisAction::Reanalyze, true);
 }
 
+void MainWindow::editMusicInputProcessing(bool layer_clock) {
+    if (music_analysis_active_) return;
+    pvt::ClockConfig& clock = layer_clock
+        ? config_.layer_clock.clock : config_.clock;
+    AudioProcessingDialog dialog(
+        clock.audio_processing,
+        layer_clock ? tr("active-layer music") : tr("project music"), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const pvt::AudioInputProcessingConfig processing = dialog.processing();
+    const auto same_processing = [](const pvt::AudioInputProcessingConfig& left,
+                                    const pvt::AudioInputProcessingConfig& right) {
+        if (left.high_pass_enabled != right.high_pass_enabled
+            || left.high_pass_hz != right.high_pass_hz
+            || left.low_pass_enabled != right.low_pass_enabled
+            || left.low_pass_hz != right.low_pass_hz
+            || left.equalizer_enabled != right.equalizer_enabled
+            || left.equalizer_bands.size() != right.equalizer_bands.size()
+            || left.frequency_streams.size() != right.frequency_streams.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < left.equalizer_bands.size(); ++index) {
+            const auto& a = left.equalizer_bands[index];
+            const auto& b = right.equalizer_bands[index];
+            if (a.frequency_hz != b.frequency_hz || a.gain_db != b.gain_db) return false;
+        }
+        for (std::size_t index = 0; index < left.frequency_streams.size(); ++index) {
+            const auto& a = left.frequency_streams[index];
+            const auto& b = right.frequency_streams[index];
+            if (a.uuid != b.uuid || a.name != b.name
+                || a.low_hz != b.low_hz || a.high_hz != b.high_hz) return false;
+        }
+        return true;
+    };
+    if (same_processing(clock.audio_processing, processing)) return;
+
+    if (!clock.music.source_sha256.empty()) {
+        const QString path = currentMusicSourcePath(layer_clock);
+        if (path.isEmpty()) {
+            QMessageBox::warning(
+                this, tr("Audio input processing"),
+                tr("The embedded music bytes are unavailable. Relink the source "
+                   "before changing pre-analysis filters or frequency streams."));
+            return;
+        }
+        (void)startMusicAnalysis(path, MusicAnalysisAction::Reanalyze,
+                                 layer_clock, processing);
+        return;
+    }
+
+    auto before = captureActiveState();
+    clock.audio_processing = processing;
+    clock.frequency_stream_uuid.clear();
+    if (layer_clock) syncActiveRender();
+    else syncProjectGlobals();
+    recordActiveStateChange(
+        layer_clock ? tr("Edit active-layer music input processing")
+                    : tr("Edit project music input processing"),
+        std::move(before));
+    loadGlobalEditors();
+    status_->setText(tr(
+        "Input processing saved. It will run before analysis when music is chosen."));
+}
+
 bool MainWindow::startMusicAnalysis(const QString& source_path,
                                     MusicAnalysisAction action,
-                                    bool layer_clock) {
+                                    bool layer_clock,
+                                    const std::optional<pvt::AudioInputProcessingConfig>&
+                                        processing_override) {
     if (source_path.isEmpty() || music_analysis_watcher_ == nullptr
         || music_analysis_watcher_->isRunning()) {
         return false;
@@ -12283,11 +12613,14 @@ bool MainWindow::startMusicAnalysis(const QString& source_path,
 
     const pvt::MusicAnalysis existing = layer_clock
         ? config_.layer_clock.clock.music : config_.clock.music;
+    const pvt::AudioInputProcessingConfig processing = processing_override.value_or(
+        layer_clock ? config_.layer_clock.clock.audio_processing
+                    : config_.clock.audio_processing);
     try {
         music_analysis_watcher_->setFuture(QtConcurrent::run(
             [this, source_path, action, generation, revision, existing,
              cancel, staged_document, layer_clock, layer_uuid,
-             attachment_id]() mutable {
+             attachment_id, processing]() mutable {
                 MusicAnalysisResult result;
                 result.source_path = source_path;
                 result.action = action;
@@ -12295,6 +12628,7 @@ bool MainWindow::startMusicAnalysis(const QString& source_path,
                 result.document_revision = revision;
                 result.layer_clock = layer_clock;
                 result.layer_uuid = layer_uuid;
+                result.processing = processing;
                 std::string error;
                 const auto progress =
                     [this, generation, revision,
@@ -12332,7 +12666,7 @@ bool MainWindow::startMusicAnalysis(const QString& source_path,
                     result.analysis = existing;
                 } else {
                     result.ok = pvt::audio::analyze_music_file(
-                        source_path.toStdString(), result.analysis,
+                        source_path.toStdString(), processing, result.analysis,
                         progress, cancel.get(), &error);
                     if (result.ok && action == MusicAnalysisAction::Reanalyze
                         && result.analysis.source_sha256
@@ -12452,7 +12786,17 @@ void MainWindow::finishMusicAnalysis(const MusicAnalysisResult& result) {
         std::make_unique<pvt::ProjectDocument>(*result.staged_document);
     document_ = std::move(committed_document);
     if (!result.verified_only) {
+        target_clock.audio_processing = result.processing;
         target_clock.music = result.analysis;
+        const auto selected = std::find_if(
+            target_clock.audio_processing.frequency_streams.cbegin(),
+            target_clock.audio_processing.frequency_streams.cend(),
+            [&target_clock](const pvt::AudioFrequencyStreamConfig& stream) {
+                return stream.uuid == target_clock.frequency_stream_uuid;
+            });
+        if (selected == target_clock.audio_processing.frequency_streams.cend()) {
+            target_clock.frequency_stream_uuid.clear();
+        }
     }
     target_clock.music.source_sha256 = result.attached.sha256;
     target_clock.music.source_basename = result.attached.basename;
@@ -12562,6 +12906,18 @@ void MainWindow::clearLayerMusicSource() {
 
 void MainWindow::schedulePreview() {
     ++preview_generation_;
+    // While Live is active, its renderer is the authoritative preview source:
+    // it includes MIDI/audio routes, transient mappings, and the actual Live
+    // clock phase. Do not let a normal editor render overwrite that frame with
+    // an authored-timeline preview a moment later.
+    if (live_workspace_ != nullptr && live_workspace_->isLiveActive()) {
+        preview_deferred_ = false;
+        if (preview_watcher_ != nullptr && preview_watcher_->isRunning()
+            && preview_cancel_ != nullptr) {
+            preview_cancel_->store(true, std::memory_order_relaxed);
+        }
+        return;
+    }
     if (preview_watcher_ && preview_watcher_->isRunning()) {
         preview_deferred_ = true;
         // Playback deliberately lets the current frame finish so a fast timer
@@ -13322,6 +13678,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
     auto* edit_live_project = live_workspace_ != nullptr
         ? live_workspace_->findChild<QPushButton*>(
               QStringLiteral("editLiveProjectButton")) : nullptr;
+    const auto* pop_out_live = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("popOutLiveButton")) : nullptr;
     const auto* live_audio_period = live_workspace_ != nullptr
         ? live_workspace_->findChild<QSpinBox*>(
               QStringLiteral("liveAudioPeriodFrames")) : nullptr;
@@ -13354,6 +13713,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_tabs->tabText(1) != tr("Control Map")
         || live_tabs->tabText(2) != tr("Scenes")
         || edit_live_project == nullptr
+        || pop_out_live == nullptr
+        || music_processing_ == nullptr || music_frequency_stream_ == nullptr
+        || layer_music_processing_ == nullptr
+        || layer_music_frequency_stream_ == nullptr
         || live_audio_period == nullptr
         || live_audio_period->minimum() != 1
         || live_audio_period->maximum() <= 2048
@@ -14099,8 +14462,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
     }
     const bool effect_catalog_complete =
-        categorized_effect_entries == 11
-        && categorized_effect_types.size() == 11U
+        categorized_effect_entries == 13
+        && categorized_effect_types.size() == 13U
         && categorized_effects_start_on_texture;
 
     auto* const starting_colors_help = findChild<QLabel*>(
@@ -14138,7 +14501,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || effect_category_tabs_ == nullptr
         || effect_category_tabs_->count() != EffectUiCategoryCount
         || !effect_catalog_complete
-        || add_effect_type_->count() != 5
+        || add_effect_type_->count() != 6
         || static_cast<pvt::EffectType>(
                add_effect_type_->itemData(0).toInt())
                != pvt::EffectType::EndlessZoom
@@ -14170,6 +14533,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || effect_sync_ == nullptr
         || effect_sync_->text() != tr("Synchronization")
         || effect_blur_type_ == nullptr || effect_blur_type_->count() != 5
+        || effect_particle_shape_ == nullptr
+        || effect_particle_shape_->count() != 5
         || effect_blur_passes_ == nullptr || effect_blur_samples_ == nullptr
         || effect_blur_minimum_ == nullptr || effect_blur_maximum_ == nullptr
         || starting_color_mode_ == nullptr

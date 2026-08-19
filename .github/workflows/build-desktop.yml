@@ -442,15 +442,21 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          Version 6.0.0 adds pre-analysis high-pass and low-pass filters, a ten-band graphical EQ, and stable named frequency streams for Music and Live audio. The full band or any named stream can drive the project clock or an active-layer clock, while flat processing and the full-band route remain the compatibility defaults.
+
+          Live setup now provides a smart audio-beat route when the input role is unambiguous, a searchable grouped control-map target browser, a detachable workspace, editor preview driven by the same routed Live clocks, and optional native sleep prevention for active sessions. Edge Detect and Twirl join the CPU/Metal effect pipeline, and Particle Field gains five procedural shapes. Custom PNG particle sprites remain an asset-backed follow-up.
+
+          Setup format advances to 14, layer records to 12, and the public C++ ABI to SONAME 6; existing projects remain migration inputs, while installed-library clients must rebuild.
+
           Version 5.0.3 keeps Live input, clocks, rendering, and stage output running while the complete project editor is open, with every live frame using the current authored project snapshot. It also removes artificial round-number ceilings from renderer fields, Live mappings and safety timing, audio buffers, recent-project history, one-shot source duration, and per-item audio routing. Semantic normalized ranges, protocol/format constraints, hostile-input defenses, deterministic real-time workload limits, and representation boundaries remain enforced.
 
           Version 5.0.2 made Wave output prerequisites explicit in the editor. The Wave page exposes the same generated-pattern displacement and slope-lighting switches as Modifiers, keeps both views synchronized, and warns when an enabled wave cannot affect pixels because both outputs are off.
 
           Version 5.0.1 repaired Ubuntu minizip-ng 4 source-package compatibility and headless CLI OpenGL initialization/teardown. Portable GPU admission follows tested platform behavior: Windows includes flat Plane rotation plus Cylinder, Sphere, and Cube, while Linux retains the three curved primitives and keeps flat Plane rotation on CPU.
 
-          This major release fixes the built-in Cylinder so it renders as a closed, rounded, perspective-projected 3D primitive with textured sides, visible caps, lighting, and translucent rear-surface compositing instead of a rectangular box mask.
+          Version 5.0.0 fixed the built-in Cylinder so it renders as a closed, rounded, perspective-projected 3D primitive with textured sides, visible caps, lighting, and translucent rear-surface compositing instead of a rectangular box mask.
 
-          Plane mapping now supports embedded PNG height maps, signed minimum and maximum displacement, an artist-selected neutral midpoint, pixel-to-node density, resolution-aware preview/output mesh caches, and Wavefront OBJ export. Setup format advances to 13, layer records to 11, and the public C++ ABI to SONAME 5; existing projects remain migration inputs.
+          Version 5.0.0 also added embedded PNG height maps, signed minimum and maximum Plane displacement, an artist-selected neutral midpoint, pixel-to-node density, resolution-aware preview/output mesh caches, and Wavefront OBJ export. Setup format advanced to 13, layer records to 11, and the public C++ ABI to SONAME 5.
 
           Windows and Linux product builds add a public-Qt offscreen OpenGL 3.3 stage for analytic Cylinder, Sphere, and Cube mapping; Windows also accelerates flat Plane rotation. CPU + GPU uses it when the runtime context supports it, strict GPU reports unsupported Plane/mesh/context work directly, and runtime capabilities show the actual OpenGL renderer. Linux flat Plane, displacement Plane, and imported-OBJ work remains ordered CPU stages, and full portable effect/source/compositing coverage plus physical Intel/AMD/NVIDIA qualification remain follow-up work. macOS continues to use its broader Metal pipeline.
 

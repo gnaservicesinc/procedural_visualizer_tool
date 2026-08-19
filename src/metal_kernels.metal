@@ -1474,6 +1474,60 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
             width, height, effect.kind.z);
         sampled = mix(source[gid.y * width + gid.x], distorted,
                       clamp_unit(intensity * area));
+    } else if (effect.kind.x == 11u) {
+        const float radius = effect.primary.w;
+        const float3 weights = float3(0.2126f, 0.7152f, 0.0722f);
+        const float top_left = dot(sample_bilinear(
+            source, x - radius, y - radius, width, height,
+            effect.kind.z).rgb, weights);
+        const float top = dot(sample_bilinear(
+            source, x, y - radius, width, height,
+            effect.kind.z).rgb, weights);
+        const float top_right = dot(sample_bilinear(
+            source, x + radius, y - radius, width, height,
+            effect.kind.z).rgb, weights);
+        const float left = dot(sample_bilinear(
+            source, x - radius, y, width, height,
+            effect.kind.z).rgb, weights);
+        const float right = dot(sample_bilinear(
+            source, x + radius, y, width, height,
+            effect.kind.z).rgb, weights);
+        const float bottom_left = dot(sample_bilinear(
+            source, x - radius, y + radius, width, height,
+            effect.kind.z).rgb, weights);
+        const float bottom = dot(sample_bilinear(
+            source, x, y + radius, width, height,
+            effect.kind.z).rgb, weights);
+        const float bottom_right = dot(sample_bilinear(
+            source, x + radius, y + radius, width, height,
+            effect.kind.z).rgb, weights);
+        const float gradient_x = -top_left + top_right
+            - 2.0f * left + 2.0f * right - bottom_left + bottom_right;
+        const float gradient_y = -top_left - 2.0f * top - top_right
+            + bottom_left + 2.0f * bottom + bottom_right;
+        const float edge = max(
+            0.0f, length(float2(gradient_x, gradient_y))
+                      * effect.primary.z - effect.placement.x);
+        const float4 original = source[gid.y * width + gid.x];
+        sampled = mix(original, float4(edge, edge, edge, original.a),
+                      clamp_unit(intensity * area));
+    } else if (effect.kind.x == 12u) {
+        const float dx = x - center_x;
+        const float dy = y - center_y;
+        const float distance = length(float2(dx, dy));
+        const float falloff = pow(clamp(
+            1.0f - distance / max(1.0f, 0.5f * frame.phases.w),
+            0.0f, 1.0f), effect.primary.w);
+        const float twist = kTau * effect.primary.z * effect.placement.x
+            * sin(effect.primary.x) * falloff * area;
+        const float cosine = cos(twist);
+        const float sine = sin(twist);
+        const float4 distorted = sample_bilinear(
+            source, center_x + cosine * dx - sine * dy,
+            center_y + sine * dx + cosine * dy,
+            width, height, effect.kind.z);
+        sampled = mix(source[gid.y * width + gid.x], distorted,
+                      clamp_unit(intensity * area));
     } else {
         sampled = source[gid.y * width + gid.x];
     }
@@ -1551,8 +1605,22 @@ kernel void particle_field(
         const float dy = (float(gid.y) - point.y) / point.z;
         const float distance_squared = dx * dx + dy * dy;
         if (distance_squared > 6.25f) continue;
+        float shape_distance_squared = distance_squared;
+        if (effect.blur.x == 1u) {
+            shape_distance_squared *= 0.38f;
+        } else if (effect.blur.x == 2u) {
+            const float ring_distance = (sqrt(distance_squared) - 1.0f) * 3.2f;
+            shape_distance_squared = ring_distance * ring_distance;
+        } else if (effect.blur.x == 3u) {
+            const float diamond = fabs(dx) + fabs(dy);
+            shape_distance_squared = 0.55f * diamond * diamond;
+        } else if (effect.blur.x == 4u) {
+            const float boundary = 1.0f + 0.42f * cos(5.0f * atan2(dy, dx));
+            const float star_distance = sqrt(distance_squared) / boundary;
+            shape_distance_squared = star_distance * star_distance;
+        }
         const float gaussian = exp(
-            -distance_squared / (0.22f + 1.55f * softness));
+            -shape_distance_squared / (0.22f + 1.55f * softness));
         const float area = circular_influence(
             effect.placement.y, effect.placement.z, effect.glow_area.w,
             float(gid.x), float(gid.y), width, height);

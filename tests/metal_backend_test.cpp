@@ -428,7 +428,9 @@ void test_backend_contract() {
         pvt::EffectType::ParticleField,
         pvt::EffectType::Glitch,
         pvt::EffectType::Starburst,
-        pvt::EffectType::LensDistortion};
+        pvt::EffectType::LensDistortion,
+        pvt::EffectType::EdgeDetect,
+        pvt::EffectType::Twirl};
     for (const pvt::EffectType type : effect_types) {
         pvt::RenderConfig single_effect = parity_config();
         single_effect.effects.clear();
@@ -450,6 +452,7 @@ void test_backend_contract() {
             effect.frequency = 2.2;
             effect.secondary = 5.0;
         } else if (type == pvt::EffectType::ParticleField) {
+            effect.particle_shape = pvt::ParticleShape::Star;
             effect.intensity = 1.1;
             effect.magnitude = 0.18;
             effect.frequency = 24.0;
@@ -473,6 +476,41 @@ void test_backend_contract() {
                                          gpu, nullptr, &error));
         const std::string label = std::string("single effect ")
                                   + pvt::effect_type_name(type);
+        check_close(cpu, gpu, 0.20, 0.018, 0.035, 0.002,
+                    label.c_str());
+    }
+
+    // Particle silhouettes share the tiled particle kernel but take distinct
+    // distance-field branches. Exercise every branch on real Metal rather than
+    // treating one non-default shape as representative of the whole enum.
+    for (const pvt::ParticleShape shape : {
+             pvt::ParticleShape::Spark, pvt::ParticleShape::SoftOrb,
+             pvt::ParticleShape::Ring, pvt::ParticleShape::Diamond,
+             pvt::ParticleShape::Star}) {
+        pvt::RenderConfig particles = parity_config();
+        particles.effects.clear();
+        particles.quantization.enabled = false;
+        particles.transform = {};
+        pvt::EffectConfig effect = pvt::default_effect(
+            pvt::EffectType::ParticleField);
+        effect.id = pvt::allocate_id(particles);
+        effect.enabled = true;
+        effect.particle_shape = shape;
+        effect.intensity = 1.1;
+        effect.magnitude = 0.18;
+        effect.frequency = 24.0;
+        effect.secondary = 0.4;
+        effect.radius_pixels = 3.0;
+        effect.threshold = 0.55;
+        effect.soft_knee = 0.5;
+        effect.area_radius = 0.58;
+        particles.effects.push_back(effect);
+        CHECK(pvt::render_frame_at_phase(particles, 0.37, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(particles, 0.37, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = std::string("particle shape ")
+                                  + pvt::particle_shape_name(shape);
         check_close(cpu, gpu, 0.20, 0.018, 0.035, 0.002,
                     label.c_str());
     }

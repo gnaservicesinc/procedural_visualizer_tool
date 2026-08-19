@@ -6,6 +6,43 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 6.0.0 audio routing and creative controls
+
+Music and Live sources now share an `AudioInputProcessingConfig`: optional
+high-pass and low-pass filters, a flat-by-default ten-band graphical equalizer,
+and stable named frequency ranges. Processing runs before every analysis stage.
+Music import computes and caches a complete analysis per named range; Live
+capture maintains the same streams causally without allocating in the device
+callback. Project and active-layer Music/Live clocks select the full band or a
+named stream by UUID, and validation rejects stale processing caches or dangling
+routes.
+
+The Live workspace creates the default audio-beat project route when an audio
+input role makes that decision unambiguous, offers a searchable grouped target
+tree for control maps, detaches into its own window, and sends the actual routed
+Live frame to the editor preview. An authored safety preference holds a native
+macOS or Windows power assertion only while Live is active. Device identities,
+network bindings, display identities, and transient performance state remain
+local or ephemeral.
+
+Edge Detect and Twirl join the staged effect catalog with CPU/Metal parity.
+Particle Field now offers Spark, Soft Orb, Ring, Diamond, and Star procedural
+shapes. Custom PNG sprites remain an asset-backed follow-up. Setup format 14 and
+layer format 12 persist all new portable state and downgrade older formats to
+their historical full-band, flat-processing, Spark-particle behavior. Because
+the new public by-value fields change layout, version 6.0.0 advances the public
+shared-library ABI to SONAME 6; installed-library clients must rebuild.
+
+Local validation on 2026-08-19 passed the optimized Qt/Cocoa/real-Metal matrix
+(23/23), the strict C++20 headless matrix (22/22), and the ASan/UBSan headless
+matrix (22/22 with leak detection disabled). The self-contained arm64 app passed
+the 26-Mach-O distribution verifier, deep strict code-signature validation, GUI
+smoke, embedded `pvt-render` version/self-test and RPATH checks, and a fresh
+single-root ZIP/checksum round trip. A clean shared install produced SONAME 6
+and its out-of-tree installed consumer configured, linked, and ran successfully.
+The only native build diagnostic was the existing beta-Xcode deployment-version
+warning for the host C++ runtime.
+
 ## 5.0.3 unrestricted live authoring
 
 Version 5.0.3 decouples the Live workspace from the Live runtime. Opening the
@@ -842,6 +879,9 @@ consumers do not inherit minizip requirements.
 | 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
 | 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and representation-bounded controls. |
+| 52 | Pre-analysis audio processing and named clock streams | Complete; hardware qualification pending | Music and Live apply optional HP/LP plus graphical EQ before analysis, then expose stable named frequency-range analyses to project and active-layer clocks. Defaults are flat/full-band; validation, transactional reanalysis, setup-14 persistence, and causal/offline tests cover routing. |
+| 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, Live can detach, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
+| 54 | Edge/Twirl effects and particle shapes | Complete | Linear-light Edge Detect, seamless Twirl, and five deterministic procedural particle shapes share CPU/Metal, GUI, CLI, randomization, validation, and persistence semantics. Custom PNG sprites remain deferred. |
 
 ## Important implementation map
 
@@ -865,14 +905,16 @@ consumers do not inherit minizip requirements.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
   compression, dithering, collision preflight, ordered atomic installation,
   serialized progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v9 codec and split
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v14 codec and split
   per-layer/global bundle records with transactional legacy file I/O.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
   metadata, semantic history operations, readable/direct-editable attachment storage,
   independent current-state copies, bounded ZIP/directory loading, and atomic
   save staging. This helper is intentionally not installed ABI.
-- `src/audio_analysis.cpp`: private full-source decoding, adaptive beat/local-
-  tempo reconciliation, and dense multiband/onset/spectral/chroma extraction.
+- `src/audio_input_processing.cpp` / `src/audio_analysis.cpp`: shared bounded
+  pre-analysis filters/EQ, private full-source decoding, named frequency-stream
+  analysis, adaptive beat/local-tempo reconciliation, and dense multiband/
+  onset/spectral/chroma extraction.
 - `src/audio_playback.cpp`: bounded real-time multi-source monitoring and
   cancellable float WAV mixing using the same local duration mappings as visual
   clock evaluation.

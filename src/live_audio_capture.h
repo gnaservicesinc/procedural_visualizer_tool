@@ -19,6 +19,13 @@ struct LiveAudioDevice {
 };
 
 struct LiveAudioSnapshot {
+    struct FrequencyStream {
+        std::string uuid;
+        MusicFeatureSample features;
+        double detected_bpm = 0.0;
+        double beat_phase = 0.0;
+    };
+
     MusicFeatureSample features;
     double detected_bpm = 0.0;
     double beat_phase = 0.0;
@@ -26,6 +33,7 @@ struct LiveAudioSnapshot {
     double estimated_input_latency_ms = 0.0;
     std::uint64_t callback_dropouts = 0U;
     bool receiving = false;
+    std::vector<FrequencyStream> frequency_streams;
 };
 
 // A small, allocation-free incremental analyzer runs in miniaudio's capture
@@ -45,7 +53,12 @@ public:
                std::string* error = nullptr);
     void stop() noexcept;
     bool is_running() const noexcept;
-    LiveAudioSnapshot snapshot() const noexcept;
+    LiveAudioSnapshot snapshot() const;
+
+    // Must be called while stopped. The next start prepares all coefficients
+    // and stream state before the callback becomes visible to the backend.
+    bool set_processing_config(const AudioInputProcessingConfig& config,
+                               std::string* error = nullptr);
 
     // Gain and sensitivity are live-performance controls, not destructive
     // edits to incoming audio. Both are lock-free and callback safe.

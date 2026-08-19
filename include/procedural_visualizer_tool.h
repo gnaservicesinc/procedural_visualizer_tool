@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 13;
+constexpr std::uint32_t kSetupFormatVersion = 14;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -74,6 +74,11 @@ constexpr std::size_t kMaximumLiveClockOutputs = 4096;
 constexpr std::size_t kMaximumLiveScenes = 2048;
 constexpr std::size_t kMaximumLiveSceneValues = 16384;
 constexpr std::size_t kMaximumLiveTextBytes = 4096;
+// Audio filters run inside real-time callbacks and once per decoded music
+// sample. These deliberately small workload bounds keep a hostile project from
+// multiplying per-sample DSP without imposing a meaningful artistic limit.
+constexpr std::size_t kMaximumAudioEqualizerBands = 32;
+constexpr std::size_t kMaximumAudioFrequencyStreams = 64;
 constexpr std::size_t kDefaultSequenceMemoryBudgetBytes =
     std::size_t{2} << 30U;
 
@@ -95,7 +100,17 @@ enum class EffectType : std::uint8_t {
     Blur,
     Glitch,
     Starburst,
-    LensDistortion
+    LensDistortion,
+    EdgeDetect,
+    Twirl
+};
+
+enum class ParticleShape : std::uint8_t {
+    Spark = 0,
+    SoftOrb,
+    Ring,
+    Diamond,
+    Star
 };
 
 enum class BlurType : std::uint8_t {
@@ -439,6 +454,50 @@ struct MusicTempoPoint {
     double confidence = 0.0;
 };
 
+struct AudioEqualizerBandConfig {
+    double frequency_hz = 1000.0;
+    double gain_db = 0.0;
+};
+
+struct AudioFrequencyStreamConfig {
+    // Stable project-local identity. Clock routes use this value rather than a
+    // row index so sorting or renaming the table cannot change their meaning.
+    std::string uuid;
+    std::string name = "Frequency stream";
+    double low_hz = 20.0;
+    double high_hz = 20000.0;
+};
+
+// Applied to decoded/captured mono audio before beat, envelope, spectrum, or
+// chroma analysis. A disabled flat block is an exact semantic bypass. Named
+// frequency streams split the already-filtered signal and are analyzed
+// independently for use as project or layer clocks.
+struct AudioInputProcessingConfig {
+    bool high_pass_enabled = false;
+    double high_pass_hz = 20.0;
+    bool low_pass_enabled = false;
+    double low_pass_hz = 20000.0;
+    bool equalizer_enabled = false;
+    std::vector<AudioEqualizerBandConfig> equalizer_bands = {
+        {31.25, 0.0}, {62.5, 0.0}, {125.0, 0.0}, {250.0, 0.0},
+        {500.0, 0.0}, {1000.0, 0.0}, {2000.0, 0.0}, {4000.0, 0.0},
+        {8000.0, 0.0}, {16000.0, 0.0}};
+    std::vector<AudioFrequencyStreamConfig> frequency_streams;
+};
+
+// Derived tables for one named range. Source identity and duration are shared
+// with the owning MusicAnalysis and are intentionally not duplicated.
+struct MusicFrequencyStreamAnalysis {
+    std::string uuid;
+    double low_hz = 20.0;
+    double high_hz = 20000.0;
+    double detected_bpm = 0.0;
+    double tempo_confidence = 0.0;
+    std::vector<double> beat_times_seconds;
+    std::vector<MusicTempoPoint> tempo_points;
+    std::vector<MusicFeatureSample> feature_samples;
+};
+
 // Lossless forward-compatibility data retained while loading a setup written
 // by another build. Unknown records keep their original key/value pair.
 // Rejected records were recognized but could not be used safely (for example,
@@ -475,6 +534,11 @@ struct MusicAnalysis {
     std::vector<double> beat_times_seconds;
     std::vector<MusicTempoPoint> tempo_points;
     std::vector<MusicFeatureSample> feature_samples;
+    std::vector<MusicFrequencyStreamAnalysis> frequency_streams;
+    // Snapshot of the exact pre-analysis settings used for this cache. Clock
+    // validation compares it with the authored source settings so stale EQ or
+    // range edits cannot be rendered as though they had been reanalyzed.
+    AudioInputProcessingConfig input_processing;
     ConfigCompatibility compatibility;
 };
 
@@ -505,6 +569,11 @@ struct ClockConfig {
     // from preview playback and movie audio. Project clocks default audible.
     bool data_only = false;
     MusicAnalysis music;
+    // Appended to preserve aggregate-initializer source compatibility. Empty
+    // selects the complete post-filter signal; otherwise it references a
+    // configured named range. This still grows the public by-value ABI.
+    AudioInputProcessingConfig audio_processing;
+    std::string frequency_stream_uuid;
 };
 
 struct LayerClockConfig {
@@ -639,6 +708,13 @@ struct SwingConfig {
 //              frequency (radial exponent), secondary (-1 barrel, +1
 //              pincushion, 0 neutral), center/local area, edge mode. Its
 //              authored clock animates the bend without changing the loop seam.
+// EdgeDetect:   intensity (source/edge mix), magnitude (edge gain), frequency
+//              (whole sampling radius in pixels), secondary (edge threshold),
+//              center/local area, edge mode.
+// Twirl:        intensity (source/effect mix), magnitude (maximum turns),
+//              frequency (radial falloff exponent), secondary (-1..1
+//              direction/depth), center/local area, edge mode. The signed
+//              sine-phase twist is exactly neutral at the loop seam.
 // Glow:        intensity, secondary (pulse depth), radius_pixels, threshold,
 //              soft_knee. Glow expands alpha coverage using straight-alpha
 //              compositing.
@@ -692,6 +768,9 @@ struct EffectConfig {
     // Deprecated serialized compatibility field from layer format 8. Rendering
     // deliberately ignores it: cycles_per_loop is the sole modulation count.
     int blur_pulses_per_cycle = 1;
+    // Procedural particle silhouettes require no external assets and retain
+    // CPU/Metal parity. Spark preserves the historical field appearance.
+    ParticleShape particle_shape = ParticleShape::Spark;
 };
 
 enum class PaletteColorEncoding : std::uint8_t {
@@ -956,6 +1035,9 @@ struct LiveClockInputConfig {
     int audio_channel = 0;
     bool follow_midi_transport = true;
     int holdover_milliseconds = 500;
+    // Empty selects the full post-filter signal. Used only for AudioStream.
+    // Appended to preserve aggregate-initializer source compatibility.
+    std::string frequency_stream_uuid;
 };
 
 struct LiveMidiClockOutputConfig {
@@ -1000,6 +1082,8 @@ struct LiveSafetyConfig {
     // When LastGoodFrame is selected, zero holds indefinitely and a positive
     // value transitions to blackout after this much time.
     int last_good_frame_timeout_milliseconds = 0;
+    // Hosts implement this only where a supported OS assertion API exists.
+    bool prevent_device_sleep = false;
 };
 
 struct LiveConfig {
@@ -1013,6 +1097,7 @@ struct LiveConfig {
     std::string startup_scene_uuid;
     LiveOutputConfig output;
     LiveSafetyConfig safety;
+    AudioInputProcessingConfig audio_processing;
 };
 
 struct ExportConfig {
@@ -1252,6 +1337,7 @@ PVT_API RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
 PVT_API ValidationResult validate(const RenderConfig& config);
 PVT_API ValidationResult validate(const ProjectConfig& project);
 PVT_API ValidationResult validate(const LiveConfig& live);
+PVT_API ValidationResult validate(const AudioInputProcessingConfig& processing);
 // Returns the stored manual count except for a render-ready Music clock, where
 // it returns ceil(audio duration * FPS). A negative result indicates an invalid
 // or unprepared clock and is accompanied by `error` when supplied.
@@ -1369,6 +1455,7 @@ PVT_API bool load_setup(const std::string& path,
                         std::string* error = nullptr);
 
 PVT_API const char* effect_type_name(EffectType value);
+PVT_API const char* particle_shape_name(ParticleShape value);
 PVT_API const char* blur_type_name(BlurType value);
 PVT_API const char* effect_space_name(EffectSpace value);
 PVT_API const char* edge_mode_name(EdgeMode value);

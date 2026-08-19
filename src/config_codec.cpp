@@ -215,6 +215,23 @@ bool is_setup_v13_key(std::string_view key) {
     return starts_with(key, "surface.plane_displacement.");
 }
 
+bool is_setup_v14_key(std::string_view key) {
+    return starts_with(key, "timing.clock.audio_input.")
+           || starts_with(key, "timing.music.input_processing.")
+           || starts_with(key, "timing.music.frequency_streams.")
+           || key == "timing.clock.frequency_stream_uuid"
+           || starts_with(key, "layer_clock.clock.audio_input.")
+           || starts_with(key, "layer_clock.music.input_processing.")
+           || starts_with(key, "layer_clock.music.frequency_streams.")
+           || key == "layer_clock.clock.frequency_stream_uuid"
+           || starts_with(key, "live.audio_input.")
+           || key == "live.safety.prevent_device_sleep"
+           || (starts_with(key, "effects.")
+               && has_suffix(key, ".particle_shape"))
+           || (starts_with(key, "live.clock_inputs.")
+               && has_suffix(key, ".frequency_stream_uuid"));
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -231,7 +248,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 7U ? 9U
                     : layer_version == 8U ? 10U
                     : layer_version == 9U ? 11U
-                    : layer_version == 10U ? 12U : 13U;
+                    : layer_version == 10U ? 12U
+                    : layer_version == 11U ? 13U : 14U;
     return true;
 }
 
@@ -249,7 +267,8 @@ bool supported_render_output_version(const std::string& serialized,
                     : output_version == 2U ? 5U
                     : output_version == 3U ? 6U
                     : output_version == 4U ? 7U
-                    : output_version == 5U ? 8U : 12U;
+                    : output_version == 5U ? 8U
+                    : output_version == 6U ? 12U : 14U;
     return true;
 }
 
@@ -488,6 +507,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 13U && is_setup_v13_key(key)) {
+            continue;
+        }
+        if (setup_version < 14U && is_setup_v14_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
@@ -1055,6 +1077,7 @@ bool deserialize_split_render_output_config(
             split_version == 1U ? 3U
             : split_version == 2U ? 4U
             : split_version == 3U ? 5U
+            : split_version == 4U ? 6U
                                   : kRenderOutputConfigFormatVersion));
         combined.push_back('\n');
         for (const std::string_view line : usable_split_records) {

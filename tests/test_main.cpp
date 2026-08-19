@@ -451,9 +451,9 @@ void test_live_control_model_and_setup_codec() {
 
     live.clock_inputs = {
         {true, pvt::LiveClockTarget::Project, {},
-         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 600},
+         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 600, {}},
         {true, pvt::LiveClockTarget::Layer, project.layers.front().uuid,
-         pvt::LiveClockInputSource::AudioStream, audio_uuid, 1, false, 250},
+         pvt::LiveClockInputSource::AudioStream, audio_uuid, 1, false, 250, {}},
     };
     live.midi_clock_outputs = {
         {true, pvt::LiveClockTarget::Project, {}, midi_uuid, true, true},
@@ -463,6 +463,14 @@ void test_live_control_model_and_setup_codec() {
     live.safety.watchdog_timeout_milliseconds = 75;
     live.safety.audio_dropout_grace_milliseconds = 325;
     live.safety.last_good_frame_timeout_milliseconds = 3000;
+    live.safety.prevent_device_sleep = true;
+    live.audio_processing.high_pass_enabled = true;
+    live.audio_processing.high_pass_hz = 45.0;
+    live.audio_processing.equalizer_enabled = true;
+    live.audio_processing.equalizer_bands[5U].gain_db = -2.5;
+    live.audio_processing.frequency_streams = {
+        {"live-bass", "Live bass", 45.0, 240.0}};
+    live.clock_inputs[1U].frequency_stream_uuid = "live-bass";
 
     CHECK(pvt::validate(live).ok);
     CHECK(pvt::validate(project).ok);
@@ -491,7 +499,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t13\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t14\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -506,6 +514,12 @@ void test_live_control_model_and_setup_codec() {
     CHECK(loaded.live.endpoints.size() == 4U);
     CHECK(loaded.live.endpoints[1].input_latency_microseconds == 18750);
     CHECK(loaded.live.mappings.size() == 2U);
+    CHECK(loaded.live.safety.prevent_device_sleep);
+    CHECK(loaded.live.audio_processing.high_pass_enabled);
+    CHECK(loaded.live.audio_processing.high_pass_hz == 45.0);
+    CHECK(loaded.live.audio_processing.equalizer_bands[5U].gain_db == -2.5);
+    CHECK(loaded.live.audio_processing.frequency_streams.size() == 1U);
+    CHECK(loaded.live.clock_inputs[1U].frequency_stream_uuid == "live-bass");
     CHECK(loaded.live.mappings[0].target_path
           == "layers/lead/effects/glow/intensity");
     CHECK(loaded.live.clock_inputs.size() == 2U);
@@ -2160,7 +2174,9 @@ void test_new_procedural_effects() {
     for (const pvt::EffectType type : {
              pvt::EffectType::Glitch,
              pvt::EffectType::Starburst,
-             pvt::EffectType::LensDistortion}) {
+             pvt::EffectType::LensDistortion,
+             pvt::EffectType::EdgeDetect,
+             pvt::EffectType::Twirl}) {
         pvt::RenderConfig config = base;
         pvt::EffectConfig effect = pvt::default_effect(type);
         effect.id = UINT64_C(0x1234567800000000)
@@ -2222,7 +2238,7 @@ void test_determinism_and_seam_continuity() {
     CHECK(before.pixels == after.pixels);
 
     // Every effect type closes its loop with either synchronization mode.
-    const std::array<pvt::EffectType, 11U> effect_types{{
+    const std::array<pvt::EffectType, 13U> effect_types{{
         pvt::EffectType::EndlessZoom,
         pvt::EffectType::Ripple,
         pvt::EffectType::Shake,
@@ -2234,6 +2250,8 @@ void test_determinism_and_seam_continuity() {
         pvt::EffectType::Glitch,
         pvt::EffectType::Starburst,
         pvt::EffectType::LensDistortion,
+        pvt::EffectType::EdgeDetect,
+        pvt::EffectType::Twirl,
     }};
     for (const pvt::EffectType type : effect_types) {
         for (const bool synchronized : {false, true}) {
@@ -3254,7 +3272,8 @@ void test_validation_limits() {
     CHECK(!pvt::validate(config).ok);
 
     for (const pvt::EffectType type : {
-             pvt::EffectType::Glitch, pvt::EffectType::Starburst}) {
+             pvt::EffectType::Glitch, pvt::EffectType::Starburst,
+             pvt::EffectType::EdgeDetect}) {
         config = pvt::default_config();
         config.effects.clear();
         auto procedural = pvt::default_effect(type);
@@ -3766,7 +3785,9 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     for (const pvt::EffectType type : {
              pvt::EffectType::Glitch,
              pvt::EffectType::Starburst,
-             pvt::EffectType::LensDistortion}) {
+             pvt::EffectType::LensDistortion,
+             pvt::EffectType::EdgeDetect,
+             pvt::EffectType::Twirl}) {
         auto effect = pvt::default_effect(type);
         effect.id = pvt::allocate_id(procedural_effect_setup);
         effect.enabled = true;
@@ -3778,14 +3799,18 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     pvt::RenderConfig loaded_procedural_effects;
     CHECK(pvt::detail::deserialize_setup_config(
         procedural_effect_text, loaded_procedural_effects, &error));
-    CHECK(loaded_procedural_effects.effects.size() == 3U);
-    if (loaded_procedural_effects.effects.size() == 3U) {
+    CHECK(loaded_procedural_effects.effects.size() == 5U);
+    if (loaded_procedural_effects.effects.size() == 5U) {
         CHECK(loaded_procedural_effects.effects[0].type
               == pvt::EffectType::Glitch);
         CHECK(loaded_procedural_effects.effects[1].type
               == pvt::EffectType::Starburst);
         CHECK(loaded_procedural_effects.effects[2].type
               == pvt::EffectType::LensDistortion);
+        CHECK(loaded_procedural_effects.effects[3].type
+              == pvt::EffectType::EdgeDetect);
+        CHECK(loaded_procedural_effects.effects[4].type
+              == pvt::EffectType::Twirl);
     }
 
     // Each compatibility fixture removes the records introduced by the newer
@@ -3832,12 +3857,26 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_thirteen_bytes = read_bytes(first);
-    CHECK(std::string(version_thirteen_bytes.begin(),
-                      version_thirteen_bytes.end())
-              .rfind("PVT_SETUP\t13\n", 0U) == 0U);
-    std::string version_twelve(version_thirteen_bytes.begin(),
-                               version_thirteen_bytes.end());
+    const auto version_fourteen_bytes = read_bytes(first);
+    CHECK(std::string(version_fourteen_bytes.begin(),
+                      version_fourteen_bytes.end())
+              .rfind("PVT_SETUP\t14\n", 0U) == 0U);
+    std::string version_thirteen(version_fourteen_bytes.begin(),
+                                 version_fourteen_bytes.end());
+    version_thirteen.replace(0U, std::string("PVT_SETUP\t14").size(),
+                             "PVT_SETUP\t13");
+    erase_records_with_fragment(version_thirteen, "audio_input.");
+    erase_records_with_fragment(version_thirteen, "input_processing.");
+    erase_records_with_fragment(version_thirteen, "frequency_streams.");
+    erase_records_with_fragment(version_thirteen, "frequency_stream_uuid");
+    erase_records_with_fragment(version_thirteen, "particle_shape");
+    erase_record(version_thirteen, "live.safety.prevent_device_sleep");
+    pvt::RenderConfig loaded_version_thirteen;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_thirteen, loaded_version_thirteen, &error));
+
+    std::string version_twelve(version_thirteen.begin(),
+                               version_thirteen.end());
     version_twelve.replace(0U, std::string("PVT_SETUP\t13").size(),
                            "PVT_SETUP\t12");
     erase_records_with_prefix(version_twelve,

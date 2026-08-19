@@ -5,6 +5,27 @@ pass. It separates portable authored project state from machine-local bindings
 and ephemeral performance state so future work does not accidentally serialize
 a device stream as if it were an analyzed music file.
 
+## Implemented in 6.0.0
+
+- Live audio has optional high-pass and low-pass filtering plus graphical
+  multiband EQ before any causal analysis. Stable named frequency ranges each
+  receive their own feature/beat/tempo stream and can drive the project or an
+  active-layer clock.
+- Adding an audio-input logical role automatically installs the otherwise
+  unambiguous default audio-beat project route. Artists can replace or fully
+  customize it afterward.
+- The control-map target chooser is a searchable grouped tree with current
+  values and retained unresolved paths rather than a project-sized combo box.
+- Live can detach into a separate window. Its routed frames feed the editor
+  preview while active, keeping authoring feedback synchronized with stage
+  output.
+- A portable safety preference can prevent system sleep for the duration of an
+  active Live session on macOS and Windows. The native assertion is released on
+  stop, close, and failure paths.
+- Setup format 14 persists the portable processing, named streams, selected
+  routes, and sleep preference. Physical device identities and runtime state
+  remain deliberately local or ephemeral.
+
 ## Implemented in 4.0.0
 
 - Portable logical endpoint roles for audio, MIDI, OSC, and foot controllers.

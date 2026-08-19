@@ -281,6 +281,7 @@ void test_layer_codec_backward_compatibility() {
     original.audio_reactive.color_amount_degrees = 38.0;
     original.waves.front().audio_response = pvt::AudioResponseMode::Beat;
     original.effects.front().audio_response = pvt::AudioResponseMode::Energy;
+    original.effects.front().particle_shape = pvt::ParticleShape::Star;
     original.waves.front().path.enabled = true;
     original.waves.front().path.path_id = 91U;
     original.waves.front().path.cycles_per_loop = 2;
@@ -320,7 +321,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t11\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t12\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -364,6 +365,8 @@ void test_layer_codec_backward_compatibility() {
           == pvt::AudioResponseMode::Beat);
     CHECK(current_round_trip.effects.front().audio_response
           == pvt::AudioResponseMode::Energy);
+    CHECK(current_round_trip.effects.front().particle_shape
+          == pvt::ParticleShape::Star);
     CHECK(current_round_trip.waves.front().path.enabled);
     CHECK(current_round_trip.waves.front().path.path_id == 91U);
     CHECK(current_round_trip.layer_clock.mix
@@ -391,11 +394,33 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.surface.plane_displacement.path
           == "height-map.png");
 
+    // Layer v11/setup v13 predates audio-input processing, named frequency
+    // streams, and procedural particle silhouettes.
+    std::istringstream current_v12_input(current_layer);
+    std::ostringstream version_eleven_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_v12_input, line)));
+    CHECK(line == "PVT_LAYER\t12");
+    version_eleven_output << "PVT_LAYER\t11\n";
+    while (std::getline(current_v12_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v12_only = key.find("audio_input.") != std::string::npos
+            || key.find("input_processing.") != std::string::npos
+            || key.find("frequency_streams.") != std::string::npos
+            || key.find("frequency_stream_uuid") != std::string::npos
+            || key.find("particle_shape") != std::string::npos;
+        if (!v12_only) version_eleven_output << line << '\n';
+    }
+    const std::string version_eleven = version_eleven_output.str();
+    pvt::RenderData loaded_version_eleven;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_eleven, loaded_version_eleven, &error, &motion_paths));
+
     // Layer v10/setup v12 predates plane-displacement geometry. Missing
     // records recover an off plane with the current safe numeric defaults.
-    std::istringstream current_v11_input(current_layer);
+    std::istringstream current_v11_input(version_eleven);
     std::ostringstream version_ten_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(current_v11_input, line)));
     CHECK(line == "PVT_LAYER\t11");
     version_ten_output << "PVT_LAYER\t10\n";
@@ -681,6 +706,24 @@ void test_render_output_codec_backward_compatibility() {
         {0.2F, 0.3F, 0.4F, 0.5F, 0.6F, 0.7F},
         {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
     };
+    canvas.clock.audio_processing.high_pass_enabled = true;
+    canvas.clock.audio_processing.high_pass_hz = 35.0;
+    canvas.clock.audio_processing.equalizer_enabled = true;
+    canvas.clock.audio_processing.equalizer_bands[4U].gain_db = 2.25;
+    canvas.clock.audio_processing.frequency_streams = {
+        {"music-bass", "Music bass", 35.0, 300.0}};
+    canvas.clock.frequency_stream_uuid = "music-bass";
+    canvas.clock.music.input_processing = canvas.clock.audio_processing;
+    pvt::MusicFrequencyStreamAnalysis music_bass;
+    music_bass.uuid = "music-bass";
+    music_bass.low_hz = 35.0;
+    music_bass.high_hz = 300.0;
+    music_bass.detected_bpm = 132.0;
+    music_bass.tempo_confidence = 0.8;
+    music_bass.beat_times_seconds = canvas.clock.music.beat_times_seconds;
+    music_bass.tempo_points = canvas.clock.music.tempo_points;
+    music_bass.feature_samples = canvas.clock.music.feature_samples;
+    canvas.clock.music.frequency_streams = {music_bass};
     canvas.audio_reactive_defaults.enabled = true;
     canvas.audio_reactive_defaults.synchronized_only = false;
     canvas.audio_reactive_defaults.wave_source = pvt::MusicFeature::Bass;
@@ -762,9 +805,9 @@ void test_render_output_codec_backward_compatibility() {
     canvas.live.mappings = {midi_mapping, osc_mapping, foot_mapping};
     canvas.live.clock_inputs = {
         {true, pvt::LiveClockTarget::Project, {},
-         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 750},
+         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 750, {}},
         {true, pvt::LiveClockTarget::Layer, layer_uuid,
-         pvt::LiveClockInputSource::AudioStream, audio_uuid, 2, false, 300},
+         pvt::LiveClockInputSource::AudioStream, audio_uuid, 2, false, 300, {}},
     };
     canvas.live.midi_clock_outputs = {
         {true, pvt::LiveClockTarget::Project, {}, midi_uuid, true, true},
@@ -779,13 +822,19 @@ void test_render_output_codec_backward_compatibility() {
     canvas.live.safety.watchdog_timeout_milliseconds = 83;
     canvas.live.safety.audio_dropout_grace_milliseconds = 410;
     canvas.live.safety.last_good_frame_timeout_milliseconds = 5000;
+    canvas.live.safety.prevent_device_sleep = true;
+    canvas.live.audio_processing.low_pass_enabled = true;
+    canvas.live.audio_processing.low_pass_hz = 16000.0;
+    canvas.live.audio_processing.frequency_streams = {
+        {"live-mid", "Live mid", 250.0, 2500.0}};
+    canvas.live.clock_inputs[1U].frequency_stream_uuid = "live-mid";
     output.filename_prefix = "music-sync_";
 
     std::string version_two;
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t6\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t7\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -798,6 +847,10 @@ void test_render_output_codec_backward_compatibility() {
           == pvt::MusicSwingPolicy::SuppressGlobal);
     CHECK(round_trip.clock.music.source_sha256 == std::string(64U, 'b'));
     CHECK(round_trip.clock.music.beat_times_seconds.size() == 4U);
+    CHECK(round_trip.clock.audio_processing.high_pass_enabled);
+    CHECK(round_trip.clock.audio_processing.equalizer_bands[4U].gain_db == 2.25);
+    CHECK(round_trip.clock.frequency_stream_uuid == "music-bass");
+    CHECK(round_trip.clock.music.frequency_streams.size() == 1U);
     CHECK(round_trip.audio_reactive_defaults.enabled);
     CHECK(!round_trip.audio_reactive_defaults.synchronized_only);
     CHECK(round_trip.audio_reactive_defaults.wave_source
@@ -826,6 +879,9 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(round_trip.live.scenes.front().values.size() == 3U);
     CHECK(round_trip.live.startup_scene_uuid == scene_uuid);
     CHECK(round_trip.live.safety.watchdog_timeout_milliseconds == 83);
+    CHECK(round_trip.live.safety.prevent_device_sleep);
+    CHECK(round_trip.live.audio_processing.low_pass_hz == 16000.0);
+    CHECK(round_trip.live.clock_inputs[1U].frequency_stream_uuid == "live-mid");
     CHECK(!round_trip.live.output.hide_cursor);
     CHECK(round_trip_output.filename_prefix == "music-sync_");
     CHECK(version_two.find("device_id") == std::string::npos);
@@ -860,10 +916,10 @@ void test_render_output_codec_backward_compatibility() {
     std::string split_output;
     CHECK(pvt::detail::serialize_music_analysis_config(
         canvas.clock.music, analysis, &error));
-    CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t1\n", 0U) == 0U);
+    CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t2\n", 0U) == 0U);
     CHECK(pvt::detail::serialize_split_render_output_config(
         canvas, output, split_output, &error));
-    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t4\n", 0U) == 0U);
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t5\n", 0U) == 0U);
     CHECK(split_output.find("timing.music.") == std::string::npos);
     CHECK(split_output.size() < version_two.size());
     pvt::CanvasLoopConfig combined_canvas;
@@ -954,7 +1010,7 @@ void test_render_output_codec_backward_compatibility() {
                    && record.value == "wrong-block";
         }));
     std::string future_analysis = malformed_analysis;
-    future_analysis.replace(0U, std::string("PVT_MUSIC_ANALYSIS\t1").size(),
+    future_analysis.replace(0U, std::string("PVT_MUSIC_ANALYSIS\t2").size(),
                             "PVT_MUSIC_ANALYSIS\t999");
     CHECK(pvt::detail::deserialize_music_analysis_config(
         future_analysis, analysis_round_trip, &error));
@@ -964,7 +1020,7 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t6");
+    CHECK(line == "PVT_RENDER_OUTPUT\t7");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');

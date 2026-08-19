@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **5.0.3**. The version is read from `VERSION` by every
+Current product version: **6.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,35 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 6.0.0 audio routing and creative-control expansion
+
+Music and Live audio can now pass through an optional high-pass filter, optional
+low-pass filter, and a graphical ten-band parametric equalizer before any beat,
+tempo, onset, spectral, or tonal analysis. Artists can add stable, named frequency
+ranges such as **Kick**, **Voice**, or **Cymbals**; each range receives its own
+causal or offline analysis and can independently drive the project clock or an
+active-layer clock. The full-band signal remains the default, all processing is
+off/flat by default, and edits to file analysis are transactional.
+
+Live setup now creates an audio-beat project clock when an audio-input role makes
+that route unambiguous. Its mapping target browser is searchable and grouped by
+project, layer, wave, Swing, and effect instead of opening one enormous combo box.
+Live mode can detach into its own window, optionally holds the system awake while
+active on supported platforms, and publishes its routed frames to the editor
+preview so authoring and program output use the same clocks.
+
+The effect catalog adds seamless **Edge Detect** and **Twirl** stages with CPU and
+Metal parity. Particle Field adds Spark, Soft Orb, Ring, Diamond, and Star
+procedural shapes without introducing an external-asset dependency. Custom PNG
+particle sprites remain a possible asset-backed follow-up rather than being
+silently embedded into the portable procedural format.
+
+These additions advance legacy setup persistence to format 14 and project layer
+records to format 12. Older formats retain their historical flat/full-band audio,
+clock, effect, and particle defaults on import. Because the additions grow
+exported by-value configuration structures, version 6.0.0 advances the installed
+shared library to SONAME 6; installed-library clients must rebuild against it.
 
 ## 5.0.3 unrestricted live authoring
 
@@ -375,7 +404,7 @@ sudo apt install procedural-visualizer-tool
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
   glow, animated block scaling, deterministic spark/trail particles, Blur,
   scanline/RGB-split Glitch, radial Starburst, and barrel/pincushion Lens
-  Distortion.
+  Distortion, linear-light Sobel Edge Detect, and seamless Twirl distortion.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
   An effect can inherit its effective audio category and source,
   override that source with any analyzed feature, force that effect on with the
@@ -635,12 +664,20 @@ Intermediate values blend between radial and the selected axis.
 ## Music analysis, synchronized playback, and native video
 
 Import is asynchronous, cancellable, and transactional. The analyzer decodes
-the full source, derives sample-accurate duration, tracks time-varying beat and
+the full source, applies the authored high-pass, low-pass, and graphical EQ
+before every analysis stage, derives sample-accurate duration, tracks time-varying beat and
 tempo observations, reconciles them with an offline multiband onset/tempogram
 pass, and stores the dense feature track up to signed-int container/API capacity.
 It does not reduce a song to one fixed BPM. The source SHA-256, decoded format, channel/sample metadata,
 beats, local tempo points, and normalized spectral/pitch features are cached in
 the project; rendering never decodes or analyzes the song again.
+
+An optional named-range table splits that filtered signal into independent
+analysis streams. Each named range stores its own beat, tempo, onset, spectral,
+and tonal results, and Music clocks select the full band or one stream by stable
+UUID. Adding, removing, relabeling, or retuning ranges requires explicit
+reanalyze; failed or cancelled analysis leaves the authored source and cache
+unchanged.
 
 Choosing the first project music source selects the Music clock and enables the
 project-wide Audio Response profile once, so every inheriting layer responds
@@ -979,8 +1016,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-12 remain importable;
-current explicit legacy output is setup format 13. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-13 remain importable;
+current explicit legacy output is setup format 14. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -996,8 +1033,11 @@ Glitch/Starburst/Lens Distortion settings, and palette column/name/encoding
 metadata. Format 12 adds layer-local RGB/alpha inversion and edge antialiasing,
 plus project-portable Live roles, mappings, clock routes, scenes, calibration,
 output preferences, and fail-safe policy. Format 13 adds generated Plane
-displacement settings and the height-map attachment identity. Project layer
-records use the corresponding current layer format 11.
+displacement settings and the height-map attachment identity. Format 14 adds
+pre-analysis audio filtering/EQ, named frequency-stream analyses and clock
+selection, Live sleep prevention, Edge Detect/Twirl, and procedural particle
+shape selection. Project layer records use the corresponding current layer
+format 12.
 Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
@@ -1316,6 +1356,14 @@ workspace without stopping that runtime; returning to Live shows the same
 uninterrupted session. Machine-only audio, MIDI, OSC, and screen bindings are
 kept in local application preferences.
 
+Live audio applies the same authored high-pass, low-pass, and graphical EQ model
+before causal analysis, then analyzes each named frequency range independently.
+Project and layer routes can select those streams explicitly. The workspace can
+detach into a dedicated window; while it is active, its routed renderer frames
+also feed the ordinary editor preview. A portable **Prevent device sleep while
+Live is active** safety option uses the native macOS or Windows power assertion
+when available and releases it immediately when Live stops.
+
 Projects persist logical endpoint roles, portable mappings, scenes, signed
 latency compensation, clock routes, and safety preferences. They never persist
 an operating-system device ID, network address, display identity, captured
@@ -1343,7 +1391,8 @@ see `LIVE_PERFORMANCE_STATUS.md` for the exact handoff checklist.
   editor, undo merge boundary, semantic diff, bit-depth transition, progress
   path, and cancellation race.
 - **Creative controls / 1.1.x:** add more effect types and deeper parameters,
-  plus optional depth-map and normal-map inputs for selected layer regions.
+  custom asset-backed particle sprites, plus optional depth-map and normal-map
+  inputs for selected layer regions.
 - **Platform parity:** Metal remains the broader macOS accelerated backend. The
   first portable stage now uses Qt-hosted OpenGL for analytic 3D surface mapping
   in Windows and Linux product builds. Full effect/source coverage and physical

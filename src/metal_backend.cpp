@@ -646,7 +646,9 @@ GpuEffect make_effect(const PreparedEffect& effect) {
                         static_cast<float>(effect.threshold),
                         static_cast<float>(effect.soft_knee),
                         static_cast<float>(effect.area_radius)};
-    result.blur = {static_cast<std::uint32_t>(effect.blur_type),
+    result.blur = {effect.type == EffectType::ParticleField
+                       ? static_cast<std::uint32_t>(effect.particle_shape)
+                       : static_cast<std::uint32_t>(effect.blur_type),
                    static_cast<std::uint32_t>(effect.blur_samples),
                    static_cast<std::uint32_t>(effect.blur_passes),
                    static_cast<std::uint32_t>(effect.id >> 32U)};

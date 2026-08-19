@@ -179,6 +179,20 @@ bool valid_enum(EffectType value) {
         case EffectType::Glitch:
         case EffectType::Starburst:
         case EffectType::LensDistortion:
+        case EffectType::EdgeDetect:
+        case EffectType::Twirl:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(ParticleShape value) {
+    switch (value) {
+        case ParticleShape::Spark:
+        case ParticleShape::SoftOrb:
+        case ParticleShape::Ring:
+        case ParticleShape::Diamond:
+        case ParticleShape::Star:
             return true;
     }
     return false;
@@ -717,24 +731,45 @@ MusicFeatureSample mix_music_sample(const MusicFeatureSample& first,
     return result;
 }
 
-MusicFeatureSample music_features_at(const MusicAnalysis& analysis,
-                                     double time_seconds) {
-    if (analysis.feature_samples.empty()
-        || !(analysis.duration_seconds > 0.0)) {
+MusicFeatureSample music_features_at(
+    const std::vector<MusicFeatureSample>& samples, double duration_seconds,
+    double time_seconds) {
+    if (samples.empty() || !(duration_seconds > 0.0)) {
         return {};
     }
-    if (analysis.feature_samples.size() == 1U) {
-        return analysis.feature_samples.front();
+    if (samples.size() == 1U) {
+        return samples.front();
     }
     const double position = clamp_value(
-        time_seconds / analysis.duration_seconds, 0.0, 1.0)
-        * static_cast<double>(analysis.feature_samples.size() - 1U);
+        time_seconds / duration_seconds, 0.0, 1.0)
+        * static_cast<double>(samples.size() - 1U);
     const std::size_t first = static_cast<std::size_t>(std::floor(position));
     const std::size_t second = std::min(first + 1U,
-                                        analysis.feature_samples.size() - 1U);
-    return mix_music_sample(analysis.feature_samples[first],
-                            analysis.feature_samples[second],
+                                        samples.size() - 1U);
+    return mix_music_sample(samples[first], samples[second],
                             position - static_cast<double>(first));
+}
+
+const MusicFrequencyStreamAnalysis* selected_frequency_stream(
+    const ClockConfig& clock) {
+    if (clock.frequency_stream_uuid.empty()) return nullptr;
+    const auto found = std::find_if(
+        clock.music.frequency_streams.begin(),
+        clock.music.frequency_streams.end(),
+        [&clock](const MusicFrequencyStreamAnalysis& stream) {
+            return stream.uuid == clock.frequency_stream_uuid;
+        });
+    return found == clock.music.frequency_streams.end() ? nullptr : &*found;
+}
+
+MusicFeatureSample music_features_at(const ClockConfig& clock,
+                                     double time_seconds) {
+    if (const auto* stream = selected_frequency_stream(clock)) {
+        return music_features_at(stream->feature_samples,
+                                 clock.music.duration_seconds, time_seconds);
+    }
+    return music_features_at(clock.music.feature_samples,
+                             clock.music.duration_seconds, time_seconds);
 }
 
 double apply_clock_transform(double phase, const ClockConfig& clock) {
@@ -834,7 +869,9 @@ double meter_offset_within_cycle(std::int64_t offset_microseconds,
 std::vector<double> music_anchors(const ClockConfig& clock) {
     std::vector<double> selected;
     selected.push_back(0.0);
-    const auto& beats = clock.music.beat_times_seconds;
+    const auto* stream = selected_frequency_stream(clock);
+    const auto& beats = stream != nullptr ? stream->beat_times_seconds
+                                          : clock.music.beat_times_seconds;
     if (clock.music_tempo == MusicTempoMode::Half) {
         for (std::size_t index = 0U; index < beats.size(); index += 2U) {
             selected.push_back(beats[index]);
@@ -968,7 +1005,7 @@ TimelineSample evaluate_clock_sample(const ClockConfig& clock,
         // Beat anchors drive only the base motion clock. The independently
         // authored audio-reactive routes consume the dense analysis envelope
         // at the actual frame timestamp, retaining within-beat transients.
-        result.music = music_features_at(clock.music, music_time);
+        result.music = music_features_at(clock, music_time);
     }
 
     result.normalized_phase = apply_clock_transform(phase, clock);
@@ -1219,8 +1256,10 @@ bool effect_has_render_work(const EffectConfig& effect) {
         case EffectType::FlagWave:
         case EffectType::Glitch:
         case EffectType::Starburst:
+        case EffectType::EdgeDetect:
             return effect.magnitude > 0.0;
         case EffectType::LensDistortion:
+        case EffectType::Twirl:
             return effect.magnitude > 0.0 && effect.secondary != 0.0;
     }
     return false;
@@ -1853,6 +1892,19 @@ const char* effect_type_name(EffectType value) {
         case EffectType::Glitch: return "Glitch";
         case EffectType::Starburst: return "Starburst";
         case EffectType::LensDistortion: return "Lens distortion";
+        case EffectType::EdgeDetect: return "Edge detect";
+        case EffectType::Twirl: return "Twirl";
+    }
+    return "Unknown";
+}
+
+const char* particle_shape_name(ParticleShape value) {
+    switch (value) {
+        case ParticleShape::Spark: return "Spark";
+        case ParticleShape::SoftOrb: return "Soft orb";
+        case ParticleShape::Ring: return "Ring";
+        case ParticleShape::Diamond: return "Diamond";
+        case ParticleShape::Star: return "Star";
     }
     return "Unknown";
 }
@@ -2130,6 +2182,18 @@ EffectConfig default_effect(EffectType type) {
             effect.frequency = 2.0; // radial exponent
             effect.secondary = -1.0; // barrel direction
             break;
+        case EffectType::EdgeDetect:
+            effect.intensity = 0.85;
+            effect.magnitude = 1.5; // Sobel edge gain
+            effect.frequency = 1.0; // sampling radius in pixels
+            effect.secondary = 0.08; // edge threshold
+            break;
+        case EffectType::Twirl:
+            effect.intensity = 0.8;
+            effect.magnitude = 0.35; // maximum turns
+            effect.frequency = 1.8; // center falloff exponent
+            effect.secondary = 1.0; // direction/depth
+            break;
     }
     return effect;
 }
@@ -2345,6 +2409,108 @@ std::uint64_t allocate_layer_file_id(const ProjectConfig& project) {
     }
 }
 
+bool audio_processing_equal(const AudioInputProcessingConfig& left,
+                            const AudioInputProcessingConfig& right) {
+    if (left.high_pass_enabled != right.high_pass_enabled
+        || left.high_pass_hz != right.high_pass_hz
+        || left.low_pass_enabled != right.low_pass_enabled
+        || left.low_pass_hz != right.low_pass_hz
+        || left.equalizer_enabled != right.equalizer_enabled
+        || left.equalizer_bands.size() != right.equalizer_bands.size()
+        || left.frequency_streams.size() != right.frequency_streams.size()) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.equalizer_bands.size(); ++index) {
+        if (left.equalizer_bands[index].frequency_hz
+                != right.equalizer_bands[index].frequency_hz
+            || left.equalizer_bands[index].gain_db
+                != right.equalizer_bands[index].gain_db) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U; index < left.frequency_streams.size(); ++index) {
+        const auto& a = left.frequency_streams[index];
+        const auto& b = right.frequency_streams[index];
+        if (a.uuid != b.uuid || a.name != b.name || a.low_hz != b.low_hz
+            || a.high_hz != b.high_hz) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool valid_audio_processing(const AudioInputProcessingConfig& processing) {
+    if (processing.equalizer_bands.size() > kMaximumAudioEqualizerBands
+        || processing.frequency_streams.size()
+               > kMaximumAudioFrequencyStreams
+        || !finite_in_range(processing.high_pass_hz, 0.001, 192000.0)
+        || !finite_in_range(processing.low_pass_hz, 0.001, 192000.0)
+        || (processing.high_pass_enabled && processing.low_pass_enabled
+            && processing.high_pass_hz >= processing.low_pass_hz)) {
+        return false;
+    }
+    double previous_frequency = 0.0;
+    for (const auto& band : processing.equalizer_bands) {
+        if (!finite_in_range(band.frequency_hz, 0.001, 192000.0)
+            || !finite_in_range(band.gain_db, -24.0, 24.0)
+            || band.frequency_hz <= previous_frequency) {
+            return false;
+        }
+        previous_frequency = band.frequency_hz;
+    }
+    std::unordered_set<std::string> ids;
+    ids.reserve(processing.frequency_streams.size());
+    for (const auto& stream : processing.frequency_streams) {
+        if (!valid_name(stream.uuid) || !valid_name(stream.name)
+            || !finite_in_range(stream.low_hz, 0.0, 192000.0)
+            || !finite_in_range(stream.high_hz, 0.001, 192000.0)
+            || stream.low_hz >= stream.high_hz
+            || !ids.insert(stream.uuid).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool valid_music_series(const std::vector<double>& beats,
+                        const std::vector<MusicTempoPoint>& tempos,
+                        const std::vector<MusicFeatureSample>& samples,
+                        double duration) {
+    if (beats.size() > kMaximumMusicBeats
+        || tempos.size() > kMaximumMusicTempoPoints
+        || samples.size() > kMaximumMusicFeatureSamples) {
+        return false;
+    }
+    double previous_beat = -1.0;
+    for (const double beat : beats) {
+        if (!std::isfinite(beat) || beat < 0.0 || beat > duration
+            || beat <= previous_beat) return false;
+        previous_beat = beat;
+    }
+    double previous_tempo = -1.0;
+    for (const auto& tempo : tempos) {
+        if (!std::isfinite(tempo.time_seconds) || tempo.time_seconds < 0.0
+            || tempo.time_seconds > duration
+            || tempo.time_seconds <= previous_tempo
+            || !positive_render_parameter(tempo.bpm)
+            || !finite_in_range(tempo.confidence, 0.0, 1.0)) return false;
+        previous_tempo = tempo.time_seconds;
+    }
+    for (const auto& sample : samples) {
+        if (!finite_in_range(sample.energy, 0.0, 1.0)
+            || !finite_in_range(sample.bass, 0.0, 1.0)
+            || !finite_in_range(sample.midrange, 0.0, 1.0)
+            || !finite_in_range(sample.treble, 0.0, 1.0)
+            || !finite_in_range(sample.onset, 0.0, 1.0)
+            || !finite_in_range(sample.beat, 0.0, 1.0)
+            || !finite_in_range(sample.spectral_centroid, 0.0, 1.0)
+            || !finite_in_range(sample.spectral_flatness, 0.0, 1.0)
+            || !finite_in_range(sample.chroma_hue, 0.0, 1.0)
+            || !finite_in_range(sample.chroma_strength, 0.0, 1.0)) return false;
+    }
+    return true;
+}
+
 ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                bool validate_layer_clock = true) {
     if (config.width < 16 || config.width > kMaximumDimension
@@ -2394,7 +2560,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
 
     const MusicAnalysis& music = config.clock.music;
-    if (music.schema_version != 1U
+    if (!valid_audio_processing(config.clock.audio_processing)
+        || music.schema_version != 1U
         || music.analyzer_version.size() > kMaximumNameBytes
         || (!music.analyzer_version.empty()
             && !valid_name(music.analyzer_version))
@@ -2410,7 +2577,9 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_in_range(music.tempo_confidence, 0.0, 1.0)
         || music.beat_times_seconds.size() > kMaximumMusicBeats
         || music.tempo_points.size() > kMaximumMusicTempoPoints
-        || music.feature_samples.size() > kMaximumMusicFeatureSamples) {
+        || music.feature_samples.size() > kMaximumMusicFeatureSamples
+        || music.frequency_streams.size()
+               > kMaximumAudioFrequencyStreams) {
         return invalid_result(
             "Music analysis metadata is invalid or exceeds a representation/API limit.");
     }
@@ -2450,6 +2619,33 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 "Music feature samples must contain finite normalized values from 0 to 1.");
         }
     }
+    std::unordered_set<std::string> cached_stream_ids;
+    cached_stream_ids.reserve(music.frequency_streams.size());
+    for (const auto& stream : music.frequency_streams) {
+        const auto authored = std::find_if(
+            config.clock.audio_processing.frequency_streams.begin(),
+            config.clock.audio_processing.frequency_streams.end(),
+            [&stream](const AudioFrequencyStreamConfig& item) {
+                return item.uuid == stream.uuid;
+            });
+        if (!valid_name(stream.uuid)
+            || !cached_stream_ids.insert(stream.uuid).second
+            || !finite_in_range(stream.low_hz, 0.0, 192000.0)
+            || !finite_in_range(stream.high_hz, 0.001, 192000.0)
+            || stream.low_hz >= stream.high_hz
+            || !nonnegative_render_parameter(stream.detected_bpm)
+            || !finite_in_range(stream.tempo_confidence, 0.0, 1.0)
+            || !valid_music_series(stream.beat_times_seconds,
+                                   stream.tempo_points,
+                                   stream.feature_samples,
+                                   music.duration_seconds)
+            || (authored != config.clock.audio_processing.frequency_streams.end()
+                && (authored->low_hz != stream.low_hz
+                    || authored->high_hz != stream.high_hz))) {
+            return invalid_result(
+                "A cached named frequency-stream analysis is invalid or stale.");
+        }
+    }
     if (music.source_frame_count != 0U
         && music.source_sample_rate == 0U) {
         return invalid_result(
@@ -2476,6 +2672,21 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (config.clock.mode == ClockMode::Music) {
         int resolved_count = 0;
         std::string frame_error;
+        const auto selected_stream = config.clock.frequency_stream_uuid.empty()
+            ? music.frequency_streams.end()
+            : std::find_if(
+                  music.frequency_streams.begin(), music.frequency_streams.end(),
+                  [&config](const MusicFrequencyStreamAnalysis& stream) {
+                      return stream.uuid == config.clock.frequency_stream_uuid;
+                  });
+        const auto selected_range = config.clock.frequency_stream_uuid.empty()
+            ? config.clock.audio_processing.frequency_streams.end()
+            : std::find_if(
+                  config.clock.audio_processing.frequency_streams.begin(),
+                  config.clock.audio_processing.frequency_streams.end(),
+                  [&config](const AudioFrequencyStreamConfig& stream) {
+                      return stream.uuid == config.clock.frequency_stream_uuid;
+                  });
         if (music.analyzer_version.empty()
             || !valid_lower_hex_digest(music.source_sha256)
             || !valid_music_basename(music.source_basename)
@@ -2484,6 +2695,13 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || music.source_sample_rate == 0U
             || music.source_channel_count == 0U
             || music.beat_times_seconds.empty()
+            || !audio_processing_equal(config.clock.audio_processing,
+                                       music.input_processing)
+            || (!config.clock.frequency_stream_uuid.empty()
+                && (selected_stream == music.frequency_streams.end()
+                    || selected_range
+                           == config.clock.audio_processing.frequency_streams.end()
+                    || selected_stream->beat_times_seconds.empty()))
             || !effective_frame_count_impl(config.total_frames, config.fps,
                                             config.clock, resolved_count,
                                             frame_error)) {
@@ -2614,6 +2832,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !valid_enum(effect.audio_response)
             || !valid_enum(effect.edge_mode)
             || !valid_enum(effect.blur_type)
+            || !valid_enum(effect.particle_shape)
             || !finite_render_parameter(effect.phase_degrees)
             || !nonnegative_render_parameter(effect.intensity)
             || !nonnegative_render_parameter(effect.magnitude)
@@ -2692,6 +2911,27 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 "Lens distortion effect " + std::to_string(index + 1U)
                 + " requires a mix from 0 to 1, a radial exponent of at least "
                   "0.25, and a barrel/pincushion direction from -1 to 1.");
+        }
+        if (effect.type == EffectType::EdgeDetect
+            && (effect.intensity > 1.0
+                || effect.frequency < 1.0
+                || effect.frequency
+                       > static_cast<double>((std::numeric_limits<int>::max)())
+                || std::floor(effect.frequency) != effect.frequency
+                || effect.secondary < 0.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Edge detect effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, a positive whole sampling "
+                  "radius, and a threshold from 0 to 1.");
+        }
+        if (effect.type == EffectType::Twirl
+            && (effect.intensity > 1.0
+                || effect.frequency < 0.25
+                || effect.secondary < -1.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Twirl effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, a radial exponent of at "
+                  "least 0.25, and direction/depth from -1 to 1.");
         }
         if (effect.type == EffectType::Blur
             && effect.blur_type == BlurType::Gaussian
@@ -3078,6 +3318,15 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
 
 ValidationResult validate(const RenderConfig& config) {
     return validate_impl(config, true);
+}
+
+ValidationResult validate(const AudioInputProcessingConfig& processing) {
+    ValidationResult result;
+    result.ok = valid_audio_processing(processing);
+    result.message = result.ok
+        ? "Audio input processing is valid."
+        : "Audio input filters, equalizer bands, or named frequency streams are invalid.";
+    return result;
 }
 
 namespace {
@@ -4169,6 +4418,61 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                         clamp_value(intensity * area, 0.0, 1.0));
                     break;
                 }
+                case EffectType::EdgeDetect: {
+                    const double radius = effect.frequency;
+                    const auto luminance_at = [&](double offset_x,
+                                                  double offset_y) {
+                        const Color value = sample_bilinear(
+                            source, x + offset_x * radius,
+                            y + offset_y * radius, effect.edge_mode);
+                        return 0.2126 * value.r + 0.7152 * value.g
+                               + 0.0722 * value.b;
+                    };
+                    const double top_left = luminance_at(-1.0, -1.0);
+                    const double top = luminance_at(0.0, -1.0);
+                    const double top_right = luminance_at(1.0, -1.0);
+                    const double left = luminance_at(-1.0, 0.0);
+                    const double right = luminance_at(1.0, 0.0);
+                    const double bottom_left = luminance_at(-1.0, 1.0);
+                    const double bottom = luminance_at(0.0, 1.0);
+                    const double bottom_right = luminance_at(1.0, 1.0);
+                    const double gradient_x = -top_left + top_right
+                        - 2.0 * left + 2.0 * right
+                        - bottom_left + bottom_right;
+                    const double gradient_y = -top_left - 2.0 * top - top_right
+                        + bottom_left + 2.0 * bottom + bottom_right;
+                    const double edge = std::max(
+                        0.0, std::hypot(gradient_x, gradient_y)
+                                 * effect.magnitude - effect.secondary);
+                    const Color original = load_color(source, x, y);
+                    const Color outlined{edge, edge, edge, original.a};
+                    sampled = blend_straight_alpha(
+                        original, outlined,
+                        clamp_value(intensity * area, 0.0, 1.0));
+                    break;
+                }
+                case EffectType::Twirl: {
+                    const double dx = x - center_x;
+                    const double dy = y - center_y;
+                    const double distance = std::hypot(dx, dy);
+                    const double falloff = std::pow(
+                        clamp_value(1.0 - distance
+                                            / std::max(1.0, 0.5 * short_side),
+                                    0.0, 1.0),
+                        effect.frequency);
+                    const double twist = kTau * effect.magnitude
+                        * effect.secondary * std::sin(phase) * falloff * area;
+                    const double cosine = std::cos(twist);
+                    const double sine = std::sin(twist);
+                    const Color distorted = sample_bilinear(
+                        source, center_x + cosine * dx - sine * dy,
+                        center_y + sine * dx + cosine * dy,
+                        effect.edge_mode);
+                    sampled = blend_straight_alpha(
+                        load_color(source, x, y), distorted,
+                        clamp_value(intensity * area, 0.0, 1.0));
+                    break;
+                }
                 case EffectType::Glow:
                 case EffectType::BlockScale:
                 case EffectType::ParticleField:
@@ -4329,8 +4633,35 @@ void apply_particle_field(const Image& source, Image& destination,
                     const double dy = (static_cast<double>(y) - py) / local_radius;
                     const double distance2 = dx * dx + dy * dy;
                     if (distance2 > 6.25) continue;
+                    double shape_distance2 = distance2;
+                    switch (effect.particle_shape) {
+                        case ParticleShape::Spark:
+                            break;
+                        case ParticleShape::SoftOrb:
+                            shape_distance2 *= 0.38;
+                            break;
+                        case ParticleShape::Ring: {
+                            const double ring_distance =
+                                (std::sqrt(distance2) - 1.0) * 3.2;
+                            shape_distance2 = ring_distance * ring_distance;
+                            break;
+                        }
+                        case ParticleShape::Diamond: {
+                            const double diamond = std::abs(dx) + std::abs(dy);
+                            shape_distance2 = 0.55 * diamond * diamond;
+                            break;
+                        }
+                        case ParticleShape::Star: {
+                            const double boundary = 1.0 + 0.42 * std::cos(
+                                5.0 * std::atan2(dy, dx));
+                            const double star_distance = std::sqrt(distance2)
+                                                         / boundary;
+                            shape_distance2 = star_distance * star_distance;
+                            break;
+                        }
+                    }
                     const double gaussian = std::exp(
-                        -distance2 / (0.22 + 1.55 * softness));
+                        -shape_distance2 / (0.22 + 1.55 * softness));
                     const double area = circular_influence(
                         effect.center_x, effect.center_y, effect.area_radius,
                         static_cast<double>(x), static_cast<double>(y),
@@ -5896,7 +6227,8 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              effect.secondary, effect.center_x, effect.center_y,
              radians(effect.angle_degrees), effect.radius_pixels,
              effect.threshold, effect.soft_knee, effect.area_radius,
-             effect.blur_type, effect.blur_passes, effect.blur_samples});
+             effect.blur_type, effect.blur_passes, effect.blur_samples,
+             effect.particle_shape});
     }
 
     candidate.motion = render.motion;
@@ -5919,7 +6251,7 @@ bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
         && config.clock.music.duration_seconds > 0.0
         && std::isfinite(normalized_phase)) {
         timeline.music = music_features_at(
-            config.clock.music,
+            config.clock,
             wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
     }
     return prepare_frame_for_backend_timeline(config, timeline, prepared,
@@ -5980,7 +6312,7 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
         && config.clock.music.duration_seconds > 0.0
         && std::isfinite(normalized_phase)) {
         direct.music = music_features_at(
-            config.clock.music,
+            config.clock,
             wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
     }
     return render_frame_at_timeline_sample_cancellable(

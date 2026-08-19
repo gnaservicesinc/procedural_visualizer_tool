@@ -1,5 +1,7 @@
 #include "live_workspace.h"
 
+#include "audio_processing_dialog.h"
+#include "device_sleep_guard.h"
 #include "live_frame_controller.h"
 #include "live_midi.h"
 #include "live_osc.h"
@@ -42,6 +44,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
+#include <QTreeWidget>
 #include <QUuid>
 #include <QVBoxLayout>
 
@@ -107,6 +110,23 @@ QString endpoint_structure_signature(const pvt::LiveConfig& live) {
                      .arg(qtext(endpoint.uuid))
                      .arg(static_cast<int>(endpoint.protocol))
                      .arg(static_cast<int>(endpoint.direction));
+    }
+    value += QStringLiteral("audio:%1|%2|%3|%4|%5;")
+                 .arg(live.audio_processing.high_pass_enabled ? 1 : 0)
+                 .arg(live.audio_processing.high_pass_hz, 0, 'g', 17)
+                 .arg(live.audio_processing.low_pass_enabled ? 1 : 0)
+                 .arg(live.audio_processing.low_pass_hz, 0, 'g', 17)
+                 .arg(live.audio_processing.equalizer_enabled ? 1 : 0);
+    for (const auto& band : live.audio_processing.equalizer_bands) {
+        value += QStringLiteral("eq:%1|%2;")
+                     .arg(band.frequency_hz, 0, 'g', 17)
+                     .arg(band.gain_db, 0, 'g', 17);
+    }
+    for (const auto& stream : live.audio_processing.frequency_streams) {
+        value += QStringLiteral("range:%1|%2|%3;")
+                     .arg(qtext(stream.uuid))
+                     .arg(stream.low_hz, 0, 'g', 17)
+                     .arg(stream.high_hz, 0, 'g', 17);
     }
     return value;
 }
@@ -284,6 +304,7 @@ struct LiveWorkspace::Impl {
     QVector<qint64> tempo_taps;
 
     pvt::audio::LiveAudioCapture audio;
+    DeviceSleepGuard sleep_guard;
     LiveMidiRouter midi;
     LiveOscRouter osc;
     LiveFrameController renderer;
@@ -339,17 +360,21 @@ struct LiveWorkspace::Impl {
     QSpinBox* watchdog_timeout = nullptr;
     QSpinBox* audio_grace = nullptr;
     QSpinBox* last_good_timeout = nullptr;
+    QCheckBox* prevent_sleep = nullptr;
     StudioKnob* gain = nullptr;
     QDoubleSpinBox* gain_value = nullptr;
     StudioKnob* sensitivity = nullptr;
     QDoubleSpinBox* sensitivity_value = nullptr;
     QSpinBox* audio_period = nullptr;
+    QPushButton* audio_processing = nullptr;
     QSpinBox* latency = nullptr;
     QLabel* detected_tempo = nullptr;
     QComboBox* project_clock = nullptr;
     QComboBox* project_clock_role = nullptr;
+    QComboBox* project_clock_stream = nullptr;
     QComboBox* layer_clock = nullptr;
     QComboBox* layer_clock_role = nullptr;
+    QComboBox* layer_clock_stream = nullptr;
     QCheckBox* project_clock_out = nullptr;
     QCheckBox* layer_clock_out = nullptr;
     QComboBox* project_clock_out_role = nullptr;
@@ -403,6 +428,7 @@ struct LiveWorkspace::Impl {
     void refreshDevices();
     void refreshScreens();
     void setActive(bool value);
+    void updateSleepPrevention();
     void startIo();
     void stopIo();
     void restartAudio();
@@ -526,6 +552,11 @@ void LiveWorkspace::Impl::buildUi() {
     edit->setToolTip(q->tr(
         "Open the full project editor without stopping Live input, rendering, or stage output."));
     header_layout->addWidget(edit);
+    auto* pop_out = new QPushButton(q->tr("Pop Out"));
+    pop_out->setObjectName(QStringLiteral("popOutLiveButton"));
+    pop_out->setToolTip(q->tr(
+        "Open Live in its own window so the full project editor remains visible."));
+    header_layout->addWidget(pop_out);
     root->addWidget(header);
 
     auto* splitter = new QSplitter(Qt::Horizontal);
@@ -598,6 +629,8 @@ void LiveWorkspace::Impl::buildUi() {
                      [this](bool checked) { setActive(checked); });
     QObject::connect(edit, &QPushButton::clicked, q,
                      [this] { emit q->requestEditMode(); });
+    QObject::connect(pop_out, &QPushButton::clicked, q,
+                     [this] { emit q->requestPopOut(); });
     QObject::connect(output_button, &QPushButton::clicked, q,
                      [this] { toggleOutput(); });
     QObject::connect(freeze_button, &QPushButton::toggled, q,
@@ -746,6 +779,10 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     audio_form->addRow(q->tr("Portable input offset"), latency_row);
     detected_tempo = new QLabel(q->tr("Waiting for audio…"));
     audio_form->addRow(q->tr("Causal analysis"), detected_tempo);
+    audio_processing = new QPushButton(q->tr("Filters, EQ + Frequency Streams…"));
+    audio_processing->setToolTip(q->tr(
+        "Configure the portable processing chain that runs before every Live analysis feature."));
+    audio_form->addRow(q->tr("Before analysis"), audio_processing);
     layout->addWidget(analysis);
 
     QFormLayout* clock_form = nullptr;
@@ -755,22 +792,26 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     project_clock->addItem(q->tr("MIDI Clock in"), static_cast<int>(pvt::LiveClockInputSource::MidiClock));
     project_clock->addItem(q->tr("Audio beat clock"), static_cast<int>(pvt::LiveClockInputSource::AudioStream));
     project_clock_role = new QComboBox;
+    project_clock_stream = new QComboBox;
     auto* project_clock_row = new QWidget;
     auto* pcr = new QHBoxLayout(project_clock_row);
     pcr->setContentsMargins(0, 0, 0, 0);
     pcr->addWidget(project_clock, 1);
     pcr->addWidget(project_clock_role, 1);
+    pcr->addWidget(project_clock_stream, 1);
     clock_form->addRow(q->tr("Project clock"), project_clock_row);
     layer_clock = new QComboBox;
     layer_clock->addItem(q->tr("Follow project"), -1);
     layer_clock->addItem(q->tr("MIDI Clock in"), static_cast<int>(pvt::LiveClockInputSource::MidiClock));
     layer_clock->addItem(q->tr("Audio beat clock"), static_cast<int>(pvt::LiveClockInputSource::AudioStream));
     layer_clock_role = new QComboBox;
+    layer_clock_stream = new QComboBox;
     auto* layer_clock_row = new QWidget;
     auto* lcr = new QHBoxLayout(layer_clock_row);
     lcr->setContentsMargins(0, 0, 0, 0);
     lcr->addWidget(layer_clock, 1);
     lcr->addWidget(layer_clock_role, 1);
+    lcr->addWidget(layer_clock_stream, 1);
     clock_form->addRow(q->tr("Active-layer clock"), layer_clock_row);
     project_clock_out = new QCheckBox(q->tr("Send project clock"));
     project_clock_out_role = new QComboBox;
@@ -835,6 +876,9 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     last_good_timeout->setSpecialValueText(q->tr("Hold indefinitely"));
     output_form->addRow(q->tr("Audio dropout grace"), audio_grace);
     output_form->addRow(q->tr("Last-good then black"), last_good_timeout);
+    prevent_sleep = new QCheckBox(q->tr(
+        "Prevent device sleep while Live is running (supported platforms)"));
+    output_form->addRow(q->tr("Show continuity"), prevent_sleep);
     auto* safety_label = new QLabel(q->tr(
         "The renderer keeps only one pending frame. A missed frame holds the last good image; "
         "the project watchdog may switch to black according to its saved safety policy."));
@@ -929,13 +973,25 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
         }
     });
     QObject::connect(calibrate, &QPushButton::clicked, q, [this] { calibrateLatency(); });
+    QObject::connect(audio_processing, &QPushButton::clicked, q, [this] {
+        AudioProcessingDialog dialog(config.audio_processing,
+                                     q->tr("Live input"), q);
+        if (dialog.exec() != QDialog::Accepted) return;
+        pvt::LiveConfig next = config;
+        next.audio_processing = dialog.processing();
+        commitConfig(std::move(next), q->tr("Change live audio input processing"));
+    });
     QObject::connect(project_clock, qOverload<int>(&QComboBox::currentIndexChanged), q,
                      [this] { editClockRoute(false); });
     QObject::connect(project_clock_role, qOverload<int>(&QComboBox::currentIndexChanged), q,
                      [this] { editClockRoute(false); });
+    QObject::connect(project_clock_stream, qOverload<int>(&QComboBox::currentIndexChanged), q,
+                     [this] { editClockRoute(false); });
     QObject::connect(layer_clock, qOverload<int>(&QComboBox::currentIndexChanged), q,
                      [this] { editClockRoute(true); });
     QObject::connect(layer_clock_role, qOverload<int>(&QComboBox::currentIndexChanged), q,
+                     [this] { editClockRoute(true); });
+    QObject::connect(layer_clock_stream, qOverload<int>(&QComboBox::currentIndexChanged), q,
                      [this] { editClockRoute(true); });
     QObject::connect(project_clock_out, &QCheckBox::toggled, q,
                      [this] { editClockOutput(false); });
@@ -967,6 +1023,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
         next.safety.watchdog_timeout_milliseconds = watchdog_timeout->value();
         next.safety.audio_dropout_grace_milliseconds = audio_grace->value();
         next.safety.last_good_frame_timeout_milliseconds = last_good_timeout->value();
+        next.safety.prevent_device_sleep = prevent_sleep->isChecked();
         commitConfig(std::move(next), q->tr("Change portable live output safety"));
     };
     QObject::connect(portable_fullscreen, &QCheckBox::toggled, q,
@@ -984,6 +1041,8 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QObject::connect(audio_grace, qOverload<int>(&QSpinBox::valueChanged), q,
                      [author_output_safety] { author_output_safety(); });
     QObject::connect(last_good_timeout, qOverload<int>(&QSpinBox::valueChanged), q,
+                     [author_output_safety] { author_output_safety(); });
+    QObject::connect(prevent_sleep, &QCheckBox::toggled, q,
                      [author_output_safety] { author_output_safety(); });
     return scroll;
 }
@@ -1212,6 +1271,7 @@ void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
     if (authored_editor) authored_editor(config, reason);
     refreshConfigUi();
     if (active) {
+        updateSleepPrevention();
         if (outputs_changed) configureClockOutputs();
         if (endpoints_changed) {
             restartAudio();
@@ -1235,6 +1295,7 @@ void LiveWorkspace::Impl::refreshConfigUi() {
     watchdog_timeout->setValue(config.safety.watchdog_timeout_milliseconds);
     audio_grace->setValue(config.safety.audio_dropout_grace_milliseconds);
     last_good_timeout->setValue(config.safety.last_good_frame_timeout_milliseconds);
+    prevent_sleep->setChecked(config.safety.prevent_device_sleep);
     watchdog_timeout->setEnabled(config.safety.frame_time_watchdog_enabled);
     rebuilding = false;
     refreshDevices();
@@ -1377,7 +1438,8 @@ void LiveWorkspace::Impl::refreshClockRouting() {
     const std::string layer_uuid = active_layer_provider ? active_layer_provider() : std::string{};
     const auto refresh_input = [this, &layer_uuid](bool layerTarget,
                                                    QComboBox* source,
-                                                   QComboBox* role) {
+                                                   QComboBox* role,
+                                                   QComboBox* stream) {
         const auto found = std::find_if(
             config.clock_inputs.begin(), config.clock_inputs.end(),
             [layerTarget, &layer_uuid](const pvt::LiveClockInputConfig& item) {
@@ -1388,6 +1450,7 @@ void LiveWorkspace::Impl::refreshClockRouting() {
             });
         QSignalBlocker b1(source);
         QSignalBlocker b2(role);
+        QSignalBlocker b3(stream);
         const int source_value = found == config.clock_inputs.end()
             ? -1 : static_cast<int>(found->source);
         source->setCurrentIndex(std::max(0, source->findData(source_value)));
@@ -1406,9 +1469,24 @@ void LiveWorkspace::Impl::refreshClockRouting() {
             if (index >= 0) role->setCurrentIndex(index);
         }
         role->setEnabled(source_value >= 0);
+        stream->clear();
+        stream->addItem(q->tr("Full filtered signal"), QString{});
+        for (const auto& item : config.audio_processing.frequency_streams) {
+            stream->addItem(qtext(item.name), qtext(item.uuid));
+        }
+        if (found != config.clock_inputs.end()) {
+            const int index = stream->findData(
+                qtext(found->frequency_stream_uuid));
+            if (index >= 0) stream->setCurrentIndex(index);
+        }
+        stream->setEnabled(
+            source_value
+            == static_cast<int>(pvt::LiveClockInputSource::AudioStream));
     };
-    refresh_input(false, project_clock, project_clock_role);
-    refresh_input(true, layer_clock, layer_clock_role);
+    refresh_input(false, project_clock, project_clock_role,
+                  project_clock_stream);
+    refresh_input(true, layer_clock, layer_clock_role,
+                  layer_clock_stream);
 
     const auto refresh_output = [this, &layer_uuid](bool layerTarget,
                                                     QCheckBox* enabled,
@@ -1510,6 +1588,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
     if (active == value) {
         QSignalBlocker block(live_button);
         live_button->setChecked(value);
+        updateSleepPrevention();
         return;
     }
     active = value;
@@ -1519,6 +1598,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         live_button->setText(value ? q->tr("LIVE · ON") : q->tr("GO LIVE"));
     }
     if (value) {
+        updateSleepPrevention();
         run_clock.restart();
         last_good_clock.invalidate();
         audio_dropout_clock.restart();
@@ -1538,6 +1618,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         requestFrame();
         emit q->runtimeStatusChanged(q->tr("Live performance runtime started."));
     } else {
+        (void)sleep_guard.setPrevented(false);
         render_timer.stop();
         ui_timer.stop();
         midi_clock_timer.stop();
@@ -1569,6 +1650,15 @@ void LiveWorkspace::Impl::setActive(bool value) {
         midi_lamp->setState(StatusLamp::State::Off);
         monitor->setText(q->tr("PROGRAM OUTPUT\nStandby"));
         emit q->runtimeStatusChanged(q->tr("Live performance runtime stopped."));
+    }
+}
+
+void LiveWorkspace::Impl::updateSleepPrevention() {
+    QString error;
+    if (!sleep_guard.setPrevented(
+            active && config.safety.prevent_device_sleep, &error)
+        && !error.isEmpty()) {
+        emit q->runtimeStatusChanged(error);
     }
 }
 
@@ -1612,6 +1702,14 @@ void LiveWorkspace::Impl::restartAudio() {
     audio.set_sensitivity(sensitivity_value->value() / 100.0);
     const QString device = audio_device->currentData().toString();
     std::string error;
+    if (!audio.set_processing_config(config.audio_processing, &error)) {
+        audio_lamp->setState(StatusLamp::State::Fault);
+        audio_lamp->setToolTip(qtext(error));
+        emit q->runtimeStatusChanged(
+            q->tr("Audio input processing could not start: %1")
+                .arg(qtext(error)));
+        return;
+    }
     const int period = std::clamp(
         QSettings().value(QStringLiteral("live/audioPeriodFrames"), 128).toInt(),
         1, kMaximumUiInteger);
@@ -1790,6 +1888,7 @@ void LiveWorkspace::Impl::frameFinished(
         return;
     }
     last_image = result.image;
+    emit q->livePreviewFrame(result.image);
     render_failed = false;
     last_good_clock.restart();
     if (!user_freeze) stage.setFrame(result.image);
@@ -1922,10 +2021,13 @@ void LiveWorkspace::Impl::createStarterRig() {
         endpoint_value.name = narrow(name);
         endpoint_value.protocol = protocol;
         endpoint_value.direction = direction;
+        const std::string uuid = endpoint_value.uuid;
         next.endpoints.push_back(std::move(endpoint_value));
+        return uuid;
     };
-    append(q->tr("Stage audio"), pvt::LiveEndpointProtocol::Audio,
-           pvt::LiveEndpointDirection::Input);
+    const std::string audio_uuid = append(
+        q->tr("Stage audio"), pvt::LiveEndpointProtocol::Audio,
+        pvt::LiveEndpointDirection::Input);
     append(q->tr("Stage MIDI"), pvt::LiveEndpointProtocol::Midi,
            pvt::LiveEndpointDirection::Bidirectional);
     append(q->tr("Stage OSC"), pvt::LiveEndpointProtocol::Osc,
@@ -1934,6 +2036,20 @@ void LiveWorkspace::Impl::createStarterRig() {
            pvt::LiveEndpointDirection::Input);
     append(q->tr("Layer clock return"), pvt::LiveEndpointProtocol::Midi,
            pvt::LiveEndpointDirection::Output);
+    const bool has_project_clock = std::any_of(
+        next.clock_inputs.begin(), next.clock_inputs.end(),
+        [](const pvt::LiveClockInputConfig& route) {
+            return route.enabled
+                && route.target == pvt::LiveClockTarget::Project;
+        });
+    if (!has_project_clock) {
+        pvt::LiveClockInputConfig route;
+        route.enabled = true;
+        route.target = pvt::LiveClockTarget::Project;
+        route.source = pvt::LiveClockInputSource::AudioStream;
+        route.endpoint_uuid = audio_uuid;
+        next.clock_inputs.push_back(std::move(route));
+    }
     next.enabled = true;
     commitConfig(std::move(next), q->tr("Create portable live starter rig"));
 }
@@ -1971,7 +2087,24 @@ void LiveWorkspace::Impl::addLogicalRole() {
     role.protocol = static_cast<pvt::LiveEndpointProtocol>(protocol->currentData().toInt());
     role.direction = static_cast<pvt::LiveEndpointDirection>(direction->currentData().toInt());
     pvt::LiveConfig next = config;
+    const std::string role_uuid = role.uuid;
+    const bool infer_audio_clock =
+        role.protocol == pvt::LiveEndpointProtocol::Audio
+        && direction_has_input(role.direction)
+        && std::none_of(next.clock_inputs.begin(), next.clock_inputs.end(),
+                        [](const pvt::LiveClockInputConfig& route) {
+                            return route.enabled
+                                && route.target == pvt::LiveClockTarget::Project;
+                        });
     next.endpoints.push_back(std::move(role));
+    if (infer_audio_clock) {
+        pvt::LiveClockInputConfig route;
+        route.enabled = true;
+        route.target = pvt::LiveClockTarget::Project;
+        route.source = pvt::LiveClockInputSource::AudioStream;
+        route.endpoint_uuid = role_uuid;
+        next.clock_inputs.push_back(std::move(route));
+    }
     next.enabled = true;
     commitConfig(std::move(next), q->tr("Add portable live role"));
 }
@@ -2018,7 +2151,7 @@ void LiveWorkspace::Impl::editMapping(int index) {
     QDialog dialog(q);
     dialog.setWindowTitle(editing ? q->tr("Edit Live Mapping")
                                   : q->tr("Add Live Mapping"));
-    dialog.resize(590, 610);
+    dialog.resize(760, 720);
     auto* outer = new QVBoxLayout(&dialog);
     auto* form = new QFormLayout;
     auto* name = new QLineEdit(editing ? qtext(initial.name) : q->tr("Performance control"));
@@ -2069,37 +2202,71 @@ void LiveWorkspace::Impl::editMapping(int index) {
     outer->addWidget(new QLabel(q->tr("TARGET")));
     outer->addWidget(target_kind);
     auto* targets = new QStackedWidget;
-    auto* setting = new QComboBox;
-    setting->setMaxVisibleItems(30);
+    auto* setting_page = new QWidget;
+    auto* setting_layout = new QVBoxLayout(setting_page);
+    setting_layout->setContentsMargins(0, 0, 0, 0);
+    auto* setting_search = new QLineEdit;
+    setting_search->setPlaceholderText(q->tr(
+        "Search targets by layer, section, or control…"));
+    setting_search->setClearButtonEnabled(true);
+    auto* setting = new QTreeWidget;
+    setting->setHeaderLabels({q->tr("Target"), q->tr("Current")});
+    setting->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    setting->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    setting->setSelectionMode(QAbstractItemView::SingleSelection);
+    setting->setAlternatingRowColors(true);
+    setting_layout->addWidget(setting_search);
+    setting_layout->addWidget(setting, 1);
     const auto registry = project_provider
         ? buildLiveTargetRegistry(project_provider())
         : std::vector<LiveTargetDescriptor>{};
-    QString previous_section;
+    QHash<QString, QTreeWidgetItem*> target_sections;
+    QTreeWidgetItem* first_target = nullptr;
     for (const auto& target : registry) {
-        if (!previous_section.isEmpty() && target.section != previous_section) {
-            setting->insertSeparator(setting->count());
+        QTreeWidgetItem* section = target_sections.value(target.section);
+        if (section == nullptr) {
+            section = new QTreeWidgetItem(setting, {target.section});
+            section->setFlags(section->flags() & ~Qt::ItemIsSelectable);
+            section->setExpanded(false);
+            target_sections.insert(target.section, section);
         }
-        previous_section = target.section;
-        setting->addItem(target.section + QStringLiteral(" · ") + target.label,
-                         target.path);
-        const int row = setting->count() - 1;
-        setting->setItemData(row, target.minimum, Qt::UserRole + 1);
-        setting->setItemData(row, target.maximum, Qt::UserRole + 2);
-        setting->setItemData(row, static_cast<int>(target.kind), Qt::UserRole + 3);
+        auto* item = new QTreeWidgetItem(
+            section, {target.label, QString::number(target.current_value, 'g', 8)});
+        item->setData(0, Qt::UserRole, target.path);
+        item->setData(0, Qt::UserRole + 1, target.minimum);
+        item->setData(0, Qt::UserRole + 2, target.maximum);
+        item->setData(0, Qt::UserRole + 3, static_cast<int>(target.kind));
+        item->setToolTip(0, target.path);
+        if (first_target == nullptr) first_target = item;
     }
     if (editing && initial.target == pvt::LiveMappingTarget::Setting) {
-        const int selected_target_index = setting->findData(qtext(initial.target_path));
-        if (selected_target_index >= 0) setting->setCurrentIndex(selected_target_index);
-        else {
-            setting->insertItem(0, q->tr("Unresolved · %1").arg(qtext(initial.target_path)),
-                                qtext(initial.target_path));
-            setting->setItemData(0, initial.output_minimum, Qt::UserRole + 1);
-            setting->setItemData(0, initial.output_maximum, Qt::UserRole + 2);
-            setting->setItemData(0, static_cast<int>(LiveTargetKind::Real), Qt::UserRole + 3);
-            setting->setCurrentIndex(0);
+        const auto matches = setting->findItems(
+            QStringLiteral("*"), Qt::MatchWildcard | Qt::MatchRecursive, 0);
+        QTreeWidgetItem* selected = nullptr;
+        for (QTreeWidgetItem* item : matches) {
+            if (item->data(0, Qt::UserRole).toString()
+                == qtext(initial.target_path)) {
+                selected = item;
+                break;
+            }
         }
+        if (selected == nullptr) {
+            auto* unresolved = new QTreeWidgetItem(
+                setting, {q->tr("Unresolved · %1").arg(qtext(initial.target_path))});
+            unresolved->setData(0, Qt::UserRole, qtext(initial.target_path));
+            unresolved->setData(0, Qt::UserRole + 1, initial.output_minimum);
+            unresolved->setData(0, Qt::UserRole + 2, initial.output_maximum);
+            unresolved->setData(0, Qt::UserRole + 3,
+                                static_cast<int>(LiveTargetKind::Real));
+            selected = unresolved;
+        }
+        setting->setCurrentItem(selected);
+        if (selected->parent() != nullptr) selected->parent()->setExpanded(true);
+    } else if (first_target != nullptr) {
+        setting->setCurrentItem(first_target);
+        first_target->parent()->setExpanded(true);
     }
-    targets->addWidget(setting);
+    targets->addWidget(setting_page);
     auto* action = new QComboBox;
     for (int value = 0; value <= static_cast<int>(pvt::LiveAction::TapTempo); ++value) {
         const auto item = static_cast<pvt::LiveAction>(value);
@@ -2129,10 +2296,14 @@ void LiveWorkspace::Impl::editMapping(int index) {
     }
     input_min->setValue(editing ? initial.input_minimum : 0.0);
     input_max->setValue(editing ? initial.input_maximum : 1.0);
+    const auto selected_target_value = [setting](int role) {
+        const QTreeWidgetItem* item = setting->currentItem();
+        return item != nullptr ? item->data(0, role) : QVariant{};
+    };
     output_min->setValue(editing ? initial.output_minimum
-                                 : setting->currentData(Qt::UserRole + 1).toDouble());
+                                 : selected_target_value(Qt::UserRole + 1).toDouble());
     output_max->setValue(editing ? initial.output_maximum
-                                 : setting->currentData(Qt::UserRole + 2).toDouble());
+                                 : selected_target_value(Qt::UserRole + 2).toDouble());
     auto* curve = new QDoubleSpinBox;
     curve->setDecimals(6);
     curve->setRange(0.000001, kMaximumLiveMappingMagnitude);
@@ -2196,11 +2367,38 @@ void LiveWorkspace::Impl::editMapping(int index) {
                      [refresh_source] { refresh_source(); });
     QObject::connect(target_kind, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
                      [targets](int row) { targets->setCurrentIndex(row); });
-    QObject::connect(setting, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
-                     [setting, output_min, output_max](int row) {
-        if (row < 0) return;
-        output_min->setValue(setting->itemData(row, Qt::UserRole + 1).toDouble());
-        output_max->setValue(setting->itemData(row, Qt::UserRole + 2).toDouble());
+    QObject::connect(setting, &QTreeWidget::currentItemChanged, &dialog,
+                     [output_min, output_max](QTreeWidgetItem* item) {
+        if (item == nullptr || item->data(0, Qt::UserRole).toString().isEmpty()) return;
+        output_min->setValue(item->data(0, Qt::UserRole + 1).toDouble());
+        output_max->setValue(item->data(0, Qt::UserRole + 2).toDouble());
+    });
+    QObject::connect(setting_search, &QLineEdit::textChanged, &dialog,
+                     [setting](const QString& query) {
+        const QString needle = query.trimmed();
+        for (int section_index = 0;
+             section_index < setting->topLevelItemCount(); ++section_index) {
+            QTreeWidgetItem* section = setting->topLevelItem(section_index);
+            bool any_visible = false;
+            for (int child_index = 0; child_index < section->childCount(); ++child_index) {
+                QTreeWidgetItem* child = section->child(child_index);
+                const bool match = needle.isEmpty()
+                    || section->text(0).contains(needle, Qt::CaseInsensitive)
+                    || child->text(0).contains(needle, Qt::CaseInsensitive)
+                    || child->data(0, Qt::UserRole).toString().contains(
+                        needle, Qt::CaseInsensitive);
+                child->setHidden(!match);
+                any_visible = any_visible || match;
+            }
+            const bool selectable_root = !section->data(0, Qt::UserRole).toString().isEmpty();
+            const bool root_match = selectable_root
+                && (needle.isEmpty()
+                    || section->text(0).contains(needle, Qt::CaseInsensitive)
+                    || section->data(0, Qt::UserRole).toString().contains(
+                        needle, Qt::CaseInsensitive));
+            section->setHidden(!any_visible && !root_match);
+            if (!needle.isEmpty() && any_visible) section->setExpanded(true);
+        }
     });
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -2230,7 +2428,13 @@ void LiveWorkspace::Impl::editMapping(int index) {
     mapping.osc_address = osc_input ? narrow(address->text().trimmed()) : std::string{};
     mapping.target = static_cast<pvt::LiveMappingTarget>(target_kind->currentData().toInt());
     if (mapping.target == pvt::LiveMappingTarget::Setting) {
-        mapping.target_path = narrow(setting->currentData().toString());
+        const QTreeWidgetItem* selected = setting->currentItem();
+        if (selected == nullptr || selected->data(0, Qt::UserRole).toString().isEmpty()) {
+            QMessageBox::warning(q, q->tr("Live mapping"),
+                                 q->tr("Choose a setting target."));
+            return;
+        }
+        mapping.target_path = narrow(selected->data(0, Qt::UserRole).toString());
     } else if (mapping.target == pvt::LiveMappingTarget::Action) {
         mapping.action = static_cast<pvt::LiveAction>(action->currentData().toInt());
     } else {
@@ -2675,8 +2879,20 @@ double LiveWorkspace::Impl::routedPhase(
         const bool holding = audio_dropout_clock.isValid()
             && audio_dropout_clock.elapsed() <= input.holdover_milliseconds;
         if (!audio_snapshot.receiving && !holding) return fallback;
-        const double bpm = audio_snapshot.detected_bpm > 0.0
-            ? audio_snapshot.detected_bpm
+        double detected_bpm = audio_snapshot.detected_bpm;
+        if (!input.frequency_stream_uuid.empty()) {
+            const auto stream = std::find_if(
+                audio_snapshot.frequency_streams.begin(),
+                audio_snapshot.frequency_streams.end(),
+                [&input](const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                    return item.uuid == input.frequency_stream_uuid;
+                });
+            if (stream != audio_snapshot.frequency_streams.end()) {
+                detected_bpm = stream->detected_bpm;
+            }
+        }
+        const double bpm = detected_bpm > 0.0
+            ? detected_bpm
             : (tapped_bpm > 0.0 ? tapped_bpm : project.canvas.clock.meter.bpm);
         const double beats_per_loop = std::max(1.0, duration * bpm / 60.0);
         const double analyzed_beats = audio_snapshot.stream_seconds * bpm / 60.0;
@@ -2796,8 +3012,21 @@ double LiveWorkspace::Impl::outputBpm(
             return midi.clockSnapshot(boundSource(input->endpoint_uuid)).bpm;
         }
         if (input != config.clock_inputs.end()
-            && input->source == pvt::LiveClockInputSource::AudioStream
-            && audio_snapshot.detected_bpm > 0.0) return audio_snapshot.detected_bpm;
+            && input->source == pvt::LiveClockInputSource::AudioStream) {
+            if (!input->frequency_stream_uuid.empty()) {
+                const auto stream = std::find_if(
+                    audio_snapshot.frequency_streams.begin(),
+                    audio_snapshot.frequency_streams.end(),
+                    [&input](const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                        return item.uuid == input->frequency_stream_uuid;
+                    });
+                if (stream != audio_snapshot.frequency_streams.end()
+                    && stream->detected_bpm > 0.0) return stream->detected_bpm;
+            }
+            if (audio_snapshot.detected_bpm > 0.0) {
+                return audio_snapshot.detected_bpm;
+            }
+        }
         return project.canvas.clock.meter.bpm;
     }
     const auto layer = std::find_if(
@@ -2816,8 +3045,21 @@ double LiveWorkspace::Impl::outputBpm(
             && midi.clockSnapshot(boundSource(input->endpoint_uuid)).bpm > 0.0) {
             return midi.clockSnapshot(boundSource(input->endpoint_uuid)).bpm;
         }
-        if (input->source == pvt::LiveClockInputSource::AudioStream
-            && audio_snapshot.detected_bpm > 0.0) return audio_snapshot.detected_bpm;
+        if (input->source == pvt::LiveClockInputSource::AudioStream) {
+            if (!input->frequency_stream_uuid.empty()) {
+                const auto stream = std::find_if(
+                    audio_snapshot.frequency_streams.begin(),
+                    audio_snapshot.frequency_streams.end(),
+                    [&input](const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                        return item.uuid == input->frequency_stream_uuid;
+                    });
+                if (stream != audio_snapshot.frequency_streams.end()
+                    && stream->detected_bpm > 0.0) return stream->detected_bpm;
+            }
+            if (audio_snapshot.detected_bpm > 0.0) {
+                return audio_snapshot.detected_bpm;
+            }
+        }
     }
     return layer == project.layers.end() ? project.canvas.clock.meter.bpm
         : layer->render.layer_clock.clock.meter.bpm;
@@ -2855,6 +3097,8 @@ void LiveWorkspace::Impl::editClockRoute(bool layerTarget) {
     if (rebuilding) return;
     QComboBox* source_combo = layerTarget ? layer_clock : project_clock;
     QComboBox* role_combo = layerTarget ? layer_clock_role : project_clock_role;
+    QComboBox* stream_combo = layerTarget ? layer_clock_stream
+                                          : project_clock_stream;
     const int source_value = source_combo->currentData().toInt();
     const std::string layer_uuid = active_layer_provider
         ? active_layer_provider() : std::string{};
@@ -2894,6 +3138,10 @@ void LiveWorkspace::Impl::editClockRoute(bool layerTarget) {
         route.layer_uuid = layerTarget ? layer_uuid : std::string{};
         route.source = source;
         route.endpoint_uuid = role_uuid;
+        route.frequency_stream_uuid =
+            source == pvt::LiveClockInputSource::AudioStream
+                ? narrow(stream_combo->currentData().toString())
+                : std::string{};
         route.follow_midi_transport = true;
         route.holdover_milliseconds = 500;
         next.clock_inputs.push_back(std::move(route));
@@ -2957,10 +3205,19 @@ LiveWorkspace::~LiveWorkspace() = default;
 void LiveWorkspace::setProjectLiveConfig(const pvt::LiveConfig& config) {
     const bool outputs_changed = clock_output_signature(impl_->config)
         != clock_output_signature(config);
+    const bool endpoints_changed = endpoint_structure_signature(impl_->config)
+        != endpoint_structure_signature(config);
     impl_->config = config;
     if (impl_->target_cache.empty()) impl_->rebuildTargetCache();
     impl_->refreshConfigUi();
-    if (impl_->active && outputs_changed) impl_->configureClockOutputs();
+    if (impl_->active) {
+        impl_->updateSleepPrevention();
+        if (outputs_changed) impl_->configureClockOutputs();
+        if (endpoints_changed) {
+            impl_->restartAudio();
+            impl_->restartOsc();
+        }
+    }
 }
 
 void LiveWorkspace::refreshProjectSnapshot() {

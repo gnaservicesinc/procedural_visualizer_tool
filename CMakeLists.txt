@@ -314,6 +314,8 @@ if(PVT_NEEDS_AUDIO_SUPPORT)
     endif()
 
     add_library(ProceduralVisualizerAudio STATIC
+        src/audio_input_processing.cpp
+        src/audio_input_processing.h
         src/audio_analysis.cpp
         src/audio_analysis.h
         src/live_audio_capture.cpp
@@ -521,8 +523,12 @@ if(PVT_BUILD_QT_GUI)
     endif()
 
     qt_add_executable(ProceduralVisualizerToolGui MACOSX_BUNDLE
+        gui/audio_processing_dialog.cpp
+        gui/audio_processing_dialog.h
         gui/application_settings_dialog.cpp
         gui/application_settings_dialog.h
+        gui/device_sleep_guard.cpp
+        gui/device_sleep_guard.h
         gui/main.cpp
         gui/main_window.cpp
         gui/main_window.h
@@ -594,6 +600,7 @@ if(PVT_BUILD_QT_GUI)
             "-framework CoreMedia"
             "-framework CoreVideo"
             "-framework Foundation"
+            "-framework IOKit"
             "-framework VideoToolbox")
     endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE

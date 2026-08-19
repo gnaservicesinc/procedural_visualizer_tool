@@ -238,7 +238,7 @@ void test_pcm_click_track_and_digest(const fs::path& directory) {
     check_beat_bounds(analysis);
     CHECK(previous == 1000U);
     CHECK(progress_calls > 4);
-    CHECK(analysis.analyzer_version == "pvt-adaptive-spectral-audio-3");
+    CHECK(analysis.analyzer_version == "pvt-adaptive-spectral-audio-4");
     CHECK(analysis.source_format == "WAV");
     CHECK(analysis.source_basename == "click-120.wav");
     CHECK(analysis.source_sample_rate == 44100U);
@@ -258,6 +258,40 @@ void test_pcm_click_track_and_digest(const fs::path& directory) {
     std::cout << "PCM16 120 BPM: " << analysis.beat_times_seconds.size()
               << " beats, BPM error " << std::abs(analysis.detected_bpm - 120.0)
               << ", maximum beat error " << beat_error * 1000.0 << " ms\n";
+
+    pvt::AudioInputProcessingConfig processing;
+    processing.high_pass_enabled = true;
+    processing.high_pass_hz = 30.0;
+    processing.low_pass_enabled = true;
+    processing.low_pass_hz = 12000.0;
+    processing.equalizer_enabled = true;
+    processing.equalizer_bands[3U].gain_db = 3.0;
+    processing.frequency_streams = {
+        {"low-pulse", "Low pulse", 30.0, 600.0},
+        {"high-click", "High click", 2000.0, 10000.0}};
+    pvt::MusicAnalysis processed;
+    CHECK(pvt::audio::analyze_music_file(
+        path.string(), processing, processed, {}, nullptr, &error));
+    CHECK(error.empty());
+    CHECK(processed.input_processing.high_pass_enabled);
+    CHECK(processed.input_processing.high_pass_hz == 30.0);
+    CHECK(processed.input_processing.equalizer_bands[3U].gain_db == 3.0);
+    CHECK(processed.frequency_streams.size() == 2U);
+    if (processed.frequency_streams.size() == 2U) {
+        CHECK(processed.frequency_streams[0U].uuid == "low-pulse");
+        CHECK(processed.frequency_streams[0U].low_hz == 30.0);
+        CHECK(processed.frequency_streams[0U].high_hz == 600.0);
+        CHECK(!processed.frequency_streams[0U].feature_samples.empty());
+        CHECK(!processed.frequency_streams[0U].beat_times_seconds.empty());
+        CHECK(processed.frequency_streams[1U].uuid == "high-click");
+        CHECK(!processed.frequency_streams[1U].feature_samples.empty());
+    }
+    pvt::RenderConfig routed = pvt::default_config();
+    routed.clock.mode = pvt::ClockMode::Music;
+    routed.clock.audio_processing = processing;
+    routed.clock.frequency_stream_uuid = "low-pulse";
+    routed.clock.music = processed;
+    CHECK(pvt::validate(routed).ok);
 
     CHECK(pvt::audio::verify_music_source(path.string(), analysis.source_sha256,
                                           {}, nullptr, &error));

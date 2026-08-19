@@ -75,6 +75,8 @@ namespace {
 // plus portable Live endpoints, mappings, scenes, clock routes, calibration,
 // output preferences, and watchdog/dropout safety. Version 13 adds generated
 // plane-displacement geometry and its portable height-map attachment identity.
+// Version 14 adds pre-analysis audio filters/EQ, named frequency streams,
+// per-clock stream selection, and Live device-sleep policy.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -86,8 +88,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 13U,
-              "config_io.cpp implements setup format version 13");
+static_assert(kSetupFormatVersion == 14U,
+              "config_io.cpp implements setup format version 14");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -212,6 +214,31 @@ bool setup_v12_record(std::string_view key) {
 
 bool setup_v13_record(std::string_view key) {
     return starts_with(key, "surface.plane_displacement.");
+}
+
+bool setup_v14_record(std::string_view key) {
+    return starts_with(key, "timing.clock.audio_input.")
+           || starts_with(key, "timing.music.input_processing.")
+           || starts_with(key, "timing.music.frequency_streams.")
+           || key == "timing.clock.frequency_stream_uuid"
+           || starts_with(key, "layer_clock.clock.audio_input.")
+           || starts_with(key, "layer_clock.music.input_processing.")
+           || starts_with(key, "layer_clock.music.frequency_streams.")
+           || key == "layer_clock.clock.frequency_stream_uuid"
+           || starts_with(key, "live.audio_input.")
+           || key == "live.safety.prevent_device_sleep"
+           || (starts_with(key, "effects.")
+               && key.size() >= std::string_view(".particle_shape").size()
+               && key.compare(key.size()
+                                  - std::string_view(".particle_shape").size(),
+                              std::string_view(".particle_shape").size(),
+                              ".particle_shape") == 0)
+           || (starts_with(key, "live.clock_inputs.")
+               && key.size() >= std::string_view(".frequency_stream_uuid").size()
+               && key.compare(key.size()
+                                  - std::string_view(".frequency_stream_uuid").size(),
+                              std::string_view(".frequency_stream_uuid").size(),
+                              ".frequency_stream_uuid") == 0);
 }
 
 void clear_error(std::string* error) {
@@ -770,7 +797,8 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 8U>
     {"blur", EffectType::Blur},
 }};
 
-constexpr std::array<std::pair<std::string_view, EffectType>, 11U> kEffectTypes{{
+constexpr std::array<std::pair<std::string_view, EffectType>, 11U>
+    kEffectTypesV13{{
     {"endless_zoom", EffectType::EndlessZoom},
     {"ripple", EffectType::Ripple},
     {"shake", EffectType::Shake},
@@ -784,12 +812,37 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 11U> kEffectTypes{
     {"lens_distortion", EffectType::LensDistortion},
 }};
 
+constexpr std::array<std::pair<std::string_view, EffectType>, 13U> kEffectTypes{{
+    {"endless_zoom", EffectType::EndlessZoom},
+    {"ripple", EffectType::Ripple},
+    {"shake", EffectType::Shake},
+    {"flag_wave", EffectType::FlagWave},
+    {"glow", EffectType::Glow},
+    {"block_scale", EffectType::BlockScale},
+    {"particle_field", EffectType::ParticleField},
+    {"blur", EffectType::Blur},
+    {"glitch", EffectType::Glitch},
+    {"starburst", EffectType::Starburst},
+    {"lens_distortion", EffectType::LensDistortion},
+    {"edge_detect", EffectType::EdgeDetect},
+    {"twirl", EffectType::Twirl},
+}};
+
 constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
     {"gaussian", BlurType::Gaussian},
     {"box", BlurType::Box},
     {"directional", BlurType::Directional},
     {"radial", BlurType::Radial},
     {"zoom", BlurType::Zoom},
+}};
+
+constexpr std::array<std::pair<std::string_view, ParticleShape>, 5U>
+    kParticleShapes{{
+    {"spark", ParticleShape::Spark},
+    {"soft_orb", ParticleShape::SoftOrb},
+    {"ring", ParticleShape::Ring},
+    {"diamond", ParticleShape::Diamond},
+    {"star", ParticleShape::Star},
 }};
 
 constexpr std::array<std::pair<std::string_view, StartingColorMode>, 8U>
@@ -1188,6 +1241,44 @@ void add_path_binding_records(SetupBuilder& builder,
     builder.add_bool(key("follow_tangent"), binding.follow_tangent);
 }
 
+void add_audio_input_records(SetupBuilder& builder, std::string_view prefix,
+                             const AudioInputProcessingConfig& processing) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    builder.add_bool(key("high_pass_enabled"), processing.high_pass_enabled);
+    builder.add_double(key("high_pass_hz"), processing.high_pass_hz);
+    builder.add_bool(key("low_pass_enabled"), processing.low_pass_enabled);
+    builder.add_double(key("low_pass_hz"), processing.low_pass_hz);
+    builder.add_bool(key("equalizer_enabled"), processing.equalizer_enabled);
+    const std::string equalizer = key("equalizer_bands");
+    builder.add_integer(equalizer + ".count",
+                        processing.equalizer_bands.size());
+    for (std::size_t index = 0U;
+         index < processing.equalizer_bands.size(); ++index) {
+        const auto& band = processing.equalizer_bands[index];
+        builder.add_double(indexed_key(equalizer, index, "frequency_hz"),
+                           band.frequency_hz);
+        builder.add_double(indexed_key(equalizer, index, "gain_db"),
+                           band.gain_db);
+    }
+    const std::string streams = key("frequency_streams");
+    builder.add_integer(streams + ".count",
+                        processing.frequency_streams.size());
+    for (std::size_t index = 0U;
+         index < processing.frequency_streams.size(); ++index) {
+        const auto& stream = processing.frequency_streams[index];
+        builder.add_string(indexed_key(streams, index, "uuid"), stream.uuid);
+        builder.add_string(indexed_key(streams, index, "name"), stream.name);
+        builder.add_double(indexed_key(streams, index, "low_hz"),
+                           stream.low_hz);
+        builder.add_double(indexed_key(streams, index, "high_hz"),
+                           stream.high_hz);
+    }
+}
+
 void add_music_records(SetupBuilder& builder, std::string_view prefix,
                        const MusicAnalysis& music) {
     const auto key = [prefix](std::string_view suffix) {
@@ -1241,6 +1332,65 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
         builder.add_double(indexed_key(samples, index, "chroma_strength"),
                            sample.chroma_strength);
     }
+    const std::string streams = key("frequency_streams");
+    builder.add_integer(streams + ".count", music.frequency_streams.size());
+    for (std::size_t stream_index = 0U;
+         stream_index < music.frequency_streams.size(); ++stream_index) {
+        const auto& stream = music.frequency_streams[stream_index];
+        const std::string item = indexed_key(streams, stream_index, "analysis");
+        builder.add_string(indexed_key(streams, stream_index, "uuid"),
+                           stream.uuid);
+        builder.add_double(indexed_key(streams, stream_index, "low_hz"),
+                           stream.low_hz);
+        builder.add_double(indexed_key(streams, stream_index, "high_hz"),
+                           stream.high_hz);
+        builder.add_double(item + ".detected_bpm", stream.detected_bpm);
+        builder.add_double(item + ".tempo_confidence",
+                           stream.tempo_confidence);
+        builder.add_integer(item + ".beat_times.count",
+                            stream.beat_times_seconds.size());
+        for (std::size_t index = 0U;
+             index < stream.beat_times_seconds.size(); ++index) {
+            builder.add_double(indexed_key(item + ".beat_times", index,
+                                           "seconds"),
+                               stream.beat_times_seconds[index]);
+        }
+        builder.add_integer(item + ".tempo_points.count",
+                            stream.tempo_points.size());
+        for (std::size_t index = 0U; index < stream.tempo_points.size(); ++index) {
+            const auto& point = stream.tempo_points[index];
+            builder.add_double(indexed_key(item + ".tempo_points", index,
+                                           "time_seconds"),
+                               point.time_seconds);
+            builder.add_double(indexed_key(item + ".tempo_points", index,
+                                           "bpm"), point.bpm);
+            builder.add_double(indexed_key(item + ".tempo_points", index,
+                                           "confidence"), point.confidence);
+        }
+        builder.add_integer(item + ".feature_samples.count",
+                            stream.feature_samples.size());
+        for (std::size_t index = 0U;
+             index < stream.feature_samples.size(); ++index) {
+            const auto& sample = stream.feature_samples[index];
+            const std::string sample_key = indexed_key(
+                item + ".feature_samples", index, "sample");
+            builder.add_double(sample_key + ".energy", sample.energy);
+            builder.add_double(sample_key + ".bass", sample.bass);
+            builder.add_double(sample_key + ".midrange", sample.midrange);
+            builder.add_double(sample_key + ".treble", sample.treble);
+            builder.add_double(sample_key + ".onset", sample.onset);
+            builder.add_double(sample_key + ".beat", sample.beat);
+            builder.add_double(sample_key + ".spectral_centroid",
+                               sample.spectral_centroid);
+            builder.add_double(sample_key + ".spectral_flatness",
+                               sample.spectral_flatness);
+            builder.add_double(sample_key + ".chroma_hue", sample.chroma_hue);
+            builder.add_double(sample_key + ".chroma_strength",
+                               sample.chroma_strength);
+        }
+    }
+    add_audio_input_records(builder, key("input_processing."),
+                            music.input_processing);
 }
 
 void add_clock_records(SetupBuilder& builder, std::string_view prefix,
@@ -1271,6 +1421,10 @@ void add_clock_records(SetupBuilder& builder, std::string_view prefix,
                        clock.phase_offset_degrees);
     builder.add_bool(key("reverse"), clock.reverse);
     builder.add_bool(key("data_only"), clock.data_only);
+    builder.add_string(key("frequency_stream_uuid"),
+                       clock.frequency_stream_uuid);
+    add_audio_input_records(builder, key("audio_input."),
+                            clock.audio_processing);
     add_music_records(builder, music_prefix, clock.music);
 }
 
@@ -1394,6 +1548,10 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
         builder.add_integer(
             indexed_key("live.clock_inputs", index, "audio_channel"),
             clock.audio_channel);
+        builder.add_string(
+            indexed_key("live.clock_inputs", index,
+                        "frequency_stream_uuid"),
+            clock.frequency_stream_uuid);
         builder.add_bool(
             indexed_key("live.clock_inputs", index,
                         "follow_midi_transport"),
@@ -1472,6 +1630,10 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
     builder.add_integer(
         "live.safety.last_good_frame_timeout_milliseconds",
         live.safety.last_good_frame_timeout_milliseconds);
+    builder.add_bool("live.safety.prevent_device_sleep",
+                     live.safety.prevent_device_sleep);
+    add_audio_input_records(builder, "live.audio_input.",
+                            live.audio_processing);
 }
 
 bool validate_persistence_bounds(const RenderConfig& config,
@@ -1569,6 +1731,10 @@ bool serialize_setup(const RenderConfig& config,
                        config.clock.phase_offset_degrees);
     builder.add_bool("timing.clock.reverse", config.clock.reverse);
     builder.add_bool("timing.clock.data_only", config.clock.data_only);
+    builder.add_string("timing.clock.frequency_stream_uuid",
+                       config.clock.frequency_stream_uuid);
+    add_audio_input_records(builder, "timing.clock.audio_input.",
+                            config.clock.audio_processing);
     add_audio_reactive_records(builder, "audio_response_defaults.",
                                config.audio_reactive_defaults);
     add_live_records(builder, config.live);
@@ -1596,69 +1762,7 @@ bool serialize_setup(const RenderConfig& config,
         }
     }
 
-    const MusicAnalysis& music = config.clock.music;
-    builder.add_integer("timing.music.schema_version", music.schema_version);
-    builder.add_string("timing.music.analyzer_version", music.analyzer_version);
-    builder.add_string("timing.music.source_sha256", music.source_sha256);
-    builder.add_string("timing.music.source_basename", music.source_basename);
-    builder.add_string("timing.music.source_format", music.source_format);
-    builder.add_integer("timing.music.source_frame_count",
-                        music.source_frame_count);
-    builder.add_integer("timing.music.source_sample_rate",
-                        music.source_sample_rate);
-    builder.add_integer("timing.music.source_channel_count",
-                        music.source_channel_count);
-    builder.add_double("timing.music.duration_seconds", music.duration_seconds);
-    builder.add_double("timing.music.detected_bpm", music.detected_bpm);
-    builder.add_double("timing.music.tempo_confidence", music.tempo_confidence);
-    builder.add_integer("timing.music.beat_times.count",
-                        music.beat_times_seconds.size());
-    for (std::size_t index = 0U; index < music.beat_times_seconds.size(); ++index) {
-        builder.add_double(indexed_key("timing.music.beat_times", index,
-                                       "seconds"),
-                           music.beat_times_seconds[index]);
-    }
-    builder.add_integer("timing.music.tempo_points.count",
-                        music.tempo_points.size());
-    for (std::size_t index = 0U; index < music.tempo_points.size(); ++index) {
-        const MusicTempoPoint& point = music.tempo_points[index];
-        builder.add_double(indexed_key("timing.music.tempo_points", index,
-                                       "time_seconds"),
-                           point.time_seconds);
-        builder.add_double(indexed_key("timing.music.tempo_points", index, "bpm"),
-                           point.bpm);
-        builder.add_double(indexed_key("timing.music.tempo_points", index,
-                                       "confidence"),
-                           point.confidence);
-    }
-    builder.add_integer("timing.music.feature_samples.count",
-                        music.feature_samples.size());
-    for (std::size_t index = 0U; index < music.feature_samples.size(); ++index) {
-        const MusicFeatureSample& sample = music.feature_samples[index];
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "energy"), sample.energy);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "bass"), sample.bass);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "midrange"), sample.midrange);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "treble"), sample.treble);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "onset"), sample.onset);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "beat"), sample.beat);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "spectral_centroid"),
-                           sample.spectral_centroid);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "spectral_flatness"),
-                           sample.spectral_flatness);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "chroma_hue"), sample.chroma_hue);
-        builder.add_double(indexed_key("timing.music.feature_samples", index,
-                                       "chroma_strength"),
-                           sample.chroma_strength);
-    }
+    add_music_records(builder, "timing.music.", config.clock.music);
 
     builder.add_bool("layer_clock.enabled", config.layer_clock.enabled);
     builder.add_enum("layer_clock.scale", config.layer_clock.scale,
@@ -1733,6 +1837,8 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("effects", index, "area_radius"), effect.area_radius);
         builder.add_enum(indexed_key("effects", index, "blur_type"),
                          effect.blur_type, kBlurTypes);
+        builder.add_enum(indexed_key("effects", index, "particle_shape"),
+                         effect.particle_shape, kParticleShapes);
         builder.add_integer(indexed_key("effects", index, "blur_passes"),
                             effect.blur_passes);
         builder.add_integer(indexed_key("effects", index, "blur_samples"),
@@ -1939,8 +2045,167 @@ bool serialize_setup(const RenderConfig& config,
     return true;
 }
 
+bool consume_audio_input_records(Records& records, std::string_view prefix,
+                                 AudioInputProcessingConfig& processing,
+                                 std::string* error) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    std::size_t equalizer_count = 0U;
+    std::size_t stream_count = 0U;
+    if (!consume_bool(records, key("high_pass_enabled"),
+                      processing.high_pass_enabled, error)
+        || !consume_double(records, key("high_pass_hz"),
+                           processing.high_pass_hz, error)
+        || !consume_bool(records, key("low_pass_enabled"),
+                         processing.low_pass_enabled, error)
+        || !consume_double(records, key("low_pass_hz"),
+                           processing.low_pass_hz, error)
+        || !consume_bool(records, key("equalizer_enabled"),
+                         processing.equalizer_enabled, error)
+        || !consume_count(records, key("equalizer_bands.count"),
+                          kMaximumAudioEqualizerBands, equalizer_count, error)) {
+        return false;
+    }
+    processing.equalizer_bands.assign(equalizer_count, {});
+    const std::string equalizer = key("equalizer_bands");
+    for (std::size_t index = 0U; index < equalizer_count; ++index) {
+        auto& band = processing.equalizer_bands[index];
+        if (!consume_double(records,
+                            indexed_key(equalizer, index, "frequency_hz"),
+                            band.frequency_hz, error)
+            || !consume_double(records,
+                               indexed_key(equalizer, index, "gain_db"),
+                               band.gain_db, error)) return false;
+    }
+    if (!consume_count(records, key("frequency_streams.count"),
+                       kMaximumAudioFrequencyStreams, stream_count, error)) {
+        return false;
+    }
+    processing.frequency_streams.assign(stream_count, {});
+    const std::string streams = key("frequency_streams");
+    for (std::size_t index = 0U; index < stream_count; ++index) {
+        auto& stream = processing.frequency_streams[index];
+        if (!consume_bounded_string(records,
+                                    indexed_key(streams, index, "uuid"),
+                                    kMaximumLiveTextBytes, stream.uuid, error)
+            || !consume_bounded_string(records,
+                                       indexed_key(streams, index, "name"),
+                                       kMaximumLiveTextBytes, stream.name, error)
+            || !consume_double(records,
+                               indexed_key(streams, index, "low_hz"),
+                               stream.low_hz, error)
+            || !consume_double(records,
+                               indexed_key(streams, index, "high_hz"),
+                               stream.high_hz, error)) return false;
+    }
+    return true;
+}
+
+bool consume_music_extensions(Records& records, std::string_view prefix,
+                              MusicAnalysis& music, std::string* error) {
+    const auto key = [prefix](std::string_view suffix) {
+        std::string result(prefix);
+        result.append(suffix);
+        return result;
+    };
+    std::size_t stream_count = 0U;
+    if (!consume_count(records, key("frequency_streams.count"),
+                       kMaximumAudioFrequencyStreams, stream_count, error)) {
+        return false;
+    }
+    music.frequency_streams.assign(stream_count, {});
+    const std::string streams = key("frequency_streams");
+    for (std::size_t stream_index = 0U; stream_index < stream_count;
+         ++stream_index) {
+        auto& stream = music.frequency_streams[stream_index];
+        const std::string item = indexed_key(streams, stream_index, "analysis");
+        std::size_t beat_count = 0U;
+        std::size_t tempo_count = 0U;
+        std::size_t sample_count = 0U;
+        if (!consume_bounded_string(
+                records, indexed_key(streams, stream_index, "uuid"),
+                kMaximumLiveTextBytes, stream.uuid, error)
+            || !consume_double(records,
+                               indexed_key(streams, stream_index, "low_hz"),
+                               stream.low_hz, error)
+            || !consume_double(records,
+                               indexed_key(streams, stream_index, "high_hz"),
+                               stream.high_hz, error)
+            || !consume_double(records, item + ".detected_bpm",
+                               stream.detected_bpm, error)
+            || !consume_double(records, item + ".tempo_confidence",
+                               stream.tempo_confidence, error)
+            || !consume_count(records, item + ".beat_times.count",
+                              kMaximumMusicBeats, beat_count, error)) {
+            return false;
+        }
+        stream.beat_times_seconds.assign(beat_count, 0.0);
+        for (std::size_t index = 0U; index < beat_count; ++index) {
+            if (!consume_double(
+                    records,
+                    indexed_key(item + ".beat_times", index, "seconds"),
+                    stream.beat_times_seconds[index], error)) return false;
+        }
+        if (!consume_count(records, item + ".tempo_points.count",
+                           kMaximumMusicTempoPoints, tempo_count, error)) {
+            return false;
+        }
+        stream.tempo_points.assign(tempo_count, {});
+        for (std::size_t index = 0U; index < tempo_count; ++index) {
+            auto& point = stream.tempo_points[index];
+            if (!consume_double(
+                    records, indexed_key(item + ".tempo_points", index,
+                                         "time_seconds"),
+                    point.time_seconds, error)
+                || !consume_double(
+                    records, indexed_key(item + ".tempo_points", index, "bpm"),
+                    point.bpm, error)
+                || !consume_double(
+                    records, indexed_key(item + ".tempo_points", index,
+                                         "confidence"),
+                    point.confidence, error)) return false;
+        }
+        if (!consume_count(records, item + ".feature_samples.count",
+                           kMaximumMusicFeatureSamples, sample_count, error)) {
+            return false;
+        }
+        stream.feature_samples.assign(sample_count, {});
+        for (std::size_t index = 0U; index < sample_count; ++index) {
+            auto& sample = stream.feature_samples[index];
+            const std::string sample_key = indexed_key(
+                item + ".feature_samples", index, "sample");
+            if (!consume_float(records, sample_key + ".energy", sample.energy,
+                               error)
+                || !consume_float(records, sample_key + ".bass", sample.bass,
+                                  error)
+                || !consume_float(records, sample_key + ".midrange",
+                                  sample.midrange, error)
+                || !consume_float(records, sample_key + ".treble",
+                                  sample.treble, error)
+                || !consume_float(records, sample_key + ".onset", sample.onset,
+                                  error)
+                || !consume_float(records, sample_key + ".beat", sample.beat,
+                                  error)
+                || !consume_float(records, sample_key + ".spectral_centroid",
+                                  sample.spectral_centroid, error)
+                || !consume_float(records, sample_key + ".spectral_flatness",
+                                  sample.spectral_flatness, error)
+                || !consume_float(records, sample_key + ".chroma_hue",
+                                  sample.chroma_hue, error)
+                || !consume_float(records, sample_key + ".chroma_strength",
+                                  sample.chroma_strength, error)) return false;
+        }
+    }
+    return consume_audio_input_records(
+        records, key("input_processing."), music.input_processing, error);
+}
+
 bool consume_music_records(Records& records, std::string_view prefix,
-                           MusicAnalysis& music, std::string* error) {
+                           MusicAnalysis& music, bool extended,
+                           std::string* error) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
@@ -2026,12 +2291,13 @@ bool consume_music_records(Records& records, std::string_view prefix,
                               indexed_key(samples, index, "chroma_strength"),
                               sample.chroma_strength, error)) return false;
     }
-    return true;
+    return !extended || consume_music_extensions(records, prefix, music, error);
 }
 
 bool consume_clock_records(Records& records, std::string_view prefix,
                            std::string_view music_prefix,
-                           ClockConfig& clock, std::string* error) {
+                           ClockConfig& clock, bool extended,
+                           std::string* error) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
@@ -2061,7 +2327,15 @@ bool consume_clock_records(Records& records, std::string_view prefix,
                              clock.phase_offset_degrees, error)
            && consume_bool(records, key("reverse"), clock.reverse, error)
            && consume_bool(records, key("data_only"), clock.data_only, error)
-           && consume_music_records(records, music_prefix, clock.music, error);
+           && (!extended
+               || (consume_bounded_string(
+                       records, key("frequency_stream_uuid"),
+                       kMaximumLiveTextBytes, clock.frequency_stream_uuid, error)
+                   && consume_audio_input_records(
+                       records, key("audio_input."), clock.audio_processing,
+                       error)))
+           && consume_music_records(records, music_prefix, clock.music,
+                                    extended, error);
 }
 
 bool consume_audio_reactive_records(Records& records,
@@ -2108,7 +2382,7 @@ bool consume_audio_reactive_records(Records& records,
                              audio.color_amount_degrees, error);
 }
 
-bool consume_live_records(Records& records, LiveConfig& live,
+bool consume_live_records(Records& records, LiveConfig& live, bool extended,
                           std::string* error) {
     if (!consume_bool(records, "live.enabled", live.enabled, error)) {
         return false;
@@ -2254,6 +2528,13 @@ bool consume_live_records(Records& records, LiveConfig& live,
                 records,
                 indexed_key("live.clock_inputs", index, "audio_channel"),
                 clock.audio_channel, error)
+            || (extended
+                && !consume_bounded_string(
+                    records,
+                    indexed_key("live.clock_inputs", index,
+                                "frequency_stream_uuid"),
+                    kMaximumLiveTextBytes, clock.frequency_stream_uuid,
+                    error))
             || !consume_bool(
                 records,
                 indexed_key("live.clock_inputs", index,
@@ -2377,7 +2658,14 @@ bool consume_live_records(Records& records, LiveConfig& live,
            && consume_integer(
                records,
                "live.safety.last_good_frame_timeout_milliseconds",
-               live.safety.last_good_frame_timeout_milliseconds, error);
+               live.safety.last_good_frame_timeout_milliseconds, error)
+           && (!extended
+               || (consume_bool(records,
+                                "live.safety.prevent_device_sleep",
+                                live.safety.prevent_device_sleep, error)
+                   && consume_audio_input_records(
+                       records, "live.audio_input.", live.audio_processing,
+                       error)));
 }
 
 bool consume_path_binding_records(Records& records,
@@ -2423,7 +2711,8 @@ bool deserialize_setup(Records& records,
         return false;
     }
     if (setup_version >= 12U
-        && !consume_live_records(records, candidate.live, error)) {
+        && !consume_live_records(records, candidate.live,
+                                 setup_version >= 14U, error)) {
         return false;
     }
 
@@ -2657,6 +2946,18 @@ bool deserialize_setup(Records& records,
             }
         }
     }
+    if (setup_version >= 14U
+        && (!consume_bounded_string(
+                records, "timing.clock.frequency_stream_uuid",
+                kMaximumLiveTextBytes,
+                candidate.clock.frequency_stream_uuid, error)
+            || !consume_audio_input_records(
+                records, "timing.clock.audio_input.",
+                candidate.clock.audio_processing, error)
+            || !consume_music_extensions(
+                records, "timing.music.", candidate.clock.music, error))) {
+        return false;
+    }
     if (setup_version >= 7U) {
         if (!consume_bool(records, "source_image.enabled",
                           candidate.starting_image.enabled, error)
@@ -2688,7 +2989,8 @@ bool deserialize_setup(Records& records,
                              kLayerClockScales, error)
             || !consume_clock_records(records, "layer_clock.clock.",
                                       "layer_clock.music.",
-                                      candidate.layer_clock.clock, error)) {
+                                      candidate.layer_clock.clock,
+                                      setup_version >= 14U, error)) {
             return false;
         }
     }
@@ -2784,9 +3086,14 @@ bool deserialize_setup(Records& records,
             || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)) {
             return false;
         }
-        if (setup_version >= 11U) {
+        if (setup_version >= 14U) {
             if (!consume_enum(records, indexed_key("effects", index, "type"),
                               effect.type, kEffectTypes, error)) {
+                return false;
+            }
+        } else if (setup_version >= 11U) {
+            if (!consume_enum(records, indexed_key("effects", index, "type"),
+                              effect.type, kEffectTypesV13, error)) {
                 return false;
             }
         } else if (setup_version >= 10U) {
@@ -2854,6 +3161,12 @@ bool deserialize_setup(Records& records,
                     records,
                     indexed_key("effects", index, "blur_pulses_per_cycle"),
                     effect.blur_pulses_per_cycle, error))) {
+            return false;
+        }
+        if (setup_version >= 14U
+            && !consume_enum(records,
+                             indexed_key("effects", index, "particle_shape"),
+                             effect.particle_shape, kParticleShapes, error)) {
             return false;
         }
         if (setup_version >= 7U
@@ -3319,7 +3632,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 10U && setup_v10_record(key))
              || (setup_version < 11U && setup_v11_record(key))
              || (setup_version < 12U && setup_v12_record(key))
-             || (setup_version < 13U && setup_v13_record(key)));
+             || (setup_version < 13U && setup_v13_record(key))
+             || (setup_version < 14U && setup_v14_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

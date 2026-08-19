@@ -113,6 +113,7 @@ private:
         QString error;
         QString source_path;
         pvt::MusicAnalysis analysis;
+        pvt::AudioInputProcessingConfig processing;
         pvt::ProjectAttachment attached;
         std::shared_ptr<pvt::ProjectDocument> staged_document;
         MusicAnalysisAction action = MusicAnalysisAction::Choose;
@@ -142,6 +143,8 @@ private:
     void restoreLayersDock(bool makeVisible = true);
     void createToolbar();
     void setLiveMode(bool live);
+    void toggleLivePopOut();
+    void restoreLiveWorkspace(bool showLiveWorkspace);
     void applyAuthoredLiveConfig(const pvt::LiveConfig& live,
                                  const QString& reason);
     void connectEditors();
@@ -314,7 +317,9 @@ private:
     bool startVideoExport();
     bool startMusicAnalysis(const QString& sourcePath,
                             MusicAnalysisAction action,
-                            bool layerClock = false);
+                            bool layerClock = false,
+                            const std::optional<pvt::AudioInputProcessingConfig>&
+                                processingOverride = std::nullopt);
     void finishMusicAnalysis(const MusicAnalysisResult& result);
     void cancelMusicAnalysis(const QString& message = {});
     void chooseMusicSource();
@@ -325,6 +330,7 @@ private:
     void relinkLayerMusicSource();
     void reanalyzeLayerMusicSource();
     void clearLayerMusicSource();
+    void editMusicInputProcessing(bool layerClock);
     QString currentMusicSourcePath(bool layerClock = false) const;
     int effectiveFrameCount(QString* error = nullptr) const;
     bool musicRenderReady() const;
@@ -411,6 +417,7 @@ private:
     QStackedWidget* workspace_stack_ = nullptr;
     QWidget* editor_workspace_ = nullptr;
     LiveWorkspace* live_workspace_ = nullptr;
+    QMainWindow* live_popout_window_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QWidget* wave_page_ = nullptr;
     QWidget* synchronization_page_ = nullptr;
@@ -549,6 +556,8 @@ private:
     QPushButton* music_reanalyze_ = nullptr;
     QPushButton* music_clear_ = nullptr;
     QPushButton* music_cancel_ = nullptr;
+    QPushButton* music_processing_ = nullptr;
+    QComboBox* music_frequency_stream_ = nullptr;
 
     QGroupBox* layer_clock_group_ = nullptr;
     QFormLayout* layer_clock_form_ = nullptr;
@@ -578,6 +587,8 @@ private:
     QPushButton* layer_music_reanalyze_ = nullptr;
     QPushButton* layer_music_clear_ = nullptr;
     QPushButton* layer_music_cancel_ = nullptr;
+    QPushButton* layer_music_processing_ = nullptr;
+    QComboBox* layer_music_frequency_stream_ = nullptr;
 
     QGroupBox* swings_group_ = nullptr;
     QListWidget* swing_list_ = nullptr;
@@ -641,6 +652,7 @@ private:
     QDoubleSpinBox* effect_threshold_ = nullptr;
     QDoubleSpinBox* effect_knee_ = nullptr;
     QDoubleSpinBox* effect_area_radius_ = nullptr;
+    QComboBox* effect_particle_shape_ = nullptr;
     QComboBox* effect_blur_type_ = nullptr;
     QSpinBox* effect_blur_passes_ = nullptr;
     QSpinBox* effect_blur_samples_ = nullptr;

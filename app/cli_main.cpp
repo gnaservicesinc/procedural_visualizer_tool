@@ -896,7 +896,14 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
         }
         case EffectType::ParticleField: {
             int particles = static_cast<int>(std::llround(effect.frequency));
-            if (!prompt_real("Spark brightness", effect.intensity, 0.0, 100.0)
+            if (!prompt_enum(
+                    "Particle shape", effect.particle_shape,
+                    {{pvt::ParticleShape::Spark, "Spark"},
+                     {pvt::ParticleShape::SoftOrb, "Soft orb"},
+                     {pvt::ParticleShape::Ring, "Ring"},
+                     {pvt::ParticleShape::Diamond, "Diamond"},
+                     {pvt::ParticleShape::Star, "Star"}})
+                || !prompt_real("Particle brightness", effect.intensity, 0.0, 100.0)
                 || !prompt_real("Travel per loop (fraction of short edge)",
                                 effect.magnitude, 0.0, 10.0)
                 || !prompt_int("Particle count", particles, 1,
@@ -985,6 +992,28 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                    && prompt_real("Radial exponent", effect.frequency,
                                   0.25, 1000.0)
                    && prompt_real("Direction (-1 barrel, +1 pincushion)",
+                                  effect.secondary, -1.0, 1.0)
+                   && configure_edge_mode(effect.edge_mode);
+        case EffectType::EdgeDetect: {
+            int radius = static_cast<int>(std::llround(effect.frequency));
+            if (!prompt_real("Source/edge mix", effect.intensity, 0.0, 1.0)
+                || !prompt_real("Edge gain", effect.magnitude, 0.0, 100.0)
+                || !prompt_int("Sampling radius (pixels)", radius, 1, 1000)
+                || !prompt_real("Edge threshold", effect.secondary, 0.0, 1.0)
+                || !configure_edge_mode(effect.edge_mode)) {
+                return false;
+            }
+            effect.frequency = static_cast<double>(radius);
+            return true;
+        }
+        case EffectType::Twirl:
+            return prompt_real("Source/effect mix", effect.intensity,
+                               0.0, 1.0)
+                   && prompt_real("Maximum turns", effect.magnitude,
+                                  0.0, 100.0)
+                   && prompt_real("Radial falloff exponent", effect.frequency,
+                                  0.25, 1000.0)
+                   && prompt_real("Direction/depth (-1 to +1)",
                                   effect.secondary, -1.0, 1.0)
                    && configure_edge_mode(effect.edge_mode);
     }

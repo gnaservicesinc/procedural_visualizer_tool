@@ -51,6 +51,7 @@ struct PreparedEffect {
     BlurType blur_type = BlurType::Gaussian;
     int blur_passes = 1;
     int blur_samples = 9;
+    ParticleShape particle_shape = ParticleShape::Spark;
 };
 
 struct PreparedFrame {

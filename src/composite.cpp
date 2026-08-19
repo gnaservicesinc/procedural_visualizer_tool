@@ -1103,6 +1103,10 @@ std::string generate_uuid() {
 
 ValidationResult validate(const LiveConfig& live) {
     try {
+        const ValidationResult audio_processing = validate(live.audio_processing);
+        if (!audio_processing.ok) {
+            return invalid_result("Live " + audio_processing.message);
+        }
         if (live.endpoints.size() > kMaximumLiveEndpoints
             || live.mappings.size() > kMaximumLiveMappings
             || live.clock_inputs.size() > kMaximumLiveClockInputs
@@ -1283,12 +1287,24 @@ ValidationResult validate(const LiveConfig& live) {
                 || (clock.target == LiveClockTarget::Layer
                     && !valid_uuid(clock.layer_uuid))
                 || (clock.source == LiveClockInputSource::MidiClock
-                    && clock.audio_channel != 0)
+                    && (clock.audio_channel != 0
+                        || !clock.frequency_stream_uuid.empty()))
                 || (!clock.endpoint_uuid.empty()
                     && !valid_uuid(clock.endpoint_uuid))) {
                 return invalid_result(
                     "Live clock input " + std::to_string(index + 1U)
                     + " has an invalid target, source, channel, endpoint, or holdover.");
+            }
+            if (!clock.frequency_stream_uuid.empty()
+                && (clock.source != LiveClockInputSource::AudioStream
+                    || std::none_of(
+                        live.audio_processing.frequency_streams.begin(),
+                        live.audio_processing.frequency_streams.end(),
+                        [&clock](const AudioFrequencyStreamConfig& stream) {
+                            return stream.uuid == clock.frequency_stream_uuid;
+                        }))) {
+                return invalid_result(
+                    "A Live audio clock references an unknown named frequency stream.");
             }
             if (!clock.enabled) continue;
             const std::string target_key =

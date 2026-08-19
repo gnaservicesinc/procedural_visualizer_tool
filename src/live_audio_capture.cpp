@@ -1,5 +1,7 @@
 #include "live_audio_capture.h"
 
+#include "audio_input_processing.h"
+
 #include "miniaudio.h"
 
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <utility>
 
 namespace pvt::audio {
@@ -42,6 +45,70 @@ float unit(float value) noexcept {
 } // namespace
 
 struct LiveAudioCapture::Impl {
+    struct FrequencyStreamState {
+        std::string uuid;
+        AudioFrequencyRangeProcessor filter;
+        std::atomic<float> energy{0.0F};
+        std::atomic<float> onset{0.0F};
+        std::atomic<double> bpm{0.0};
+        std::atomic<std::uint64_t> last_beat_frame{0U};
+        double squared = 0.0;
+        double previous_energy = 0.0;
+        double adaptive_peak = 0.02;
+
+        void begin_block() noexcept { squared = 0.0; }
+
+        void push(float sample) noexcept {
+            const double filtered = static_cast<double>(filter.process(sample));
+            squared += filtered * filtered;
+        }
+
+        void finish_block(std::uint64_t now_frame, ma_uint32 frame_count,
+                          double response) noexcept {
+            const double rms = std::sqrt(
+                squared / static_cast<double>(frame_count));
+            adaptive_peak = std::max(rms, adaptive_peak * 0.9992);
+            const double normalization = std::max(0.015, adaptive_peak);
+            const float normalized = unit(static_cast<float>(
+                response * rms / normalization));
+            const double flux = std::max(0.0, rms - previous_energy);
+            const float attack = unit(static_cast<float>(
+                flux * response * 18.0 / normalization));
+            previous_energy = rms;
+            energy.store(normalized, std::memory_order_relaxed);
+            onset.store(attack, std::memory_order_relaxed);
+            const std::uint64_t previous = last_beat_frame.load(
+                std::memory_order_relaxed);
+            const std::uint64_t refractory = kCaptureSampleRate / 4U;
+            if (attack >= 0.55F
+                && (previous == 0U || now_frame - previous >= refractory)) {
+                if (previous != 0U) {
+                    const double interval = static_cast<double>(now_frame - previous)
+                                            / kCaptureSampleRate;
+                    const double candidate = 60.0 / interval;
+                    if (candidate >= 40.0 && candidate <= 240.0) {
+                        const double old = bpm.load(std::memory_order_relaxed);
+                        bpm.store(old > 0.0 ? 0.78 * old + 0.22 * candidate
+                                            : candidate,
+                                  std::memory_order_relaxed);
+                    }
+                }
+                last_beat_frame.store(now_frame, std::memory_order_relaxed);
+            }
+        }
+
+        void reset() noexcept {
+            filter.reset();
+            energy.store(0.0F, std::memory_order_relaxed);
+            onset.store(0.0F, std::memory_order_relaxed);
+            bpm.store(0.0, std::memory_order_relaxed);
+            last_beat_frame.store(0U, std::memory_order_relaxed);
+            squared = 0.0;
+            previous_energy = 0.0;
+            adaptive_peak = 0.02;
+        }
+    };
+
     ma_context context{};
     ma_device device{};
     bool context_initialized = false;
@@ -64,6 +131,9 @@ struct LiveAudioCapture::Impl {
     std::atomic<std::uint64_t> dropouts{0U};
     std::atomic<std::int64_t> last_callback_ns{0};
     std::atomic<double> estimated_latency_ms{0.0};
+    AudioInputProcessingConfig processing_config;
+    AudioInputProcessor input_processor;
+    std::vector<std::unique_ptr<FrequencyStreamState>> frequency_streams;
 
     // Callback-thread-only analyzer state.
     double low_state = 0.0;
@@ -91,6 +161,9 @@ struct LiveAudioCapture::Impl {
             self->gain.load(std::memory_order_relaxed));
         const double response = static_cast<double>(
             self->sensitivity.load(std::memory_order_relaxed));
+        for (const auto& stream : self->frequency_streams) {
+            stream->begin_block();
+        }
         // One-pole crossovers are cheap enough for the audio callback and make
         // the three controls useful without a block FFT or callback allocation.
         const double bass_alpha = 1.0 - std::exp(
@@ -103,8 +176,11 @@ struct LiveAudioCapture::Impl {
         double treble_squared = 0.0;
         std::uint32_t zero_crossings = 0U;
         for (ma_uint32 frame = 0U; frame < frame_count; ++frame) {
-            const double sample = static_cast<double>(samples[frame])
-                                  * input_gain;
+            const float processed = self->input_processor.process(samples[frame]);
+            const double sample = static_cast<double>(processed) * input_gain;
+            for (const auto& stream : self->frequency_streams) {
+                stream->push(static_cast<float>(sample));
+            }
             self->low_state += bass_alpha * (sample - self->low_state);
             self->mid_low_state += mid_alpha * (sample - self->mid_low_state);
             const double low = self->low_state;
@@ -178,6 +254,9 @@ struct LiveAudioCapture::Impl {
         }
 
         const std::uint64_t now_frame = first_frame + frame_count;
+        for (const auto& stream : self->frequency_streams) {
+            stream->finish_block(now_frame, frame_count, response);
+        }
         const std::uint64_t previous_beat_frame = self->last_beat_frame.load(
             std::memory_order_relaxed);
         const std::uint64_t refractory = kCaptureSampleRate / 4U;
@@ -235,6 +314,8 @@ struct LiveAudioCapture::Impl {
         previous_energy = 0.0;
         adaptive_peak = 0.02;
         previous_sample = 0.0F;
+        input_processor.reset();
+        for (const auto& stream : frequency_streams) stream->reset();
     }
 
     ~Impl() { uninitialize(); }
@@ -282,6 +363,10 @@ bool LiveAudioCapture::start(const std::string& runtime_device_name,
                              std::string* error) {
     if (error != nullptr) error->clear();
     stop();
+    if (!impl_->input_processor.configure(
+            impl_->processing_config, kCaptureSampleRate, error)) {
+        return false;
+    }
     requested_period_frames = std::max<ma_uint32>(1U,
                                                   requested_period_frames);
     ma_result result = ma_context_init(nullptr, 0U, nullptr, &impl_->context);
@@ -367,7 +452,7 @@ bool LiveAudioCapture::is_running() const noexcept {
     return impl_->running.load(std::memory_order_acquire);
 }
 
-LiveAudioSnapshot LiveAudioCapture::snapshot() const noexcept {
+LiveAudioSnapshot LiveAudioCapture::snapshot() const {
     LiveAudioSnapshot value;
     value.features.energy = impl_->energy.load(std::memory_order_relaxed);
     value.features.bass = impl_->bass.load(std::memory_order_relaxed);
@@ -404,7 +489,59 @@ LiveAudioSnapshot LiveAudioCapture::snapshot() const noexcept {
         std::memory_order_relaxed);
     value.receiving = is_running() && callback_ns != 0
         && monotonic_nanoseconds() - callback_ns < INT64_C(500000000);
+    value.frequency_streams.reserve(impl_->frequency_streams.size());
+    for (const auto& stream : impl_->frequency_streams) {
+        LiveAudioSnapshot::FrequencyStream item;
+        item.uuid = stream->uuid;
+        item.features.energy = stream->energy.load(std::memory_order_relaxed);
+        item.features.onset = stream->onset.load(std::memory_order_relaxed);
+        item.detected_bpm = stream->bpm.load(std::memory_order_relaxed);
+        const std::uint64_t stream_beat = stream->last_beat_frame.load(
+            std::memory_order_relaxed);
+        if (stream_beat != 0U && frames >= stream_beat) {
+            const double seconds_since = static_cast<double>(frames - stream_beat)
+                                         / kCaptureSampleRate;
+            const double period = item.detected_bpm > 0.0
+                                      ? 60.0 / item.detected_bpm : 0.5;
+            item.beat_phase = std::fmod(seconds_since / period, 1.0);
+            item.features.beat = unit(static_cast<float>(
+                1.0 - seconds_since / std::min(0.16, period)));
+        }
+        value.frequency_streams.push_back(std::move(item));
+    }
     return value;
+}
+
+bool LiveAudioCapture::set_processing_config(
+    const AudioInputProcessingConfig& config, std::string* error) {
+    if (error != nullptr) error->clear();
+    if (is_running()) {
+        return fail(error,
+                    "Stop live audio before changing its input processing.");
+    }
+    AudioInputProcessor prepared_input;
+    if (!prepared_input.configure(config, kCaptureSampleRate, error)) {
+        return false;
+    }
+    if (config.frequency_streams.size() > kMaximumAudioFrequencyStreams) {
+        return fail(error,
+                    "The frequency-stream table exceeds its real-time limit.");
+    }
+    std::vector<std::unique_ptr<Impl::FrequencyStreamState>> prepared_streams;
+    prepared_streams.reserve(config.frequency_streams.size());
+    for (const auto& authored : config.frequency_streams) {
+        auto stream = std::make_unique<Impl::FrequencyStreamState>();
+        stream->uuid = authored.uuid;
+        if (!stream->filter.configure(authored.low_hz, authored.high_hz,
+                                      kCaptureSampleRate, error)) {
+            return false;
+        }
+        prepared_streams.push_back(std::move(stream));
+    }
+    impl_->processing_config = config;
+    impl_->input_processor = std::move(prepared_input);
+    impl_->frequency_streams = std::move(prepared_streams);
+    return true;
 }
 
 void LiveAudioCapture::set_gain(double requested) noexcept {
