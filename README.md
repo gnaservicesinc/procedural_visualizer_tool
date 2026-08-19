@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **5.0.0**. The version is read from `VERSION` by every
+Current product version: **5.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,22 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 5.0.1 cross-platform release reliability
+
+Version 5.0.1 makes the 5.0 renderer and packages reliable on their actual
+release platforms. The CLI initializes its Qt/OpenGL service on the main thread
+before worker rendering and releases render-thread contexts before Qt platform
+shutdown, avoiding headless export deadlocks. Ubuntu's minizip-ng 4 API now
+receives the mutable, lifetime-stable input buffer its reader contract requires,
+repairing the Launchpad binary-package build.
+
+Portable GPU coverage follows tested platform capability: Windows accelerates
+flat Plane rotation plus Cylinder, Sphere, and Cube; Linux accelerates the three
+curved 3D primitives and keeps flat Plane rotation on CPU after Mesa exposed
+driver-dependent straight-RGB sampling. Displacement Plane and imported OBJ
+meshes remain ordered CPU raster stages on both platforms. macOS retains its
+broader Metal pipeline.
 
 ## 5.0.0 displacement Plane and closed Cylinder
 

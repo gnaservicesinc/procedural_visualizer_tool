@@ -1,3 +1,12 @@
+procedural-visualizer-tool (5.0.1) stonking; urgency=medium
+
+  * Initialize and tear down Qt/OpenGL contexts without headless CLI deadlocks.
+  * Match Ubuntu minizip-ng 4's mutable zero-copy reader-buffer API.
+  * Accelerate flat Plane rotation on Windows while retaining the proven
+    Cylinder, Sphere, and Cube OpenGL path on both Windows and Linux.
+
+ -- Andrew Smith (GNA SERVICES INC) <Andrew@GNAServicesInc.com>  Wed, 19 Aug 2026 05:55:49 -0400
+
 procedural-visualizer-tool (5.0.0) stonking; urgency=medium
 
   * Render the built-in Cylinder as a closed, rounded 3D primitive.

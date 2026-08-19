@@ -6,6 +6,24 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 5.0.1 cross-platform release reliability
+
+Version 5.0.1 repairs the two integration failures found by native release and
+PPA builders after the 5.0.0 feature tag. The CLI eagerly initializes the
+Qt/OpenGL service on its main thread before the sequence renderer starts worker
+threads, so a worker never blocks on a GUI-thread dispatch while the CLI main
+thread waits for that worker. Qt's post routine now releases GL objects, returns
+the context to the GUI thread, and joins the dedicated render thread before
+platform teardown.
+
+Ubuntu minizip-ng 4 declares its zero-copy reader buffer mutable. Palette/KPL
+loading now supplies a lifetime-stable mutable `std::string` buffer, matching the
+upstream contract without copying or casting away constness. Portable GPU
+admission is intentionally platform-specific: Windows includes flat Plane
+rotation plus Cylinder/Sphere/Cube; Linux includes Cylinder/Sphere/Cube and
+keeps flat Plane rotation on CPU after Mesa parity caught a straight-RGB source
+block mismatch. Displacement Plane and OBJ meshes remain ordered CPU stages.
+
 ## 5.0.0 displacement Plane and closed Cylinder
 
 Version 5.0.0 replaces the built-in Cylinder's former rectangular side mask
