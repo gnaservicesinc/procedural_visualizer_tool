@@ -505,14 +505,61 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    render.surface.lighting, [](pvt::RenderData& r, double v) { r.surface.lighting = v; });
         add_nested(QStringLiteral("surface.mapping"), QObject::tr("Surface type"),
                    QObject::tr("Surface"), LiveTargetKind::Enumeration, 0,
-                   render.surface.obj_path.empty() ? 3 : 4,
-                   static_cast<double>(render.surface.mapping), [](pvt::RenderData& r, double v) { r.surface.mapping = static_cast<pvt::SurfaceMapping>(std::llround(v)); });
+                   render.surface.obj_path.empty()
+                           && render.surface.obj_sha256.empty() ? 3 : 4,
+                   static_cast<double>(render.surface.mapping), [](pvt::RenderData& r, double v) {
+                       r.surface.mapping = static_cast<pvt::SurfaceMapping>(
+                           std::llround(v));
+                       if (r.surface.mapping != pvt::SurfaceMapping::Plane) {
+                           r.surface.plane_displacement.enabled = false;
+                       }
+                   });
         add_nested(QStringLiteral("surface.rotations"), QObject::tr("Surface rotations"),
                    QObject::tr("Surface"), LiveTargetKind::Integer, -1000, 1000,
                    render.surface.rotations_per_loop, [](pvt::RenderData& r, double v) { r.surface.rotations_per_loop = static_cast<int>(std::llround(v)); });
         add_nested(QStringLiteral("surface.phase"), QObject::tr("Surface phase"),
                    QObject::tr("Surface"), LiveTargetKind::Real, -36000, 36000,
                    render.surface.phase_degrees, [](pvt::RenderData& r, double v) { r.surface.phase_degrees = v; });
+        if (!render.surface.plane_displacement.path.empty()
+            || !render.surface.plane_displacement.sha256.empty()) {
+            add_nested(
+                QStringLiteral("surface.plane_displacement.enabled"),
+                QObject::tr("Plane displacement"), QObject::tr("Surface"),
+                LiveTargetKind::Boolean, 0, 1,
+                render.surface.plane_displacement.enabled,
+                [](pvt::RenderData& r, double v) {
+                    const bool enabled = v >= 0.5;
+                    r.surface.plane_displacement.enabled = enabled;
+                    if (enabled) {
+                        r.surface.enabled = true;
+                        r.surface.mapping = pvt::SurfaceMapping::Plane;
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.plane_displacement.minimum"),
+                QObject::tr("Plane minimum height"), QObject::tr("Surface"),
+                LiveTargetKind::Real, -2, 0,
+                render.surface.plane_displacement.minimum,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.plane_displacement.minimum = v;
+                });
+            add_nested(
+                QStringLiteral("surface.plane_displacement.maximum"),
+                QObject::tr("Plane maximum height"), QObject::tr("Surface"),
+                LiveTargetKind::Real, 0, 2,
+                render.surface.plane_displacement.maximum,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.plane_displacement.maximum = v;
+                });
+            add_nested(
+                QStringLiteral("surface.plane_displacement.midpoint"),
+                QObject::tr("Plane neutral midpoint"), QObject::tr("Surface"),
+                LiveTargetKind::Real, 0, 1,
+                render.surface.plane_displacement.midpoint,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.plane_displacement.midpoint = v;
+                });
+        }
         add_nested(QStringLiteral("transform.flip_horizontal"), QObject::tr("Flip horizontal"),
                    QObject::tr("Modifiers"), LiveTargetKind::Boolean, 0, 1,
                    render.transform.flip_horizontal, [](pvt::RenderData& r, double v) { r.transform.flip_horizontal = v >= 0.5; });

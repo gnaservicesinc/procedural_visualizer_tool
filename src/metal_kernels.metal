@@ -967,22 +967,6 @@ float4 composite_straight_over(float4 front, float4 back) {
                   output_alpha);
 }
 
-float4 sample_cylinder_side(const device float4* source,
-                            uint width, uint height,
-                            float longitude, float normal_x, float normal_z,
-                            float surface_v, float phase, float lighting) {
-    const float wrapped_u = wrap_unit(
-        0.5f + longitude / kTau - phase / kTau);
-    float4 sampled = sample_bilinear_wrapped_x(
-        source, wrapped_u * float(width),
-        surface_v * float(height - 1u), width, height);
-    return shade_surface(
-        sampled,
-        orient_normal(float3(normal_x, 0.0f, normal_z),
-                      float3(0.0f, 0.0f, -1.0f)),
-        lighting);
-}
-
 float4 sample_sphere_side(const device float4* source,
                           uint width, uint height,
                           float normal_x, float normal_y, float normal_z,
@@ -1000,6 +984,119 @@ float4 sample_sphere_side(const device float4* source,
         sampled,
         orient_normal(normal, float3(0.0f, 0.0f, -1.0f)),
         lighting);
+}
+
+struct CylinderHit {
+    float distance;
+    float3 point;
+    float3 normal;
+};
+
+struct CylinderIntersections {
+    CylinderHit front;
+    CylinderHit back;
+    bool has_back;
+};
+
+void add_cylinder_hit(float distance, float3 normal,
+                      float3 origin, float3 direction,
+                      thread CylinderIntersections& intersections) {
+    if (!isfinite(distance) || distance < 0.0f) return;
+    if (isfinite(intersections.front.distance)
+        && fabs(intersections.front.distance - distance) <= 1.0e-6f) {
+        return;
+    }
+    const CylinderHit hit = {
+        distance, origin + direction * distance, normal};
+    if (distance < intersections.front.distance) {
+        if (isfinite(intersections.front.distance)) {
+            intersections.back = intersections.front;
+            intersections.has_back = true;
+        }
+        intersections.front = hit;
+    } else if (distance < intersections.back.distance) {
+        intersections.back = hit;
+        intersections.has_back = true;
+    }
+}
+
+bool intersect_closed_cylinder(float3 origin, float3 direction,
+                               thread CylinderIntersections& intersections) {
+    intersections.front.distance = INFINITY;
+    intersections.back.distance = INFINITY;
+    intersections.has_back = false;
+    const float a = direction.x * direction.x
+                    + direction.z * direction.z;
+    const float b = 2.0f * (origin.x * direction.x
+                            + origin.z * direction.z);
+    const float c = origin.x * origin.x + origin.z * origin.z - 1.0f;
+    if (a > 1.0e-7f) {
+        const float discriminant = b * b - 4.0f * a * c;
+        if (discriminant >= 0.0f) {
+            const float root = sqrt(max(0.0f, discriminant));
+            const float2 distances = float2(
+                (-b - root) / (2.0f * a),
+                (-b + root) / (2.0f * a));
+            for (uint index = 0u; index < 2u; ++index) {
+                const float distance = distances[index];
+                const float y = origin.y + distance * direction.y;
+                if (distance >= 0.0f && y >= -1.000001f
+                    && y <= 1.000001f) {
+                    const float3 point = origin + direction * distance;
+                    add_cylinder_hit(
+                        distance, normalize(float3(point.x, 0.0f, point.z)),
+                        origin, direction, intersections);
+                }
+            }
+        }
+    }
+    if (fabs(direction.y) > 1.0e-7f) {
+        for (uint index = 0u; index < 2u; ++index) {
+            const float cap_y = index == 0u ? -1.0f : 1.0f;
+            const float distance = (cap_y - origin.y) / direction.y;
+            const float3 point = origin + direction * distance;
+            if (distance >= 0.0f
+                && point.x * point.x + point.z * point.z <= 1.000001f) {
+                add_cylinder_hit(
+                    distance, float3(0.0f, cap_y, 0.0f),
+                    origin, direction, intersections);
+            }
+        }
+    }
+    return isfinite(intersections.front.distance);
+}
+
+float2 cylinder_uv(float3 point, float3 normal) {
+    if (fabs(normal.y) < 0.5f) {
+        return float2(
+            wrap_unit(0.5f + atan2(point.x, point.z) / kTau),
+            clamp(0.5f * (1.0f - point.y), 0.0f, 1.0f));
+    }
+    return clamp(float2(
+        0.5f + 0.5f * point.x,
+        normal.y > 0.0f ? 0.5f + 0.5f * point.z
+                        : 0.5f - 0.5f * point.z), 0.0f, 1.0f);
+}
+
+float4 sample_cylinder_hit(const device float4* source,
+                           uint width, uint height,
+                           CylinderHit hit,
+                           float phase, float fixed_x_rotation,
+                           float3 world_direction,
+                           float curvature, float lighting) {
+    const float2 uv = cylinder_uv(hit.point, hit.normal);
+    float4 sampled = fabs(hit.normal.y) < 0.5f
+        ? sample_bilinear_wrapped_x(
+              source, uv.x * float(width), uv.y * float(height - 1u),
+              width, height)
+        : sample_bilinear(
+              source, uv.x * float(width - 1u),
+              uv.y * float(height - 1u), width, height, 3u);
+    const float3 world_normal = rotate_x(
+        rotate_y(hit.normal, phase), fixed_x_rotation);
+    return shade_surface(
+        sampled, orient_normal(world_normal, world_direction),
+        lighting * curvature);
 }
 
 struct CubeHit {
@@ -1130,26 +1227,30 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
             center_y + sine * dx + cosine * dy,
             width, height, 3u);
     } else if (surface.kind.x == 1u) {
-        const float radius = 0.46f * short_side;
-        const float normalized_x = (x - center_x) / radius;
-        const float normalized_y = (y - center_y) / (0.46f * float(height));
-        if (fabs(normalized_x) > 1.0f || fabs(normalized_y) > 1.0f) {
+        const float scale = 0.52f * short_side;
+        const float screen_x = (x - center_x) / scale;
+        const float screen_y = (center_y - y) / scale;
+        const float3 world_origin = float3(0.0f, 0.0f, 3.4f);
+        const float3 world_direction = normalize(
+            float3(screen_x, screen_y, -2.5f));
+        const float fixed_x_rotation = -0.35f;
+        const float3 origin = rotate_y(
+            rotate_x(world_origin, -fixed_x_rotation), -phase);
+        const float3 direction = rotate_y(
+            rotate_x(world_direction, -fixed_x_rotation), -phase);
+        CylinderIntersections intersections;
+        if (!intersect_closed_cylinder(origin, direction, intersections)) {
             visible = false;
         } else {
-            const float longitude = asin(clamp(normalized_x, -1.0f, 1.0f));
-            const float surface_v = 0.5f + 0.5f * normalized_y;
-            const float normalized_z = sqrt(max(
-                0.0f, 1.0f - normalized_x * normalized_x));
-            float4 wrapped = sample_cylinder_side(
-                source, width, height, longitude, normalized_x,
-                normalized_z, surface_v, phase, lighting);
-            if (normalized_z > 1.0e-7f) {
-                const float rear_longitude = normalized_x >= 0.0f
-                    ? kPi - longitude : -kPi - longitude;
-                const float4 rear = sample_cylinder_side(
-                    source, width, height, rear_longitude, normalized_x,
-                    -normalized_z, surface_v, phase, lighting);
-                wrapped = composite_straight_over(wrapped, rear);
+            float4 wrapped = sample_cylinder_hit(
+                source, width, height, intersections.front, phase,
+                fixed_x_rotation, world_direction, curvature, lighting);
+            if (intersections.has_back) {
+                const float4 rear = sample_cylinder_hit(
+                    source, width, height, intersections.back, phase,
+                    fixed_x_rotation, world_direction, curvature, lighting);
+                const float4 layered = composite_straight_over(wrapped, rear);
+                wrapped = mix(wrapped, layered, curvature);
             }
             result = mix(planar, wrapped, curvature);
         }

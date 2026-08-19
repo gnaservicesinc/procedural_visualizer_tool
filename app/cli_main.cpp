@@ -3,6 +3,11 @@
 #include "project_bundle.h"
 #include "source_image.h"
 
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+#  include <QByteArray>
+#  include <QGuiApplication>
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -11,6 +16,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -39,6 +45,20 @@ constexpr double kMaximumClockMilliseconds =
 // actually changing a value. That preserves the bundle invariant that a
 // no-change Save validates the project without manufacturing a new version.
 bool g_prompt_changed = false;
+
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+std::unique_ptr<QGuiApplication> make_graphics_application(int& argc,
+                                                           char** argv) {
+#  if defined(__linux__)
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")
+        && qEnvironmentVariableIsEmpty("DISPLAY")
+        && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) {
+        qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    }
+#  endif
+    return std::make_unique<QGuiApplication>(argc, argv);
+}
+#endif
 
 bool effective_active_clock_is_music(const RenderConfig& config) {
     return (config.layer_clock.enabled ? config.layer_clock.clock.mode
@@ -1613,6 +1633,11 @@ void configure_surface(RenderConfig& config,
                  {pvt::SurfaceMapping::Sphere, "Sphere"},
                  {pvt::SurfaceMapping::Cube, "Cube"},
                  {pvt::SurfaceMapping::CustomObj, "Custom OBJ"}});
+    if (config.surface.mapping != pvt::SurfaceMapping::Plane
+        && config.surface.plane_displacement.enabled) {
+        config.surface.plane_displacement.enabled = false;
+        g_prompt_changed = true;
+    }
     if (config.surface.mapping == pvt::SurfaceMapping::CustomObj) {
         const std::string previous_path = config.surface.obj_path;
         const bool changed_before_path_prompt = g_prompt_changed;
@@ -1638,6 +1663,55 @@ void configure_surface(RenderConfig& config,
             config.surface.obj_sha256 = attached.sha256;
             config.surface.obj_basename = attached.basename;
         }
+    }
+    if (config.surface.mapping == pvt::SurfaceMapping::Plane) {
+        auto& displacement = config.surface.plane_displacement;
+        const std::string previous_path = displacement.path;
+        const bool changed_before_path_prompt = g_prompt_changed;
+        if (!prompt_text("Height-map PNG path", displacement.path,
+                         kMaximumPathBytes)) {
+            return;
+        }
+        if (displacement.path != previous_path) {
+            std::string source_error;
+            if (!pvt::detail::validate_starting_image_source(
+                    displacement.path, &source_error)) {
+                std::cout << "Could not decode that height map; the previous map remains: "
+                          << source_error << '\n';
+                displacement.path = previous_path;
+                g_prompt_changed = changed_before_path_prompt;
+                return;
+            }
+            ProjectDocument candidate = document;
+            pvt::ProjectAttachment attached;
+            std::string attachment_error;
+            if (!pvt::attach_project_file(
+                    candidate,
+                    pvt::plane_displacement_attachment_id(layer_uuid),
+                    displacement.path, &attached, &attachment_error)) {
+                std::cout << "Could not embed that height map; the previous map remains: "
+                          << attachment_error << '\n';
+                displacement.path = previous_path;
+                g_prompt_changed = changed_before_path_prompt;
+                return;
+            }
+            document = std::move(candidate);
+            displacement.path = attached.local_path;
+            displacement.sha256 = attached.sha256;
+            displacement.basename = attached.basename;
+        }
+        prompt_bool("Displace Plane with height map", displacement.enabled);
+        if (displacement.enabled && displacement.path.empty()
+            && displacement.sha256.empty()) {
+            std::cout << "Choose a height-map PNG before enabling plane displacement.\n";
+            displacement.enabled = false;
+        }
+        prompt_real("Minimum displacement", displacement.minimum, -2.0, 0.0);
+        prompt_real("Maximum displacement", displacement.maximum, 0.0, 2.0);
+        prompt_real("Neutral height-map midpoint", displacement.midpoint, 0.0, 1.0);
+        prompt_int("Height-map pixels per mesh node",
+                   displacement.pixels_per_node, 1,
+                   (std::numeric_limits<int>::max)());
     }
     prompt_int("Surface rotations per loop", config.surface.rotations_per_loop, -1000, 1000);
     prompt_real("Surface starting phase (degrees)", config.surface.phase_degrees,
@@ -1689,9 +1763,9 @@ void configure_surface(RenderConfig& config,
         config.output.write_alpha = true;
         std::cout << "Final RGBA output enabled because layer motion can expose the canvas exterior.\n";
     }
-    if (config.surface.enabled
-        && config.surface.mapping != pvt::SurfaceMapping::Plane
-        && config.surface.curvature > 0.0) {
+    if (config.surface.enabled && config.surface.curvature > 0.0
+        && (config.surface.mapping != pvt::SurfaceMapping::Plane
+            || config.surface.plane_displacement.enabled)) {
         g_prompt_changed = g_prompt_changed || !config.output.write_alpha;
         config.output.write_alpha = true;
         std::cout << "Final RGBA output enabled for the 3D surface exterior.\n";
@@ -1983,6 +2057,20 @@ void configure_project_and_layers(CliState& state) {
                 copy.render.surface.obj_sha256 = attached.sha256;
                 copy.render.surface.obj_basename = attached.basename;
             }
+            if (!copy.render.surface.plane_displacement.sha256.empty()) {
+                pvt::ProjectAttachment attached;
+                if (!duplicate_attachment(
+                        pvt::plane_displacement_attachment_id(
+                            project.layers[first_index].uuid),
+                        pvt::plane_displacement_attachment_id(copy.uuid),
+                        attached)) {
+                    std::cout << "The embedded plane height map is unavailable.\n";
+                    continue;
+                }
+                copy.render.surface.plane_displacement.path = attached.local_path;
+                copy.render.surface.plane_displacement.sha256 = attached.sha256;
+                copy.render.surface.plane_displacement.basename = attached.basename;
+            }
             if (!copy.render.layer_clock.clock.music.source_sha256.empty()) {
                 pvt::ProjectAttachment attached;
                 if (!duplicate_attachment(
@@ -2037,6 +2125,8 @@ void configure_project_and_layers(CliState& state) {
             bool detached = true;
             for (const std::string& reference_id : {
                      pvt::surface_obj_attachment_id(
+                         project.layers[first_index].uuid),
+                     pvt::plane_displacement_attachment_id(
                          project.layers[first_index].uuid),
                      pvt::starting_image_attachment_id(
                          project.layers[first_index].uuid),
@@ -2540,6 +2630,9 @@ void print_help(const char* program) {
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
         << "  (0 uses the bounded default of 2)\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping)\n"
+        << "  --height-map PNG  (enable a subdivided displacement Plane)\n"
+        << "  --height-min N --height-max N --height-midpoint 0..1\n"
+        << "  --height-pixels-per-node N --no-height-map\n"
         << "  --starting-image PNG --image-fit stretch|contain|cover|tile\n"
         << "  --no-starting-image\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
@@ -2577,7 +2670,10 @@ bool option_takes_value(const std::string& option) {
            || option == "--beat-offset-ms"
            || option == "--png-compression" || option == "--workers"
            || option == "--backend" || option == "--gpu-in-flight"
-           || option == "--obj"
+           || option == "--obj" || option == "--height-map"
+           || option == "--height-min" || option == "--height-max"
+           || option == "--height-midpoint"
+           || option == "--height-pixels-per-node"
            || option == "--starting-image" || option == "--image-fit"
            || option == "--dither" || option == "--output-dir" || option == "--prefix"
            || option == "--start-frame" || option == "--digits";
@@ -2809,7 +2905,14 @@ int main(int argc, char** argv) {
     std::string bundle_to_save;
     std::string legacy_to_save;
 
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+    std::unique_ptr<QGuiApplication> graphics_application;
+#endif
+
     if (argc == 1) {
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+        graphics_application = make_graphics_application(argc, argv);
+#endif
         return interactive_menu(state) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
@@ -2952,6 +3055,14 @@ int main(int argc, char** argv) {
             mark_changed(state.document.project.layers.at(state.active_layer)
                              .render.starting_image.enabled,
                          false);
+            continue;
+        }
+        if (option == "--no-height-map") {
+            mutate_active([&](RenderConfig& config) {
+                if (!config.surface.plane_displacement.enabled) return false;
+                config.surface.plane_displacement.enabled = false;
+                return true;
+            });
             continue;
         }
         if (!option_takes_value(option)) {
@@ -3220,11 +3331,90 @@ int main(int argc, char** argv) {
                                          && !config.output.write_alpha);
                 config.surface.enabled = true;
                 config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+                config.surface.plane_displacement.enabled = false;
                 config.surface.obj_path = attached.local_path;
                 config.surface.obj_sha256 = attached.sha256;
                 config.surface.obj_basename = attached.basename;
                 if (needs_alpha) config.output.write_alpha = true;
                 return changed;
+            });
+        } else if (option == "--height-map" && valid_output_directory(value)) {
+            std::string source_error;
+            if (!pvt::detail::validate_starting_image_source(
+                    value, &source_error)) {
+                std::cerr << "Could not decode the displacement height map: "
+                          << source_error << '\n';
+                return EXIT_FAILURE;
+            }
+            ProjectDocument candidate = state.document;
+            pvt::ProjectAttachment attached;
+            std::string attachment_error;
+            const std::string reference_id =
+                pvt::plane_displacement_attachment_id(
+                    candidate.project.layers.at(state.active_layer).uuid);
+            if (!pvt::attach_project_file(candidate, reference_id, value,
+                                          &attached, &attachment_error)) {
+                std::cerr << "Could not embed the displacement height map: "
+                          << attachment_error << '\n';
+                return EXIT_FAILURE;
+            }
+            state.document = std::move(candidate);
+            mutate_active([&](RenderConfig& config) {
+                auto& displacement = config.surface.plane_displacement;
+                const bool changed = !config.surface.enabled
+                                     || config.surface.mapping
+                                            != pvt::SurfaceMapping::Plane
+                                     || !displacement.enabled
+                                     || displacement.path != attached.local_path
+                                     || displacement.sha256 != attached.sha256
+                                     || displacement.basename != attached.basename
+                                     || !config.output.write_alpha;
+                config.surface.enabled = true;
+                config.surface.mapping = pvt::SurfaceMapping::Plane;
+                displacement.enabled = true;
+                displacement.path = attached.local_path;
+                displacement.sha256 = attached.sha256;
+                displacement.basename = attached.basename;
+                config.output.write_alpha = true;
+                return changed;
+            });
+        } else if (option == "--height-min"
+                   && parse_real(value, -2.0, 0.0, real)) {
+            mutate_active([&](RenderConfig& config) {
+                auto& destination =
+                    config.surface.plane_displacement.minimum;
+                if (destination == real) return false;
+                destination = real;
+                return true;
+            });
+        } else if (option == "--height-max"
+                   && parse_real(value, 0.0, 2.0, real)) {
+            mutate_active([&](RenderConfig& config) {
+                auto& destination =
+                    config.surface.plane_displacement.maximum;
+                if (destination == real) return false;
+                destination = real;
+                return true;
+            });
+        } else if (option == "--height-midpoint"
+                   && parse_real(value, 0.0, 1.0, real)) {
+            mutate_active([&](RenderConfig& config) {
+                auto& destination =
+                    config.surface.plane_displacement.midpoint;
+                if (destination == real) return false;
+                destination = real;
+                return true;
+            });
+        } else if (option == "--height-pixels-per-node"
+                   && parse_integer(value, 1,
+                                    (std::numeric_limits<int>::max)(),
+                                    integer)) {
+            mutate_active([&](RenderConfig& config) {
+                auto& destination =
+                    config.surface.plane_displacement.pixels_per_node;
+                if (destination == integer) return false;
+                destination = static_cast<int>(integer);
+                return true;
             });
         } else if (option == "--starting-image"
                    && valid_output_directory(value)) {
@@ -3379,12 +3569,18 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
         if (loaded_document) {
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+            graphics_application = make_graphics_application(argc, argv);
+#endif
             return interactive_menu(state) ? EXIT_SUCCESS : EXIT_FAILURE;
         }
         std::cerr << "No action selected. Add --render, --save FILE, or use --help.\n";
         return EXIT_FAILURE;
     }
 
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+    graphics_application = make_graphics_application(argc, argv);
+#endif
     if (!pvt::render_project_sequence(
             state.document.project, render_options,
             [](int completed, int total) {

@@ -6,6 +6,76 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 5.0.0 displacement Plane and closed Cylinder
+
+Version 5.0.0 replaces the built-in Cylinder's former rectangular side mask
+with a closed perspective ray-cast primitive. The CPU and Metal paths intersect
+the cylindrical side plus both caps, use a fixed cap-revealing tilt and authored
+Y rotation, texture sides and caps separately, apply the same lighting rule,
+and composite the exit surface behind a translucent entry surface. A shape
+regression rejects a rectangular alpha bounding box, while the existing
+neutral-curvature, shell-alpha, distinct-rear-color, loop, and CPU/Metal parity
+contracts remain active.
+
+Plane mapping now owns optional `PlaneDisplacementConfig` state: embedded PNG
+path/content identity, signed minimum and maximum height, normalized zero-height
+midpoint, and positive pixels-per-node ratio. A checked grid generator samples
+linear PNG luminance, preserves both output edges, emits indexed triangles,
+UVs, and smooth normals, and uses stable 2D-aspect normalization so the same
+authored height range does not change scale when the map's extrema change.
+Decoded-image identity, effective render dimensions, ratio, and all height
+controls key a bounded LRU mesh cache. The editor preview and adaptive Live
+renderer already scale the effective project canvas before rendering, so they
+request lower-resolution grids; full frame/video and full-quality Live paths
+request their corresponding output grid. The GUI exports the authored-output
+mesh atomically as a Wavefront OBJ.
+
+Height maps are layer-scoped content-addressed attachments. They materialize,
+duplicate, detach, independently-copy, compare, recover, and save with the same
+transactional bundle rules as starting images and custom OBJs. GUI and CLI
+source controls validate/decode before commit, keep source selection reachable
+while use is disabled, preserve a disabled asset for later reuse, and enable
+final alpha whenever the displaced mesh exterior can be visible. Metal renders
+the ordered mesh stage on CPU and resumes the same strict GPU pipeline rather
+than silently retrying a failed layer on CPU.
+
+Setup format advances to 13 and layer format to 11; formats through setup 12
+and layer 10 migrate to neutral displacement defaults. Public by-value
+configuration layout grows, so the product and shared-library ABI advance to
+5.0.0/SONAME 5 and installed clients must rebuild. Existing projects remain
+compatible inputs.
+
+Windows and Linux Qt product builds now compile a public-API OpenGL 3.3 surface
+backend. A process-lifetime service creates a `QOffscreenSurface` on the GUI
+thread, owns one serialized render context on a dedicated thread, uploads and
+reads float RGBA textures, and evaluates the analytic Plane, closed Cylinder,
+Sphere, and Cube mappings in a fragment shader. `RendererCapabilities` reports
+compiled/available state, driver renderer, and actionable status. CPU + GPU
+uses the stage when available and does not hide an admitted shader/runtime
+failure behind a CPU retry. Strict GPU requires a supported active analytic
+surface on these platforms; imported OBJ and displacement-Plane meshes remain
+explicit ordered CPU stages. Metal remains preferred on macOS and unchanged in
+coverage. The release matrix builds the backend on x64/ARM64 Windows and Linux;
+the Linux job exercises CPU/OpenGL parity under Xvfb/Mesa, while physical
+Intel/AMD/NVIDIA hardware qualification remains outstanding.
+
+Application Settings and Video Export now place their content inside resizable
+scroll areas, cap themselves to the active screen's available geometry, and
+leave their dialog buttons outside the scrolling region. GUI smoke verifies the
+settings scroll contract and screen bound, covering the high-scale/small-screen
+cutoff shown in the supplied screenshot.
+
+Local release-candidate validation passes all 23 optimized static and all 23
+optimized shared native tests, including real Metal parity and Cocoa GUI smoke;
+all 22 strict C++20 CPU/CLI tests; and all 22 ASan/UBSan CPU/CLI tests. The
+OpenGL translation unit passes the same strict C++ warning policy against Qt
+6.8.3, and both embedded GLSL 330 shaders pass `glslangValidator`. A clean
+installed shared-library consumer configures, links, and runs against SONAME 5.
+The self-contained macOS distribution verifies all 26 Mach-O files, passes deep
+code-signature verification, and passes GUI and CLI smoke both before and after
+single-root archive extraction. Remote Windows/Linux native OpenGL/package
+results remain the release tag's final gate.
+
 ## 4.0.1 generated alpha reliability
 
 Version 4.0.1 fixes a first-layer-only transparency failure in the built-in
@@ -1120,13 +1190,14 @@ target.
    PPA from Debian/Ubuntu systems, including clean-install, upgrade, dependency,
    and desktop-entry behavior.
 4. **Cross-platform acceleration:** retain explicit CPU, CPU+GPU, and GPU
-   policy, and use CPU-only rendering automatically only where no GPU backend is
-   available. Metal is the only implemented/tested GPU
-   backend today. Implement the staged Qt-hosted OpenGL design in
-   `PORTABILITY_ROADMAP.md`, exercise it first with Mesa CI parity, and call it
-   production-ready only after real Linux/Windows GPU stacks pass; a
-   software-rendered VM does not prove parity. GLFW may host a future standalone
-   Live output window but does not replace the renderer or Qt editor.
+   policy. Metal remains the broad macOS backend; 5.0.0 adds the first
+   Qt-hosted OpenGL stage for analytic Plane/Cylinder/Sphere/Cube mapping on
+   Windows and Linux. Continue the staged design in `PORTABILITY_ROADMAP.md`
+   through sources, effects, quantization, and GPU-resident compositing, and
+   call the complete backend production-ready only after real Windows/Linux
+   Intel, AMD, and NVIDIA stacks pass; Mesa/hosted CI does not prove physical
+   driver parity. GLFW may host a future standalone Live output window but does
+   not replace the renderer or Qt editor.
 5. **Cross-platform native video:** investigate optional GStreamer export on
    Linux. Prefer native Media Foundation on Windows; a later integration may
    prompt for an already-installed FFmpeg executable and link to external

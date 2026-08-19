@@ -43,6 +43,8 @@ include(CMakePackageConfigHelpers)
 option(PVT_BUILD_CLI "Build the command-line renderer" ON)
 option(PVT_BUILD_EXAMPLES "Build the C++ library API example" OFF)
 option(PVT_ENABLE_METAL "Build the optional Apple Metal rendering backend" ON)
+option(PVT_ENABLE_OPENGL_SURFACE
+    "Build the Qt-hosted OpenGL analytic-surface backend on Windows/Linux" ON)
 set(PVT_DISTRIBUTION_CODE_SIGN_IDENTITY "-" CACHE STRING
     "macOS signing identity for distribution; '-' performs ad-hoc signing")
 if(PVT_ENABLE_DISTRIBUTION AND NOT PVT_BUILD_QT_GUI)
@@ -122,10 +124,20 @@ else()
 endif()
 find_package(Threads REQUIRED)
 
+# Product builds already require Qt for the editor. Discover it before the
+# renderer target so Windows/Linux can use the same public Qt context and
+# function-loading APIs for offscreen OpenGL surface mapping. A core-only
+# library build remains free of Qt and uses the portable CPU implementation.
+if(PVT_BUILD_QT_GUI)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Network)
+endif()
+
 add_library(ProceduralVisualizerTool
     src/composite.cpp
     src/config_io.cpp
     src/core.cpp
+    src/displacement_surface.cpp
+    src/displacement_surface.h
     src/frame_renderer.cpp
     src/frame_renderer_internal.h
     src/image_io.cpp
@@ -195,6 +207,20 @@ if(APPLE AND PVT_ENABLE_METAL)
 endif()
 if(NOT PVT_METAL_BACKEND_ENABLED)
     target_sources(ProceduralVisualizerTool PRIVATE src/metal_backend_stub.cpp)
+endif()
+
+set(PVT_OPENGL_SURFACE_BACKEND_ENABLED OFF)
+if(PVT_ENABLE_OPENGL_SURFACE AND PVT_BUILD_QT_GUI
+   AND (WIN32 OR (UNIX AND NOT APPLE)))
+    set(PVT_OPENGL_SURFACE_BACKEND_ENABLED ON)
+    target_sources(ProceduralVisualizerTool PRIVATE
+        src/opengl_surface_backend.cpp)
+    target_link_libraries(ProceduralVisualizerTool PRIVATE Qt6::Gui)
+    target_compile_definitions(ProceduralVisualizerTool PRIVATE
+        PVT_HAS_OPENGL_SURFACE_BACKEND=1)
+else()
+    target_sources(ProceduralVisualizerTool PRIVATE
+        src/opengl_surface_backend_stub.cpp)
 endif()
 add_library(ProceduralVisualizerTool::ProceduralVisualizerTool
     ALIAS ProceduralVisualizerTool)
@@ -440,6 +466,11 @@ if(PVT_BUILD_CLI)
         ProceduralVisualizerTool::Audio)
     target_compile_definitions(pvt_render_cli PRIVATE
         PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
+    if(PVT_OPENGL_SURFACE_BACKEND_ENABLED)
+        target_compile_definitions(pvt_render_cli PRIVATE
+            PVT_CLI_HAS_QT_OPENGL_SURFACE=1)
+        target_link_libraries(pvt_render_cli PRIVATE Qt6::Gui)
+    endif()
     pvt_enable_warnings(pvt_render_cli)
 endif()
 
@@ -453,7 +484,6 @@ if(PVT_BUILD_EXAMPLES)
 endif()
 
 if(PVT_BUILD_QT_GUI)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Network)
     qt_standard_project_setup()
 
     set(PVT_GUI_VIDEO_SOURCES gui/video_export_stub.cpp)
@@ -694,6 +724,20 @@ if(BUILD_TESTING)
     pvt_enable_warnings(pvt_metal_backend_tests)
     add_test(NAME pvt_metal_backend COMMAND pvt_metal_backend_tests)
 
+    if(PVT_OPENGL_SURFACE_BACKEND_ENABLED)
+        add_executable(pvt_opengl_surface_backend_tests
+            tests/opengl_surface_backend_test.cpp)
+        target_compile_features(pvt_opengl_surface_backend_tests PRIVATE
+            cxx_std_17)
+        set_target_properties(pvt_opengl_surface_backend_tests PROPERTIES
+            CXX_EXTENSIONS NO)
+        target_link_libraries(pvt_opengl_surface_backend_tests PRIVATE
+            ProceduralVisualizerTool::ProceduralVisualizerTool Qt6::Gui)
+        pvt_enable_warnings(pvt_opengl_surface_backend_tests)
+        add_test(NAME pvt_opengl_surface_backend
+            COMMAND pvt_opengl_surface_backend_tests)
+    endif()
+
     add_executable(pvt_bundle_tests tests/bundle_test.cpp)
     target_compile_features(pvt_bundle_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_bundle_tests PROPERTIES CXX_EXTENSIONS NO)
@@ -784,6 +828,15 @@ if(BUILD_TESTING)
                 --png-compression 0
                 --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-custom-obj
                 --prefix obj_ --overwrite)
+        add_test(NAME pvt_cli_displacement_plane_render
+            COMMAND pvt_render_cli --render
+                --width 32 --height 32 --block-size 2 --frames 2
+                --height-map ${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png
+                --height-min -0.3 --height-max 0.45
+                --height-midpoint 0.48 --height-pixels-per-node 3
+                --png-compression 0
+                --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-displacement-plane
+                --prefix height_ --overwrite)
         add_test(NAME pvt_cli_starting_image_render
             COMMAND pvt_render_cli --render
                 --width 32 --height 32 --block-size 2 --frames 2
@@ -872,6 +925,11 @@ install(EXPORT ProceduralVisualizerToolTargets
     NAMESPACE ProceduralVisualizerTool::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ProceduralVisualizerTool)
 
+set(PVT_CONFIG_QT_DEPENDENCY "")
+if(PVT_OPENGL_SURFACE_BACKEND_ENABLED AND NOT BUILD_SHARED_LIBS)
+    set(PVT_CONFIG_QT_DEPENDENCY
+        "find_dependency(Qt6 6.5 COMPONENTS Gui)")
+endif()
 configure_package_config_file(
     cmake/ProceduralVisualizerToolConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/ProceduralVisualizerToolConfig.cmake

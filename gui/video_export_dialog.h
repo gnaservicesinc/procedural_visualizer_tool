@@ -10,6 +10,7 @@ class QComboBox;
 class QLabel;
 class QDoubleSpinBox;
 class QSpinBox;
+class QShowEvent;
 
 class VideoExportDialog final : public QDialog {
 public:
@@ -33,6 +34,9 @@ private:
     QSpinBox* chunk_frames_ = nullptr;
     QDoubleSpinBox* chunk_seconds_ = nullptr;
     QLabel* explanation_ = nullptr;
+
+protected:
+    void showEvent(QShowEvent* event) override;
 };
 
 #endif

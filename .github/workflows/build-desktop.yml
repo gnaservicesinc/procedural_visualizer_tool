@@ -203,10 +203,14 @@ jobs:
         shell: bash
         run: |
           metal_cpp="$RUNNER_TEMP/metal-cpp"
-          git init "$metal_cpp"
-          git -C "$metal_cpp" remote add origin https://github.com/apple/metal-cpp.git
-          git -C "$metal_cpp" fetch --depth=1 origin 9b4029d993648571595451f3b965c7c438fb7dc4
-          git -C "$metal_cpp" checkout --detach FETCH_HEAD
+          archive="$RUNNER_TEMP/metal-cpp.tar.gz"
+          mkdir -p "$metal_cpp"
+          curl --fail --location --retry 5 --retry-all-errors \
+            --output "$archive" \
+            "https://codeload.github.com/apple/metal-cpp/tar.gz/9b4029d993648571595451f3b965c7c438fb7dc4"
+          echo "c24619ba3c46bb1e7e435865c24e52b2766662dad9fa3367ec412348ce20149d  $archive" \
+            | shasum -a 256 --check
+          tar -xzf "$archive" --strip-components=1 -C "$metal_cpp"
           echo "METAL_CPP_DIR=$metal_cpp" >> "$GITHUB_ENV"
 
       - name: Configure Linux
@@ -273,9 +277,7 @@ jobs:
       - name: Run Linux tests
         if: runner.os == 'Linux'
         shell: bash
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: ctest --test-dir build --output-on-failure --timeout 300
+        run: xvfb-run --auto-servernum ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Run macOS tests
         if: runner.os == 'macOS'
@@ -294,6 +296,11 @@ jobs:
           xvfb-run --auto-servernum \
             ./package/bin/procedural-visualizer-tool --smoke-test
           ./package/bin/pvt-render --self-test
+          cmake -S tests/consumer -B installed-consumer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/package;$QT_ROOT"
+          cmake --build installed-consumer --parallel
+          ./installed-consumer/pvt_installed_consumer
 
       - name: Install Windows package
         if: runner.os == 'Windows'
@@ -326,6 +333,20 @@ jobs:
             "--smoke-test"
           Invoke-PackageCheck `
             "$env:GITHUB_WORKSPACE/package/bin/pvt-render.exe" "--self-test"
+          $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
+          $consumerPrefix = "$env:GITHUB_WORKSPACE/package;$env:QT_ROOT"
+          cmake -S tests/consumer -B installed-consumer `
+            -G "Visual Studio 17 2022" `
+            -A "${{ matrix.cmake-arch }}" -T ClangCL `
+            -DCMAKE_PREFIX_PATH="$consumerPrefix" `
+            -DQT_HOST_PATH="$qtHostPath" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg-triplet }}"
+          cmake --build installed-consumer --config Release --parallel
+          & "$env:GITHUB_WORKSPACE/installed-consumer/Release/pvt_installed_consumer.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed consumer failed with exit code $LASTEXITCODE"
+          }
 
       - name: Verify and stage macOS package
         if: runner.os == 'macOS'
@@ -421,21 +442,21 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
-          This patch fixes generated alpha on the built-in first layer and in existing projects created from that template. "Include alpha as a generated color dimension" now applies directly instead of being silently disabled by a separate source-alpha setting.
+          This major release fixes the built-in Cylinder so it renders as a closed, rounded, perspective-projected 3D primitive with textured sides, visible caps, lighting, and translucent rear-surface compositing instead of a rectangular box mask.
 
-          The source-alpha switch now has one clear purpose: it non-destructively ignores alpha stored in starting palettes and PNG pixels. Generated alpha remains independently controllable beside the generated color ranges.
+          Plane mapping now supports embedded PNG height maps, signed minimum and maximum displacement, an artist-selected neutral midpoint, pixel-to-node density, resolution-aware preview/output mesh caches, and Wavefront OBJ export. Setup format advances to 13, layer records to 11, and the public C++ ABI to SONAME 5; existing projects remain migration inputs.
 
-          CPU, Metal, project compositing, export-safety analysis, GUI defaults, Live mappings, and CLI wording share the corrected contract. Regression coverage includes generated alpha with palette/PNG alpha disabled and verifies CPU/Metal parity.
+          Windows and Linux product builds add a public-Qt offscreen OpenGL 3.3 stage for analytic Plane, Cylinder, Sphere, and Cube mapping. CPU + GPU uses it when the runtime context supports it, strict GPU reports unsupported mesh/context work directly, and runtime capabilities show the actual OpenGL renderer. Imported OBJ and displacement-Plane meshes remain ordered CPU stages, and full portable effect/source/compositing coverage plus physical Intel/AMD/NVIDIA qualification remain follow-up work. macOS continues to use its broader Metal pipeline.
 
-          This patch keeps SONAME 4, setup format 12, and all project-bundle formats unchanged.
+          Application Settings and Video Export now cap themselves to the active monitor, keep action buttons visible, and scroll their content when the display or UI scale cannot fit the natural layout.
 
-          CoreMIDI is the first native MIDI backend. Linux and Windows packages retain the portable Live authoring model but currently report the unsupported runtime adapter clearly. Syphon, Spout, and NDI remain optional follow-up transports.
+          CoreMIDI remains the first native MIDI backend. Linux and Windows packages retain the portable Live authoring model but report the unsupported runtime adapter clearly. Syphon, Spout, and NDI remain optional follow-up transports.
 
           Downloads are attached for Apple Silicon macOS, x64 and ARM64 Linux, and x64 and ARM64 Windows. Every package was built and smoke-tested on its named native GitHub-hosted runner before this release was published. See SHA256SUMS.txt for integrity checks.
 
           The optional command-line renderer is named pvt-render. It is embedded inside the macOS application bundle and installed under bin/ in the Linux and Windows packages.
 
-          Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows currently have no GPU backend and therefore use the CPU renderer and PNG/EXR sequence export while portable GPU and native movie backends are developed. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
+          Platform boundary: macOS includes the tested Metal renderer and AVFoundation/VideoToolbox movie export. Linux and Windows include analytic-surface OpenGL acceleration but still use PNG/EXR sequence export and the CPU for unported renderer stages. The macOS package is ad-hoc signed but not notarized; Windows packages are not Authenticode-signed.
           EOF
 
       - name: Publish GitHub release

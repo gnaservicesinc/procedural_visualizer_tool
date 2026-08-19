@@ -211,6 +211,10 @@ bool is_setup_v12_key(std::string_view key) {
     return starts_with(key, "post_process.") || starts_with(key, "live.");
 }
 
+bool is_setup_v13_key(std::string_view key) {
+    return starts_with(key, "surface.plane_displacement.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -226,7 +230,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 6U ? 8U
                     : layer_version == 7U ? 9U
                     : layer_version == 8U ? 10U
-                    : layer_version == 9U ? 11U : 12U;
+                    : layer_version == 9U ? 11U
+                    : layer_version == 10U ? 12U : 13U;
     return true;
 }
 
@@ -482,6 +487,9 @@ bool synthesize_setup(const std::string& partial,
         if (setup_version < 12U && is_setup_v12_key(key)) {
             continue;
         }
+        if (setup_version < 13U && is_setup_v13_key(key)) {
+            continue;
+        }
         if (is_render_key(key) != partial_is_render) {
             destination.append(line);
             destination.push_back('\n');
@@ -620,6 +628,11 @@ bool serialize_layer_config(const RenderData& render,
         // portable project semantics.
         if (!project.layers.front().render.surface.obj_sha256.empty()) {
             project.layers.front().render.surface.obj_path.clear();
+        }
+        if (!project.layers.front().render.surface
+                 .plane_displacement.sha256.empty()) {
+            project.layers.front().render.surface
+                .plane_displacement.path.clear();
         }
         if (!project.layers.front().render.starting_image.sha256.empty()) {
             project.layers.front().render.starting_image.path.clear();

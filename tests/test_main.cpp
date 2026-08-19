@@ -1,5 +1,6 @@
 #include "procedural_visualizer_tool.h"
 #include "../src/config_codec.h"
+#include "../src/displacement_surface.h"
 #include "../src/frame_renderer_internal.h"
 #include "../src/path_utf8.h"
 #include "../src/source_image.h"
@@ -155,6 +156,130 @@ bool write_test_png16(const fs::path& path, png_uint_32 width,
     return pixels.size() == PNG_IMAGE_SIZE(image) / sizeof(png_uint_16)
            && png_image_write_to_file(&image, path.string().c_str(), 0,
                                       pixels.data(), 0, nullptr) != 0;
+}
+
+void test_plane_displacement_mesh(const fs::path& directory) {
+    std::size_t columns = 0U;
+    std::size_t rows = 0U;
+    std::size_t mesh_bytes = 0U;
+    std::string requirements_error;
+    CHECK(pvt::detail::displacement_mesh_requirements(
+        96, 64, 4, columns, rows, mesh_bytes, &requirements_error));
+    CHECK(columns == 25U);
+    CHECK(rows == 17U);
+    CHECK(mesh_bytes > 0U);
+    CHECK(pvt::detail::displacement_mesh_requirements(
+        96, 64, 1, columns, rows, mesh_bytes, &requirements_error));
+    CHECK(columns == 96U);
+    CHECK(rows == 64U);
+
+    const fs::path height_map = directory / "plane-height.png";
+    std::vector<unsigned char> pixels(9U * 9U * 4U, 255U);
+    for (std::size_t y = 0U; y < 9U; ++y) {
+        for (std::size_t x = 0U; x < 9U; ++x) {
+            const double dx = static_cast<double>(x) - 4.0;
+            const double dy = static_cast<double>(y) - 4.0;
+            const double distance = std::sqrt(dx * dx + dy * dy);
+            const unsigned char value = static_cast<unsigned char>(
+                std::lround(std::clamp(1.0 - distance / 5.7, 0.0, 1.0)
+                            * 255.0));
+            const std::size_t offset = (y * 9U + x) * 4U;
+            pixels[offset] = value;
+            pixels[offset + 1U] = value;
+            pixels[offset + 2U] = value;
+        }
+    }
+    CHECK(write_test_png(height_map, 9U, 9U, pixels));
+
+    pvt::RenderConfig config = pvt::default_config();
+    make_small(config);
+    config.width = 96;
+    config.height = 64;
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.output.write_alpha = true;
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::Plane;
+    config.surface.curvature = 1.0;
+    config.surface.lighting = 0.65;
+    config.surface.plane_displacement.enabled = true;
+    config.surface.plane_displacement.path = height_map.string();
+    config.surface.plane_displacement.minimum = -0.25;
+    config.surface.plane_displacement.maximum = 0.45;
+    config.surface.plane_displacement.midpoint = 0.5;
+    config.surface.plane_displacement.pixels_per_node = 4;
+
+    const auto validation = pvt::validate(config);
+    CHECK(validation.ok);
+    pvt::Image first;
+    std::string error;
+    CHECK(pvt::render_frame(config, 0, first, &error));
+    CHECK(first.width == config.width);
+    CHECK(first.height == config.height);
+    bool transparent_exterior = false;
+    for (std::size_t offset = 3U; offset < first.pixels.size(); offset += 4U) {
+        transparent_exterior = transparent_exterior
+                               || first.pixels[offset] < 0.01F;
+    }
+    CHECK(transparent_exterior);
+
+    pvt::RenderConfig flat = config;
+    flat.surface.plane_displacement.enabled = false;
+    flat.surface.rotations_per_loop = 0;
+    flat.surface.phase_degrees = 0.0;
+    pvt::Image flat_image;
+    CHECK(pvt::render_frame(flat, 0, flat_image, &error));
+    CHECK(mean_absolute_difference(first, flat_image) > 0.01);
+
+    // A larger pixels-per-node ratio must reduce retained mesh memory, while
+    // a larger render target builds a correspondingly larger output mesh.
+    pvt::RenderConfig coarse = config;
+    coarse.surface.plane_displacement.pixels_per_node = 8;
+    const auto coarse_validation = pvt::validate(coarse);
+    CHECK(coarse_validation.ok);
+    CHECK(coarse_validation.estimated_peak_bytes
+          < validation.estimated_peak_bytes);
+    pvt::RenderConfig full = config;
+    full.width = 192;
+    full.height = 128;
+    const auto full_validation = pvt::validate(full);
+    CHECK(full_validation.ok);
+    CHECK(full_validation.estimated_peak_bytes
+          > validation.estimated_peak_bytes);
+
+    // Replacing the PNG at the same path, with the same dimensions, must
+    // invalidate the decoded-image identity and rebuild the generated plane.
+    const auto previous_modified = fs::last_write_time(height_map);
+    std::vector<unsigned char> replacement(9U * 9U * 4U, 255U);
+    for (std::size_t offset = 0U; offset < replacement.size(); offset += 4U) {
+        const unsigned char value = static_cast<unsigned char>(
+            255U - static_cast<unsigned int>(pixels[offset % pixels.size()]));
+        replacement[offset] = value;
+        replacement[offset + 1U] = value;
+        replacement[offset + 2U] = value;
+    }
+    CHECK(write_test_png(height_map, 9U, 9U, replacement));
+    std::error_code timestamp_error;
+    fs::last_write_time(
+        height_map, previous_modified + std::chrono::seconds(1),
+        timestamp_error);
+    CHECK(!timestamp_error);
+    pvt::Image changed;
+    CHECK(pvt::render_frame(config, 0, changed, &error));
+    CHECK(mean_absolute_difference(first, changed) > 0.001);
+
+    pvt::RenderConfig invalid = config;
+    invalid.surface.plane_displacement.path.clear();
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.surface.plane_displacement.minimum = 0.1;
+    CHECK(!pvt::validate(invalid).ok);
 }
 
 void test_post_process_effects(const fs::path& directory) {
@@ -351,7 +476,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t12\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t13\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -2212,6 +2337,39 @@ void test_direction_alpha_and_surfaces(const fs::path& source_root) {
                                            || radial.pixels[offset] == 0.0F;
             }
             CHECK(has_transparent_exterior);
+            if (mapping == pvt::SurfaceMapping::Cylinder) {
+                int minimum_x = config.width;
+                int maximum_x = -1;
+                int minimum_y = config.height;
+                int maximum_y = -1;
+                for (int y = 0; y < config.height; ++y) {
+                    for (int x = 0; x < config.width; ++x) {
+                        const float* pixel = radial.pixel(x, y);
+                        if (pixel != nullptr && pixel[3] > 0.5F) {
+                            minimum_x = std::min(minimum_x, x);
+                            maximum_x = std::max(maximum_x, x);
+                            minimum_y = std::min(minimum_y, y);
+                            maximum_y = std::max(maximum_y, y);
+                        }
+                    }
+                }
+                CHECK(maximum_x > minimum_x);
+                CHECK(maximum_y > minimum_y);
+                int transparent_bounds_corners = 0;
+                for (const auto corner : {
+                         std::pair{minimum_x, minimum_y},
+                         std::pair{maximum_x, minimum_y},
+                         std::pair{minimum_x, maximum_y},
+                         std::pair{maximum_x, maximum_y}}) {
+                    const float* pixel = radial.pixel(corner.first,
+                                                      corner.second);
+                    transparent_bounds_corners +=
+                        pixel != nullptr && pixel[3] < 0.01F ? 1 : 0;
+                }
+                // The old implementation was exactly a rectangular side
+                // mask. A closed tilted cylinder has rounded cap/side bounds.
+                CHECK(transparent_bounds_corners >= 1);
+            }
         }
     }
 
@@ -3242,6 +3400,15 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
     original.surface.obj_path = "mesh folder/test.obj";
+    original.surface.plane_displacement.enabled = false;
+    original.surface.plane_displacement.minimum = -0.42;
+    original.surface.plane_displacement.maximum = 0.73;
+    original.surface.plane_displacement.midpoint = 0.37;
+    original.surface.plane_displacement.pixels_per_node = 7;
+    original.surface.plane_displacement.path =
+        "height maps/test height.png";
+    original.surface.plane_displacement.sha256 = std::string(64U, 'b');
+    original.surface.plane_displacement.basename = "test height.png";
     original.palette = pvt::default_palette(2U);
     original.palette.enabled = false;
     original.palette.columns = 7U;
@@ -3381,6 +3548,16 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.output.png_compression_level == 3);
     CHECK(loaded.output.write_alpha);
     CHECK(loaded.surface.obj_path == original.surface.obj_path);
+    CHECK(loaded.surface.plane_displacement.minimum == -0.42);
+    CHECK(loaded.surface.plane_displacement.maximum == 0.73);
+    CHECK(loaded.surface.plane_displacement.midpoint == 0.37);
+    CHECK(loaded.surface.plane_displacement.pixels_per_node == 7);
+    CHECK(loaded.surface.plane_displacement.path
+          == original.surface.plane_displacement.path);
+    CHECK(loaded.surface.plane_displacement.sha256
+          == original.surface.plane_displacement.sha256);
+    CHECK(loaded.surface.plane_displacement.basename
+          == original.surface.plane_displacement.basename);
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
@@ -3596,11 +3773,28 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_twelve_bytes = read_bytes(first);
-    CHECK(std::string(version_twelve_bytes.begin(), version_twelve_bytes.end())
-              .rfind("PVT_SETUP\t12\n", 0U) == 0U);
-    std::string version_eleven(version_twelve_bytes.begin(),
-                               version_twelve_bytes.end());
+    const auto version_thirteen_bytes = read_bytes(first);
+    CHECK(std::string(version_thirteen_bytes.begin(),
+                      version_thirteen_bytes.end())
+              .rfind("PVT_SETUP\t13\n", 0U) == 0U);
+    std::string version_twelve(version_thirteen_bytes.begin(),
+                               version_thirteen_bytes.end());
+    version_twelve.replace(0U, std::string("PVT_SETUP\t13").size(),
+                           "PVT_SETUP\t12");
+    erase_records_with_prefix(version_twelve,
+                              "surface.plane_displacement.");
+    pvt::RenderConfig loaded_version_twelve;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_twelve, loaded_version_twelve, &error));
+    CHECK(!loaded_version_twelve.surface.plane_displacement.enabled);
+    CHECK(loaded_version_twelve.surface.plane_displacement.path.empty());
+    CHECK(loaded_version_twelve.surface.plane_displacement.minimum == -0.2);
+    CHECK(loaded_version_twelve.surface.plane_displacement.maximum == 0.2);
+    CHECK(loaded_version_twelve.surface.plane_displacement.midpoint == 0.5);
+    CHECK(loaded_version_twelve.surface.plane_displacement.pixels_per_node == 4);
+
+    std::string version_eleven(version_twelve.begin(),
+                               version_twelve.end());
     version_eleven.replace(0U, std::string("PVT_SETUP\t12").size(),
                            "PVT_SETUP\t11");
     erase_records_with_prefix(version_eleven, "post_process.");
@@ -4555,6 +4749,7 @@ int main(int argc, char** argv) {
     test_image_access_and_transactional_render();
     test_cancellable_single_layer_render();
     test_post_process_effects(test_directory);
+    test_plane_displacement_mesh(test_directory);
     test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
     test_new_procedural_effects();

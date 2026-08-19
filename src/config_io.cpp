@@ -73,7 +73,8 @@ namespace {
 // Starburst, and Lens distortion effect types. Version 12 adds bounded,
 // layer-local RGB/alpha inversion and edge antialiasing post-process controls,
 // plus portable Live endpoints, mappings, scenes, clock routes, calibration,
-// output preferences, and watchdog/dropout safety.
+// output preferences, and watchdog/dropout safety. Version 13 adds generated
+// plane-displacement geometry and its portable height-map attachment identity.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -85,8 +86,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 12U,
-              "config_io.cpp implements setup format version 12");
+static_assert(kSetupFormatVersion == 13U,
+              "config_io.cpp implements setup format version 13");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -207,6 +208,10 @@ bool setup_v11_record(std::string_view key) {
 
 bool setup_v12_record(std::string_view key) {
     return starts_with(key, "post_process.") || starts_with(key, "live.");
+}
+
+bool setup_v13_record(std::string_view key) {
+    return starts_with(key, "surface.plane_displacement.");
 }
 
 void clear_error(std::string* error) {
@@ -1854,6 +1859,17 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("surface.obj_path", config.surface.obj_path);
     builder.add_string("surface.obj_sha256", config.surface.obj_sha256);
     builder.add_string("surface.obj_basename", config.surface.obj_basename);
+    const PlaneDisplacementConfig& plane =
+        config.surface.plane_displacement;
+    builder.add_bool("surface.plane_displacement.enabled", plane.enabled);
+    builder.add_double("surface.plane_displacement.minimum", plane.minimum);
+    builder.add_double("surface.plane_displacement.maximum", plane.maximum);
+    builder.add_double("surface.plane_displacement.midpoint", plane.midpoint);
+    builder.add_integer("surface.plane_displacement.pixels_per_node",
+                        plane.pixels_per_node);
+    builder.add_string("surface.plane_displacement.path", plane.path);
+    builder.add_string("surface.plane_displacement.sha256", plane.sha256);
+    builder.add_string("surface.plane_displacement.basename", plane.basename);
 
     builder.add_bool("source_image.enabled", config.starting_image.enabled);
     builder.add_enum("source_image.fit", config.starting_image.fit,
@@ -2641,7 +2657,6 @@ bool deserialize_setup(Records& records,
             }
         }
     }
-
     if (setup_version >= 7U) {
         if (!consume_bool(records, "source_image.enabled",
                           candidate.starting_image.enabled, error)
@@ -3012,6 +3027,36 @@ bool deserialize_setup(Records& records,
                                      "surface.obj_sha256"));
         }
     }
+    if (setup_version >= 13U) {
+        PlaneDisplacementConfig& plane =
+            candidate.surface.plane_displacement;
+        if (!consume_bool(records, "surface.plane_displacement.enabled",
+                          plane.enabled, error)
+            || !consume_double(records, "surface.plane_displacement.minimum",
+                               plane.minimum, error)
+            || !consume_double(records, "surface.plane_displacement.maximum",
+                               plane.maximum, error)
+            || !consume_double(records, "surface.plane_displacement.midpoint",
+                               plane.midpoint, error)
+            || !consume_integer(
+                records, "surface.plane_displacement.pixels_per_node",
+                plane.pixels_per_node, error)
+            || !consume_string(records, "surface.plane_displacement.path",
+                               plane.path, error)
+            || !consume_bounded_string(
+                records, "surface.plane_displacement.sha256",
+                kSha256HexBytes, plane.sha256, error)
+            || !consume_bounded_string(
+                records, "surface.plane_displacement.basename",
+                kMaximumAttachmentBasenameBytes, plane.basename, error)
+            || !is_lowercase_sha256(plane.sha256)) {
+            return fail(
+                error,
+                record_error(
+                    "Invalid plane-displacement attachment metadata at setup key",
+                    "surface.plane_displacement.sha256"));
+        }
+    }
 
     if (setup_version >= 4U) {
         std::size_t palette_color_count = 0U;
@@ -3273,7 +3318,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 8U && setup_v8_record(key))
              || (setup_version < 10U && setup_v10_record(key))
              || (setup_version < 11U && setup_v11_record(key))
-             || (setup_version < 12U && setup_v12_record(key)));
+             || (setup_version < 12U && setup_v12_record(key))
+             || (setup_version < 13U && setup_v13_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

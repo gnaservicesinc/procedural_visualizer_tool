@@ -80,7 +80,8 @@ QRectF PreviewWidget::imageRectangle() const {
 
 bool PreviewWidget::sourceOverlayActive() const {
     if (!config_.surface.enabled
-        || config_.surface.mapping == pvt::SurfaceMapping::Plane) {
+        || (config_.surface.mapping == pvt::SurfaceMapping::Plane
+            && !config_.surface.plane_displacement.enabled)) {
         return false;
     }
     if (overlay_mode_ == OverlayMode::Swings) {

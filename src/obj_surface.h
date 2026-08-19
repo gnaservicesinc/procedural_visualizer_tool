@@ -30,6 +30,20 @@ bool apply_obj_surface_mapping(const Image& source,
                                std::string* error,
                                const std::atomic_bool* cancel = nullptr);
 
+// Renders an already-built immutable mesh through the same projection,
+// visibility, UV, lighting, and transparency pipeline used for Custom OBJ.
+// This is the common path used by generated displacement planes.
+bool apply_mesh_surface_mapping(const Image& source,
+                                Image& destination,
+                                const ObjMesh& mesh,
+                                int rotations_per_loop,
+                                double phase_degrees,
+                                double curvature,
+                                double lighting,
+                                double loop_phase,
+                                std::string* error,
+                                const std::atomic_bool* cancel = nullptr);
+
 } // namespace detail
 } // namespace pvt
 

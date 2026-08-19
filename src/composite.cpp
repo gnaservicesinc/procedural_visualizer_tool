@@ -468,7 +468,8 @@ bool render_data_can_create_transparency(const RenderData& render) {
         return true;
     }
     if (render.surface.enabled
-        && render.surface.mapping != SurfaceMapping::Plane
+        && (render.surface.mapping != SurfaceMapping::Plane
+            || render.surface.plane_displacement.enabled)
         && render.surface.curvature > 0.0) {
         return true;
     }
@@ -926,6 +927,23 @@ bool render_project_with_backend_validated(
     std::string metal_status;
     const bool metal_available = detail::metal_backend_available(
         &metal_device, &metal_status);
+
+    // The portable OpenGL backend accelerates the analytic surface stage
+    // inside each reference render rather than occupying an independent
+    // whole-layer lane. Preserve the requested CPU + GPU policy so every
+    // eligible Windows/Linux layer reaches that stage.
+    if (!metal_available) {
+        for (const std::size_t index : contributing) {
+            Image image;
+            std::string layer_error;
+            if (!render_one(index, options, image, layer_error)) {
+                return contextual_failure(index, layer_error);
+            }
+            if (!composite_one(index, image)) return false;
+        }
+        destination = std::move(accumulator);
+        return true;
+    }
     FrameRenderOptions cpu_options = options;
     cpu_options.backend = RenderBackend::Cpu;
     FrameRenderOptions gpu_options = options;

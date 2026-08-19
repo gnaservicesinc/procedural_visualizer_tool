@@ -49,21 +49,21 @@ constexpr std::size_t kMaximumCachedStartingImages = 64U;
 bool inspect_source(const std::string& path, std::uintmax_t& file_size,
                     fs::file_time_type& modified, std::string* error) {
     if (path.empty() || path.find('\0') != std::string::npos) {
-        return fail(error, "Starting image path is empty or contains a NUL byte.");
+        return fail(error, "PNG source path is empty or contains a NUL byte.");
     }
     std::error_code code;
     const fs::path native = path_from_utf8(path);
     const fs::file_status status = fs::symlink_status(native, code);
     if (code || !fs::is_regular_file(status) || fs::is_symlink(status)) {
         return fail(error,
-                    "Starting image must be a readable regular file, not a link or special file.");
+                    "PNG source must be a readable regular file, not a link or special file.");
     }
     file_size = fs::file_size(native, code);
     if (code || file_size == 0U || file_size > kMaximumEmbeddedAssetBytes) {
-        return fail(error, "Starting image file is empty, unreadable, or exceeds the signed-int bundle-entry limit.");
+        return fail(error, "PNG source file is empty, unreadable, or exceeds the signed-int bundle-entry limit.");
     }
     modified = fs::last_write_time(native, code);
-    return !code || fail(error, "Could not inspect the starting image timestamp.");
+    return !code || fail(error, "Could not inspect the PNG source timestamp.");
 }
 
 std::FILE* open_source(const fs::path& path) {
@@ -77,17 +77,17 @@ std::FILE* open_source(const fs::path& path) {
 
 bool decode_png(const std::string& path, std::shared_ptr<const Image>& decoded,
                 const std::atomic_bool* cancel, std::string* error) {
-    if (cancelled(cancel)) return fail(error, "Starting image decoding was cancelled.");
+    if (cancelled(cancel)) return fail(error, "PNG source decoding was cancelled.");
     const fs::path native = path_from_utf8(path);
     std::FILE* file = open_source(native);
-    if (file == nullptr) return fail(error, "Could not open the starting image.");
+    if (file == nullptr) return fail(error, "Could not open the PNG source.");
 
     png_image png{};
     png.version = PNG_IMAGE_VERSION;
     if (png_image_begin_read_from_stdio(&png, file) == 0) {
         const std::string message = png.message;
         std::fclose(file);
-        return fail(error, "Could not read starting PNG metadata: " + message);
+        return fail(error, "Could not read PNG source metadata: " + message);
     }
     const std::uint64_t decoded_pixels =
         static_cast<std::uint64_t>(png.width) * png.height;
@@ -100,7 +100,7 @@ bool decode_png(const std::string& path, std::shared_ptr<const Image>& decoded,
         png_image_free(&png);
         std::fclose(file);
         return fail(error,
-                    "Starting PNG dimensions are invalid or exceed addressable decoded storage.");
+                    "PNG source dimensions are invalid or exceed addressable decoded storage.");
     }
     png.format = PNG_FORMAT_LINEAR_RGB_ALPHA;
     const int decoded_width = static_cast<int>(png.width);
@@ -112,11 +112,11 @@ bool decode_png(const std::string& path, std::shared_ptr<const Image>& decoded,
         const std::string message = png.message;
         png_image_free(&png);
         std::fclose(file);
-        return fail(error, "Could not decode starting PNG: " + message);
+        return fail(error, "Could not decode PNG source: " + message);
     }
     png_image_free(&png);
     std::fclose(file);
-    if (cancelled(cancel)) return fail(error, "Starting image decoding was cancelled.");
+    if (cancelled(cancel)) return fail(error, "PNG source decoding was cancelled.");
 
     auto result = std::make_shared<Image>();
     result->width = decoded_width;
@@ -125,7 +125,7 @@ bool decode_png(const std::string& path, std::shared_ptr<const Image>& decoded,
     constexpr float scale = 1.0F / 65535.0F;
     for (std::size_t index = 0U; index < components; ++index) {
         if ((index & 65535U) == 0U && cancelled(cancel)) {
-            return fail(error, "Starting image decoding was cancelled.");
+            return fail(error, "PNG source decoding was cancelled.");
         }
         result->pixels[index] = static_cast<float>(linear[index]) * scale;
     }

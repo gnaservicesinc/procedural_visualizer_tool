@@ -4,11 +4,16 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <QScreen>
+#include <QScrollArea>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <limits>
 
 namespace {
@@ -34,18 +39,23 @@ VideoExportDialog::VideoExportDialog(
       project_has_alpha_(projectHasAlpha) {
     setWindowTitle(tr("Export Video"));
     setModal(true);
-    setMinimumWidth(620);
 
     auto* root = new QVBoxLayout(this);
-    root->addWidget(wrapped_label(
+    auto* scroll = new QScrollArea(this);
+    scroll->setObjectName(QStringLiteral("videoExportScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto* content = new QWidget(scroll);
+    auto* content_layout = new QVBoxLayout(content);
+    content_layout->addWidget(wrapped_label(
         tr("Native macOS export writes a QuickTime movie directly; it does not "
            "launch or bundle FFmpeg. VideoToolbox hardware encoding is selected "
            "for compressed formats when the chosen policy permits it."),
-        this));
+        content));
     if (!available.prores_4444 && !available.prores_4444_xq
         && !available.hevc && !available.status.empty()) {
-        root->addWidget(wrapped_label(
-            QString::fromStdString(available.status), this));
+        content_layout->addWidget(wrapped_label(
+            QString::fromStdString(available.status), content));
     }
 
     auto* form = new QFormLayout;
@@ -134,12 +144,14 @@ VideoExportDialog::VideoExportDialog(
     chunk_seconds_->setValue(10.0);
     chunk_seconds_->setSuffix(tr(" seconds"));
     form->addRow(tr("Maximum chunk duration"), chunk_seconds_);
-    root->addLayout(form);
+    content_layout->addLayout(form);
 
     explanation_ = wrapped_label(QString{}, this);
     explanation_->setObjectName(QStringLiteral("videoChoiceExplanation"));
-    root->addWidget(explanation_);
-    root->addStretch(1);
+    content_layout->addWidget(explanation_);
+    content_layout->addStretch(1);
+    scroll->setWidget(content);
+    root->addWidget(scroll, 1);
 
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -154,6 +166,21 @@ VideoExportDialog::VideoExportDialog(
     connect(chunk_mode_, &QComboBox::currentIndexChanged,
             this, [this] { updateChoiceState(); });
     updateChoiceState();
+}
+
+void VideoExportDialog::showEvent(QShowEvent* event) {
+    QDialog::showEvent(event);
+    QScreen* target = screen();
+    if (target == nullptr) target = QGuiApplication::primaryScreen();
+    if (target == nullptr) return;
+    const QSize available = target->availableGeometry().size();
+    const int maximum_width = (std::max)(380, available.width() - 32);
+    const int maximum_height = (std::max)(320, available.height() - 32);
+    setMaximumSize(maximum_width, maximum_height);
+    setMinimumWidth((std::min)(620, maximum_width));
+    const QSize desired = sizeHint().expandedTo(QSize(620, 560));
+    resize((std::min)(desired.width(), maximum_width),
+           (std::min)(desired.height(), maximum_height));
 }
 
 void VideoExportDialog::updateChoiceState() {

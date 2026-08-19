@@ -7,6 +7,10 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QScrollArea>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -36,15 +40,22 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     setObjectName(QStringLiteral("applicationSettingsDialog"));
     setWindowTitle(tr("Application Settings"));
     setModal(true);
-    setMinimumWidth(520);
 
     auto* root = new QVBoxLayout(this);
-    root->addWidget(explanatory_label(
+    auto* scroll = new QScrollArea(this);
+    scroll->setObjectName(QStringLiteral("applicationSettingsScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* content = new QWidget(scroll);
+    auto* content_layout = new QVBoxLayout(content);
+    content_layout->addWidget(explanatory_label(
         tr("These settings apply to every project and persist after the "
            "application is closed."),
-        this));
+        content));
 
-    auto* tabs = new QTabWidget(this);
+    auto* tabs = new QTabWidget(content);
     tabs->setObjectName(QStringLiteral("applicationSettingsTabs"));
 
     auto* general_page = new QWidget(tabs);
@@ -140,27 +151,65 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     const int backend_index = render_backend_->findData(static_cast<int>(renderBackend));
     render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 1);
     render_backend_->setToolTip(
-        tr("CPU is the deterministic reference renderer. CPU + GPU pairs "
-           "independent CPU and Metal work and requires Metal whenever it is "
-           "available; it never hides a Metal failure behind a whole-frame CPU retry. "
-           "GPU requires Metal for the accelerated pixel pipeline."));
+        tr("CPU is the deterministic reference renderer. CPU + GPU uses Metal "
+           "on macOS and accelerates supported analytic 3D surfaces with OpenGL "
+           "on Windows and Linux. GPU is strict and reports unsupported work or "
+           "runtime acceleration failures instead of silently retrying on CPU."));
     backend_form->addRow(tr("Backend"), render_backend_);
+    const pvt::RendererCapabilities capabilities = pvt::renderer_capabilities();
+    QString accelerator_status;
+    if (capabilities.metal_available) {
+        accelerator_status = tr("Metal ready: %1")
+            .arg(QString::fromStdString(capabilities.metal_device_name));
+    } else if (capabilities.opengl_surface_available) {
+        accelerator_status = tr("OpenGL 3D surfaces ready: %1")
+            .arg(QString::fromStdString(
+                capabilities.opengl_surface_device_name));
+    } else if (capabilities.opengl_surface_compiled) {
+        accelerator_status = QString::fromStdString(
+            capabilities.opengl_surface_status);
+    } else {
+        accelerator_status = QString::fromStdString(capabilities.metal_status);
+    }
+    auto* capability_label = explanatory_label(accelerator_status,
+                                                backend_group);
+    capability_label->setObjectName(QStringLiteral("rendererCapabilityStatus"));
+    backend_form->addRow(tr("Acceleration"), capability_label);
     backend_form->addRow(
         explanatory_label(
             tr("This backend is used for both live preview and export. CPU + GPU "
-               "is recommended for maximum throughput; GPU keeps every layer on "
-               "the accelerated pipeline and is useful for diagnosing Metal errors."),
+               "is recommended for maximum throughput. On Windows and Linux, "
+               "OpenGL accelerates built-in Plane, Cylinder, Sphere, and Cube "
+               "surface mapping; displacement planes and imported OBJ meshes "
+               "remain ordered CPU raster stages."),
             backend_group));
     rendering_layout->addWidget(backend_group);
     rendering_layout->addStretch(1);
     tabs->addTab(rendering_page, tr("Rendering"));
 
-    root->addWidget(tabs, 1);
+    content_layout->addWidget(tabs, 1);
+    scroll->setWidget(content);
+    root->addWidget(scroll, 1);
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     root->addWidget(buttons);
+}
+
+void ApplicationSettingsDialog::showEvent(QShowEvent* event) {
+    QDialog::showEvent(event);
+    QScreen* target = screen();
+    if (target == nullptr) target = QGuiApplication::primaryScreen();
+    if (target == nullptr) return;
+    const QSize available = target->availableGeometry().size();
+    const int maximum_width = (std::max)(360, available.width() - 32);
+    const int maximum_height = (std::max)(320, available.height() - 32);
+    setMaximumSize(maximum_width, maximum_height);
+    setMinimumWidth((std::min)(520, maximum_width));
+    const QSize desired = sizeHint().expandedTo(QSize(520, 560));
+    resize((std::min)(desired.width(), maximum_width),
+           (std::min)(desired.height(), maximum_height));
 }
 
 int ApplicationSettingsDialog::undoLimit() const {

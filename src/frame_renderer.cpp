@@ -21,6 +21,22 @@ bool fail(std::string* error, std::string message) {
     return false;
 }
 
+class OpenGLSurfaceScope final {
+public:
+    explicit OpenGLSurfaceScope(bool active)
+        : previous_(detail::set_opengl_surface_acceleration_active(active)) {}
+
+    ~OpenGLSurfaceScope() {
+        detail::set_opengl_surface_acceleration_active(previous_);
+    }
+
+    OpenGLSurfaceScope(const OpenGLSurfaceScope&) = delete;
+    OpenGLSurfaceScope& operator=(const OpenGLSurfaceScope&) = delete;
+
+private:
+    bool previous_ = false;
+};
+
 bool validate_frame_options(const FrameRenderOptions& options,
                             std::string* error) {
     switch (options.backend) {
@@ -60,47 +76,63 @@ bool render_with_backend(const RenderConfig& config,
 
     std::string device_name;
     std::string metal_status;
-    const bool available = detail::metal_backend_available(
+    const bool metal_available = detail::metal_backend_available(
         &device_name, &metal_status);
     std::string unsupported_reason;
-    const bool supported = available
-                           && detail::metal_backend_supports(
-                                  config, &unsupported_reason);
-    if (!available) {
-        if (options.backend == RenderBackend::Gpu) {
+    if (metal_available) {
+        const bool supported = detail::metal_backend_supports(
+            config, &unsupported_reason);
+        if (!supported) {
             return fail(error,
-                        metal_status.empty()
-                            ? "Metal rendering is unavailable on this host."
-                            : metal_status);
+                        unsupported_reason.empty()
+                            ? "This frame is not supported by the Metal backend."
+                            : unsupported_reason);
         }
-        // CPU is the only possible renderer on a host without Metal.
-        return cpu_render();
-    }
-    if (!supported) {
+        detail::PreparedFrame prepared;
+        std::string metal_error;
+        if (prepare(prepared, &metal_error)
+            && detail::render_prepared_frame_metal(
+                config, prepared, options, destination, cancel, &metal_error)) {
+            if (error != nullptr) error->clear();
+            return true;
+        }
+        // Once Metal is available, CPU + GPU never hides an acceleration
+        // failure behind an unexpectedly slow whole-frame retry.
         return fail(error,
-                    unsupported_reason.empty()
-                        ? "This frame is not supported by the Metal backend."
-                        : unsupported_reason);
+                    metal_error.empty()
+                        ? "Metal rendering failed."
+                        : metal_error);
     }
 
-    detail::PreparedFrame prepared;
-    std::string metal_error;
-    if (prepare(prepared, &metal_error)
-        && detail::render_prepared_frame_metal(
-            config, prepared, options, destination, cancel, &metal_error)) {
-        if (error != nullptr) {
-            error->clear();
-        }
-        return true;
+    std::string opengl_device;
+    std::string opengl_status;
+    const bool opengl_available = detail::opengl_surface_backend_available(
+        &opengl_device, &opengl_status);
+    const bool opengl_supported = opengl_available
+        && detail::opengl_surface_backend_supports(config, &unsupported_reason);
+    if (opengl_supported) {
+        // The reference renderer owns ordered stages and invokes OpenGL only
+        // at the analytic 3D surface boundary. A runtime OpenGL failure is
+        // returned directly; CPU + GPU never repeats that surface on CPU.
+        OpenGLSurfaceScope scope(true);
+        return cpu_render();
     }
-    // Once Metal is available, CPU + GPU never hides an acceleration failure
-    // behind an unexpectedly slow whole-frame retry. CPU participates in
-    // preparation and dependency-heavy stages; the GPU remains mandatory for
-    // the accelerated pixel pipeline.
-    return fail(error,
-                metal_error.empty()
-                    ? "Metal rendering failed."
-                    : metal_error);
+    if (options.backend == RenderBackend::Gpu) {
+        if (opengl_available && !unsupported_reason.empty()) {
+            return fail(error, unsupported_reason);
+        }
+        if (!opengl_status.empty()
+            && detail::opengl_surface_backend_compiled()) {
+            return fail(error, opengl_status);
+        }
+        return fail(error,
+                    metal_status.empty()
+                        ? "No supported GPU renderer is available on this host."
+                        : metal_status);
+    }
+    // CPU + GPU remains useful on machines without a suitable context and for
+    // frames that have no supported analytic surface stage.
+    return cpu_render();
 }
 
 } // namespace
@@ -167,6 +199,12 @@ RendererCapabilities renderer_capabilities() {
     capabilities.metal_compiled = detail::metal_backend_compiled();
     capabilities.metal_available = detail::metal_backend_available(
         &capabilities.metal_device_name, &capabilities.metal_status);
+    capabilities.opengl_surface_compiled =
+        detail::opengl_surface_backend_compiled();
+    capabilities.opengl_surface_available =
+        detail::opengl_surface_backend_available(
+            &capabilities.opengl_surface_device_name,
+            &capabilities.opengl_surface_status);
     return capabilities;
 }
 

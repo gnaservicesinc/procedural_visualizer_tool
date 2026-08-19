@@ -1,3 +1,16 @@
+procedural-visualizer-tool (5.0.0) stonking; urgency=medium
+
+  * Render the built-in Cylinder as a closed, rounded 3D primitive.
+  * Add cached, resolution-aware Plane displacement meshes from embedded PNG
+    height maps, with signed range, midpoint, density, and OBJ export controls.
+  * Accelerate analytic Plane, Cylinder, Sphere, and Cube mapping through a
+    Qt-hosted OpenGL 3.3 stage on Windows and Linux product builds.
+  * Keep tall settings and video dialogs inside the active screen with
+    scrollable content and permanently reachable action buttons.
+  * Advance setup, layer, and shared-library ABI formats for the new state.
+
+ -- Andrew Smith (GNA SERVICES INC) <Andrew@GNAServicesInc.com>  Wed, 19 Aug 2026 02:49:52 -0400
+
 procedural-visualizer-tool (4.0.1) stonking; urgency=medium
 
   * New upstream release.

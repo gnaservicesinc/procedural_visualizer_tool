@@ -598,6 +598,25 @@ void test_backend_contract() {
     check_close(reference, hybrid, 0.24, 0.018, 0.06, 0.0025,
                 "custom OBJ hybrid surface");
 
+    config.surface.mapping = pvt::SurfaceMapping::Plane;
+    config.surface.plane_displacement.enabled = true;
+    config.surface.plane_displacement.path =
+        PVT_TEST_SOURCE_DIR "/icon/icon.png";
+    config.surface.plane_displacement.minimum = -0.31;
+    config.surface.plane_displacement.maximum = 0.44;
+    config.surface.plane_displacement.midpoint = 0.46;
+    config.surface.plane_displacement.pixels_per_node = 5;
+    CHECK(pvt::render_frame(config, 4, cpu_options, reference, nullptr,
+                            &error));
+    CHECK(pvt::render_frame(config, 4, gpu_options, gpu, nullptr,
+                            &error));
+    check_close(reference, gpu, 0.24, 0.018, 0.06, 0.0025,
+                "displacement Plane split CPU/GPU surface");
+    CHECK(pvt::render_frame(config, 4, hybrid_options, hybrid, nullptr,
+                            &error));
+    check_close(reference, hybrid, 0.24, 0.018, 0.06, 0.0025,
+                "displacement Plane hybrid surface");
+
     std::atomic_bool cancel {true};
     pvt::Image sentinel = cpu;
     config.surface.enabled = false;

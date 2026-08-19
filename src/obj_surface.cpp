@@ -552,20 +552,20 @@ struct LayerFragments {
 
 } // namespace
 
-bool apply_obj_surface_mapping(const Image& source,
-                               Image& destination,
-                               const std::string& utf8_obj_path,
-                               int rotations_per_loop,
-                               double phase_degrees,
-                               double curvature,
-                               double lighting,
-                               double loop_phase,
-                               std::string* error,
-                               const std::atomic_bool* cancel) {
+bool apply_mesh_surface_mapping(const Image& source,
+                                Image& destination,
+                                const ObjMesh& mesh,
+                                int rotations_per_loop,
+                                double phase_degrees,
+                                double curvature,
+                                double lighting,
+                                double loop_phase,
+                                std::string* error,
+                                const std::atomic_bool* cancel) {
     clear_error(error);
     if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
         return fail(error,
-                    "OBJ surface rendering was cancelled; destination was unchanged.");
+                    "Mesh surface rendering was cancelled; destination was unchanged.");
     }
     std::size_t pixel_count = 0U;
     if (!validate_source(source, pixel_count, error)) {
@@ -573,7 +573,7 @@ bool apply_obj_surface_mapping(const Image& source,
     }
     if (!std::isfinite(phase_degrees) || !std::isfinite(curvature)
         || !std::isfinite(lighting) || !std::isfinite(loop_phase)) {
-        return fail(error, "OBJ surface parameters must be finite.");
+        return fail(error, "Mesh surface parameters must be finite.");
     }
     curvature = clamp_value(curvature, 0.0, 1.0);
     if (curvature == 0.0) {
@@ -582,16 +582,11 @@ bool apply_obj_surface_mapping(const Image& source,
             destination = std::move(unchanged);
             return true;
         } catch (const std::bad_alloc&) {
-            return fail(error, "Not enough memory to copy the neutral OBJ surface.");
+            return fail(error, "Not enough memory to copy the neutral mesh surface.");
         }
     }
 
     try {
-        throw_if_cancelled(cancel);
-        std::shared_ptr<const ObjMesh> mesh;
-        if (!load_obj_mesh_cached(utf8_obj_path, mesh, error)) {
-            return false;
-        }
         throw_if_cancelled(cancel);
         double wrapped_loop_phase = std::fmod(loop_phase, kTau);
         if (wrapped_loop_phase < 0.0) {
@@ -602,10 +597,10 @@ bool apply_obj_surface_mapping(const Image& source,
                              + phase_degrees * kPi / 180.0;
         const double y_rotation = kInitialYRotation + phase;
         const std::vector<ProjectedVertex> projected =
-            project_positions(*mesh, source.width, source.height, y_rotation,
+            project_positions(mesh, source.width, source.height, y_rotation,
                               cancel);
         const std::vector<ObjVec3> world_normals =
-            transform_normals(*mesh, y_rotation, cancel);
+            transform_normals(mesh, y_rotation, cancel);
 
         Image mapped;
         mapped.width = source.width;
@@ -617,7 +612,7 @@ bool apply_obj_surface_mapping(const Image& source,
             std::vector<float> depth(pixel_count,
                                      std::numeric_limits<float>::infinity());
             OpaqueFragments fragments{depth, mapped};
-            rasterize_mesh(*mesh, projected, world_normals, source,
+            rasterize_mesh(mesh, projected, world_normals, source,
                            source.width, source.height, mapped_lighting, cancel,
                            fragments);
         } else {
@@ -634,7 +629,7 @@ bool apply_obj_surface_mapping(const Image& source,
             for (;;) {
                 throw_if_cancelled(cancel);
                 LayerFragments fragments{previous_depth, next_depth, layer};
-                rasterize_mesh(*mesh, projected, world_normals, source,
+                rasterize_mesh(mesh, projected, world_normals, source,
                                source.width, source.height, mapped_lighting, cancel,
                                fragments);
 
@@ -674,12 +669,62 @@ bool apply_obj_surface_mapping(const Image& source,
         return true;
     } catch (const ObjSurfaceCancelled&) {
         return fail(error,
-                    "OBJ surface rendering was cancelled; destination was unchanged.");
+                    "Mesh surface rendering was cancelled; destination was unchanged.");
     } catch (const std::bad_alloc&) {
-        return fail(error, "Not enough memory to render the OBJ surface; destination was unchanged.");
+        return fail(error, "Not enough memory to render the mesh surface; destination was unchanged.");
     } catch (const std::exception& exception) {
-        return fail(error, std::string("Could not render OBJ surface; destination was unchanged: ")
+        return fail(error, std::string("Could not render mesh surface; destination was unchanged: ")
                            + exception.what());
+    }
+}
+
+bool apply_obj_surface_mapping(const Image& source,
+                               Image& destination,
+                               const std::string& utf8_obj_path,
+                               int rotations_per_loop,
+                               double phase_degrees,
+                               double curvature,
+                               double lighting,
+                               double loop_phase,
+                               std::string* error,
+                               const std::atomic_bool* cancel) {
+    clear_error(error);
+    if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+        return fail(error,
+                    "OBJ surface rendering was cancelled; destination was unchanged.");
+    }
+    std::size_t pixel_count = 0U;
+    if (!validate_source(source, pixel_count, error)) {
+        return false;
+    }
+    if (!std::isfinite(phase_degrees) || !std::isfinite(curvature)
+        || !std::isfinite(lighting) || !std::isfinite(loop_phase)) {
+        return fail(error, "OBJ surface parameters must be finite.");
+    }
+    if (clamp_value(curvature, 0.0, 1.0) == 0.0) {
+        try {
+            Image unchanged = source;
+            destination = std::move(unchanged);
+            return true;
+        } catch (const std::bad_alloc&) {
+            return fail(error, "Not enough memory to copy the neutral OBJ surface.");
+        }
+    }
+    try {
+        std::shared_ptr<const ObjMesh> mesh;
+        if (!load_obj_mesh_cached(utf8_obj_path, mesh, error)) {
+            return false;
+        }
+        return apply_mesh_surface_mapping(
+            source, destination, *mesh, rotations_per_loop, phase_degrees,
+            curvature, lighting, loop_phase, error, cancel);
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to load the OBJ surface; destination was unchanged.");
+    } catch (const std::exception& exception) {
+        return fail(error,
+                    std::string("Could not load OBJ surface; destination was unchanged: ")
+                        + exception.what());
     }
 }
 

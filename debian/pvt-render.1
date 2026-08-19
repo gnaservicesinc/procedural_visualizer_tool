@@ -1,4 +1,4 @@
-.TH PVT-RENDER 1 "August 2026" "Procedural Visualizer Tool 4.0.1" "User Commands"
+.TH PVT-RENDER 1 "August 2026" "Procedural Visualizer Tool 5.0.0" "User Commands"
 .SH NAME
 pvt-render \- render Procedural Visualizer Tool projects
 .SH SYNOPSIS
@@ -38,6 +38,15 @@ Set output dimensions, sequence length, and frame rate.
 .TP
 .BR --backend " " cpu|cpu+gpu|gpu
 Select the rendering policy.
+.TP
+.BR --height-map " " PNG
+Embed a PNG height map and enable the generated displacement Plane. Use
+.BR --height-min ,
+.BR --height-max ,
+.BR --height-midpoint ,
+and
+.B --height-pixels-per-node
+to control its signed height range and mesh density.
 .TP
 .BR --self-test
 Run the command-line library smoke test. Use this option by itself.

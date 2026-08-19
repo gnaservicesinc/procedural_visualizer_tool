@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **4.0.1**. The version is read from `VERSION` by every
+Current product version: **5.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,54 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 5.0.0 displacement Plane and closed Cylinder
+
+The built-in **Cylinder** is now a perspective-projected, closed 3D primitive
+with a rounded silhouette, textured side, visible top/bottom caps, lighting,
+and front/rear straight-alpha compositing. Its CPU and Metal implementations
+share the same ray intersection, UV, phase, and tilt semantics; selecting
+Cylinder no longer produces a rectangular box mask.
+
+The built-in **Plane** can now generate real height-field geometry from an
+embedded 8/16-bit PNG. Linear PNG luminance below and above an artist-selected
+neutral midpoint maps independently to signed minimum and maximum displacement.
+**Pixel-to-node ratio** controls mesh density: `1` creates one vertex per render
+pixel, while larger values reduce geometry and always retain both outer edges.
+PVT lazily builds and caches a separate mesh for each effective render
+resolution, so the scaled editor preview and adaptive Live monitor use lower
+resolution geometry while full-resolution frames, video, and Live output use
+the authored/output resolution. Changing the map, range, midpoint, ratio, or
+effective resolution selects or rebuilds the matching mesh. The GUI can export
+the authored-output mesh as Wavefront OBJ with positions, UVs, normals, and
+triangles.
+
+The height map is a content-addressed layer attachment and follows the same
+transactional bundle, duplication, history, and stale-writer protections as
+starting images and custom OBJs. Strict GPU rendering keeps Metal active around
+the ordered CPU mesh-raster stage instead of repeating the whole layer on CPU.
+Setup persistence advances to format 13 and layer records to format 11. The new
+public `PlaneDisplacementConfig` member grows by-value configuration types, so
+5.0.0 advances the shared-library ABI to SONAME 5; installed C++ clients must
+rebuild. Older setups and project bundles remain migration inputs with plane
+displacement disabled by default.
+
+Windows and Linux product builds now include the first portable GPU stage: a
+public-Qt, offscreen OpenGL 3.3 renderer for the built-in analytic Plane,
+Cylinder, Sphere, and Cube mappings. CPU + GPU activates it when a suitable
+runtime context exists; strict GPU requires a supported active analytic surface
+and reports context, shader, displacement-mesh, or imported-OBJ limitations
+directly. The rest of the frame and final project compositing remain on the
+reference CPU path, while macOS continues to prefer its broader Metal pipeline.
+`RendererCapabilities` reports compiled/runtime status and the actual OpenGL
+renderer instead of guessing from the operating-system name. This is genuine 3D
+surface acceleration, not yet a claim of full portable pixel-pipeline coverage
+or qualification on every vendor driver.
+
+Tall pop-out settings are screen-aware in 5.0.0. Application Settings and Video
+Export cap their initial size to the active monitor's available work area, keep
+their action buttons visible, and scroll the content region when display size or
+UI scaling cannot fit the natural layout.
 
 ## 4.0.1 generated alpha reliability
 
@@ -126,15 +174,17 @@ phase, should be reviewed once after opening in 2.0.
   playback without a Qt Multimedia or system-installed audio dependency. WAV
   (including IEEE 32-bit float), FLAC, and MP3 are accepted. These private
   targets are omitted from a core-library-only build.
-- Qt 6.5 or newer with Widgets, Concurrent, and Network components for the
-  optional GUI and its bounded OSC listener.
+- Qt 6.5 or newer with Gui, Widgets, Concurrent, and Network components for the
+  optional GUI, its bounded OSC listener, and the Windows/Linux offscreen
+  OpenGL surface accelerator.
 - On Apple platforms, the optional Metal backend uses Apple's header-only
   [metal-cpp](https://developer.apple.com/metal/cpp/) from
   `../3rd_party/metal-cpp` plus the system Foundation and Metal frameworks. Set
-  `PVT_ENABLE_METAL=OFF` for an explicitly CPU-only build, or
-  point `PVT_METAL_CPP_DIR` at another metal-cpp checkout. Other platforms build
-  the same public backend API with a CPU-only implementation because no portable
-  GPU backend exists there yet.
+  `PVT_ENABLE_METAL=OFF` for an explicitly CPU-only Apple build, or point
+  `PVT_METAL_CPP_DIR` at another metal-cpp checkout. Windows and Linux Qt product
+  builds enable analytic-surface OpenGL by default; pass
+  `PVT_ENABLE_OPENGL_SURFACE=OFF` to build those products without it. Core-only
+  library builds remain Qt-free and CPU-only.
 - On macOS, GUI video export uses the system AVFoundation, VideoToolbox,
   CoreMedia, and CoreVideo frameworks directly. FFmpeg is neither launched nor
   bundled.
@@ -311,8 +361,9 @@ sudo apt install procedural-visualizer-tool
   preserves whole-layer behavior; a positive radius creates a smoothly
   feathered circle around the center for zoom, ripple, shake, flag wave, and
   glow. Glow's blur radius remains a separate control. Texture-effect and Swing
-  overlays use a labelled unwrapped source/UV inset whenever a non-plane
-  surface is active; mapped-object overlays remain final screen coordinates.
+  overlays use a labelled unwrapped source/UV inset whenever a non-plane or
+  displaced Plane surface is active; mapped-object overlays remain final screen
+  coordinates.
 - Transparent, black, white, or reflected out-of-frame handling for coordinate
   effects.
 - Multiple dynamic swing modulators with sine, triangle, smooth-pulse, and
@@ -393,7 +444,10 @@ sudo apt install procedural-visualizer-tool
   premultiplied edge antialiasing with strength/threshold/pass controls, then
   RGB, luminance, or hue quantization with 2-65,536 levels and adjustable mix.
   This final pipeline remains independent of the starting palette.
-- Plane, cylinder, sphere, ray-cast cube, and custom Wavefront OBJ mappings.
+- Plane (flat or PNG-displaced), closed ray-cast cylinder, sphere, ray-cast
+  cube, and custom Wavefront OBJ mappings.
+  Displacement Plane density follows the effective preview/Live/output
+  resolution and its pixel-to-node ratio; the GUI exports the generated mesh.
   OBJ files may provide texture coordinates and normals; automatic box UVs and
   geometric normals cover meshes that omit them.
 - Independent procedural alpha modulation with minimum/maximum alpha, spatial
@@ -403,15 +457,16 @@ sudo apt install procedural-visualizer-tool
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
-- CPU, CPU + GPU, and GPU frame backends. CPU + GPU is the application default:
-  it runs adjacent project layers through bounded CPU and Metal lanes while
-  preserving bottom-to-top compositing order. A single layer uses Metal for its
-  parallel pixel stages while CPU preparation handles only ordered dependencies
-  such as Floyd-Steinberg source dithering and custom OBJ rasterization. Generated
-  sources, source alpha, image-to-palette mapping, reusable paths, particles,
-  blur, and all analytic stages remain GPU accelerated. Once Metal is available,
-  CPU + GPU reports a Metal failure instead of silently repeating the whole
-  layer on CPU; CPU-only rendering is automatic only where Metal is unavailable.
+- CPU, CPU + GPU, and strict GPU frame backends. CPU + GPU is the application
+  default. On macOS it runs adjacent project layers through bounded CPU and
+  Metal lanes, with Metal covering the broad parallel pixel pipeline and CPU
+  handling ordered dependencies such as mesh rasterization. On Windows and
+  Linux it keeps the reference frame pipeline on CPU and dispatches supported
+  analytic Plane/Cylinder/Sphere/Cube mapping through a serialized offscreen
+  OpenGL 3.3 shader stage. An admitted GPU-stage failure is reported instead of
+  silently repeating that stage on CPU. Strict GPU requires Metal on macOS or an
+  active supported analytic surface on Windows/Linux; imported OBJ and
+  displacement-Plane rasterization are not accepted by the strict OpenGL path.
 
 The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
@@ -597,12 +652,15 @@ the parallel pixel pipeline. CPU rendering remains the reference and is used
 automatically only when Metal is unavailable. Generated source ordering,
 source alpha, starting-image palette selection, starting-image fitting,
 particles, reusable path resolution, built-in placement, rotation, and scale
-all keep Metal active. Floyd-Steinberg source dithering and custom OBJ depth
-peeling are ordered CPU stages inside the accelerated pipeline rather than
-whole-layer fallbacks. An unexpected Metal error is surfaced immediately instead
-of being hidden behind an unacceptably slow CPU retry. **GPU** likewise requires
-Metal for every contributing layer, while final
-linear-light project compositing remains on the CPU. The installed library's
+all keep Metal active. Floyd-Steinberg source dithering, custom OBJ depth
+peeling, and displacement-Plane rasterization are ordered CPU stages inside
+the accelerated pipeline rather than whole-layer fallbacks. An unexpected
+Metal error is surfaced immediately instead of being hidden behind an
+unacceptably slow CPU retry. On Windows and Linux, the Qt-hosted OpenGL service
+accelerates the analytic 3D surface stage for Plane, Cylinder, Sphere, and Cube;
+strict **GPU** rejects frames without one of those supported active stages.
+Final linear-light project compositing remains on the CPU on every platform. The
+installed library's
 legacy overloads retain CPU as their compatibility default; callers opt into
 acceleration with
 `FrameRenderOptions` or `SequenceRenderOptions::frame`.
@@ -640,7 +698,7 @@ can choose the upper bound explicitly:
 ./build/pvt-render --render --workers 1
 ./build/pvt-render --render --workers 12
 
-# Manual backend selection and optional Metal admission bound
+# Manual backend selection and optional GPU admission bound
 ./build/pvt-render --render --backend cpu
 ./build/pvt-render --render --backend cpu+gpu --gpu-in-flight 2
 ./build/pvt-render --render --backend gpu
@@ -873,8 +931,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-11 remain importable;
-current explicit legacy output is setup format 12. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-12 remain importable;
+current explicit legacy output is setup format 13. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -889,8 +947,9 @@ default clock-mixing switch and mode, Kaleidoscope and Domain Warp shaping,
 Glitch/Starburst/Lens Distortion settings, and palette column/name/encoding
 metadata. Format 12 adds layer-local RGB/alpha inversion and edge antialiasing,
 plus project-portable Live roles, mappings, clock routes, scenes, calibration,
-output preferences, and fail-safe policy. Project layer records use the
-corresponding current layer format 10.
+output preferences, and fail-safe policy. Format 13 adds generated Plane
+displacement settings and the height-map attachment identity. Project layer
+records use the corresponding current layer format 11.
 Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
@@ -944,6 +1003,21 @@ To wrap the generated image around a mesh from the command line:
 active layer's procedural alpha modulation. It also imports the mesh into the
 project's managed attachment cache immediately.
 
+To generate and map a displaced Plane from a height map:
+
+```sh
+./build/pvt-render --render --height-map maps/terrain.png \
+  --height-min -0.3 --height-max 0.55 --height-midpoint 0.5 \
+  --height-pixels-per-node 4 --frames 120 \
+  --output-dir preview --prefix terrain_
+```
+
+`--height-map` selects Plane mapping, embeds the PNG, enables final RGBA, and
+builds geometry at the effective render resolution. The four numeric controls
+may be applied before or after the map because options are processed left to
+right. `--no-height-map` bypasses displacement without discarding the embedded
+asset or its authored settings.
+
 To analyze a song, let it drive selected controls, and save a portable project:
 
 ```sh
@@ -979,6 +1053,32 @@ On macOS, `make gui` runs the app-bundle executable directly so it inherits the
 make working directory. If a desktop launcher supplies `/` (the source of the
 old `.` export failure), the GUI rejects that unusable launch directory, anchors
 relative paths in the user's home folder, and never treats `.` as filesystem root.
+
+## Displacement Plane surfaces
+
+Plane displacement samples the selected PNG across a regular output-space
+grid. `pixels_per_node = 1` produces `(width x height)` vertices. For larger
+ratios, each dimension uses `1 + ceil((dimension - 1) / ratio)` vertices so the
+right and bottom edges remain exact even when the ratio does not divide the
+resolution. Triangles share per-vertex smooth normals computed from the actual
+height field. PNG alpha is ignored; linear RGB is reduced to Rec. 709 luminance
+and clamped to the normalized height-data range.
+
+The minimum displacement is constrained to `[-2, 0]`, maximum to `[0, 2]`, and
+midpoint to `[0, 1]`. A sample equal to midpoint has zero height; the two sides
+interpolate independently, allowing asymmetric valleys and peaks. The existing
+Surface **Curvature** control is an exact flat-to-mesh crossfade, and Surface
+phase/rotations animate the generated object with the same projection used for
+custom meshes. Curvature zero is neutral and does not require mesh work.
+
+Decoded height images and generated meshes use bounded evicting caches. The
+mesh key includes decoded-image identity, effective resolution, pixel-to-node
+ratio, minimum, maximum, and midpoint. Preview and Live resolution scaling
+therefore create smaller grids without changing the authored output settings;
+full-resolution frame/video/Live paths request the corresponding full grid.
+The GUI **Export output-resolution OBJ…** action writes the exact authored
+resolution mesh atomically and never replaces an existing destination until
+the complete OBJ has been generated successfully.
 
 ## Custom OBJ surfaces
 
@@ -1037,7 +1137,8 @@ The public header is `include/procedural_visualizer_tool.h`. It exposes:
 - float RGBA layer/project rendering by frame index or normalized phase;
 - bounded linear-light blend compositing, individual PNG/EXR writing, and
   composite sequence export;
-- backend-neutral CPU/CPU+GPU/GPU frame options and Metal capability reporting;
+- backend-neutral CPU/CPU+GPU/GPU frame options plus Metal and OpenGL surface
+  capability reporting;
 - a bounded `SequenceRenderOptions` worker policy, ordered atomic output, and
   serialized progress/cancellation callbacks; and
 - backward-compatible transactional `.pvt` setup save/load.
@@ -1193,25 +1294,29 @@ see `LIVE_PERFORMANCE_STATUS.md` for the exact handoff checklist.
   path, and cancellation race.
 - **Creative controls / 1.1.x:** add more effect types and deeper parameters,
   plus optional depth-map and normal-map inputs for selected layer regions.
-- **Platform parity:** Metal remains the tested accelerated backend. A portable
-  GPU backend is a goal only after native Linux/Windows validation is available.
-  The concrete design in [`PORTABILITY_ROADMAP.md`](PORTABILITY_ROADMAP.md)
-  uses Qt-hosted OpenGL for the existing editor, prefers Media Foundation for
-  native Windows movies and optional GStreamer for Linux, and reserves GLFW for
-  a possible lightweight Live front end rather than duplicating Qt inside the
-  editor. PNG/EXR sequences remain the dependable cross-platform export today.
+- **Platform parity:** Metal remains the broader macOS accelerated backend. The
+  first portable stage now uses Qt-hosted OpenGL for analytic 3D surface mapping
+  in Windows and Linux product builds. Full effect/source coverage and physical
+  Intel/AMD/NVIDIA driver qualification remain follow-up work described in
+  [`PORTABILITY_ROADMAP.md`](PORTABILITY_ROADMAP.md). Media Foundation remains
+  the preferred future Windows movie path and optional GStreamer the Linux
+  path; PNG/EXR sequences remain the dependable cross-platform export today.
 
 ## Current boundary
 
-Plane, cylinder, sphere, and cube mappings have analytic CPU and Metal paths;
-custom OBJ mapping uses a checked, cached CPU parser and rasterizer. OBJ materials
-and textures are intentionally not loaded because the procedural frame supplies
-the surface image. Cooperative cancellation is checked within CPU rendering,
-Metal admission, effects, surface mapping, quantization, layer compositing, OBJ
-rasterization, and every PNG/EXR output scanline. An in-flight GPU command
+Flat Plane, closed cylinder, sphere, and cube mappings have analytic CPU,
+Metal, and Windows/Linux OpenGL paths. Custom OBJ and generated displacement
+Plane mapping use the checked, cached CPU mesh rasterizer as an ordered stage
+inside CPU/Metal policies and CPU + GPU portable rendering. OBJ materials and
+textures are intentionally not loaded because the procedural frame supplies the
+surface image. Cooperative cancellation is checked within CPU rendering, GPU
+admission, effects, surface mapping,
+quantization, layer compositing, mesh generation/rasterization, and every
+PNG/EXR output scanline. An in-flight GPU command
 buffer may finish, but its result is discarded before installation when
-cancellation is observed. Music, custom OBJ, and starting-image attachments are
-embedded under their content identity and exact original filename. Live
+cancellation is observed. Music, custom OBJ, displacement-height, and
+starting-image attachments are embedded under their content identity and exact
+original filename. Live
 audio/data capture and non-macOS native movie containers remain future work. See
 `IMPLEMENTATION_STATUS.md` for the detailed hand-off ledger.
 

@@ -6,10 +6,10 @@ it compiles in a software-rendered virtual machine.
 
 ## Selected direction
 
-Build an OpenGL renderer for Linux and Windows using the context, surface, and
-function-loading APIs already supplied by Qt. Keep Metal on macOS. This gives
-PVT a real shader backend on all desktop platforms without replacing the UI or
-changing the public CPU/CPU+GPU/GPU policies.
+PVT 5.0.0 begins the OpenGL renderer for Linux and Windows using the context,
+surface, and function-loading APIs already supplied by Qt. Keep Metal on macOS.
+The shipped first stage accelerates analytic 3D surface mapping without
+replacing the UI or changing the public CPU/CPU+GPU/GPU policy names.
 
 GLFW is not required for this editor path. It remains available for evaluation
 only if a later standalone `pvt-live` presentation executable needs a minimal
@@ -20,20 +20,24 @@ full-screen window. The shared renderer must not depend on its window host.
 Use Qt's public OpenGL integration in the existing GUI and
 `QOffscreenSurface` for non-windowed rendering.
 
-1. Keep `cpu`, `cpu+gpu`, and strict `gpu` as user-visible policies. Add runtime
-   capability reporting for Metal and OpenGL rather than platform-name checks.
+1. **Implemented in 5.0.0:** keep `cpu`, `cpu+gpu`, and strict `gpu` as
+   user-visible policies and report Metal/OpenGL runtime capabilities rather
+   than using platform-name checks.
 2. Extract the current Metal kernel inputs into backend-neutral packed
    parameters and explicit passes. The CPU renderer remains the reference.
-3. Implement an OpenGL texture/framebuffer pass graph for procedural sources,
-   supported effects, analytic surfaces, quantization, and layer compositing.
-   Unsupported operations must fall back only in `cpu+gpu`; strict `gpu` must
-   give an actionable error.
+3. **First stage implemented:** an OpenGL float-texture/framebuffer pass covers
+   analytic Plane, closed Cylinder, Sphere, and Cube mapping. Procedural sources,
+   effects, quantization, mesh surfaces, and final layer compositing remain on
+   CPU for the portable path. CPU + GPU accelerates an eligible stage; strict
+   GPU gives an actionable error when no supported analytic stage exists.
 4. Reuse the current bounded admission, cancellation, straight-alpha, linear
    light, half-open loop, and ordered-compositing contracts. Do not read a GPU
    result into the CPU between every effect.
-5. Run CPU/OpenGL image, alpha, seam, and cancellation parity tests with Mesa
-   software rendering in CI. Then validate real Intel, AMD, and NVIDIA drivers
-   on Linux and Windows before calling the backend production-ready.
+5. **CI stage implemented:** run CPU/OpenGL image and alpha parity for all four
+   analytic mappings with Mesa under Xvfb, plus native compilation/package smoke
+   on Windows. Cancellation expansion and real Intel, AMD, and NVIDIA driver
+   qualification remain required before calling the complete portable backend
+   production-ready.
 6. Keep Metal as the preferred macOS backend. Apple's deprecated OpenGL stack
    is not a reason to replace the already-tested Metal implementation.
 
@@ -79,9 +83,9 @@ platform throughout this work.
 
 ## Delivery order
 
-1. OpenGL proof of parity for one procedural layer and final compositing.
-2. Linux and Windows installed-package hardware probes and diagnostics.
-3. Complete supported effect/surface coverage plus hybrid fallbacks.
+1. ~~OpenGL proof for analytic one-layer surface mapping.~~ Shipped in 5.0.0.
+2. Linux and Windows installed-package physical hardware probes and diagnostics.
+3. Complete supported source/effect coverage and GPU-resident compositing.
 4. Windows Media Foundation movie export.
 5. Linux GStreamer movie export.
 6. Real-GPU and real-codec validation, followed by enabling `cpu+gpu` as a safe

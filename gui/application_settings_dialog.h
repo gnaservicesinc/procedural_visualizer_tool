@@ -8,6 +8,7 @@
 class QComboBox;
 class QLabel;
 class QSpinBox;
+class QShowEvent;
 
 class ApplicationSettingsDialog final : public QDialog {
 public:
@@ -34,6 +35,9 @@ private:
     QLabel* defaults_status_ = nullptr;
     NewProjectDefaultsAction defaults_action_ =
         NewProjectDefaultsAction::Keep;
+
+protected:
+    void showEvent(QShowEvent* event) override;
 };
 
 #endif

@@ -23,7 +23,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 12;
+constexpr std::uint32_t kSetupFormatVersion = 13;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -830,6 +830,22 @@ struct PostProcessConfig {
     int antialias_passes = 1;
 };
 
+// Optional height-field geometry for the built-in Plane surface. The height
+// PNG is interpreted as linear grayscale data: `midpoint` is the neutral
+// sample, while samples below/above it interpolate to minimum/maximum. A
+// pixels_per_node value of 1 creates one mesh vertex for every render pixel;
+// larger values provide a deliberate performance/geometry tradeoff.
+struct PlaneDisplacementConfig {
+    bool enabled = false;
+    double minimum = -0.2;
+    double maximum = 0.2;
+    double midpoint = 0.5;
+    int pixels_per_node = 4;
+    std::string path;
+    std::string sha256;
+    std::string basename;
+};
+
 struct SurfaceConfig {
     bool enabled = false;
     SurfaceMapping mapping = SurfaceMapping::Plane;
@@ -848,6 +864,7 @@ struct SurfaceConfig {
     std::string obj_path;
     std::string obj_sha256;
     std::string obj_basename;
+    PlaneDisplacementConfig plane_displacement;
 };
 
 // An embedded starting image replaces procedural spatial generation. When a
@@ -1150,9 +1167,10 @@ struct ValidationResult {
 
 struct FrameRenderOptions {
     // CPU remains the library/API compatibility default. Applications can opt
-    // into CpuAndGpu, which uses Metal where supported and falls back to the
-    // reference CPU renderer. Gpu is strict: it reports unavailable or
-    // unsupported work instead of silently using the CPU.
+    // into CpuAndGpu, which uses Metal for the accelerated pixel pipeline on
+    // macOS and OpenGL for supported analytic 3D surface mapping on Windows
+    // and Linux. Gpu is strict: it reports unavailable or unsupported work
+    // instead of silently using the CPU.
     RenderBackend backend = RenderBackend::Cpu;
     // Metal work is admitted before its frame buffers are allocated. This
     // bound therefore limits both queued command buffers and GPU-visible frame
@@ -1165,6 +1183,10 @@ struct RendererCapabilities {
     bool metal_available = false;
     std::string metal_device_name;
     std::string metal_status;
+    bool opengl_surface_compiled = false;
+    bool opengl_surface_available = false;
+    std::string opengl_surface_device_name;
+    std::string opengl_surface_status;
 };
 
 using ProgressCallback = std::function<bool(int completed_frames, int total_frames)>;

@@ -1,5 +1,6 @@
 #include "frame_renderer_internal.h"
 
+#include "displacement_surface.h"
 #include "metal_kernels_source.h"
 #include "obj_surface.h"
 #include "source_image.h"
@@ -916,7 +917,8 @@ bool surface_has_work(const SurfaceConfig& surface) {
     if (surface.mapping != SurfaceMapping::Plane) {
         return surface.curvature > 0.0;
     }
-    return surface.rotations_per_loop != 0
+    return (surface.plane_displacement.enabled && surface.curvature > 0.0)
+           || surface.rotations_per_loop != 0
            || std::fmod(surface.phase_degrees, 360.0) != 0.0;
 }
 
@@ -1289,9 +1291,12 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }
-    if (surface_has_work(config.surface)
-        && config.surface.mapping == SurfaceMapping::CustomObj) {
-        // OBJ visibility is an ordered raster operation. Complete the GPU
+    const bool cpu_raster_surface = surface_has_work(config.surface)
+        && (config.surface.mapping == SurfaceMapping::CustomObj
+            || (config.surface.mapping == SurfaceMapping::Plane
+                && config.surface.plane_displacement.enabled));
+    if (cpu_raster_surface) {
+        // Mesh visibility is an ordered raster operation. Complete the GPU
         // texture stages, rasterize only this dependency-heavy surface on the
         // CPU, then resume transforms, motion, surface effects, and
         // quantization on the GPU. This avoids a whole-layer CPU fallback.
@@ -1302,18 +1307,23 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         source.pixels.resize(pixel_count * 4U);
         std::memcpy(source.pixels.data(), current->contents(), frame_bytes);
         Image mapped;
-        if (!apply_obj_surface_mapping(
-                source, mapped, config.surface.obj_path,
-                config.surface.rotations_per_loop,
-                config.surface.phase_degrees, config.surface.curvature,
-                config.surface.lighting, prepared.loop_phase, error, cancel)) {
+        const bool mapped_ok = config.surface.mapping == SurfaceMapping::CustomObj
+            ? apply_obj_surface_mapping(
+                  source, mapped, config.surface.obj_path,
+                  config.surface.rotations_per_loop,
+                  config.surface.phase_degrees, config.surface.curvature,
+                  config.surface.lighting, prepared.loop_phase, error, cancel)
+            : apply_displacement_plane_mapping(
+                  source, mapped, config.surface, prepared.loop_phase,
+                  error, cancel);
+        if (!mapped_ok) {
             return false;
         }
         std::memcpy(current->contents(), mapped.pixels.data(), frame_bytes);
         command_buffer = context.queue()->commandBuffer();
         if (command_buffer == nullptr) {
             return fail(error,
-                        "Metal could not resume after OBJ surface rasterization.");
+                        "Metal could not resume after mesh-surface rasterization.");
         }
     } else if (surface_has_work(config.surface)) {
         const GpuSurface surface = make_surface(config, prepared);

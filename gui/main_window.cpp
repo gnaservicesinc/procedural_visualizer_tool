@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "application_settings_dialog.h"
+#include "live_target_registry.h"
 #include "live_workspace.h"
 #include "preview_widget.h"
 #include "video_export.h"
@@ -8,6 +9,7 @@
 #include "../src/audio_analysis.h"
 #include "../src/audio_playback.h"
 #include "../src/config_codec.h"
+#include "../src/displacement_surface.h"
 #include "../src/palette_io.h"
 #include "../src/project_bundle.h"
 #include "../src/source_image.h"
@@ -44,6 +46,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -76,6 +79,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QTemporaryDir>
+#include <QTextStream>
 #include <QThread>
 #include <QTimer>
 #include <QDateTime>
@@ -751,6 +755,15 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_path));
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_sha256));
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_basename));
+    bytes = saturating_add(
+        bytes, estimated_string_bytes(
+                   render.surface.plane_displacement.path));
+    bytes = saturating_add(
+        bytes, estimated_string_bytes(
+                   render.surface.plane_displacement.sha256));
+    bytes = saturating_add(
+        bytes, estimated_string_bytes(
+                   render.surface.plane_displacement.basename));
     bytes = saturating_add(bytes,
                            estimated_string_bytes(render.starting_image.path));
     bytes = saturating_add(bytes,
@@ -955,7 +968,9 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
         && config.starting_colors.alpha_minimum < 1.0) {
         return true;
     }
-    if (config.surface.enabled && config.surface.mapping != pvt::SurfaceMapping::Plane
+    if (config.surface.enabled
+        && (config.surface.mapping != pvt::SurfaceMapping::Plane
+            || config.surface.plane_displacement.enabled)
         && config.surface.curvature > 0.0) {
         return true;
     }
@@ -3815,8 +3830,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
     add_enum_item(surface_mapping_, tr("Sphere"), pvt::SurfaceMapping::Sphere);
     add_enum_item(surface_mapping_, tr("Cube"), pvt::SurfaceMapping::Cube);
     add_enum_item(surface_mapping_, tr("Custom OBJ"), pvt::SurfaceMapping::CustomObj);
-    auto* obj_path_row = new QWidget;
-    auto* obj_path_layout = new QHBoxLayout(obj_path_row);
+    surface_obj_row_ = new QWidget;
+    auto* obj_path_layout = new QHBoxLayout(surface_obj_row_);
     obj_path_layout->setContentsMargins(0, 0, 0, 0);
     surface_obj_path_ = new QLineEdit;
     surface_obj_path_->setMaxLength(static_cast<int>(kMaximumPathBytes));
@@ -3836,11 +3851,74 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_lighting_ = real_editor(0.0, 10.0);
     surface->addRow(surface_enabled_);
     surface->addRow(tr("Surface"), surface_mapping_);
-    surface->addRow(tr("OBJ file"), obj_path_row);
+    surface->addRow(tr("OBJ file"), surface_obj_row_);
+    surface_obj_label_ = surface->labelForField(surface_obj_row_);
     surface->addRow(tr("Rotations per loop"), surface_rotations_);
     surface->addRow(tr("Starting phase (degrees)"), surface_phase_);
     surface->addRow(tr("Curvature"), surface_curvature_);
     surface->addRow(tr("Lighting"), surface_lighting_);
+
+    surface_plane_displacement_group_ = new QGroupBox(
+        tr("Plane displacement mesh"));
+    surface_plane_displacement_group_->setObjectName(
+        QStringLiteral("planeDisplacementGroup"));
+    surface_plane_displacement_group_->setToolTip(tr(
+        "Builds a cached subdivided plane at the current render resolution. "
+        "Preview/live monitoring uses its lower working resolution; frame, "
+        "video, and full-resolution live output build the corresponding full grid."));
+    auto* plane_displacement = new QFormLayout(
+        surface_plane_displacement_group_);
+    surface_plane_displacement_enabled_ = new QCheckBox(
+        tr("Displace Plane with height map"));
+    surface_plane_displacement_enabled_->setObjectName(
+        QStringLiteral("planeDisplacementEnabled"));
+    auto* height_row = new QWidget;
+    auto* height_layout = new QHBoxLayout(height_row);
+    height_layout->setContentsMargins(0, 0, 0, 0);
+    surface_plane_displacement_path_ = new QLineEdit;
+    surface_plane_displacement_path_->setObjectName(
+        QStringLiteral("planeDisplacementPath"));
+    surface_plane_displacement_path_->setReadOnly(true);
+    surface_plane_displacement_path_->setPlaceholderText(
+        tr("Choose an 8/16-bit grayscale PNG"));
+    surface_plane_displacement_browse_ = new QPushButton(tr("Choose…"));
+    surface_plane_displacement_clear_ = new QPushButton(tr("Clear"));
+    height_layout->addWidget(surface_plane_displacement_path_, 1);
+    height_layout->addWidget(surface_plane_displacement_browse_);
+    height_layout->addWidget(surface_plane_displacement_clear_);
+    surface_plane_displacement_minimum_ = real_editor(-2.0, 0.0, 4, 0.01);
+    surface_plane_displacement_maximum_ = real_editor(0.0, 2.0, 4, 0.01);
+    surface_plane_displacement_midpoint_ = real_editor(0.0, 1.0, 4, 0.01);
+    surface_plane_displacement_ratio_ = integer_editor(
+        1, (std::numeric_limits<int>::max)());
+    surface_plane_displacement_ratio_->setSuffix(tr(" px/node"));
+    surface_plane_displacement_ratio_->setToolTip(tr(
+        "1 creates one vertex per render pixel. Larger values create fewer "
+        "vertices and triangles. Both outer edges are always retained."));
+    surface_plane_displacement_export_ = new QPushButton(
+        tr("Export output-resolution OBJ…"));
+    surface_plane_displacement_export_->setToolTip(tr(
+        "Generate the same mesh used at the authored output resolution and "
+        "save it as a Wavefront OBJ with UVs and smooth normals."));
+    auto* displacement_help = new QLabel(tr(
+        "PNG luminance is treated as linear height data. The midpoint is the "
+        "neutral (zero-height) sample; values below/above it interpolate to "
+        "the signed minimum/maximum. A changed map or setting rebuilds the "
+        "cached plane automatically."));
+    displacement_help->setWordWrap(true);
+    plane_displacement->addRow(surface_plane_displacement_enabled_);
+    plane_displacement->addRow(tr("Height map"), height_row);
+    plane_displacement->addRow(tr("Minimum displacement"),
+                               surface_plane_displacement_minimum_);
+    plane_displacement->addRow(tr("Maximum displacement"),
+                               surface_plane_displacement_maximum_);
+    plane_displacement->addRow(tr("Neutral midpoint"),
+                               surface_plane_displacement_midpoint_);
+    plane_displacement->addRow(tr("Pixel-to-node ratio"),
+                               surface_plane_displacement_ratio_);
+    plane_displacement->addRow(surface_plane_displacement_export_);
+    plane_displacement->addRow(displacement_help);
+    surface->addRow(surface_plane_displacement_group_);
     surface_layout->addWidget(surface_group);
 
     auto* post_process_group = new QGroupBox(
@@ -4029,6 +4107,36 @@ QWidget* MainWindow::createLayerSettingsPage() {
             (void)setSurfaceObjSource(selected);
         }
     });
+    connect(surface_plane_displacement_browse_, &QPushButton::clicked,
+            this, [this] {
+        QString preferred;
+        const auto& displacement = config_.surface.plane_displacement;
+        if (!displacement.path.empty()) {
+            preferred = QFileInfo(
+                QString::fromStdString(displacement.path)).absolutePath();
+        }
+        const QString selected = QFileDialog::getOpenFileName(
+            this, tr("Choose plane displacement height map"),
+            usableDialogDirectory(preferred),
+            tr("PNG height maps (*.png);;All files (*)"));
+        if (!selected.isEmpty()) {
+            rememberDialogLocation(selected);
+            if (!displacement.sha256.empty()
+                && QMessageBox::question(
+                       this, tr("Replace embedded height map?"),
+                       tr("Replace the active layer's plane-displacement map with %1?")
+                           .arg(QFileInfo(selected).fileName()),
+                       QMessageBox::Yes | QMessageBox::No,
+                       QMessageBox::Yes) != QMessageBox::Yes) {
+                return;
+            }
+            (void)setPlaneDisplacementSource(selected);
+        }
+    });
+    connect(surface_plane_displacement_clear_, &QPushButton::clicked,
+            this, [this] { (void)setPlaneDisplacementSource({}); });
+    connect(surface_plane_displacement_export_, &QPushButton::clicked,
+            this, &MainWindow::exportPlaneDisplacementObj);
     connect(starting_image_browse_, &QPushButton::clicked, this, [this] {
         std::vector<const pvt::LayerConfig*> reusable;
         QStringList labels;
@@ -6246,7 +6354,8 @@ void MainWindow::connectEditors() {
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          kaleidoscope_segments_, domain_warp_octaves_,
                          domain_warp_cycles_,
-                         surface_rotations_, post_antialias_passes_,
+                         surface_rotations_, surface_plane_displacement_ratio_,
+                         post_antialias_passes_,
                          quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
                          motion_cycles_y_, motion_rotations_}) {
@@ -6257,7 +6366,10 @@ void MainWindow::connectEditors() {
                          wall_frequency_, wall_mix_, saturation_, surface_curvature_,
                          kaleidoscope_rotation_, kaleidoscope_mix_,
                          domain_warp_strength_, domain_warp_scale_,
-                         surface_lighting_, post_invert_rgb_mix_,
+                         surface_lighting_, surface_plane_displacement_minimum_,
+                         surface_plane_displacement_maximum_,
+                         surface_plane_displacement_midpoint_,
+                         post_invert_rgb_mix_,
                          post_invert_alpha_mix_, post_antialias_strength_,
                          post_antialias_threshold_, quantization_mix_, alpha_minimum_,
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
@@ -6274,6 +6386,7 @@ void MainWindow::connectEditors() {
     }
     for (auto* editor : {displacement_enabled_, lighting_enabled_, spiral_enabled_,
                          wall_enabled_, surface_enabled_, post_invert_rgb_enabled_,
+                         surface_plane_displacement_enabled_,
                          post_invert_alpha_enabled_, post_antialias_enabled_,
                          quantization_enabled_,
                          alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
@@ -6811,11 +6924,13 @@ void MainWindow::duplicateLayer() {
     layer.file_id = pvt::allocate_layer_file_id(project_);
     append_copy_suffix(layer.name);
     const bool copy_obj = !layer.render.surface.obj_sha256.empty();
+    const bool copy_height =
+        !layer.render.surface.plane_displacement.sha256.empty();
     const bool copy_music =
         !layer.render.layer_clock.clock.music.source_sha256.empty();
     const bool copy_image = !layer.render.starting_image.sha256.empty();
     std::unique_ptr<pvt::ProjectDocument> staged_document;
-    if (copy_obj || copy_music || copy_image) {
+    if (copy_obj || copy_height || copy_music || copy_image) {
         if (document_ == nullptr) {
             QMessageBox::critical(this, tr("Could not duplicate layer"),
                                   tr("The project attachment registry is unavailable."));
@@ -6862,6 +6977,34 @@ void MainWindow::duplicateLayer() {
         layer.render.surface.obj_path = duplicate_attachment.local_path;
         layer.render.surface.obj_sha256 = duplicate_attachment.sha256;
         layer.render.surface.obj_basename = duplicate_attachment.basename;
+    }
+    if (copy_height) {
+        const pvt::ProjectAttachment* source_attachment =
+            pvt::find_project_attachment(
+                *staged_document,
+                pvt::plane_displacement_attachment_id(source->uuid));
+        if (source_attachment == nullptr
+            || source_attachment->local_path.empty()) {
+            QMessageBox::critical(
+                this, tr("Could not duplicate layer"),
+                tr("The embedded plane-displacement height map is unavailable."));
+            return;
+        }
+        pvt::ProjectAttachment duplicate_attachment;
+        std::string attachment_error;
+        if (!pvt::attach_project_file(
+                *staged_document,
+                pvt::plane_displacement_attachment_id(layer.uuid),
+                source_attachment->local_path, &duplicate_attachment,
+                &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not duplicate layer"),
+                                  QString::fromStdString(attachment_error));
+            return;
+        }
+        auto& displacement = layer.render.surface.plane_displacement;
+        displacement.path = duplicate_attachment.local_path;
+        displacement.sha256 = duplicate_attachment.sha256;
+        displacement.basename = duplicate_attachment.basename;
     }
     if (copy_music) {
         const pvt::ProjectAttachment* source_attachment =
@@ -6971,6 +7114,7 @@ void MainWindow::removeLayer() {
         }
         for (const std::string& reference_id : {
                  pvt::surface_obj_attachment_id(layer->uuid),
+                 pvt::plane_displacement_attachment_id(layer->uuid),
                  pvt::starting_image_attachment_id(layer->uuid),
                  pvt::layer_music_attachment_id(layer->uuid)}) {
             std::string detach_error;
@@ -7331,6 +7475,208 @@ bool MainWindow::setSurfaceObjSource(const QString& source_path) {
         : tr("Embedded %1 for the active layer.")
               .arg(QString::fromStdString(config_.surface.obj_basename)));
     return true;
+}
+
+bool MainWindow::setPlaneDisplacementSource(const QString& source_path) {
+    if (populating_ || activeLayer() == nullptr) return false;
+    if (!source_path.isEmpty()
+        && QFileInfo(source_path).suffix().compare(
+               QStringLiteral("png"), Qt::CaseInsensitive) != 0) {
+        QMessageBox::warning(
+            this, tr("Unsupported height map"),
+            tr("Plane displacement accepts 8/16-bit PNG height maps."));
+        return false;
+    }
+    if (document_ == nullptr) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+        document_->project = project_;
+    }
+
+    auto before = captureActiveState();
+    auto& displacement = config_.surface.plane_displacement;
+    const std::string reference_id =
+        pvt::plane_displacement_attachment_id(active_layer_uuid_);
+    std::string attachment_error;
+    if (source_path.isEmpty()) {
+        if (!pvt::detach_project_file(
+                *document_, reference_id, &attachment_error)) {
+            QMessageBox::critical(
+                this, tr("Could not clear height map"),
+                QString::fromStdString(attachment_error));
+            return false;
+        }
+        displacement.enabled = false;
+        displacement.path.clear();
+        displacement.sha256.clear();
+        displacement.basename.clear();
+    } else {
+        const QString resolved = QDir::isAbsolutePath(source_path)
+            ? QDir::cleanPath(source_path)
+            : QDir::cleanPath(
+                  QDir(startup_working_directory_).absoluteFilePath(
+                      source_path));
+        if (!pvt::detail::validate_starting_image_source(
+                resolved.toStdString(), &attachment_error)) {
+            QMessageBox::critical(
+                this, tr("Could not decode height map"),
+                QString::fromStdString(attachment_error));
+            return false;
+        }
+        pvt::ProjectAttachment attached;
+        if (!pvt::attach_project_file(
+                *document_, reference_id, resolved.toStdString(), &attached,
+                &attachment_error)) {
+            QMessageBox::critical(
+                this, tr("Could not embed height map"),
+                QString::fromStdString(attachment_error));
+            return false;
+        }
+        displacement.enabled = true;
+        displacement.path = attached.local_path;
+        displacement.sha256 = attached.sha256;
+        displacement.basename = attached.basename;
+        config_.surface.enabled = true;
+        config_.surface.mapping = pvt::SurfaceMapping::Plane;
+    }
+
+    ensureAlphaForTransparency();
+    syncActiveRender();
+    syncProjectGlobals();
+    document_->project = project_;
+    document_->dirty = true;
+    {
+        const QSignalBlocker use_blocker(
+            surface_plane_displacement_enabled_);
+        const QSignalBlocker surface_blocker(surface_enabled_);
+        const QSignalBlocker mapping_blocker(surface_mapping_);
+        surface_plane_displacement_enabled_->setChecked(
+            displacement.enabled);
+        surface_plane_displacement_path_->setText(
+            QString::fromStdString(displacement.basename));
+        surface_enabled_->setChecked(config_.surface.enabled);
+        select_enum(surface_mapping_, config_.surface.mapping);
+    }
+    preview_->setConfiguration(config_);
+    updateSurfaceEditorState();
+    schedulePreview();
+    recordActiveStateChange(
+        source_path.isEmpty() ? tr("Clear plane height map")
+                              : tr("Embed plane height map"),
+        std::move(before));
+    status_->setText(
+        source_path.isEmpty()
+            ? tr("Cleared the active layer's plane-displacement height map.")
+            : tr("Embedded %1 and rebuilt the active layer's displacement plane.")
+                  .arg(QString::fromStdString(displacement.basename)));
+    return true;
+}
+
+void MainWindow::exportPlaneDisplacementObj() {
+    const auto& displacement = config_.surface.plane_displacement;
+    if (displacement.path.empty()) {
+        QMessageBox::information(
+            this, tr("No height map"),
+            tr("Choose a plane-displacement height map before exporting its mesh."));
+        return;
+    }
+    QString suggested = QString::fromStdString(displacement.basename);
+    if (suggested.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) {
+        suggested.chop(4);
+    }
+    suggested += QStringLiteral("-displaced-%1x%2.obj")
+                     .arg(config_.width)
+                     .arg(config_.height);
+    QString destination = QFileDialog::getSaveFileName(
+        this, tr("Export output-resolution displacement plane"),
+        usableDialogDirectory({}) + QDir::separator() + suggested,
+        tr("Wavefront OBJ (*.obj)"));
+    if (destination.isEmpty()) return;
+    if (!destination.endsWith(QStringLiteral(".obj"), Qt::CaseInsensitive)) {
+        destination += QStringLiteral(".obj");
+    }
+    rememberDialogLocation(destination);
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    std::shared_ptr<const pvt::detail::ObjMesh> mesh;
+    std::string mesh_error;
+    const bool loaded = pvt::detail::load_displacement_plane_mesh(
+        displacement, config_.width, config_.height, mesh, nullptr,
+        &mesh_error);
+    if (!loaded || !mesh) {
+        QApplication::restoreOverrideCursor();
+        QMessageBox::critical(
+            this, tr("Could not build displacement plane"),
+            QString::fromStdString(mesh_error));
+        return;
+    }
+
+    QSaveFile file(destination);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QApplication::restoreOverrideCursor();
+        QMessageBox::critical(
+            this, tr("Could not export OBJ"), file.errorString());
+        return;
+    }
+    QTextStream stream(&file);
+    stream.setLocale(QLocale::c());
+    stream.setRealNumberNotation(QTextStream::SmartNotation);
+    stream.setRealNumberPrecision(17);
+    stream << "# Procedural Visualizer Tool displacement plane\n"
+           << "# render_resolution " << config_.width << ' '
+           << config_.height << "\n"
+           << "# pixels_per_node " << displacement.pixels_per_node << "\n"
+           << "o PVT_Displacement_Plane\n";
+    for (std::size_t index = 0U; index < mesh->positions.size(); ++index) {
+        const auto& position = mesh->positions[index];
+        const double scale = mesh->normalization_scale;
+        stream << "v "
+               << (position.x - mesh->normalization_center.x) * scale << ' '
+               << (position.y - mesh->normalization_center.y) * scale << ' '
+               << (position.z - mesh->normalization_center.z) * scale << '\n';
+        if ((index & 16383U) == 0U) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        }
+    }
+    for (const auto& uv : mesh->texcoords) {
+        stream << "vt " << uv.x << ' ' << uv.y << '\n';
+    }
+    for (const auto& normal : mesh->normals) {
+        stream << "vn " << normal.x << ' ' << normal.y << ' '
+               << normal.z << '\n';
+    }
+    for (std::size_t index = 0U; index < mesh->triangles.size(); ++index) {
+        stream << "f";
+        for (const auto& corner : mesh->triangles[index].corners) {
+            const qulonglong position =
+                static_cast<qulonglong>(corner.position) + 1U;
+            const qulonglong texcoord =
+                static_cast<qulonglong>(corner.texcoord) + 1U;
+            const qulonglong normal =
+                static_cast<qulonglong>(corner.normal) + 1U;
+            stream << ' ' << position << '/' << texcoord << '/' << normal;
+        }
+        stream << '\n';
+        if ((index & 16383U) == 0U) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        }
+    }
+    stream.flush();
+    const bool written = stream.status() == QTextStream::Ok
+                         && file.commit();
+    const QString file_error = file.errorString();
+    QApplication::restoreOverrideCursor();
+    if (!written) {
+        QMessageBox::critical(
+            this, tr("Could not export OBJ"), file_error);
+        return;
+    }
+    status_->setText(
+        tr("Exported %1 vertices and %2 triangles to %3.")
+            .arg(static_cast<qulonglong>(mesh->positions.size()))
+            .arg(static_cast<qulonglong>(mesh->triangles.size()))
+            .arg(destination));
 }
 
 bool MainWindow::setStartingImageSource(const QString& source_path) {
@@ -9286,6 +9632,20 @@ void MainWindow::loadGlobalEditors() {
     surface_phase_->setValue(config_.surface.phase_degrees);
     surface_curvature_->setValue(config_.surface.curvature);
     surface_lighting_->setValue(config_.surface.lighting);
+    const auto& plane_displacement =
+        config_.surface.plane_displacement;
+    surface_plane_displacement_enabled_->setChecked(
+        plane_displacement.enabled);
+    surface_plane_displacement_path_->setText(
+        QString::fromStdString(plane_displacement.basename));
+    surface_plane_displacement_minimum_->setValue(
+        plane_displacement.minimum);
+    surface_plane_displacement_maximum_->setValue(
+        plane_displacement.maximum);
+    surface_plane_displacement_midpoint_->setValue(
+        plane_displacement.midpoint);
+    surface_plane_displacement_ratio_->setValue(
+        plane_displacement.pixels_per_node);
     transform_flip_horizontal_->setChecked(config_.transform.flip_horizontal);
     transform_flip_vertical_->setChecked(config_.transform.flip_vertical);
     select_enum(transform_mirror_, config_.transform.mirror);
@@ -9329,6 +9689,7 @@ void MainWindow::loadGlobalEditors() {
     post_antialias_threshold_->setValue(
         config_.post_process.antialias_threshold);
     post_antialias_passes_->setValue(config_.post_process.antialias_passes);
+    updateSurfaceEditorState();
     updatePostProcessEditorState();
     quantization_enabled_->setChecked(config_.quantization.enabled);
     quantization_levels_->setValue(config_.quantization.levels);
@@ -9363,6 +9724,37 @@ void MainWindow::loadGlobalEditors() {
     populating_ = false;
     updateOutputEditorValidity();
     updateSynchronizationState();
+}
+
+void MainWindow::updateSurfaceEditorState() {
+    if (surface_mapping_ == nullptr || surface_obj_row_ == nullptr
+        || surface_plane_displacement_group_ == nullptr) {
+        return;
+    }
+    const auto mapping = static_cast<pvt::SurfaceMapping>(
+        surface_mapping_->currentData().toInt());
+    const bool custom_obj = mapping == pvt::SurfaceMapping::CustomObj;
+    const bool plane = mapping == pvt::SurfaceMapping::Plane;
+    surface_obj_row_->setVisible(custom_obj);
+    if (surface_obj_label_ != nullptr) {
+        surface_obj_label_->setVisible(custom_obj);
+    }
+    surface_plane_displacement_group_->setVisible(plane);
+    const bool has_height_map =
+        !config_.surface.plane_displacement.path.empty()
+        || !config_.surface.plane_displacement.sha256.empty();
+    surface_plane_displacement_clear_->setEnabled(has_height_map);
+    surface_plane_displacement_export_->setEnabled(has_height_map);
+    surface_plane_displacement_path_->setToolTip(
+        has_height_map
+            ? tr("Embedded project asset: %1")
+                  .arg(QString::fromStdString(
+                      config_.surface.plane_displacement.basename))
+            : tr("Choose remains available while displacement use is off."));
+    surface_curvature_->setToolTip(
+        plane && has_height_map
+            ? tr("Crossfade from the original flat image at 0 to the fully projected displacement mesh at 1.")
+            : tr("Crossfade from the original flat image at 0 to the fully mapped 3D surface at 1."));
 }
 
 void MainWindow::updatePostProcessEditorState() {
@@ -10972,6 +11364,45 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_mapping_) {
         config_.surface.mapping =
             static_cast<pvt::SurfaceMapping>(surface_mapping_->currentData().toInt());
+        if (config_.surface.mapping != pvt::SurfaceMapping::Plane
+            && config_.surface.plane_displacement.enabled) {
+            config_.surface.plane_displacement.enabled = false;
+            const QSignalBlocker blocker(
+                surface_plane_displacement_enabled_);
+            surface_plane_displacement_enabled_->setChecked(false);
+        }
+    } else if (changed_editor == surface_plane_displacement_enabled_) {
+        if (surface_plane_displacement_enabled_->isChecked()
+            && config_.surface.plane_displacement.path.empty()) {
+            const QSignalBlocker blocker(
+                surface_plane_displacement_enabled_);
+            surface_plane_displacement_enabled_->setChecked(false);
+            status_->setText(
+                tr("Choose a height-map PNG before enabling plane displacement."));
+            return;
+        }
+        config_.surface.plane_displacement.enabled =
+            surface_plane_displacement_enabled_->isChecked();
+        if (config_.surface.plane_displacement.enabled) {
+            config_.surface.enabled = true;
+            config_.surface.mapping = pvt::SurfaceMapping::Plane;
+            const QSignalBlocker enabled_blocker(surface_enabled_);
+            const QSignalBlocker mapping_blocker(surface_mapping_);
+            surface_enabled_->setChecked(true);
+            select_enum(surface_mapping_, pvt::SurfaceMapping::Plane);
+        }
+    } else if (changed_editor == surface_plane_displacement_minimum_) {
+        config_.surface.plane_displacement.minimum =
+            surface_plane_displacement_minimum_->value();
+    } else if (changed_editor == surface_plane_displacement_maximum_) {
+        config_.surface.plane_displacement.maximum =
+            surface_plane_displacement_maximum_->value();
+    } else if (changed_editor == surface_plane_displacement_midpoint_) {
+        config_.surface.plane_displacement.midpoint =
+            surface_plane_displacement_midpoint_->value();
+    } else if (changed_editor == surface_plane_displacement_ratio_) {
+        config_.surface.plane_displacement.pixels_per_node =
+            surface_plane_displacement_ratio_->value();
     } else if (changed_editor == surface_rotations_) {
         config_.surface.rotations_per_loop = surface_rotations_->value();
     } else if (changed_editor == surface_phase_) {
@@ -11089,6 +11520,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
                                && config_.output.dither_enabled);
     starting_image_palette_dither_method_->setEnabled(
         config_.starting_image.palette_dither_enabled);
+    updateSurfaceEditorState();
     updatePostProcessEditorState();
     png_compression_->setEnabled(config_.output.bit_depth != 32);
     if (changed_editor == post_invert_rgb_enabled_
@@ -12825,10 +13257,27 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("saveCurrentProjectDefaults"));
         const auto* restore_defaults = settings_dialog.findChild<QPushButton*>(
             QStringLiteral("restoreBuiltInDefaults"));
+        const auto* settings_scroll = settings_dialog.findChild<QScrollArea*>(
+            QStringLiteral("applicationSettingsScroll"));
+        const auto* capability_status = settings_dialog.findChild<QLabel*>(
+            QStringLiteral("rendererCapabilityStatus"));
+        settings_dialog.show();
+        QApplication::processEvents();
+        QScreen* settings_screen = settings_dialog.screen();
+        const bool settings_fit_screen = settings_screen == nullptr
+            || (settings_dialog.width()
+                    <= settings_screen->availableGeometry().width() - 16
+                && settings_dialog.height()
+                    <= settings_screen->availableGeometry().height() - 16);
+        settings_dialog.hide();
         if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
             || recent_limit == nullptr
             || backend == nullptr || backend->count() != 3
             || save_defaults == nullptr || restore_defaults == nullptr
+            || settings_scroll == nullptr || !settings_scroll->widgetResizable()
+            || capability_status == nullptr
+            || capability_status->text().isEmpty()
+            || !settings_fit_screen
             || settings_dialog.undoLimit() != expected_undo_limit
             || settings_dialog.recentProjectLimit() != recent_project_limit_
             || settings_dialog.renderBackend() != expected_backend) {
@@ -12858,12 +13307,112 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
     }
+    if (surface_mapping_ == nullptr || surface_obj_row_ == nullptr
+        || surface_plane_displacement_group_ == nullptr
+        || surface_plane_displacement_enabled_ == nullptr
+        || surface_plane_displacement_path_ == nullptr
+        || surface_plane_displacement_browse_ == nullptr
+        || surface_plane_displacement_clear_ == nullptr
+        || surface_plane_displacement_minimum_ == nullptr
+        || surface_plane_displacement_maximum_ == nullptr
+        || surface_plane_displacement_midpoint_ == nullptr
+        || surface_plane_displacement_ratio_ == nullptr
+        || surface_plane_displacement_export_ == nullptr) {
+        if (error != nullptr) {
+            *error = tr("The Plane displacement editor is incomplete.");
+        }
+        return false;
+    }
+    {
+        const int original_mapping = surface_mapping_->currentIndex();
+        const QSignalBlocker blocker(surface_mapping_);
+        select_enum(surface_mapping_, pvt::SurfaceMapping::Plane);
+        updateSurfaceEditorState();
+        const bool plane_editor_reachable =
+            !surface_plane_displacement_group_->isHidden()
+            && surface_plane_displacement_group_->isAncestorOf(
+                surface_plane_displacement_browse_)
+            && surface_plane_displacement_browse_->isEnabled()
+            && surface_obj_row_->isHidden();
+        select_enum(surface_mapping_, pvt::SurfaceMapping::CustomObj);
+        updateSurfaceEditorState();
+        const bool custom_obj_exclusive =
+            surface_plane_displacement_group_->isHidden()
+            && !surface_obj_row_->isHidden();
+        surface_mapping_->setCurrentIndex(original_mapping);
+        updateSurfaceEditorState();
+        if (!plane_editor_reachable || !custom_obj_exclusive) {
+            if (error != nullptr) {
+                *error = tr("Plane displacement is unreachable while off or overlaps the Custom OBJ source editor.");
+            }
+            return false;
+        }
+    }
+    {
+        pvt::ProjectConfig live_probe = pvt::default_project();
+        auto& live_surface = live_probe.layers.front().render.surface;
+        live_surface.enabled = true;
+        live_surface.mapping = pvt::SurfaceMapping::Plane;
+        live_surface.plane_displacement.enabled = true;
+        live_surface.plane_displacement.path = "embedded-height.png";
+        const QString prefix = QStringLiteral("layer/%1/surface.")
+                                   .arg(QString::fromStdString(
+                                       live_probe.layers.front().uuid));
+        const auto targets = buildLiveTargetRegistry(live_probe);
+        const auto target = [&targets, &prefix](const QString& suffix) {
+            return std::find_if(
+                targets.begin(), targets.end(),
+                [&prefix, &suffix](const LiveTargetDescriptor& item) {
+                    return item.path == prefix + suffix;
+                });
+        };
+        const auto enabled = target(QStringLiteral("plane_displacement.enabled"));
+        const auto minimum = target(QStringLiteral("plane_displacement.minimum"));
+        const auto maximum = target(QStringLiteral("plane_displacement.maximum"));
+        const auto midpoint = target(QStringLiteral("plane_displacement.midpoint"));
+        const auto mapping = target(QStringLiteral("mapping"));
+        if (enabled == targets.end() || minimum == targets.end()
+            || maximum == targets.end() || midpoint == targets.end()
+            || mapping == targets.end()
+            || !minimum->apply(live_probe, -0.75)
+            || live_probe.layers.front().render.surface.plane_displacement.minimum
+                   != -0.75
+            || !mapping->apply(
+                live_probe, static_cast<double>(pvt::SurfaceMapping::Cylinder))
+            || live_probe.layers.front().render.surface.plane_displacement.enabled
+            || !enabled->apply(live_probe, 1.0)
+            || !live_probe.layers.front().render.surface.enabled
+            || live_probe.layers.front().render.surface.mapping
+                   != pvt::SurfaceMapping::Plane
+            || !live_probe.layers.front().render.surface.plane_displacement.enabled) {
+            if (error != nullptr) {
+                *error = tr("Live Plane displacement targets are incomplete or can create an invalid surface combination.");
+            }
+            return false;
+        }
+    }
     pvt::RenderConfig alpha_probe = pvt::default_config();
     alpha_probe.starting_image.enabled = true;
     alpha_probe.alpha.use_source_alpha = false;
     if (configuration_requires_alpha(alpha_probe)) {
         if (error != nullptr) {
             *error = tr("An opaque-decoded starting image unnecessarily forced alpha output.");
+        }
+        return false;
+    }
+    alpha_probe.surface.enabled = true;
+    alpha_probe.surface.mapping = pvt::SurfaceMapping::Plane;
+    alpha_probe.surface.plane_displacement.enabled = true;
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A displaced Plane did not request alpha for its mesh exterior.");
+        }
+        return false;
+    }
+    alpha_probe.surface.curvature = 0.0;
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A neutral displaced Plane unnecessarily forced alpha output.");
         }
         return false;
     }
@@ -14608,6 +15157,106 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !config_.surface.obj_sha256.empty()) {
         if (error != nullptr) {
             *error = tr("Redo did not clear the custom OBJ attachment again.");
+        }
+        return false;
+    }
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+
+    const QString height_path = directory.filePath(
+        QStringLiteral("attachment height smoke.png"));
+    QImage height_fixture(7, 5, QImage::Format_RGBA8888);
+    for (int y = 0; y < height_fixture.height(); ++y) {
+        for (int x = 0; x < height_fixture.width(); ++x) {
+            const int level = (x + y) * 255
+                              / (height_fixture.width()
+                                 + height_fixture.height() - 2);
+            height_fixture.setPixel(x, y, qRgba(level, level, level, 255));
+        }
+    }
+    if (!height_fixture.save(height_path, "PNG")) {
+        if (error != nullptr) {
+            *error = tr("Could not create the Plane height-map smoke fixture.");
+        }
+        return false;
+    }
+    const std::string height_reference =
+        pvt::plane_displacement_attachment_id(active_layer_uuid_);
+    if (!setPlaneDisplacementSource(height_path)) {
+        if (error != nullptr) {
+            *error = tr("The GUI could not embed a Plane height map immediately.");
+        }
+        return false;
+    }
+    const pvt::ProjectAttachment* embedded_height =
+        pvt::find_project_attachment(*document_, height_reference);
+    if (embedded_height == nullptr || embedded_height->sha256.empty()
+        || embedded_height->basename != "attachment height smoke.png"
+        || embedded_height->local_path.empty()
+        || config_.surface.plane_displacement.sha256
+               != embedded_height->sha256
+        || config_.surface.plane_displacement.path
+               != embedded_height->local_path
+        || !config_.surface.plane_displacement.enabled
+        || !config_.surface.enabled
+        || config_.surface.mapping != pvt::SurfaceMapping::Plane
+        || !config_.output.write_alpha
+        || !surface_plane_displacement_export_->isEnabled()
+        || undo_stack_->count() != 1) {
+        if (error != nullptr) {
+            *error = tr("Plane height-map embedding did not update geometry, alpha, and attachment state atomically.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (pvt::find_project_attachment(*document_, height_reference) != nullptr
+        || !config_.surface.plane_displacement.sha256.empty()
+        || config_.surface.plane_displacement.enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not remove both Plane displacement metadata and its attachment reference.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    embedded_height = pvt::find_project_attachment(
+        *document_, height_reference);
+    if (embedded_height == nullptr
+        || config_.surface.plane_displacement.sha256
+               != embedded_height->sha256
+        || !config_.surface.plane_displacement.enabled) {
+        if (error != nullptr) {
+            *error = tr("Redo did not restore the embedded Plane height map.");
+        }
+        return false;
+    }
+    if (!setPlaneDisplacementSource(QString{})) {
+        if (error != nullptr) {
+            *error = tr("The embedded Plane height map could not be cleared.");
+        }
+        return false;
+    }
+    if (pvt::find_project_attachment(*document_, height_reference) != nullptr
+        || !config_.surface.plane_displacement.sha256.empty()
+        || config_.surface.plane_displacement.enabled) {
+        if (error != nullptr) {
+            *error = tr("Clearing a Plane height map left attachment or enabled state behind.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (pvt::find_project_attachment(*document_, height_reference) == nullptr
+        || config_.surface.plane_displacement.sha256.empty()
+        || !config_.surface.plane_displacement.enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore a cleared Plane height map.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    if (pvt::find_project_attachment(*document_, height_reference) != nullptr
+        || !config_.surface.plane_displacement.sha256.empty()) {
+        if (error != nullptr) {
+            *error = tr("Redo did not clear the Plane height map again.");
         }
         return false;
     }

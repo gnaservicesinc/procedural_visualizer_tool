@@ -1,5 +1,6 @@
 #include "procedural_visualizer_tool.h"
 
+#include "displacement_surface.h"
 #include "frame_renderer_internal.h"
 #include "obj_surface.h"
 #include "source_image.h"
@@ -1227,6 +1228,9 @@ bool surface_has_render_work(const SurfaceConfig& surface) {
     }
     if (surface.mapping != SurfaceMapping::Plane) {
         return surface.curvature > 0.0;
+    }
+    if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
+        return true;
     }
     const bool identity_rotation = surface.rotations_per_loop == 0
                                    && std::fmod(surface.phase_degrees, 360.0) == 0.0;
@@ -2911,6 +2915,31 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result(
             "A custom OBJ surface requires a valid runtime path or embedded attachment identity.");
     }
+    const PlaneDisplacementConfig& plane =
+        config.surface.plane_displacement;
+    if (!finite_in_range(plane.minimum, -2.0, 2.0)
+        || !finite_in_range(plane.maximum, -2.0, 2.0)
+        || plane.minimum > 0.0 || plane.maximum < 0.0
+        || plane.minimum > plane.maximum
+        || !finite_in_range(plane.midpoint, 0.0, 1.0)
+        || plane.pixels_per_node < 1
+        || plane.pixels_per_node > kMaximumDimension
+        || (!plane.path.empty()
+            && !valid_path_text(plane.path, kMaximumPathBytes, false))
+        || (plane.sha256.empty() != plane.basename.empty())
+        || (!plane.sha256.empty()
+            && (!valid_lower_hex_digest(plane.sha256)
+                || plane.basename.size() > kMaximumAttachmentBasenameBytes
+                || !valid_music_basename(plane.basename)))) {
+        return invalid_result(
+            "Plane displacement values or height-map attachment metadata are invalid.");
+    }
+    if (plane.enabled
+        && (config.surface.mapping != SurfaceMapping::Plane
+            || (plane.path.empty() && plane.sha256.empty()))) {
+        return invalid_result(
+            "An enabled plane displacement requires the Plane surface and a valid height-map PNG path or embedded attachment identity.");
+    }
     if (!valid_enum(config.starting_image.fit)
         || !valid_enum(config.starting_image.palette_dither_method)
         || (!config.starting_image.path.empty()
@@ -2932,7 +2961,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (include_export) {
         const bool has_transparent_surface =
             surface_has_render_work(config.surface)
-            && config.surface.mapping != SurfaceMapping::Plane;
+            && (config.surface.mapping != SurfaceMapping::Plane
+                || config.surface.plane_displacement.enabled);
         const bool has_transparent_palette_source =
             config.alpha.use_source_alpha && config.palette.enabled
             && std::any_of(
@@ -3017,19 +3047,42 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (!checked_multiply(frame_bytes, buffer_count, peak_bytes)) {
         return invalid_result("The renderer's peak memory estimate overflowed.");
     }
-    if (surface_has_render_work(config.surface)
-        && config.surface.mapping == SurfaceMapping::CustomObj) {
+    const bool uses_raster_mesh = surface_has_render_work(config.surface)
+        && (config.surface.mapping == SurfaceMapping::CustomObj
+            || (config.surface.mapping == SurfaceMapping::Plane
+                && config.surface.plane_displacement.enabled));
+    if (uses_raster_mesh) {
         std::size_t obj_working_bytes = 0;
         if (!checked_multiply(pixel_count,
                               detail::kObjSurfaceLayeredBytesPerPixel,
                               obj_working_bytes)
             || obj_working_bytes > std::numeric_limits<std::size_t>::max()
                                        - peak_bytes) {
-            return invalid_result("The custom OBJ peak memory estimate overflowed.");
+            return invalid_result("The mesh-surface peak memory estimate overflowed.");
         }
         // Validate against the transparent, multi-layer path. Opaque images
         // automatically use a smaller nearest-fragment buffer at render time.
         peak_bytes += obj_working_bytes;
+    }
+    if (surface_has_render_work(config.surface)
+        && config.surface.mapping == SurfaceMapping::Plane
+        && config.surface.plane_displacement.enabled) {
+        std::size_t columns = 0U;
+        std::size_t rows = 0U;
+        std::size_t mesh_bytes = 0U;
+        std::string mesh_error;
+        if (!detail::displacement_mesh_requirements(
+                config.width, config.height,
+                config.surface.plane_displacement.pixels_per_node,
+                columns, rows, mesh_bytes, &mesh_error)) {
+            return invalid_result(mesh_error);
+        }
+        if (mesh_bytes > (std::numeric_limits<std::size_t>::max)()
+                             - peak_bytes) {
+            return invalid_result(
+                "The displacement-plane peak memory estimate overflowed.");
+        }
+        peak_bytes += mesh_bytes;
     }
 
     ValidationResult result;
@@ -4708,11 +4761,117 @@ std::pair<double, double> cube_uv(Vec3 point, Vec3 normal) {
     return {clamp_value(u, 0.0, 1.0), clamp_value(v, 0.0, 1.0)};
 }
 
+struct CylinderHit {
+    double distance = 0.0;
+    Vec3 point;
+    Vec3 normal;
+};
+
+struct CylinderIntersections {
+    CylinderHit front;
+    CylinderHit back;
+    bool has_back = false;
+};
+
+bool intersect_closed_cylinder(Vec3 origin, Vec3 direction,
+                               CylinderIntersections& intersections) {
+    std::array<CylinderHit, 4U> hits{};
+    std::size_t hit_count = 0U;
+    const auto add_hit = [&](double distance, Vec3 normal) {
+        if (!std::isfinite(distance) || distance < 0.0
+            || hit_count >= hits.size()) {
+            return;
+        }
+        const Vec3 point = add(origin, multiply(direction, distance));
+        for (std::size_t index = 0U; index < hit_count; ++index) {
+            if (std::fabs(hits[index].distance - distance) <= 1.0e-9) {
+                return;
+            }
+        }
+        hits[hit_count++] = {distance, point, normal};
+    };
+
+    const double a = direction.x * direction.x
+                     + direction.z * direction.z;
+    const double b = 2.0 * (origin.x * direction.x
+                            + origin.z * direction.z);
+    const double c = origin.x * origin.x + origin.z * origin.z - 1.0;
+    if (a > 1.0e-12) {
+        const double discriminant = b * b - 4.0 * a * c;
+        if (discriminant >= 0.0) {
+            const double root = std::sqrt(std::max(0.0, discriminant));
+            const double first = (-b - root) / (2.0 * a);
+            const double second = (-b + root) / (2.0 * a);
+            for (const double distance : {first, second}) {
+                const double y = origin.y + distance * direction.y;
+                if (distance >= 0.0 && y >= -1.0 - 1.0e-10
+                    && y <= 1.0 + 1.0e-10) {
+                    const Vec3 point = add(
+                        origin, multiply(direction, distance));
+                    add_hit(distance,
+                            normalize({point.x, 0.0, point.z}));
+                }
+            }
+        }
+    }
+    if (std::fabs(direction.y) > 1.0e-12) {
+        for (const double cap_y : {-1.0, 1.0}) {
+            const double distance = (cap_y - origin.y) / direction.y;
+            const Vec3 point = add(origin, multiply(direction, distance));
+            if (distance >= 0.0
+                && point.x * point.x + point.z * point.z
+                       <= 1.0 + 1.0e-10) {
+                add_hit(distance,
+                        {0.0, cap_y > 0.0 ? 1.0 : -1.0, 0.0});
+            }
+        }
+    }
+    if (hit_count == 0U) return false;
+    std::sort(hits.begin(), hits.begin() + static_cast<std::ptrdiff_t>(hit_count),
+              [](const CylinderHit& left, const CylinderHit& right) {
+                  return left.distance < right.distance;
+              });
+    intersections = {};
+    intersections.front = hits[0U];
+    if (hit_count > 1U) {
+        intersections.back = hits[1U];
+        intersections.has_back = true;
+    }
+    return true;
+}
+
+std::pair<double, double> cylinder_uv(Vec3 point, Vec3 normal) {
+    if (std::fabs(normal.y) < 0.5) {
+        return {wrap_unit(0.5 + std::atan2(point.x, point.z) / kTau),
+                clamp_value(0.5 * (1.0 - point.y), 0.0, 1.0)};
+    }
+    const double u = 0.5 + 0.5 * point.x;
+    const double v = normal.y > 0.0
+                         ? 0.5 + 0.5 * point.z
+                         : 0.5 - 0.5 * point.z;
+    return {clamp_value(u, 0.0, 1.0), clamp_value(v, 0.0, 1.0)};
+}
+
 bool apply_surface_mapping(const Image& source, Image& destination,
                            const SurfaceConfig& surface, double loop_phase,
                            std::string* error,
                            const std::atomic_bool* cancel) {
     throw_if_cancelled(cancel);
+    if (detail::opengl_surface_acceleration_active()
+        && detail::opengl_surface_backend_supports(surface)) {
+        const bool rendered = detail::apply_surface_mapping_opengl(
+            source, destination, surface, loop_phase, cancel, error);
+        throw_if_cancelled(cancel);
+        return rendered;
+    }
+    if (surface.mapping == SurfaceMapping::Plane
+        && surface.plane_displacement.enabled
+        && surface.curvature > 0.0) {
+        const bool rendered = detail::apply_displacement_plane_mapping(
+            source, destination, surface, loop_phase, error, cancel);
+        throw_if_cancelled(cancel);
+        return rendered;
+    }
     if (surface.mapping == SurfaceMapping::CustomObj) {
         const bool rendered = detail::apply_obj_surface_mapping(
             source, destination, surface.obj_path, surface.rotations_per_loop,
@@ -4755,39 +4914,49 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                     break;
                 }
                 case SurfaceMapping::Cylinder: {
-                    const double radius = 0.46 * short_side;
-                    const double normalized_x = (x - center_x) / radius;
-                    const double normalized_y = (y - center_y)
-                                                / (0.46 * source.height);
-                    if (std::fabs(normalized_x) > 1.0
-                        || std::fabs(normalized_y) > 1.0) {
+                    const double scale = 0.52 * short_side;
+                    const double screen_x = (x - center_x) / scale;
+                    const double screen_y = (center_y - y) / scale;
+                    const Vec3 world_origin = {0.0, 0.0, 3.4};
+                    const Vec3 world_direction = normalize(
+                        {screen_x, screen_y, -2.5});
+                    constexpr double fixed_x_rotation = -0.35;
+                    // Spin around the cylinder's own Y axis, then tilt the
+                    // complete closed primitive so its caps remain visible.
+                    const Vec3 origin = rotate_y(
+                        rotate_x(world_origin, -fixed_x_rotation), -phase);
+                    const Vec3 direction = rotate_y(
+                        rotate_x(world_direction, -fixed_x_rotation), -phase);
+                    CylinderIntersections intersections;
+                    if (!intersect_closed_cylinder(
+                            origin, direction, intersections)) {
                         visible = false;
                         break;
                     }
-                    const double longitude = std::asin(clamp_value(normalized_x, -1.0, 1.0));
-                    const double surface_v = 0.5 + 0.5 * normalized_y;
-                    const double normalized_z = std::sqrt(std::max(
-                        0.0, 1.0 - normalized_x * normalized_x));
-                    const auto sample_side = [&](double side_longitude,
-                                                 double normal_z) {
-                        const double wrapped_u = wrap_unit(
-                            0.5 + side_longitude / kTau - phase / kTau);
-                        Color sampled = sample_bilinear_wrapped_x(
-                            source, wrapped_u * source.width,
-                            surface_v * (source.height - 1));
-                        const Vec3 outward_normal = {normalized_x, 0.0, normal_z};
-                        return shade_surface(sampled,
-                                             face_forward(outward_normal,
-                                                          {0.0, 0.0, -1.0}),
-                                             surface.lighting);
+                    const auto sample_hit = [&](const CylinderHit& hit) {
+                        const auto uv = cylinder_uv(hit.point, hit.normal);
+                        Color sampled = std::fabs(hit.normal.y) < 0.5
+                            ? sample_bilinear_wrapped_x(
+                                  source, uv.first * source.width,
+                                  uv.second * (source.height - 1))
+                            : sample_bilinear(
+                                  source, uv.first * (source.width - 1),
+                                  uv.second * (source.height - 1),
+                                  EdgeMode::Reflect);
+                        const Vec3 world_normal = rotate_x(
+                            rotate_y(hit.normal, phase), fixed_x_rotation);
+                        return shade_surface(
+                            sampled,
+                            face_forward(world_normal, world_direction),
+                            surface.lighting * curvature);
                     };
-                    Color wrapped = sample_side(longitude, normalized_z);
-                    if (normalized_z > 1.0e-10) {
-                        const double rear_longitude = normalized_x >= 0.0
-                                                          ? kPi - longitude
-                                                          : -kPi - longitude;
-                        const Color rear = sample_side(rear_longitude, -normalized_z);
-                        wrapped = composite_straight_alpha_over(wrapped, rear);
+                    Color wrapped = sample_hit(intersections.front);
+                    if (intersections.has_back) {
+                        const Color rear = sample_hit(intersections.back);
+                        const Color layered = composite_straight_alpha_over(
+                            wrapped, rear);
+                        wrapped = blend_straight_alpha(
+                            wrapped, layered, curvature);
                     }
                     const Color planar = load_color(source, x, y);
                     output = blend_straight_alpha(planar, wrapped, curvature);
@@ -5581,8 +5750,10 @@ bool render_frame_at_timeline_sample_cancellable(
         // planar source in that state. Plane mapping remains active whenever its
         // configured phase or per-loop rotation can produce a 2D rotation.
         if (surface_has_render_work(render.surface)) {
-            if (render.surface.mapping == SurfaceMapping::CustomObj) {
-                // OBJ mapping builds its transactional mapped image locally.
+            if (render.surface.mapping == SurfaceMapping::CustomObj
+                || (render.surface.mapping == SurfaceMapping::Plane
+                    && render.surface.plane_displacement.enabled)) {
+                // Raster-mesh mapping builds its transactional mapped image locally.
                 // Release the no-longer-needed effect scratch allocation so
                 // that local image occupies the surface-work buffer already
                 // included by central peak-memory validation.

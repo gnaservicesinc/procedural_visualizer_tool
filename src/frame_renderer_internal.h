@@ -90,6 +90,20 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                                  const std::atomic_bool* cancel,
                                  std::string* error);
 
+bool opengl_surface_backend_compiled();
+bool opengl_surface_backend_available(std::string* device_name,
+                                      std::string* status);
+bool opengl_surface_backend_supports(const RenderConfig& config,
+                                     std::string* reason);
+bool opengl_surface_backend_supports(const SurfaceConfig& surface);
+bool opengl_surface_acceleration_active();
+bool set_opengl_surface_acceleration_active(bool active);
+bool apply_surface_mapping_opengl(const Image& source, Image& destination,
+                                  const SurfaceConfig& surface,
+                                  double loop_phase,
+                                  const std::atomic_bool* cancel,
+                                  std::string* error);
+
 } // namespace pvt::detail
 
 #endif
