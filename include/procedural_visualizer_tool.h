@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 16;
+constexpr std::uint32_t kSetupFormatVersion = 17;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -49,6 +49,7 @@ constexpr std::size_t kMaximumLayerGroups = kMaximumLayers;
 constexpr std::size_t kMaximumPaletteColors = kMaximumUiItems;
 constexpr std::size_t kMaximumMotionPaths = kMaximumUiItems;
 constexpr std::size_t kMaximumMotionPathNodes = kMaximumUiItems;
+constexpr std::size_t kMaximumParameterLfos = kMaximumUiItems;
 constexpr std::size_t kBuiltInPaletteCount = 6;
 // The text codec, CLI, and Qt editors ultimately expose signed-int counts.
 // Their bounds replace the former small product-policy ceilings.
@@ -1228,6 +1229,23 @@ struct CanvasLoopConfig {
     LiveConfig live;
 };
 
+// A layer-local low-frequency oscillator drives one stable numeric target.
+// Target paths use the same reorder-safe keys as Live controls, relative to
+// the owning layer (for example "surface.rotation_y" or
+// "effect/42/intensity"). Integer targets round the evaluated value at the
+// point of use. Integer cycles preserve a seamless project loop.
+struct ParameterLfo {
+    bool enabled = true;
+    std::string target_path;
+    Waveform waveform = Waveform::Sine;
+    double minimum = 0.0;
+    double maximum = 1.0;
+    int cycles_per_loop = 1;
+    double phase_degrees = 0.0;
+    // Used by Smooth pulse; neutral for the other waveform choices.
+    double shape = 0.5;
+};
+
 // Per-layer render data. Canvas/loop and export settings deliberately live
 // outside this type so switching layers cannot overwrite project-global data.
 struct RenderData {
@@ -1272,6 +1290,10 @@ struct RenderData {
     // Appended so older aggregate initializers retain their field ordering and
     // receive a fully neutral finishing stage.
     PostProcessConfig post_process;
+    // Appended project-authoring modulation. Unknown or deleted targets are
+    // retained by persistence and ignored at render time so item deletion and
+    // older/newer application versions do not destroy authored automation.
+    std::vector<ParameterLfo> parameter_lfos;
 };
 
 // Backward-compatible single-render configuration. Public field access such
@@ -1358,9 +1380,10 @@ struct ValidationResult {
 struct FrameRenderOptions {
     // CPU remains the library/API compatibility default. Applications can opt
     // into CpuAndGpu, which uses Metal for the accelerated pixel pipeline on
-    // macOS and OpenGL for supported analytic 3D surface mapping on Windows
-    // and Linux. Gpu is strict: it reports unavailable or unsupported work
-    // instead of silently using the CPU.
+    // macOS and OpenGL generated/surface/completion passes on Windows and
+    // Linux. Gpu prioritizes that device and reports runtime acceleration
+    // failures instead of silently restarting the frame on CPU. Ordered CPU
+    // dependencies may remain inside the same GPU-owned frame.
     RenderBackend backend = RenderBackend::Cpu;
     // Metal work is admitted before its frame buffers are allocated. This
     // bound therefore limits both queued command buffers and GPU-visible frame
@@ -1425,6 +1448,10 @@ PVT_API std::uint64_t allocate_layer_file_id(const ProjectConfig& project);
 PVT_API RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
                                          const ExportConfig& output,
                                          const RenderData& render);
+// True when the current layer contains the stable numeric target referenced by
+// a ParameterLfo path. Dynamic wave/swing/effect paths are resolved by ID.
+PVT_API bool parameter_lfo_target_supported(const RenderData& render,
+                                            const std::string& target_path);
 
 PVT_API ValidationResult validate(const RenderConfig& config);
 PVT_API ValidationResult validate(const ProjectConfig& project);

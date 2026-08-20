@@ -20,7 +20,7 @@ full-screen window. The shared renderer must not depend on its window host.
 Use Qt's public OpenGL integration in the existing GUI and
 `QOffscreenSurface` for non-windowed rendering.
 
-1. **Implemented in 5.0.0:** keep `cpu`, `cpu+gpu`, and strict `gpu` as
+1. **Implemented in 5.0.0:** keep `cpu`, `cpu+gpu`, and `gpu` as
    user-visible policies and report Metal/OpenGL runtime capabilities rather
    than using platform-name checks.
 2. Extract the current Metal kernel inputs into backend-neutral packed
@@ -30,8 +30,10 @@ Use Qt's public OpenGL integration in the existing GUI and
    analytic closed Cylinder/Sphere/Cube/flat Plane mapping, and displaced Plane
    mesh rasterization on Windows/Linux. Other generated modes, starting images,
    palettes, effects, quantization, Custom OBJ, and final layer compositing
-   remain on CPU for the portable path. CPU + GPU accelerates eligible stages;
-   strict GPU gives an actionable error when no supported stage exists.
+   remain ordered reference stages inside the portable path. CPU + GPU
+   accelerates eligible stages; GPU admits every valid layer and completes it
+   through OpenGL instead of rejecting projects without a particular surface
+   or generated-source variant.
 4. Reuse the current bounded admission, cancellation, straight-alpha, linear
    light, half-open loop, and ordered-compositing contracts. Do not read a GPU
    result into the CPU between every effect.

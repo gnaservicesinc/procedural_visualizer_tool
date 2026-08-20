@@ -488,9 +488,15 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          Version 9.0.0 adds layer-local numeric LFOs for the editor, library, preview, and export pipeline. Artists can drive supported numeric render values between authored minimum and maximum values with Sine, Triangle, Smooth pulse, or Bounce waveforms, plus whole cycles per loop, phase, and pulse shape. Stable wave, swing, and effect IDs survive reordering; the underlying numeric field remains the authored fallback; undo and setup/project persistence retain the oscillator definitions.
+
+          The backend selector is now simply GPU and describes both performance and debugging uses. On Windows and Linux, every validated project is admitted: starting images, palettes, alternate generated-color modes, Custom OBJ work, and neutral layers without an analytic surface complete through OpenGL instead of being rejected by a narrow admission rule. Dependency-ordered reference stages can remain inside the same GPU-owned frame, while runtime context or shader failures stay actionable and are never hidden by a whole-frame CPU retry.
+
+          Setup persistence advances to format 17 and layer records to format 15. Existing projects remain migration inputs with an empty neutral LFO collection. `ParameterLfo` extends the public by-value configuration layout, so the product major and installed shared-library ABI advance together to 9.0.0/SONAME 9; installed-library clients must rebuild.
+
           Version 8.0.3 fixes the actual Windows/Linux acceleration gap instead of hiding strict GPU diagnostics. Ordinary Continuous hue generated layers now execute in a real offscreen OpenGL 3.3 fragment pass covering prepared waves and paths, spatial swings, displacement, slope lighting, spiral/wall signals, generated RGB ranges, audio hue response, block replication, and procedural alpha. Supported surface stages can run in the same accelerated frame. CPU + GPU retains bounded CPU lanes for unsupported ordered work, while any admitted OpenGL failure is reported without a CPU retry.
 
-          GPU (Strict diagnostics) is restored as a first-class editor, CLI, and library choice on every platform, and saved selections are preserved. A no-surface default layer succeeds through the portable generated-source shader; unsupported source/stage combinations and context/shader failures remain direct strict errors. The CLI now pumps Qt graphics events around sequence coordination, so drivers that require the OpenGL context on the GUI thread accelerate rather than deadlock. Runtime parity tests exercise CPU, CPU + GPU, strict GPU, unsupported-stage rejection, and the no-fallback contract.
+          GPU was restored as a first-class editor, CLI, and library choice on every platform, and saved selections were preserved. A no-surface default layer succeeded through the portable generated-source shader. The CLI also began pumping Qt graphics events around sequence coordination, so drivers that require the OpenGL context on the GUI thread accelerate rather than deadlock.
 
           Version 8.0.2's Windows/Linux preference migration and removal of strict GPU from the editor are superseded by this release.
 

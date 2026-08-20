@@ -99,13 +99,13 @@ bool document_version(const std::string& serialized,
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 16U> prefixes{{
+    constexpr std::array<std::string_view, 17U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
         "starting_colors.",
-        "post_process.",
+        "post_process.", "parameter_lfos.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -259,6 +259,10 @@ bool is_setup_v16_key(std::string_view key) {
            || key == "surface.normalize_obj";
 }
 
+bool is_setup_v17_key(std::string_view key) {
+    return starts_with(key, "parameter_lfos.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -278,7 +282,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 10U ? 12U
                     : layer_version == 11U ? 13U
                     : layer_version == 12U ? 14U
-                    : layer_version == 13U ? 15U : 16U;
+                    : layer_version == 13U ? 15U
+                    : layer_version == 14U ? 16U : 17U;
     return true;
 }
 
@@ -545,6 +550,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 16U && is_setup_v16_key(key)) {
+            continue;
+        }
+        if (setup_version < 17U && is_setup_v17_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

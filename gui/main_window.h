@@ -245,6 +245,7 @@ private:
     void showApplicationSettings();
     void showAboutDialog();
     void showMotionPathEditor();
+    void showParameterLfoEditor();
     bool hasCustomNewProjectDefaults() const;
     std::unique_ptr<pvt::ProjectDocument> makeNewProjectDocument(
         QString* warning = nullptr) const;

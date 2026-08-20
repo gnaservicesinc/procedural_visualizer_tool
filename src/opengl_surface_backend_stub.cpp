@@ -68,4 +68,12 @@ bool apply_surface_mapping_opengl(const Image&, Image&,
     return false;
 }
 
+bool complete_frame_opengl(const Image&, Image&, const std::atomic_bool*,
+                           std::string* error) {
+    if (error != nullptr) {
+        *error = "OpenGL rendering is not compiled into this build.";
+    }
+    return false;
+}
+
 } // namespace pvt::detail

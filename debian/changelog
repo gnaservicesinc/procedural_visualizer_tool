@@ -1,3 +1,11 @@
+procedural-visualizer-tool (9.0.0) stonking; urgency=medium
+
+  * Add numeric layer LFOs with four waveforms, ranges, phase, and persistence.
+  * Make GPU a first-class performance backend for every valid project.
+  * Advance setup/layer formats to 17/15 and the shared-library ABI to 9.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 20 Aug 2026 17:50:57 -0400
+
 procedural-visualizer-tool (8.0.3) stonking; urgency=medium
 
   * Accelerate ordinary generated layers through OpenGL on Windows/Linux.

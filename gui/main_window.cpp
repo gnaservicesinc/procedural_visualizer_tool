@@ -6369,6 +6369,16 @@ void MainWindow::createToolbar() {
     settings_menu->addSeparator();
     settings_menu->addAction(randomize_values_action_);
     settings_menu->addAction(randomize_mix_action_);
+    auto* lfo_action = new QAction(tr("LFOs…"), this);
+    lfo_action->setObjectName(QStringLiteral("parameterLfoAction"));
+    lfo_action->setToolTip(tr(
+        "Animate numeric values between an authored minimum and maximum with "
+        "a seamless low-frequency oscillator."));
+    settings_menu->addAction(lfo_action);
+    toolbar->addAction(lfo_action);
+    toolbar->addSeparator();
+    connect(lfo_action, &QAction::triggered, this,
+            &MainWindow::showParameterLfoEditor);
     export_settings_action_ = toolbar->addAction(tr("Export Settings…"));
     export_settings_action_->setObjectName(QStringLiteral("exportSettingsAction"));
     export_settings_action_->setToolTip(
@@ -6634,6 +6644,315 @@ void MainWindow::showAboutDialog() {
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
     dialog.exec();
+}
+
+void MainWindow::showParameterLfoEditor() {
+    const pvt::LayerConfig* layer = activeLayer();
+    if (layer == nullptr) {
+        QMessageBox::information(
+            this, tr("No editable layer"),
+            tr("Select a layer before authoring numeric LFOs."));
+        return;
+    }
+
+    struct TargetChoice {
+        QString path;
+        QString label;
+        LiveTargetKind kind = LiveTargetKind::Real;
+        double minimum = 0.0;
+        double maximum = 1.0;
+        double current = 0.0;
+    };
+    std::vector<TargetChoice> choices;
+    const QString prefix = QStringLiteral("layer/%1/")
+                               .arg(QString::fromStdString(layer->uuid));
+    for (const LiveTargetDescriptor& target :
+         buildLiveTargetRegistry(project_)) {
+        if (!target.path.startsWith(prefix)
+            || (target.kind != LiveTargetKind::Real
+                && target.kind != LiveTargetKind::Integer)) {
+            continue;
+        }
+        const QString relative = target.path.mid(prefix.size());
+        if (!pvt::parameter_lfo_target_supported(
+                layer->render, relative.toStdString())) {
+            continue;
+        }
+        choices.push_back(
+            {relative, target.section + QStringLiteral(" — ") + target.label,
+             target.kind, target.minimum, target.maximum,
+             target.current_value});
+    }
+    if (choices.empty()) {
+        QMessageBox::information(
+            this, tr("No numeric targets"),
+            tr("This layer does not currently expose a numeric LFO target."));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Numeric LFOs — %1")
+                              .arg(QString::fromStdString(layer->name)));
+    dialog.setObjectName(QStringLiteral("parameterLfoDialog"));
+    dialog.resize(760, 430);
+    auto* outer = new QVBoxLayout(&dialog);
+    auto* explanation = new QLabel(
+        tr("Each LFO replaces its target value only while rendering. The "
+           "numeric field remains the authored fallback, and one or more "
+           "whole cycles stay seamless across the project loop."),
+        &dialog);
+    explanation->setWordWrap(true);
+    outer->addWidget(explanation);
+    auto* body = new QHBoxLayout;
+    outer->addLayout(body, 1);
+    auto* left = new QVBoxLayout;
+    auto* list = new QListWidget(&dialog);
+    list->setObjectName(QStringLiteral("parameterLfoList"));
+    left->addWidget(list, 1);
+    auto* list_buttons = new QHBoxLayout;
+    auto* add = new QPushButton(tr("Add LFO"), &dialog);
+    auto* remove = new QPushButton(tr("Remove"), &dialog);
+    list_buttons->addWidget(add);
+    list_buttons->addWidget(remove);
+    left->addLayout(list_buttons);
+    body->addLayout(left, 1);
+
+    auto* editor = new QGroupBox(tr("Selected LFO"), &dialog);
+    auto* form = new QFormLayout(editor);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* enabled = new QCheckBox(tr("Enabled"), editor);
+    auto* target = new QComboBox(editor);
+    target->setObjectName(QStringLiteral("parameterLfoTarget"));
+    for (const TargetChoice& choice : choices) {
+        target->addItem(choice.label, choice.path);
+    }
+    auto* waveform = new QComboBox(editor);
+    waveform->setObjectName(QStringLiteral("parameterLfoWaveform"));
+    for (const pvt::Waveform value : {
+             pvt::Waveform::Sine, pvt::Waveform::Triangle,
+             pvt::Waveform::SmoothPulse, pvt::Waveform::Bounce}) {
+        waveform->addItem(
+            QString::fromUtf8(pvt::waveform_name(value)),
+            static_cast<int>(value));
+    }
+    auto* minimum = real_editor(-kMaximumRenderParameter,
+                                kMaximumRenderParameter, 6, 0.1);
+    minimum->setObjectName(QStringLiteral("parameterLfoMinimum"));
+    auto* maximum = real_editor(-kMaximumRenderParameter,
+                                kMaximumRenderParameter, 6, 0.1);
+    maximum->setObjectName(QStringLiteral("parameterLfoMaximum"));
+    auto* cycles = integer_editor(1, kMaximumIntegerParameter);
+    cycles->setObjectName(QStringLiteral("parameterLfoCycles"));
+    auto* phase = real_editor(-kMaximumRenderParameter,
+                              kMaximumRenderParameter, 4, 1.0);
+    phase->setSuffix(tr("°"));
+    phase->setObjectName(QStringLiteral("parameterLfoPhase"));
+    auto* shape = real_editor(0.0, 1.0, 4, 0.01);
+    shape->setObjectName(QStringLiteral("parameterLfoShape"));
+    shape->setToolTip(tr(
+        "Soft-to-sharp pulse shape. Used only by Smooth pulse."));
+    form->addRow(QString{}, enabled);
+    form->addRow(tr("Numeric value"), target);
+    form->addRow(tr("Wave type"), waveform);
+    form->addRow(tr("Minimum"), minimum);
+    form->addRow(tr("Maximum"), maximum);
+    form->addRow(tr("Cycles per loop"), cycles);
+    form->addRow(tr("Phase"), phase);
+    form->addRow(tr("Pulse shape"), shape);
+    body->addWidget(editor, 2);
+
+    std::vector<pvt::ParameterLfo> edited = config_.parameter_lfos;
+    bool loading = false;
+    const auto choice_index = [&choices](const std::string& path) {
+        const auto found = std::find_if(
+            choices.begin(), choices.end(), [&path](const TargetChoice& item) {
+                return item.path.toStdString() == path;
+            });
+        return found == choices.end()
+                   ? -1 : static_cast<int>(found - choices.begin());
+    };
+    const auto refresh_item = [&](int row) {
+        if (row < 0 || row >= static_cast<int>(edited.size())) return;
+        const pvt::ParameterLfo& lfo = edited[static_cast<std::size_t>(row)];
+        const int selected = choice_index(lfo.target_path);
+        const QString name = selected >= 0
+            ? choices[static_cast<std::size_t>(selected)].label
+            : QString::fromStdString(lfo.target_path);
+        const QString summary = tr("%1 — %2 to %3 (%4)")
+            .arg(name)
+            .arg(lfo.minimum, 0, 'g', 6)
+            .arg(lfo.maximum, 0, 'g', 6)
+            .arg(QString::fromUtf8(pvt::waveform_name(lfo.waveform)));
+        if (auto* item = list->item(row)) {
+            item->setText((lfo.enabled ? QString{} : tr("Disabled — "))
+                          + summary);
+        }
+    };
+    const auto update_ranges = [&] {
+        const int index = target->currentIndex();
+        if (index < 0 || index >= static_cast<int>(choices.size())) return;
+        const TargetChoice& choice = choices[static_cast<std::size_t>(index)];
+        minimum->setRange(choice.minimum, choice.maximum);
+        maximum->setRange(choice.minimum, choice.maximum);
+    };
+    const auto update_current = [&] {
+        if (loading) return;
+        const int row = list->currentRow();
+        if (row < 0 || row >= static_cast<int>(edited.size())
+            || target->currentIndex() < 0) {
+            return;
+        }
+        pvt::ParameterLfo& lfo = edited[static_cast<std::size_t>(row)];
+        lfo.enabled = enabled->isChecked();
+        lfo.target_path = target->currentData().toString().toStdString();
+        lfo.waveform = static_cast<pvt::Waveform>(
+            waveform->currentData().toInt());
+        lfo.minimum = minimum->value();
+        lfo.maximum = maximum->value();
+        lfo.cycles_per_loop = cycles->value();
+        lfo.phase_degrees = phase->value();
+        lfo.shape = shape->value();
+        shape->setEnabled(lfo.waveform == pvt::Waveform::SmoothPulse);
+        refresh_item(row);
+    };
+    const auto load_row = [&](int row) {
+        loading = true;
+        const bool present = row >= 0 && row < static_cast<int>(edited.size());
+        editor->setEnabled(present);
+        remove->setEnabled(present);
+        if (present) {
+            const pvt::ParameterLfo& lfo =
+                edited[static_cast<std::size_t>(row)];
+            int selected = choice_index(lfo.target_path);
+            if (selected < 0) selected = 0;
+            target->setCurrentIndex(selected);
+            update_ranges();
+            enabled->setChecked(lfo.enabled);
+            waveform->setCurrentIndex(std::max(
+                0, waveform->findData(static_cast<int>(lfo.waveform))));
+            minimum->setValue(lfo.minimum);
+            maximum->setValue(lfo.maximum);
+            cycles->setValue(lfo.cycles_per_loop);
+            phase->setValue(lfo.phase_degrees);
+            shape->setValue(lfo.shape);
+            shape->setEnabled(lfo.waveform == pvt::Waveform::SmoothPulse);
+        }
+        loading = false;
+    };
+    for (std::size_t index = 0U; index < edited.size(); ++index) {
+        list->addItem(QString{});
+        refresh_item(static_cast<int>(index));
+    }
+    connect(list, &QListWidget::currentRowChanged, &dialog, load_row);
+    connect(enabled, &QCheckBox::toggled, &dialog, update_current);
+    connect(target, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
+            [&, update_current](int) {
+                if (!loading) {
+                    update_ranges();
+                    minimum->setValue(std::clamp(
+                        minimum->value(), minimum->minimum(), minimum->maximum()));
+                    maximum->setValue(std::clamp(
+                        maximum->value(), maximum->minimum(), maximum->maximum()));
+                }
+                update_current();
+            });
+    connect(waveform, qOverload<int>(&QComboBox::currentIndexChanged),
+            &dialog, update_current);
+    connect(minimum, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(maximum, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(cycles, qOverload<int>(&QSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(phase, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(shape, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(add, &QPushButton::clicked, &dialog, [&] {
+        std::unordered_set<std::string> used;
+        for (const auto& lfo : edited) used.insert(lfo.target_path);
+        const auto available = std::find_if(
+            choices.begin(), choices.end(), [&used](const TargetChoice& item) {
+                return used.count(item.path.toStdString()) == 0U;
+            });
+        if (available == choices.end()) {
+            QMessageBox::information(
+                &dialog, tr("All targets already have LFOs"),
+                tr("Remove or retarget an existing LFO before adding another."));
+            return;
+        }
+        pvt::ParameterLfo lfo;
+        lfo.target_path = available->path.toStdString();
+        if (available->minimum == 0.0 && available->maximum == 1.0) {
+            lfo.minimum = 0.0;
+            lfo.maximum = 1.0;
+        } else {
+            const double radius = std::max(1.0, std::fabs(available->current) * 0.5);
+            lfo.minimum = std::clamp(available->current - radius,
+                                     available->minimum, available->maximum);
+            lfo.maximum = std::clamp(available->current + radius,
+                                     available->minimum, available->maximum);
+        }
+        edited.push_back(std::move(lfo));
+        list->addItem(QString{});
+        const int row = static_cast<int>(edited.size()) - 1;
+        refresh_item(row);
+        list->setCurrentRow(row);
+    });
+    connect(remove, &QPushButton::clicked, &dialog, [&] {
+        const int row = list->currentRow();
+        if (row < 0 || row >= static_cast<int>(edited.size())) return;
+        edited.erase(edited.begin() + row);
+        delete list->takeItem(row);
+        list->setCurrentRow(std::min(row, list->count() - 1));
+        if (list->count() == 0) load_row(-1);
+    });
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    outer->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        std::unordered_set<std::string> targets;
+        for (const pvt::ParameterLfo& lfo : edited) {
+            if (!targets.insert(lfo.target_path).second) {
+                QMessageBox::warning(
+                    &dialog, tr("Duplicate LFO target"),
+                    tr("Each numeric value can have one LFO. Choose a "
+                       "different target for one of the duplicates."));
+                return;
+            }
+            if (lfo.minimum > lfo.maximum) {
+                QMessageBox::warning(
+                    &dialog, tr("Invalid LFO range"),
+                    tr("Every LFO minimum must be less than or equal to its maximum."));
+                return;
+            }
+        }
+        pvt::RenderConfig candidate = config_;
+        candidate.parameter_lfos = edited;
+        const pvt::ValidationResult validation = pvt::validate(candidate);
+        if (!validation.ok) {
+            QMessageBox::warning(
+                &dialog, tr("Invalid LFO settings"),
+                QString::fromStdString(validation.message));
+            return;
+        }
+        dialog.accept();
+    });
+    if (!edited.empty()) list->setCurrentRow(0);
+    else load_row(-1);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    auto before = captureActiveState();
+    config_.parameter_lfos = std::move(edited);
+    syncActiveRender();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    recordActiveStateChange(tr("Edit numeric LFOs"), std::move(before));
+    status_->setText(tr("Updated %1 numeric LFO(s) for %2.")
+                         .arg(config_.parameter_lfos.size())
+                         .arg(QString::fromStdString(layer->name)));
 }
 
 void MainWindow::showMotionPathEditor() {
@@ -15273,7 +15592,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         });
 
         // Keep this lifecycle/coalescing check independent of whether a user
-        // persisted strict GPU on a build that intentionally lacks Metal.
+        // persisted GPU on a build that intentionally lacks acceleration.
         render_backend_ = pvt::RenderBackend::Cpu;
         live_workspace_->setOutputResolutionScale(0.25);
         live_workspace_->setPresentationFullscreen(false);
@@ -15622,6 +15941,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("undoLimitPreference"));
         const auto* backend = settings_dialog.findChild<QComboBox*>(
             QStringLiteral("renderBackendPreference"));
+        const auto* lfo_action = findChild<QAction*>(
+            QStringLiteral("parameterLfoAction"));
         const auto* recent_limit = settings_dialog.findChild<QSpinBox*>(
             QStringLiteral("recentProjectLimitPreference"));
         const auto* save_defaults = settings_dialog.findChild<QPushButton*>(
@@ -15661,6 +15982,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || recent_limit == nullptr
             || backend == nullptr || backend->count() != 3
             || backend->findData(static_cast<int>(pvt::RenderBackend::Gpu)) < 0
+            || backend->itemText(backend->findData(
+                    static_cast<int>(pvt::RenderBackend::Gpu))) != tr("GPU")
+            || lfo_action == nullptr || lfo_action->text() != tr("LFOs…")
             || save_defaults == nullptr || restore_defaults == nullptr
             || settings_scroll == nullptr || !settings_scroll->widgetResizable()
             || capability_status == nullptr
@@ -16005,6 +16329,37 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
     motion_rotation_offset_->setValue(original_rotation_offset);
+    bool inspected_parameter_lfo_editor = false;
+    QTimer::singleShot(0, this, [this, &inspected_parameter_lfo_editor] {
+        if (auto* dialog = findChild<QDialog*>(
+                QStringLiteral("parameterLfoDialog"))) {
+            const auto* target = dialog->findChild<QComboBox*>(
+                QStringLiteral("parameterLfoTarget"));
+            const auto* waveform = dialog->findChild<QComboBox*>(
+                QStringLiteral("parameterLfoWaveform"));
+            inspected_parameter_lfo_editor =
+                dialog->findChild<QListWidget*>(
+                    QStringLiteral("parameterLfoList")) != nullptr
+                && target != nullptr && target->count() > 0
+                && waveform != nullptr && waveform->count() == 4
+                && dialog->findChild<QDoubleSpinBox*>(
+                    QStringLiteral("parameterLfoMinimum")) != nullptr
+                && dialog->findChild<QDoubleSpinBox*>(
+                    QStringLiteral("parameterLfoMaximum")) != nullptr
+                && dialog->findChild<QSpinBox*>(
+                    QStringLiteral("parameterLfoCycles")) != nullptr
+                && dialog->findChild<QDoubleSpinBox*>(
+                    QStringLiteral("parameterLfoPhase")) != nullptr;
+            dialog->reject();
+        }
+    });
+    showParameterLfoEditor();
+    if (!inspected_parameter_lfo_editor) {
+        if (error != nullptr) {
+            *error = tr("The numeric LFO editor is incomplete or malformed.");
+        }
+        return false;
+    }
     bool inspected_motion_path_editor = false;
     QTimer::singleShot(0, this, [this, &inspected_motion_path_editor] {
         if (auto* dialog = findChild<QDialog*>(

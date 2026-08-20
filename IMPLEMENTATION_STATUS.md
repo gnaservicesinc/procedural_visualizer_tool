@@ -6,6 +6,43 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 9.0.0 numeric LFOs and GPU admission correction
+
+The backend selector now says **GPU** and describes both performance and
+debugging uses. The portable OpenGL path admits every validated layer and owns
+a final float-RGBA completion pass, so alternate generated sources, starting
+images, palettes, Custom OBJ stages, or neutral/no-surface layers cannot fail
+merely because GPU is selected. Accelerated-stage/runtime failures remain
+transactional and are returned directly without a whole-frame CPU retry. The
+OpenGL regression now renders the formerly rejected Channel loops fixture and
+checks CPU/GPU parity.
+
+Layer-local `ParameterLfo` records use stable numeric target paths and support
+Sine, Triangle, Smooth pulse, and Bounce waveforms, authored minimum/maximum,
+positive whole cycles per loop, phase, and pulse shape. The toolbar/Settings
+**LFOs…** editor lists numeric values from the same stable registry used by
+Live control, retains base field values, supports undo, and validates unique
+targets. CPU and accelerated renders materialize an identical render-only
+copy. Setup format 17 and layer format 15 persist the records while older
+formats receive an empty neutral collection.
+
+`ParameterLfo` grows the public by-value `RenderData`/`RenderConfig` layout.
+Version 9.0.0 therefore advances the installed shared-library ABI to SONAME 9;
+installed consumers must rebuild against the new major ABI.
+
+Local 9.0.0 release validation passes all 24 native static Release tests, all
+24 shared-library Release tests, all 23 C++20 tests, and all 23
+AddressSanitizer plus UndefinedBehaviorSanitizer tests with unsupported macOS
+leak detection disabled. A real Qt OpenGL test build passes generated-source,
+surface, universal-admission, identity-completion, and no-whole-frame-retry
+parity on an Apple M2 Max. A clean external CMake consumer links and runs
+against `libProceduralVisualizerTool.9.dylib`. The macOS distribution verifier
+checks 26 Mach-O files; Cocoa smoke, embedded `pvt-render` version/self-test,
+arm64 architecture, plist 9.0.0 metadata, `/usr/lib` RPATH resolution, deep
+strict signing, and the app/README/license ZIP root all pass. Native
+Linux x64/ARM64 and Windows x64/ARM64 packages remain the tag-triggered remote
+matrix's responsibility.
+
 ## 8.0.3 portable generated-layer acceleration
 
 The portable OpenGL 3.3 service now owns the generated-source stage for an
@@ -16,12 +53,11 @@ reference CPU renderer retains the ordered remainder of the frame and invokes
 the same OpenGL surface stages afterward. Admission occurs before either GPU
 stage and an admitted runtime failure is returned directly without a CPU retry.
 
-Strict GPU is restored as a first-class debugging choice in the Windows/Linux
+GPU is restored as a first-class choice in the Windows/Linux
 editor and saved selections are preserved. The runtime regression renders a
-no-surface default layer with CPU, CPU + GPU, and strict GPU, compares float
-output, and proves the strict path can succeed only through the new shader; an
-unsupported generated mode remains a direct strict error. The Qt GUI smoke test
-requires all three choices and verifies that strict can be selected.
+no-surface default layer with CPU, CPU + GPU, and GPU, compares float
+output, and proves the GPU path can succeed through the new shader. The Qt GUI
+smoke test requires all three choices and verifies that GPU can be selected.
 
 Drivers without threaded OpenGL retain their context on Qt's GUI thread. The
 CLI now runs the sequence coordinator separately while pumping that GUI event
@@ -32,8 +68,8 @@ on strict OpenGL versus 6.07s on the CPU reference, including file output.
 
 ## 8.0.2 Windows GPU selection correction (superseded)
 
-8.0.2 incorrectly treated the ordinary-layer failure as a strict-preference UI
-problem. It hid strict GPU in the Windows/Linux editor and migrated saved
+8.0.2 incorrectly treated the ordinary-layer failure as a GPU-preference UI
+problem. It hid GPU in the Windows/Linux editor and migrated saved
 preferences while leaving generated layers on CPU. 8.0.3 reverses that UI
 change and fixes the missing accelerated stage itself.
 
@@ -100,8 +136,9 @@ independently on macOS even though that platform uses Metal at runtime.
 
 Existing setup <=15 and layer <=13 records migrate the old Plane reflection,
 axis choice, camera, tilt, initial Cube/mesh turn, framing, and light constants
-into visible values. Current persistence is setup format 16 and layer format
-14. The public by-value `SurfaceConfig` growth is an ABI change, so product and
+into visible values. At the 8.0.0 release, persistence was setup format 16 and
+layer format 14 (the unreleased LFO work advances those to 17/15). The public
+by-value `SurfaceConfig` growth is an ABI change, so product and
 SONAME advance together to 8.0.0/8.
 
 Local 8.0.0 release validation passes all 24 native Release tests, all 23 C++20

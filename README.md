@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **8.0.3**. The version is read from `VERSION` by every
+Current product version: **9.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,30 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 9.0.0 numeric LFOs and universal GPU admission
+
+The editor now exposes **LFOs…** in the project toolbar and Settings menu.
+Each layer can drive any supported numeric render value between an authored
+minimum and maximum using Sine, Triangle, Smooth pulse, or Bounce, with whole
+cycles per loop, phase, and pulse shape. Targets use stable wave/swing/effect
+IDs, survive reordering, participate in undo, and persist in setup format 17
+and layer format 15. The underlying numeric field remains the fallback value;
+the oscillator is materialized only into each rendered frame.
+
+The backend choice is now simply **GPU**. On Windows and Linux, every valid
+layer is admitted and the completed frame passes through the OpenGL renderer,
+including starting images, alternate generated-color modes, palettes, Custom
+OBJ work, and projects with no active analytic surface. Dependency-ordered
+stages can still run on the reference lane inside that GPU-owned frame, but
+selecting GPU no longer makes a saved project invalid. Runtime context or
+shader failures remain visible and are never hidden by a whole-frame CPU retry.
+
+Setup persistence advances to format 17 and layer records to format 15;
+existing projects remain migration inputs with no LFOs enabled by default.
+Because `ParameterLfo` extends the public by-value configuration layout, the
+product major and installed shared-library SONAME advance together to 9.0.0/9.
+Installed-library clients must rebuild against the new ABI.
 
 ## 8.0.3 portable generated-layer acceleration
 
@@ -20,19 +44,19 @@ run in the same accelerated frame. CPU + GPU keeps unsupported ordered stages
 on bounded CPU lanes, but never disguises a failure after an OpenGL stage has
 been admitted.
 
-**GPU (Strict diagnostics)** remains a first-class editor, CLI, and library
-choice on every platform. A no-surface default layer now succeeds through the
-generated-source shader, while unsupported sources and runtime context/shader
-failures remain actionable strict errors with no CPU retry. Preferences are
-preserved instead of migrated. The CLI also pumps Qt graphics events while its
+**GPU** remains a first-class editor, CLI, and library choice on every
+platform. A no-surface default layer succeeds through the generated-source
+shader, and runtime context/shader failures remain actionable errors with no
+whole-frame CPU retry. Preferences are preserved instead of migrated. The CLI
+also pumps Qt graphics events while its
 sequence coordinator runs, so drivers that require the OpenGL context to stay
 on the GUI thread accelerate instead of deadlocking.
 
 ## 8.0.2 Windows GPU selection correction (superseded)
 
-8.0.2 renamed the hybrid choice but incorrectly treated strict GPU as a UI
+8.0.2 renamed the hybrid choice but incorrectly treated GPU as a UI
 selection problem, hiding it in the Windows/Linux editor and migrating saved
-preferences. 8.0.3 restores that core diagnostic feature and fixes the actual
+preferences. 8.0.3 restores that first-class backend and fixes the actual
 missing generated-layer GPU stage.
 
 ## 8.0.1 Linux OpenGL surface correction
@@ -733,18 +757,18 @@ sudo apt install procedural-visualizer-tool
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
-- CPU, CPU + GPU, and strict GPU frame backends. The application presents CPU +
-  GPU as **CPU + GPU (Recommended)** and preserves **GPU (Strict diagnostics)**
-  as a first-class debugging choice. On macOS it runs adjacent project
+- CPU, CPU + GPU, and GPU frame backends. The application presents CPU + GPU as
+  **CPU + GPU (Recommended)** and **GPU** as a first-class performance and
+  debugging choice. On macOS it runs adjacent project
   layers through bounded CPU and
   Metal lanes, with Metal covering the broad parallel pixel pipeline and CPU
   handling ordered dependencies such as mesh rasterization. On Windows and
   Linux it dispatches ordinary Continuous hue generated layers and supported
   analytic Cylinder/Sphere/Cube and flat/displaced Plane mapping through a
   serialized offscreen OpenGL 3.3 shader service. An admitted GPU-stage failure
-  is reported instead of silently repeating that stage on CPU. Strict OpenGL
-  succeeds only when the frame contains supported accelerated work and never
-  falls back after admission.
+  is reported instead of silently repeating that stage on CPU. OpenGL GPU mode
+  admits every valid layer and owns the completed frame even when an ordered
+  dependency still executes on the reference lane.
 
 The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
@@ -1220,8 +1244,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-15 remain importable;
-current explicit legacy output is setup format 16. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-16 remain importable;
+current explicit legacy output is setup format 17. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1241,12 +1265,13 @@ displacement settings and the height-map attachment identity. Format 14 adds
 pre-analysis audio filtering/EQ, named frequency-stream analyses and clock
 selection, Live sleep prevention, Edge Detect/Twirl, and procedural particle
 shape selection. Format 15 adds independent particle rendering profile, size
-variation, definition, twinkle, seed, orientation, and rotation. Project layer
-records use the corresponding current layer format 14. Format 16 makes surface
+variation, definition, twinkle, seed, orientation, and rotation. Format 16 makes surface
 projection, sizing, XYZ transforms/loop rotations, Euler order, camera, outside
 fill, lighting model, rear compositing, and OBJ normalization explicit. Older
 files receive visible compatibility values that reproduce their former
-presentation without carrying hidden behavior forward. Import creates a new unsaved
+presentation without carrying hidden behavior forward. Format 17 adds numeric
+parameter LFOs; project layer records use the corresponding current layer
+format 15. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
 The CLI exposes

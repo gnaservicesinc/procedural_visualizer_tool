@@ -81,6 +81,7 @@ namespace {
 // independent particle profile, size variation, definition, twinkle, seed,
 // orientation, and rotation controls. Version 16 replaces implicit surface
 // camera/orientation constants with a completely authored surface view.
+// Version 17 adds layer-local numeric parameter LFOs with stable target paths.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -92,8 +93,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 16U,
-              "config_io.cpp implements setup format version 16");
+static_assert(kSetupFormatVersion == 17U,
+              "config_io.cpp implements setup format version 17");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -105,13 +106,13 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool render_record_key(std::string_view key) {
-    constexpr std::array<std::string_view, 16U> prefixes{{
+    constexpr std::array<std::string_view, 17U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
         "starting_colors.",
-        "post_process.",
+        "post_process.", "parameter_lfos.",
     }};
     return std::any_of(prefixes.begin(), prefixes.end(),
                        [key](std::string_view prefix) {
@@ -288,6 +289,10 @@ bool setup_v16_record(std::string_view key) {
            || key == "surface.light_diffuse"
            || key == "surface.composite_backfaces"
            || key == "surface.normalize_obj";
+}
+
+bool setup_v17_record(std::string_view key) {
+    return starts_with(key, "parameter_lfos.");
 }
 
 void clear_error(std::string* error) {
@@ -1790,7 +1795,8 @@ bool serialize_setup(const RenderConfig& config,
     }
     if (config.waves.size() > kMaximumWaves
         || config.swings.size() > kMaximumSwings
-        || config.effects.size() > kMaximumEffects) {
+        || config.effects.size() > kMaximumEffects
+        || config.parameter_lfos.size() > kMaximumParameterLfos) {
         return fail(error, "Cannot save configuration: a collection exceeds its public maximum.");
     }
     if (!validate_persistence_bounds(config, error)) {
@@ -1964,6 +1970,32 @@ bool serialize_setup(const RenderConfig& config,
             effect.blur_pulses_per_cycle);
         add_path_binding_records(
             builder, indexed_key("effects", index, "path") + ".", effect.path);
+    }
+
+    builder.add_integer("parameter_lfos.count",
+                        config.parameter_lfos.size());
+    for (std::size_t index = 0U;
+         index < config.parameter_lfos.size(); ++index) {
+        const ParameterLfo& lfo = config.parameter_lfos[index];
+        builder.add_bool(indexed_key("parameter_lfos", index, "enabled"),
+                         lfo.enabled);
+        builder.add_string(
+            indexed_key("parameter_lfos", index, "target_path"),
+            lfo.target_path);
+        builder.add_enum(indexed_key("parameter_lfos", index, "waveform"),
+                         lfo.waveform, kWaveforms);
+        builder.add_double(indexed_key("parameter_lfos", index, "minimum"),
+                           lfo.minimum);
+        builder.add_double(indexed_key("parameter_lfos", index, "maximum"),
+                           lfo.maximum);
+        builder.add_integer(
+            indexed_key("parameter_lfos", index, "cycles_per_loop"),
+            lfo.cycles_per_loop);
+        builder.add_double(
+            indexed_key("parameter_lfos", index, "phase_degrees"),
+            lfo.phase_degrees);
+        builder.add_double(indexed_key("parameter_lfos", index, "shape"),
+                           lfo.shape);
     }
 
     builder.add_bool("rhythm.swings_enabled", config.swings_enabled);
@@ -3367,6 +3399,53 @@ bool deserialize_setup(Records& records,
         }
     }
 
+    if (setup_version >= 17U) {
+        std::size_t lfo_count = 0U;
+        if (!consume_count(records, "parameter_lfos.count",
+                           kMaximumParameterLfos, lfo_count, error)) {
+            return false;
+        }
+        candidate.parameter_lfos.assign(lfo_count, {});
+        for (std::size_t index = 0U; index < lfo_count; ++index) {
+            ParameterLfo& lfo = candidate.parameter_lfos[index];
+            if (!consume_bool(
+                    records,
+                    indexed_key("parameter_lfos", index, "enabled"),
+                    lfo.enabled, error)
+                || !consume_bounded_string(
+                    records,
+                    indexed_key("parameter_lfos", index, "target_path"),
+                    kMaximumDecodedStringBytes, lfo.target_path, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("parameter_lfos", index, "waveform"),
+                    lfo.waveform, kWaveforms, error)
+                || !consume_double(
+                    records,
+                    indexed_key("parameter_lfos", index, "minimum"),
+                    lfo.minimum, error)
+                || !consume_double(
+                    records,
+                    indexed_key("parameter_lfos", index, "maximum"),
+                    lfo.maximum, error)
+                || !consume_integer(
+                    records,
+                    indexed_key("parameter_lfos", index,
+                                "cycles_per_loop"),
+                    lfo.cycles_per_loop, error)
+                || !consume_double(
+                    records,
+                    indexed_key("parameter_lfos", index, "phase_degrees"),
+                    lfo.phase_degrees, error)
+                || !consume_double(
+                    records,
+                    indexed_key("parameter_lfos", index, "shape"),
+                    lfo.shape, error)) {
+                return false;
+            }
+        }
+    }
+
     if (setup_version >= 5U) {
         if (!consume_bool(records, "rhythm.swings_enabled",
                           candidate.swings_enabled, error)
@@ -4103,7 +4182,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 13U && setup_v13_record(key))
              || (setup_version < 14U && setup_v14_record(key))
              || (setup_version < 15U && setup_v15_record(key))
-             || (setup_version < 16U && setup_v16_record(key)));
+             || (setup_version < 16U && setup_v16_record(key))
+             || (setup_version < 17U && setup_v17_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -4223,14 +4303,14 @@ RecoveryAttempt decode_with_record_repair(
 }
 
 std::string recovery_group(std::string_view key) {
-    constexpr std::array<std::string_view, 23U> groups{{
+    constexpr std::array<std::string_view, 24U> groups{{
         "paths.", "timing.music.", "timing.clock.", "canvas.",
         "output.", "waves.", "swings.", "effects.", "layer_clock.",
         "palette.", "surface.", "source_image.", "motion.", "alpha.",
         "quantization.", "transform.", "audio_reactive.", "appearance.",
         "rhythm.", "audio_response_defaults.",
         "starting_colors.",
-        "post_process.",
+        "post_process.", "parameter_lfos.",
         "live.",
     }};
     for (const std::string_view group : groups) {
@@ -4243,7 +4323,7 @@ bool collection_recovery_group(std::string_view group) {
     return group == "paths." || group == "waves." || group == "swings."
            || group == "effects." || group == "palette."
            || group == "timing.music." || group == "layer_clock."
-           || group == "live.";
+           || group == "live." || group == "parameter_lfos.";
 }
 
 bool recover_setup_records(Records records,

@@ -346,31 +346,38 @@ int main(int argc, char** argv) {
     neutral.surface.enabled = false;
     pvt::Image neutral_reference;
     pvt::Image neutral_hybrid;
-    pvt::Image neutral_strict;
+    pvt::Image neutral_gpu;
     CHECK(pvt::render_frame(neutral, 0, cpu, neutral_reference, nullptr,
                             &error));
     CHECK(pvt::render_frame(neutral, 0, hybrid, neutral_hybrid, nullptr,
                             &error));
-    // With no surface stage, strict success can only come from the generated
-    // source shader. The strict renderer never retries an admitted failure on
-    // CPU, so this is also a regression against disguised fallback.
-    CHECK(pvt::render_frame(neutral, 0, gpu, neutral_strict, nullptr, &error));
+    // With no surface stage, GPU success comes from the generated source and
+    // completion passes. The GPU renderer never retries an admitted failure
+    // on CPU, so this is also a regression against disguised fallback.
+    CHECK(pvt::render_frame(neutral, 0, gpu, neutral_gpu, nullptr, &error));
     CHECK(maximum_difference(neutral_reference, neutral_hybrid) <= 0.0035);
-    CHECK(maximum_difference(neutral_reference, neutral_strict) <= 0.0035);
+    CHECK(maximum_difference(neutral_reference, neutral_gpu) <= 0.0035);
 
     pvt::RenderConfig unsupported_source = neutral;
     unsupported_source.starting_colors.mode =
         pvt::StartingColorMode::ChannelLoops;
-    CHECK(!pvt::render_frame(unsupported_source, 0, gpu, rejected, nullptr,
-                             &error));
-    CHECK(error.find("Continuous hue") != std::string::npos);
+    pvt::Image unsupported_reference;
+    pvt::Image unsupported_gpu;
+    CHECK(pvt::render_frame(unsupported_source, 0, cpu,
+                            unsupported_reference, nullptr, &error));
+    CHECK(pvt::render_frame(unsupported_source, 0, gpu,
+                            unsupported_gpu, nullptr, &error));
+    // This path is deliberately outside the generated-source shader. Its GPU
+    // completion pass must be an identity operation, not a subtle resample.
+    CHECK(maximum_difference(unsupported_reference, unsupported_gpu)
+          <= 1.0e-6);
 
     if (failures != 0) {
         std::cerr << failures << " OpenGL surface backend test(s) failed.\n";
         return EXIT_FAILURE;
     }
-    std::cout << "OpenGL generated-source/surface acceleration and strict "
-                 "no-fallback policy passed on "
+    std::cout << "OpenGL generated-source/surface acceleration and GPU "
+                 "no-whole-frame-retry policy passed on "
               << capabilities.opengl_surface_device_name << ".\n";
     return EXIT_SUCCESS;
 }

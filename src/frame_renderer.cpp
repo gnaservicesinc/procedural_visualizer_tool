@@ -3,6 +3,7 @@
 #include "frame_renderer_internal.h"
 
 #include <atomic>
+#include <cmath>
 #include <exception>
 #include <new>
 #include <string>
@@ -156,15 +157,23 @@ bool render_frame_at_phase(const RenderConfig& config,
                            const std::atomic_bool* cancel,
                            std::string* error) {
     try {
+        const ValidationResult validation =
+            detail::validate_frame_render_config(config);
+        if (!validation.ok) return fail(error, validation.message);
+        if (!std::isfinite(normalized_phase)) {
+            return fail(error, "Normalized render phase must be finite.");
+        }
+        const RenderConfig resolved = detail::materialize_parameter_lfos(
+            config, normalized_phase);
         return render_with_backend(
-            config, options, destination, cancel, error,
+            resolved, options, destination, cancel, error,
             [&](detail::PreparedFrame& prepared, std::string* prepare_error) {
                 return detail::prepare_frame_for_backend_at_phase(
-                    config, normalized_phase, prepared, prepare_error);
+                    resolved, normalized_phase, prepared, prepare_error);
             },
             [&] {
                 return render_frame_at_phase_cancellable(
-                    config, normalized_phase, destination, cancel, error);
+                    resolved, normalized_phase, destination, cancel, error);
             });
     } catch (const std::bad_alloc&) {
         return fail(error,
@@ -184,15 +193,20 @@ bool render_frame(const RenderConfig& config, int frame_index,
                   const std::atomic_bool* cancel,
                   std::string* error) {
     try {
+        const ValidationResult validation =
+            detail::validate_frame_render_config(config);
+        if (!validation.ok) return fail(error, validation.message);
+        const RenderConfig resolved =
+            detail::materialize_parameter_lfos_at_frame(config, frame_index);
         return render_with_backend(
-            config, options, destination, cancel, error,
+            resolved, options, destination, cancel, error,
             [&](detail::PreparedFrame& prepared, std::string* prepare_error) {
                 return detail::prepare_frame_for_backend(
-                    config, frame_index, prepared, prepare_error);
+                    resolved, frame_index, prepared, prepare_error);
             },
             [&] {
                 return render_frame_cancellable(
-                    config, frame_index, destination, cancel, error);
+                    resolved, frame_index, destination, cancel, error);
             });
     } catch (const std::bad_alloc&) {
         return fail(error,

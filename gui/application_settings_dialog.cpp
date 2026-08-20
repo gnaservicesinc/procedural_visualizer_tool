@@ -152,15 +152,16 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     render_backend_->addItem(tr("CPU"), static_cast<int>(pvt::RenderBackend::Cpu));
     render_backend_->addItem(tr("CPU + GPU (Recommended)"),
                              static_cast<int>(pvt::RenderBackend::CpuAndGpu));
-    render_backend_->addItem(tr("GPU (Strict diagnostics)"),
+    render_backend_->addItem(tr("GPU"),
                              static_cast<int>(pvt::RenderBackend::Gpu));
     const int backend_index = render_backend_->findData(static_cast<int>(renderBackend));
     render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 1);
     render_backend_->setToolTip(
         tr("CPU is the deterministic reference renderer. CPU + GPU maximizes "
-           "available CPU and GPU work. GPU (Strict diagnostics) is a core "
-           "debugging mode: it reports unsupported work and runtime "
-           "acceleration failures instead of silently retrying on CPU."));
+           "available CPU and GPU work. GPU prioritizes the graphics device, "
+           "which can keep preview and export responsive while the CPU is busy. "
+           "GPU runtime failures are reported instead of silently restarting "
+           "the frame on CPU."));
     backend_form->addRow(tr("Backend"), render_backend_);
     QString accelerator_status;
     if (capabilities.metal_available) {

@@ -126,6 +126,16 @@ bool valid_name(const std::string& value) {
     return true;
 }
 
+bool valid_lfo_target_path(const std::string& value) {
+    if (value.empty() || value.size() > kMaximumNameBytes) return false;
+    return std::all_of(value.begin(), value.end(), [](char raw) {
+        const unsigned char character = static_cast<unsigned char>(raw);
+        return (character >= 'a' && character <= 'z')
+               || (character >= '0' && character <= '9')
+               || character == '_' || character == '/' || character == '.';
+    });
+}
+
 bool valid_path_text(const std::string& value, std::size_t maximum_size, bool prefix) {
     if (value.empty() || value.size() > maximum_size) {
         return false;
@@ -1559,6 +1569,245 @@ double evaluate_waveform(Waveform waveform, double phase, double shape) {
     return 0.0;
 }
 
+bool split_lfo_item_target(std::string_view path, std::string_view prefix,
+                           std::uint64_t& id, std::string_view& property) {
+    if (path.size() <= prefix.size()
+        || path.compare(0U, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    const std::size_t slash = path.find('/', prefix.size());
+    if (slash == std::string_view::npos || slash == prefix.size()
+        || slash + 1U >= path.size()) {
+        return false;
+    }
+    std::uint64_t parsed = 0U;
+    for (std::size_t index = prefix.size(); index < slash; ++index) {
+        const unsigned char character = static_cast<unsigned char>(path[index]);
+        if (character < '0' || character > '9') return false;
+        const std::uint64_t digit = character - '0';
+        if (parsed > ((std::numeric_limits<std::uint64_t>::max)() - digit)
+                         / 10U) {
+            return false;
+        }
+        parsed = parsed * 10U + digit;
+    }
+    if (parsed == 0U) return false;
+    id = parsed;
+    property = path.substr(slash + 1U);
+    return true;
+}
+
+int lfo_integer(double value) {
+    return static_cast<int>(std::llround(clamp_value(
+        value, static_cast<double>((std::numeric_limits<int>::min)()),
+        static_cast<double>((std::numeric_limits<int>::max)()))));
+}
+
+bool apply_lfo_target(RenderData& render, std::string_view path,
+                      double value) {
+    const double magnitude = maximum_render_parameter_magnitude();
+    const auto finite = [&](double minimum, double maximum) {
+        return clamp_value(value, minimum, maximum);
+    };
+    if (path == "phrase_warp") render.phrase_warp = finite(-magnitude, magnitude);
+    else if (path == "ghost_mix") render.ghost_mix = finite(0.0, 1.0);
+    else if (path == "ghost_lag") render.ghost_lag_degrees = finite(-magnitude, magnitude);
+    else if (path == "displacement") render.displacement = finite(0.0, magnitude);
+    else if (path == "wave_depth") render.wave_depth = finite(0.0, magnitude);
+    else if (path == "spiral_frequency") render.spiral_frequency = finite(0.0, magnitude);
+    else if (path == "spiral_arms") render.spiral_arms = lfo_integer(value);
+    else if (path == "wall_frequency") render.wall_frequency = finite(0.0, magnitude);
+    else if (path == "wall_mix") render.wall_mix = finite(-magnitude, magnitude);
+    else if (path == "hue_cycles") render.hue_cycles = lfo_integer(value);
+    else if (path == "saturation") render.saturation = finite(0.0, 1.0);
+    else if (path == "audio.wave_amount") render.audio_reactive.wave_amount = finite(-magnitude, magnitude);
+    else if (path == "audio.effect_amount") render.audio_reactive.effect_amount = finite(-magnitude, magnitude);
+    else if (path == "audio.color_amount") render.audio_reactive.color_amount_degrees = finite(-magnitude, magnitude);
+    else if (path == "clock.bpm") render.layer_clock.clock.meter.bpm = finite(0.000001, magnitude);
+    else if (path == "clock.phase") render.layer_clock.clock.phase_offset_degrees = finite(-magnitude, magnitude);
+    else if (path == "alpha.minimum") {
+        render.alpha.minimum = finite(0.0, 1.0);
+        render.alpha.maximum = std::max(render.alpha.maximum, render.alpha.minimum);
+    } else if (path == "alpha.maximum") {
+        render.alpha.maximum = finite(0.0, 1.0);
+        render.alpha.minimum = std::min(render.alpha.minimum, render.alpha.maximum);
+    } else if (path == "alpha.frequency") render.alpha.spatial_frequency = finite(0.0, magnitude);
+    else if (path == "alpha.cycles") render.alpha.cycles_per_loop = lfo_integer(value);
+    else if (path == "alpha.phase") render.alpha.phase_degrees = finite(-magnitude, magnitude);
+    else if (path == "quantization.levels") render.quantization.levels = std::max(2, lfo_integer(value));
+    else if (path == "quantization.mix") render.quantization.mix = finite(0.0, 1.0);
+    else if (path == "post.invert_rgb_mix") render.post_process.invert_rgb_mix = finite(0.0, 1.0);
+    else if (path == "post.invert_alpha_mix") render.post_process.invert_alpha_mix = finite(0.0, 1.0);
+    else if (path == "post.antialias_strength") render.post_process.antialias_strength = finite(0.0, 1.0);
+    else if (path == "post.antialias_threshold") render.post_process.antialias_threshold = finite(0.0, 1.0);
+    else if (path == "post.antialias_passes") render.post_process.antialias_passes = std::max(1, lfo_integer(value));
+    else if (path == "motion.center_x") render.motion.center_x = finite(-magnitude, magnitude);
+    else if (path == "motion.center_y") render.motion.center_y = finite(-magnitude, magnitude);
+    else if (path == "motion.travel_x") render.motion.travel_x = finite(0.0, magnitude);
+    else if (path == "motion.travel_y") render.motion.travel_y = finite(0.0, magnitude);
+    else if (path == "motion.cycles_x") render.motion.cycles_x = lfo_integer(value);
+    else if (path == "motion.cycles_y") render.motion.cycles_y = lfo_integer(value);
+    else if (path == "motion.phase") render.motion.phase_degrees = finite(-magnitude, magnitude);
+    else if (path == "motion.rotations") render.motion.rotations_per_loop = lfo_integer(value);
+    else if (path == "motion.rotation_offset") render.motion.rotation_offset_degrees = finite(-magnitude, magnitude);
+    else if (path == "motion.scale_pulse") render.motion.scale_pulse = finite(0.0, magnitude);
+    else if (path == "surface.curvature") render.surface.curvature = finite(0.0, 1.0);
+    else if (path == "surface.lighting") render.surface.lighting = finite(0.0, magnitude);
+    else if (path == "surface.rotation_x_turns") render.surface.rotation_x_turns_per_loop = lfo_integer(value);
+    else if (path == "surface.rotation_y_turns") render.surface.rotation_y_turns_per_loop = lfo_integer(value);
+    else if (path == "surface.rotation_z_turns") render.surface.rotation_z_turns_per_loop = lfo_integer(value);
+    else if (path == "surface.rotation_x") render.surface.rotation_x_degrees = finite(-magnitude, magnitude);
+    else if (path == "surface.rotation_y") render.surface.rotation_y_degrees = finite(-magnitude, magnitude);
+    else if (path == "surface.rotation_z") render.surface.rotation_z_degrees = finite(-magnitude, magnitude);
+    else if (path == "surface.size") render.surface.size_percent = finite(0.000001, magnitude);
+    else if (path == "surface.scale_x") render.surface.scale_x = finite(0.000001, magnitude);
+    else if (path == "surface.scale_y") render.surface.scale_y = finite(0.000001, magnitude);
+    else if (path == "surface.scale_z") render.surface.scale_z = finite(0.000001, magnitude);
+    else if (path == "surface.position_x") render.surface.position_x_percent = finite(-magnitude, magnitude);
+    else if (path == "surface.position_y") render.surface.position_y_percent = finite(-magnitude, magnitude);
+    else if (path == "surface.position_z") render.surface.position_z = finite(-magnitude, magnitude);
+    else if (path == "surface.camera_distance") render.surface.camera_distance = finite(0.000001, magnitude);
+    else if (path == "surface.focal_length") render.surface.focal_length = finite(0.000001, magnitude);
+    else if (path == "surface.light_x") render.surface.light_direction_x = finite(-magnitude, magnitude);
+    else if (path == "surface.light_y") render.surface.light_direction_y = finite(-magnitude, magnitude);
+    else if (path == "surface.light_z") render.surface.light_direction_z = finite(-magnitude, magnitude);
+    else if (path == "surface.light_ambient") render.surface.light_ambient = finite(0.0, magnitude);
+    else if (path == "surface.light_diffuse") render.surface.light_diffuse = finite(0.0, magnitude);
+    else if (path == "surface.plane_displacement.minimum") {
+        render.surface.plane_displacement.minimum = finite(-magnitude, magnitude);
+        render.surface.plane_displacement.maximum = std::max(
+            render.surface.plane_displacement.maximum,
+            render.surface.plane_displacement.minimum);
+    } else if (path == "surface.plane_displacement.maximum") {
+        render.surface.plane_displacement.maximum = finite(-magnitude, magnitude);
+        render.surface.plane_displacement.minimum = std::min(
+            render.surface.plane_displacement.minimum,
+            render.surface.plane_displacement.maximum);
+    } else if (path == "surface.plane_displacement.midpoint") render.surface.plane_displacement.midpoint = finite(0.0, 1.0);
+    else if (path == "starting.red_minimum") {
+        render.starting_colors.red_minimum = finite(0.0, 1.0);
+        render.starting_colors.red_maximum = std::max(render.starting_colors.red_maximum, render.starting_colors.red_minimum);
+    } else if (path == "starting.red_maximum") {
+        render.starting_colors.red_maximum = finite(0.0, 1.0);
+        render.starting_colors.red_minimum = std::min(render.starting_colors.red_minimum, render.starting_colors.red_maximum);
+    } else if (path == "starting.green_minimum") {
+        render.starting_colors.green_minimum = finite(0.0, 1.0);
+        render.starting_colors.green_maximum = std::max(render.starting_colors.green_maximum, render.starting_colors.green_minimum);
+    } else if (path == "starting.green_maximum") {
+        render.starting_colors.green_maximum = finite(0.0, 1.0);
+        render.starting_colors.green_minimum = std::min(render.starting_colors.green_minimum, render.starting_colors.green_maximum);
+    } else if (path == "starting.blue_minimum") {
+        render.starting_colors.blue_minimum = finite(0.0, 1.0);
+        render.starting_colors.blue_maximum = std::max(render.starting_colors.blue_maximum, render.starting_colors.blue_minimum);
+    } else if (path == "starting.blue_maximum") {
+        render.starting_colors.blue_maximum = finite(0.0, 1.0);
+        render.starting_colors.blue_minimum = std::min(render.starting_colors.blue_minimum, render.starting_colors.blue_maximum);
+    } else if (path == "starting.alpha_minimum") {
+        render.starting_colors.alpha_minimum = finite(0.0, 1.0);
+        render.starting_colors.alpha_maximum = std::max(render.starting_colors.alpha_maximum, render.starting_colors.alpha_minimum);
+    } else if (path == "starting.alpha_maximum") {
+        render.starting_colors.alpha_maximum = finite(0.0, 1.0);
+        render.starting_colors.alpha_minimum = std::min(render.starting_colors.alpha_minimum, render.starting_colors.alpha_maximum);
+    } else if (path == "starting.kaleidoscope.segments") render.starting_colors.kaleidoscope.mirrored_segments = std::max(2, lfo_integer(value));
+    else if (path == "starting.kaleidoscope.rotation") render.starting_colors.kaleidoscope.rotation_degrees = finite(-magnitude, magnitude);
+    else if (path == "starting.kaleidoscope.mix") render.starting_colors.kaleidoscope.mix = finite(0.0, 1.0);
+    else if (path == "starting.warp.strength") render.starting_colors.domain_warp.strength = finite(0.0, magnitude);
+    else if (path == "starting.warp.scale") render.starting_colors.domain_warp.scale = finite(0.000001, magnitude);
+    else if (path == "starting.warp.octaves") render.starting_colors.domain_warp.octaves = std::max(1, lfo_integer(value));
+    else if (path == "starting.warp.cycles") render.starting_colors.domain_warp.cycles_per_loop = lfo_integer(value);
+    else {
+        std::uint64_t id = 0U;
+        std::string_view property;
+        if (split_lfo_item_target(path, "wave/", id, property)) {
+            const auto found = std::find_if(render.waves.begin(), render.waves.end(),
+                [id](const WaveConfig& item) { return item.id == id; });
+            if (found == render.waves.end()) return false;
+            if (property == "amplitude") found->amplitude = finite(-magnitude, magnitude);
+            else if (property == "frequency") found->spatial_frequency = finite(0.0, magnitude);
+            else if (property == "cycles") found->cycles_per_loop = lfo_integer(value);
+            else if (property == "phase") found->phase_degrees = finite(-magnitude, magnitude);
+            else if (property == "direction") found->direction = finite(0.0, 1.0);
+            else if (property == "x") found->x_percent = finite(-magnitude, magnitude);
+            else if (property == "y") found->y_percent = finite(-magnitude, magnitude);
+            else return false;
+        } else if (split_lfo_item_target(path, "swing/", id, property)) {
+            const auto found = std::find_if(render.swings.begin(), render.swings.end(),
+                [id](const SwingConfig& item) { return item.id == id; });
+            if (found == render.swings.end()) return false;
+            if (property == "amount") found->amount = finite(-magnitude, magnitude);
+            else if (property == "cycles") found->cycles_per_loop = lfo_integer(value);
+            else if (property == "phase") found->phase_degrees = finite(-magnitude, magnitude);
+            else if (property == "shape") found->shape = finite(0.0, 1.0);
+            else if (property == "center_x") found->center_x = finite(-magnitude, magnitude);
+            else if (property == "center_y") found->center_y = finite(-magnitude, magnitude);
+            else if (property == "radius") found->radius = finite(0.0, magnitude);
+            else return false;
+        } else if (split_lfo_item_target(path, "effect/", id, property)) {
+            const auto found = std::find_if(render.effects.begin(), render.effects.end(),
+                [id](const EffectConfig& item) { return item.id == id; });
+            if (found == render.effects.end()) return false;
+            const bool particles = found->type == EffectType::ParticleField;
+            const bool normalized = found->type == EffectType::BlockScale
+                || found->type == EffectType::Glitch
+                || found->type == EffectType::Starburst
+                || found->type == EffectType::LensDistortion;
+            if (property == "intensity") found->intensity = finite(0.0, normalized ? 1.0 : magnitude);
+            else if (property == "magnitude") found->magnitude = finite(found->type == EffectType::BlockScale ? 0.000001 : 0.0, magnitude);
+            else if (property == "frequency") found->frequency = particles ? std::round(finite(1.0, static_cast<double>((std::numeric_limits<int>::max)()))) : finite(0.0, magnitude);
+            else if (property == "secondary") found->secondary = finite(-magnitude, magnitude);
+            else if (property == "center_x") found->center_x = finite(-magnitude, magnitude);
+            else if (property == "center_y") found->center_y = finite(-magnitude, magnitude);
+            else if (property == "angle") found->angle_degrees = finite(-magnitude, magnitude);
+            else if (property == "radius") found->radius_pixels = finite(particles ? 0.000001 : 0.0, magnitude);
+            else if (property == "threshold") found->threshold = finite(0.0, particles ? 1.0 : magnitude);
+            else if (property == "soft_knee") found->soft_knee = finite(0.0, 1.0);
+            else if (property == "area") found->area_radius = finite(0.0, magnitude);
+            else if (property == "cycles") found->cycles_per_loop = lfo_integer(value);
+            else if (property == "phase") found->phase_degrees = finite(-magnitude, magnitude);
+            else if (property == "particle_size_variation") found->particle_size_variation = finite(0.0, 1.0);
+            else if (property == "particle_definition") found->particle_definition = finite(0.0, 1.0);
+            else if (property == "particle_twinkle") found->particle_twinkle = finite(0.0, 1.0);
+            else if (property == "particle_rotation") found->particle_rotation_degrees = finite(-magnitude, magnitude);
+            else if (property == "blur_passes") found->blur_passes = std::max(1, lfo_integer(value));
+            else if (property == "blur_samples") {
+                found->blur_samples = std::max(2, lfo_integer(value));
+                if (found->blur_type == BlurType::Gaussian
+                    && found->blur_samples % 2 == 0
+                    && found->blur_samples < (std::numeric_limits<int>::max)()) {
+                    ++found->blur_samples;
+                }
+            } else if (property == "blur_minimum") {
+                found->blur_minimum = finite(0.0, 1.0);
+                found->blur_maximum = std::max(found->blur_maximum, found->blur_minimum);
+            } else if (property == "blur_maximum") {
+                found->blur_maximum = finite(0.0, 1.0);
+                found->blur_minimum = std::min(found->blur_minimum, found->blur_maximum);
+            } else return false;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+void materialize_parameter_lfos_in_place(RenderData& render,
+                                         double normalized_phase) {
+    const std::vector<ParameterLfo> authored = render.parameter_lfos;
+    render.parameter_lfos.clear();
+    const double phase = kTau * wrap_unit(normalized_phase);
+    for (const ParameterLfo& lfo : authored) {
+        if (!lfo.enabled || lfo.target_path.empty()) continue;
+        const double wave = evaluate_waveform(
+            lfo.waveform,
+            static_cast<double>(lfo.cycles_per_loop) * phase
+                + radians(lfo.phase_degrees),
+            lfo.shape);
+        const double amount = 0.5 + 0.5 * wave;
+        const double value = mix_value(lfo.minimum, lfo.maximum, amount);
+        (void)apply_lfo_target(render, lfo.target_path, value);
+    }
+}
+
 double circular_influence(double center_x, double center_y, double radius,
                           double x, double y, int width, int height) {
     if (radius <= 1.0e-12) {
@@ -2523,6 +2772,16 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
     return config;
 }
 
+bool parameter_lfo_target_supported(const RenderData& render,
+                                    const std::string& target_path) {
+    try {
+        RenderData candidate = render;
+        return apply_lfo_target(candidate, target_path, 0.0);
+    } catch (...) {
+        return false;
+    }
+}
+
 std::uint64_t allocate_id(const RenderData& render) {
     std::unordered_set<std::uint64_t> used;
     std::uint64_t maximum = 0;
@@ -2907,6 +3166,28 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
     if (config.effects.size() > kMaximumEffects) {
         return invalid_result("The configuration contains too many effects.");
+    }
+    if (config.parameter_lfos.size() > kMaximumParameterLfos) {
+        return invalid_result(
+            "The configuration contains too many parameter LFOs.");
+    }
+    std::unordered_set<std::string> lfo_targets;
+    lfo_targets.reserve(config.parameter_lfos.size());
+    for (const ParameterLfo& lfo : config.parameter_lfos) {
+        if (!valid_lfo_target_path(lfo.target_path)
+            || !lfo_targets.insert(lfo.target_path).second
+            || !valid_enum(lfo.waveform)
+            || !finite_render_parameter(lfo.minimum)
+            || !finite_render_parameter(lfo.maximum)
+            || lfo.minimum > lfo.maximum
+            || lfo.cycles_per_loop < 1
+            || !finite_render_parameter(lfo.phase_degrees)
+            || !finite_in_range(lfo.shape, 0.0, 1.0)) {
+            return invalid_result(
+                "Parameter LFOs need unique target paths, a valid waveform, "
+                "an ordered finite range, positive loop cycles, and a "
+                "normalized pulse shape.");
+        }
     }
     if (config.motion_paths.size() > kMaximumMotionPaths) {
         return invalid_result("The reusable motion-path count exceeds the signed-int UI/API limit.");
@@ -6511,9 +6792,11 @@ bool render_frame_at_timeline_sample_cancellable(
             kTau * wrap_unit(timeline.normalized_phase);
         const double independent_loop_phase =
             kTau * wrap_unit(timeline.independent_phase);
-        const MotionClockState motion_clock =
-            prepare_motion_clock(config, loop_phase);
         RenderConfig resolved_config = config;
+        materialize_parameter_lfos_in_place(
+            resolved_config, timeline.normalized_phase);
+        const MotionClockState motion_clock =
+            prepare_motion_clock(resolved_config, loop_phase);
         resolve_path_bindings(resolved_config, independent_loop_phase,
                               motion_clock);
         const RenderConfig& render = resolved_config;
@@ -6629,6 +6912,13 @@ bool render_frame_at_timeline_sample_cancellable(
         apply_effect_stage(EffectSpace::Surface);
         apply_post_process(current, scratch, render.post_process, cancel);
         apply_quantization(current, render.quantization, cancel);
+        if (detail::opengl_surface_acceleration_active()) {
+            if (!detail::complete_frame_opengl(
+                    current, scratch, cancel, error)) {
+                return false;
+            }
+            current.pixels.swap(scratch.pixels);
+        }
         throw_if_cancelled(cancel);
 
         destination.width = current.width;
@@ -6655,6 +6945,24 @@ bool render_frame_at_timeline_sample_cancellable(
 
 namespace detail {
 
+RenderConfig materialize_parameter_lfos(const RenderConfig& config,
+                                        double normalized_phase) {
+    RenderConfig resolved = config;
+    materialize_parameter_lfos_in_place(resolved, normalized_phase);
+    return resolved;
+}
+
+RenderConfig materialize_parameter_lfos_at_frame(const RenderConfig& config,
+                                                  int frame_index) {
+    const TimelineSample timeline = resolve_timeline_sample(config,
+                                                            frame_index);
+    return materialize_parameter_lfos(config, timeline.normalized_phase);
+}
+
+ValidationResult validate_frame_render_config(const RenderConfig& config) {
+    return validate_impl(config, false);
+}
+
 ValidationResult validate_render_config_structure(const RenderConfig& config) {
     return validate_impl(config, true, true, false);
 }
@@ -6680,9 +6988,11 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
     candidate.loop_phase = kTau * wrap_unit(timeline.normalized_phase);
     candidate.independent_loop_phase =
         kTau * wrap_unit(timeline.independent_phase);
-    const MotionClockState motion_clock =
-        prepare_motion_clock(config, candidate.loop_phase);
     RenderConfig resolved_config = config;
+    materialize_parameter_lfos_in_place(
+        resolved_config, timeline.normalized_phase);
+    const MotionClockState motion_clock =
+        prepare_motion_clock(resolved_config, candidate.loop_phase);
     resolve_path_bindings(resolved_config, candidate.independent_loop_phase,
                           motion_clock);
     const RenderConfig& render = resolved_config;

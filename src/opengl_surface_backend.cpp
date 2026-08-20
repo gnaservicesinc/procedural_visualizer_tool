@@ -2435,50 +2435,13 @@ bool opengl_surface_backend_available(std::string* device_name,
 
 bool opengl_backend_supports(const RenderConfig& config,
                              std::string* reason) {
-    if (generated_base_supported_config(config)
-        || surface_has_supported_work(config.surface)) {
-        if (reason != nullptr) reason->clear();
-        return true;
-    }
-    if (reason != nullptr) {
-        if (config.starting_image.enabled) {
-            *reason = "Strict OpenGL GPU rendering does not yet accelerate "
-                      "starting-image source generation and this layer has no "
-                      "supported active surface stage.";
-        } else if (config.palette.enabled
-                   || config.starting_colors.mode
-                          != StartingColorMode::ContinuousHue
-                   || config.starting_colors.include_alpha
-                   || (config.starting_colors.domain_warp.enabled
-                       && config.starting_colors.domain_warp.strength > 1.0e-12)
-                   || (config.starting_colors.kaleidoscope.enabled
-                       && config.starting_colors.kaleidoscope.mix > 1.0e-12)) {
-            *reason = "Strict OpenGL GPU rendering currently accelerates "
-                      "Continuous hue generated sources without generated "
-                      "source alpha or coordinate shaping; this layer also "
-                      "has no supported active surface stage.";
-        } else if (!config.surface.enabled) {
-            *reason = "Strict OpenGL GPU rendering could not find an admitted "
-                      "generated-source or analytic surface stage.";
-        } else if (config.surface.mapping == SurfaceMapping::CustomObj) {
-            *reason = "Strict OpenGL GPU rendering does not accelerate imported "
-                      "OBJ mesh rasterization and this layer's source is not "
-                      "supported by the generated-source shader.";
-        } else if (config.surface.mapping == SurfaceMapping::Plane
-                   && config.surface.plane_displacement.enabled
-                   && config.surface.curvature > 0.0) {
-            *reason = "Strict OpenGL GPU rendering does not accelerate "
-                      "displacement-Plane mesh rasterization.";
-        } else if (config.surface.mapping == SurfaceMapping::Plane) {
-            *reason = "Strict OpenGL GPU rendering requires an active flat "
-                      "Plane transform; displacement-Plane meshes remain "
-                      "ordered CPU stages.";
-        } else {
-            *reason = "Strict OpenGL GPU rendering requires an active analytic "
-                      "Cylinder, Sphere, or Cube surface mapping.";
-        }
-    }
-    return false;
+    (void)config;
+    // OpenGL always owns the completed frame, even when a dependency-ordered
+    // source/effect stage currently runs on the reference lane. Requiring a
+    // particular generated-source variant or active analytic surface made
+    // otherwise valid saved projects fail merely because GPU was selected.
+    if (reason != nullptr) reason->clear();
+    return true;
 }
 
 bool opengl_generated_base_supported(const RenderConfig& config) {
@@ -2526,6 +2489,20 @@ bool apply_surface_mapping_opengl(const Image& source, Image& destination,
                                   std::string* error) {
     return service().render(source, destination, surface, loop_phase, cancel,
                             error);
+}
+
+bool complete_frame_opengl(const Image& source, Image& destination,
+                           const std::atomic_bool* cancel,
+                           std::string* error) {
+    SurfaceConfig identity;
+    identity.enabled = true;
+    identity.mapping = SurfaceMapping::Plane;
+    identity.projection = SurfaceProjection::Orthographic;
+    identity.sizing = SurfaceSizing::Contain;
+    identity.outside = SurfaceOutside::Source;
+    identity.curvature = 0.0;
+    identity.lighting = 0.0;
+    return service().render(source, destination, identity, 0.0, cancel, error);
 }
 
 } // namespace pvt::detail

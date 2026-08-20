@@ -223,6 +223,14 @@ struct PreparedFrame {
     LayerMotionConfig motion;
 };
 
+// Materializes layer-local parameter LFOs into a render-only copy. Authored
+// values and the saved oscillator definitions remain unchanged.
+RenderConfig materialize_parameter_lfos(const RenderConfig& config,
+                                        double normalized_phase);
+RenderConfig materialize_parameter_lfos_at_frame(const RenderConfig& config,
+                                                  int frame_index);
+ValidationResult validate_frame_render_config(const RenderConfig& config);
+
 PVT_API bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
                                                 double normalized_phase,
                                                 PreparedFrame& prepared,
@@ -270,6 +278,9 @@ bool apply_surface_mapping_opengl(const Image& source, Image& destination,
                                   double loop_phase,
                                   const std::atomic_bool* cancel,
                                   std::string* error);
+bool complete_frame_opengl(const Image& source, Image& destination,
+                           const std::atomic_bool* cancel,
+                           std::string* error);
 
 } // namespace pvt::detail
 

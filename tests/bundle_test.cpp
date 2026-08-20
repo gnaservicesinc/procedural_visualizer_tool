@@ -343,6 +343,17 @@ void test_layer_codec_backward_compatibility() {
     original.surface.plane_displacement.midpoint = 0.43;
     original.surface.plane_displacement.pixels_per_node = 6;
     original.surface.plane_displacement.path = "height-map.png";
+    pvt::ParameterLfo amplitude_lfo;
+    amplitude_lfo.target_path =
+        "wave/" + std::to_string(original.waves.front().id) + "/amplitude";
+    amplitude_lfo.waveform = pvt::Waveform::Triangle;
+    amplitude_lfo.minimum = -0.4;
+    amplitude_lfo.maximum = 1.7;
+    amplitude_lfo.cycles_per_loop = 3;
+    amplitude_lfo.phase_degrees = 27.0;
+    original.parameter_lfos.push_back(amplitude_lfo);
+    CHECK(pvt::parameter_lfo_target_supported(
+        original, amplitude_lfo.target_path));
     const std::vector<pvt::CubicMotionPath> motion_paths{
         pvt::default_ellipse_path(91U, 100U, "Layer ellipse")};
     const auto has_suffix = [](const std::string& value,
@@ -356,7 +367,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t14\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t15\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -466,6 +477,18 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.surface.plane_displacement.pixels_per_node == 6);
     CHECK(current_round_trip.surface.plane_displacement.path
           == "height-map.png");
+    CHECK(current_round_trip.parameter_lfos.size() == 1U);
+    if (current_round_trip.parameter_lfos.size() == 1U) {
+        const auto& loaded_lfo = current_round_trip.parameter_lfos.front();
+        CHECK(loaded_lfo.target_path == amplitude_lfo.target_path);
+        CHECK(loaded_lfo.waveform == amplitude_lfo.waveform);
+        CHECK(loaded_lfo.minimum == amplitude_lfo.minimum);
+        CHECK(loaded_lfo.maximum == amplitude_lfo.maximum);
+        CHECK(loaded_lfo.cycles_per_loop == amplitude_lfo.cycles_per_loop);
+        CHECK(loaded_lfo.phase_degrees == amplitude_lfo.phase_degrees);
+        CHECK(pvt::parameter_lfo_target_supported(
+            current_round_trip, loaded_lfo.target_path));
+    }
 
     // Layer v12/setup v14 predates the independent particle controls. Their
     // compatibility defaults retain the old renderer exactly.
@@ -473,7 +496,7 @@ void test_layer_codec_backward_compatibility() {
     std::ostringstream version_twelve_output;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_v14_input, line)));
-    CHECK(line == "PVT_LAYER\t14");
+    CHECK(line == "PVT_LAYER\t15");
     version_twelve_output << "PVT_LAYER\t12\n";
     while (std::getline(current_v14_input, line)) {
         const std::size_t tab = line.find('\t');
@@ -496,7 +519,10 @@ void test_layer_codec_backward_compatibility() {
             || key.rfind("surface.light_", 0U) == 0U
             || key == "surface.composite_backfaces"
             || key == "surface.normalize_obj";
-        if (!v13_only && !v14_only) version_twelve_output << line << '\n';
+        const bool v15_only = key.rfind("parameter_lfos.", 0U) == 0U;
+        if (!v13_only && !v14_only && !v15_only) {
+            version_twelve_output << line << '\n';
+        }
     }
     version_twelve_output << "surface.rotations_per_loop\t0\n"
                           << "surface.phase_degrees\t0\n";
@@ -1069,7 +1095,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t14");
+    CHECK(line == "PVT_LAYER\t15");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -1099,7 +1125,10 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
             || key.rfind("surface.light_", 0U) == 0U
             || key == "surface.composite_backfaces"
             || key == "surface.normalize_obj";
-        if (!current_particle_field && !current_surface_field) {
+        const bool current_lfo_field =
+            key.rfind("parameter_lfos.", 0U) == 0U;
+        if (!current_particle_field && !current_surface_field
+            && !current_lfo_field) {
             legacy_layer << line << '\n';
         }
     }

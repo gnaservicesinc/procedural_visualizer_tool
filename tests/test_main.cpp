@@ -98,6 +98,93 @@ void make_small(pvt::RenderConfig& config) {
     config.fps = 24.0;
 }
 
+void test_parameter_lfos() {
+    pvt::RenderConfig animated = pvt::default_config();
+    make_small(animated);
+    pvt::ParameterLfo lfo;
+    lfo.target_path = "saturation";
+    lfo.waveform = pvt::Waveform::Sine;
+    lfo.minimum = 0.2;
+    lfo.maximum = 0.8;
+    lfo.cycles_per_loop = 1;
+    lfo.phase_degrees = -90.0;
+    animated.parameter_lfos.push_back(lfo);
+    CHECK(pvt::validate(animated).ok);
+    CHECK(pvt::parameter_lfo_target_supported(animated, "saturation"));
+    CHECK(!pvt::parameter_lfo_target_supported(animated, "not/a/target"));
+
+    const auto maximum_difference = [](const pvt::Image& left,
+                                       const pvt::Image& right) {
+        if (left.width != right.width || left.height != right.height
+            || left.pixels.size() != right.pixels.size()) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double result = 0.0;
+        for (std::size_t index = 0U; index < left.pixels.size(); ++index) {
+            result = std::max(
+                result, std::fabs(static_cast<double>(left.pixels[index])
+                                  - static_cast<double>(right.pixels[index])));
+        }
+        return result;
+    };
+    std::string error;
+    pvt::RenderConfig reference = animated;
+    reference.parameter_lfos.clear();
+    reference.saturation = lfo.minimum;
+    pvt::Image expected_minimum;
+    pvt::Image actual_minimum;
+    CHECK(pvt::render_frame_at_phase(reference, 0.0, expected_minimum,
+                                     &error));
+    CHECK(pvt::render_frame_at_phase(animated, 0.0, actual_minimum, &error));
+    CHECK(maximum_difference(expected_minimum, actual_minimum) <= 1.0e-7);
+
+    reference.saturation = lfo.maximum;
+    pvt::Image expected_maximum;
+    pvt::Image actual_maximum;
+    CHECK(pvt::render_frame_at_phase(reference, 0.5, expected_maximum,
+                                     &error));
+    CHECK(pvt::render_frame_at_phase(animated, 0.5, actual_maximum, &error));
+    CHECK(maximum_difference(expected_maximum, actual_maximum) <= 1.0e-7);
+    pvt::Image seam;
+    CHECK(pvt::render_frame_at_phase(animated, 1.0, seam, &error));
+    CHECK(maximum_difference(actual_minimum, seam) <= 1.0e-7);
+
+    // The backend-selecting overload must use the resolved project/layer clock,
+    // not the raw frame fraction, when it materializes an LFO for acceleration.
+    animated.clock.reverse = true;
+    animated.clock.phase_offset_degrees = 73.0;
+    pvt::Image clock_reference;
+    pvt::Image clock_selected_cpu;
+    pvt::FrameRenderOptions selected_cpu;
+    selected_cpu.backend = pvt::RenderBackend::Cpu;
+    CHECK(pvt::render_frame(animated, 3, clock_reference, &error));
+    CHECK(pvt::render_frame(animated, 3, selected_cpu, clock_selected_cpu,
+                            nullptr, &error));
+    CHECK(maximum_difference(clock_reference, clock_selected_cpu) <= 1.0e-7);
+
+    std::string serialized;
+    CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
+    CHECK(serialized.find("PVT_SETUP\t17\n") == 0U);
+    pvt::RenderConfig loaded;
+    CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
+    CHECK(loaded.parameter_lfos.size() == 1U);
+    if (loaded.parameter_lfos.size() == 1U) {
+        const pvt::ParameterLfo& recovered = loaded.parameter_lfos.front();
+        CHECK(recovered.target_path == lfo.target_path);
+        CHECK(recovered.waveform == lfo.waveform);
+        CHECK(recovered.minimum == lfo.minimum);
+        CHECK(recovered.maximum == lfo.maximum);
+        CHECK(recovered.cycles_per_loop == lfo.cycles_per_loop);
+        CHECK(recovered.phase_degrees == lfo.phase_degrees);
+    }
+
+    animated.parameter_lfos.push_back(lfo);
+    CHECK(!pvt::validate(animated).ok);
+    pvt::Image rejected;
+    CHECK(!pvt::render_frame(animated, 0, selected_cpu, rejected, nullptr,
+                             &error));
+}
+
 pvt::ClockConfig ready_music_clock(double duration_seconds = 1.0,
                                    std::uint32_t sample_rate = 1000U) {
     pvt::ClockConfig clock;
@@ -641,7 +728,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t16\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t17\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -1494,7 +1581,7 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
 
     // Reverse changes traversal direction, not the separately authored
     // starting phase. Follow-tangent orientation must face actual travel and
-    // survive preparation for strict GPU rendering.
+    // survive preparation for GPU rendering.
     path_config.waves.front().synchronized = false;
     path_config.waves.front().path.phase_degrees = 90.0;
     pvt::detail::PreparedFrame forward_path;
@@ -4326,11 +4413,12 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t16\n", 0U) == 0U);
+              .rfind("PVT_SETUP\t17\n", 0U) == 0U);
     std::string version_fifteen(current_version_bytes.begin(),
                                 current_version_bytes.end());
-    version_fifteen.replace(0U, std::string("PVT_SETUP\t16").size(),
+    version_fifteen.replace(0U, std::string("PVT_SETUP\t17").size(),
                             "PVT_SETUP\t15");
+    erase_record(version_fifteen, "parameter_lfos.count");
     for (const char* key : {
              "surface.projection", "surface.sizing", "surface.outside",
              "surface.rotation_order",
@@ -5632,6 +5720,7 @@ int main(int argc, char** argv) {
     CHECK(!ignored);
 
     test_defaults_and_dynamic_collections();
+    test_parameter_lfos();
     test_live_control_model_and_setup_codec();
     test_synchronized_clocks_and_music();
     test_layer_clock_mixing_and_generated_shaping();
