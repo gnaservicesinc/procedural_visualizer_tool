@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **7.0.1**. The version is read from `VERSION` by every
+Current product version: **7.0.2**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,16 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 7.0.2 Windows ARM64 package correction
+
+Windows ARM64 deployment now makes Qt's x64 host tools query the ARM64 target
+installation through its `qtpaths` wrapper. The target and companion host Qt
+installations share the layout expected by that wrapper, preventing
+`windeployqt` from placing x64 Qt DLLs beside the ARM64 application. Package
+validation checks the PE machine type of the application, Qt Core, and both
+platform plugins before launching smoke tests, so an architecture mismatch is
+reported directly instead of appearing as a hung application.
 
 ## 7.0.1 high-precision image input and cross-platform reliability
 

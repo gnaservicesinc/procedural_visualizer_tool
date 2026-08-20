@@ -920,6 +920,35 @@ if(PVT_BUILD_QT_GUI)
 qt6_deploy_runtime_dependencies(
     EXECUTABLE \"$<TARGET_FILE_NAME:ProceduralVisualizerToolGui>.app\"
 )")
+        elseif(WIN32)
+            # The aqt ARM64 package contains host-runnable qtpaths*.bat
+            # wrappers rather than qtpaths*.exe. On a native Windows ARM64
+            # runner CMake does not consider the build cross-compiling, so Qt
+            # 6.8's automatic deployment lookup misses those wrappers and an
+            # x64 host windeployqt copies x64 DLLs beside the ARM64 executable.
+            # Pass the target wrapper explicitly through Qt's public deploy
+            # option so windeployqt always selects the target architecture.
+            set(pvt_target_qtpaths "")
+            foreach(pvt_qtpaths_name qtpaths6.bat qtpaths.bat)
+                set(pvt_qtpaths_candidate
+                    "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}/${pvt_qtpaths_name}")
+                if(EXISTS "${pvt_qtpaths_candidate}")
+                    set(pvt_target_qtpaths "${pvt_qtpaths_candidate}")
+                    break()
+                endif()
+            endforeach()
+            if(pvt_target_qtpaths)
+                message(STATUS
+                    "Qt deployment will query the target runtime with ${pvt_target_qtpaths}")
+                qt_generate_deploy_app_script(
+                    TARGET ProceduralVisualizerToolGui
+                    OUTPUT_SCRIPT pvt_qt_deploy_script
+                    DEPLOY_TOOL_OPTIONS --qtpaths "${pvt_target_qtpaths}")
+            else()
+                qt_generate_deploy_app_script(
+                    TARGET ProceduralVisualizerToolGui
+                    OUTPUT_SCRIPT pvt_qt_deploy_script)
+            endif()
         else()
             qt_generate_deploy_app_script(
                 TARGET ProceduralVisualizerToolGui

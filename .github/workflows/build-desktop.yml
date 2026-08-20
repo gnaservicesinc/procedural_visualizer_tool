@@ -151,8 +151,12 @@ jobs:
           if [[ "${{ matrix.qt-arch }}" == *arm64_cross_compiled ]]; then
             "$python_exe" -m aqt install-qt \
               windows desktop "$QT_VERSION" win64_msvc2022_64 \
-              --outputdir .qt-host
-            qt_host_root="$GITHUB_WORKSPACE/.qt-host/$QT_VERSION/msvc2022_64"
+              --outputdir .qt
+            # aqt patches the target Qt's qtpaths*.bat wrappers to find the
+            # companion host tools as a sibling of msvc2022_arm64. Keep both
+            # installations under the same version root so windeployqt can
+            # query the ARM64 target layout instead of deploying x64 DLLs.
+            qt_host_root="$GITHUB_WORKSPACE/.qt/$QT_VERSION/msvc2022_64"
             echo "QT_HOST_ROOT=$qt_host_root" >> "$GITHUB_ENV"
             echo "$qt_host_root/bin" >> "$GITHUB_PATH"
           fi
@@ -316,6 +320,46 @@ jobs:
             "$env:VCPKG_INSTALLATION_ROOT/installed/${{ matrix.vcpkg-triplet }}/share/zlib/copyright" `
             "$docDir/ZLIB-LICENSE"
           $env:QT_QPA_PLATFORM = "offscreen"
+          function Get-PeMachine($filePath) {
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+              throw "Required packaged binary is missing: $filePath"
+            }
+            $stream = [System.IO.File]::OpenRead($filePath)
+            try {
+              $reader = [System.IO.BinaryReader]::new($stream)
+              if ($reader.ReadUInt16() -ne 0x5A4D) {
+                throw "Packaged binary has no DOS/PE header: $filePath"
+              }
+              [void]$stream.Seek(0x3C, [System.IO.SeekOrigin]::Begin)
+              $peOffset = $reader.ReadUInt32()
+              [void]$stream.Seek($peOffset, [System.IO.SeekOrigin]::Begin)
+              if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "Packaged binary has no PE signature: $filePath"
+              }
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+          $expectedMachine = if ("${{ matrix.cmake-arch }}" -eq "ARM64") {
+            0xAA64
+          } else {
+            0x8664
+          }
+          $architectureFiles = @(
+            "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe",
+            "$env:GITHUB_WORKSPACE/package/bin/Qt6Core.dll",
+            "$env:GITHUB_WORKSPACE/package/plugins/platforms/qoffscreen.dll",
+            "$env:GITHUB_WORKSPACE/package/plugins/platforms/qwindows.dll"
+          )
+          foreach ($architectureFile in $architectureFiles) {
+            $actualMachine = Get-PeMachine $architectureFile
+            if ($actualMachine -ne $expectedMachine) {
+              $actualMachineText = "0x{0:X4}" -f $actualMachine
+              $expectedMachineText = "0x{0:X4}" -f $expectedMachine
+              throw "Packaged binary architecture mismatch: $architectureFile has PE machine $actualMachineText, expected $expectedMachineText"
+            }
+          }
           function Invoke-PackageCheck($filePath, $argument) {
             $process = Start-Process `
               -FilePath $filePath -ArgumentList $argument -PassThru
@@ -441,6 +485,8 @@ jobs:
           fi
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
+
+          Version 7.0.2 corrects Windows ARM64 deployment. Qt's x64 host tools now query the ARM64 target installation through its patched qtpaths wrapper, preventing x64 Qt DLLs from being mixed into an ARM64 package. The workflow verifies the PE machine type of the application, Qt Core, and platform plugins before running the installed-package smoke tests. Product behavior, the public API, SONAME 7 ABI, setup format 15, layer format 13, and bundle formats are unchanged.
 
           Version 7.0.1 adds full-precision PNG and OpenEXR input for displacement height maps and layer starting images. Raw 8/16-bit PNG samples and 16-bit HALF/32-bit FLOAT EXR scanlines remain linear data without an 8-bit intermediate; single-channel EXR height maps work directly, and palette-image import now accepts HALF or FLOAT EXR. Supported scanline compression includes NONE, RLE, ZIPS, and ZIP.
 
