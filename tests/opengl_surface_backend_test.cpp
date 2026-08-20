@@ -225,11 +225,26 @@ int main(int argc, char** argv) {
         std::string error;
         CHECK(pvt::render_frame(config, 5, cpu, reference, nullptr, &error));
         CHECK(pvt::render_frame(config, 5, gpu, strict, nullptr, &error));
-        const double difference = maximum_difference(reference, strict);
+        std::size_t maximum_index = 0U;
+        const double difference = maximum_difference(reference, strict,
+                                                     &maximum_index);
         if (difference > 0.0035) {
+            const std::size_t pixel_index = maximum_index - maximum_index % 4U;
             std::cerr << pvt::surface_mapping_name(mapping)
                       << " opaque CPU/GPU max difference " << difference
-                      << '\n';
+                      << " at value " << maximum_index << " (CPU "
+                      << reference.pixels[maximum_index] << ", GPU "
+                      << strict.pixels[maximum_index] << "); CPU rgba [";
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                if (channel != 0U) std::cerr << ", ";
+                std::cerr << reference.pixels[pixel_index + channel];
+            }
+            std::cerr << "], GPU rgba [";
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                if (channel != 0U) std::cerr << ", ";
+                std::cerr << strict.pixels[pixel_index + channel];
+            }
+            std::cerr << "]\n";
         }
         CHECK(difference <= 0.0035);
     }
@@ -241,17 +256,17 @@ int main(int argc, char** argv) {
                std::chrono::steady_clock::now().time_since_epoch().count())
            + ".exr");
     pvt::Image height_image;
-    height_image.width = 9;
-    height_image.height = 9;
-    height_image.pixels.resize(9U * 9U * 4U, 1.0F);
+    height_image.width = 16;
+    height_image.height = 16;
+    height_image.pixels.resize(16U * 16U * 4U, 1.0F);
     for (int y = 0; y < height_image.height; ++y) {
         for (int x = 0; x < height_image.width; ++x) {
-            const double dx = static_cast<double>(x) - 4.0;
-            const double dy = static_cast<double>(y) - 4.0;
+            const double dx = static_cast<double>(x) - 7.5;
+            const double dy = static_cast<double>(y) - 7.5;
             const float value = static_cast<float>(std::clamp(
-                1.0 - std::sqrt(dx * dx + dy * dy) / 5.7, 0.0, 1.0));
+                1.0 - std::sqrt(dx * dx + dy * dy) / 10.7, 0.0, 1.0));
             const std::size_t offset =
-                (static_cast<std::size_t>(y) * 9U
+                (static_cast<std::size_t>(y) * 16U
                  + static_cast<std::size_t>(x))
                 * 4U;
             height_image.pixels[offset] = value;
@@ -262,12 +277,17 @@ int main(int argc, char** argv) {
     pvt::RenderConfig height_output = pvt::default_config();
     height_output.width = height_image.width;
     height_output.height = height_image.height;
+    height_output.block_size = 1;
     height_output.output.bit_depth = 32;
     height_output.output.write_alpha = false;
     height_output.output.overwrite_existing = true;
     std::string error;
-    CHECK(pvt::write_image(height_map.string(), height_image, height_output,
-                           0U, &error));
+    const bool wrote_height_map = pvt::write_image(
+        height_map.string(), height_image, height_output, 0U, &error);
+    if (!wrote_height_map) {
+        std::cerr << "OpenGL displacement EXR fixture: " << error << '\n';
+    }
+    CHECK(wrote_height_map);
 
     pvt::RenderConfig displaced = analytic_config(pvt::SurfaceMapping::Plane);
     displaced.surface.plane_displacement.enabled = true;

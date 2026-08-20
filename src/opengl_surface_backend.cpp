@@ -178,7 +178,8 @@ vec3 worldNormal(vec3 normal) {
 }
 
 vec3 faceForwardToRay(vec3 normal, vec3 rayDirection) {
-    return dot(normal, rayDirection) > 0.0 ? -normal : normal;
+    return dot(normal, rayDirection) > 8.0 * 1.1920929e-7
+        ? -normal : normal;
 }
 
 vec4 shadeSurface(vec4 color, vec3 normal, float amount) {
@@ -370,9 +371,15 @@ bool intersectSphere(vec3 origin, vec3 direction,
     float a = dot(direction, direction);
     float b = 2.0 * dot(origin, direction);
     float c = dot(origin, origin) - 1.0;
-    float discriminant = b * b - 4.0 * a * c;
-    if (a <= 1.0e-12 || discriminant < 0.0) return false;
-    float root = sqrt(max(0.0, discriminant));
+    float bSquared = b * b;
+    float fourAc = 4.0 * a * c;
+    float discriminant = bSquared - fourAc;
+    float discriminantTolerance = 8.0 * 1.1920929e-7
+        * max(1.0, max(abs(bSquared), abs(fourAc)));
+    if (a <= 1.0e-12 || discriminant < -discriminantTolerance) return false;
+    float stableDiscriminant = abs(discriminant) <= discriminantTolerance
+        ? 0.0 : discriminant;
+    float root = sqrt(max(0.0, stableDiscriminant));
     float first = (-b - root) / (2.0 * a);
     float second = (-b + root) / (2.0 * a);
     if (first > second) {

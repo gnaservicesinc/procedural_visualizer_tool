@@ -5318,7 +5318,13 @@ double dot(Vec3 first, Vec3 second) {
 }
 
 Vec3 face_forward(Vec3 normal, Vec3 ray_direction) {
-    return dot(normal, ray_direction) > 0.0 ? multiply(normal, -1.0) : normal;
+    // At an analytic silhouette the exact dot product is zero. Treat the
+    // float-sized neighborhood around zero as tangent so CPU double math and
+    // GPU float math do not choose opposite faces for the same raster sample.
+    constexpr double tangent_tolerance =
+        8.0 * static_cast<double>((std::numeric_limits<float>::epsilon)());
+    return dot(normal, ray_direction) > tangent_tolerance
+               ? multiply(normal, -1.0) : normal;
 }
 
 Vec3 normalize(Vec3 value) {
@@ -5699,9 +5705,25 @@ bool apply_surface_mapping(const Image& source, Image& destination,
         const double a = dot(direction, direction);
         const double b = 2.0 * dot(origin, direction);
         const double c = dot(origin, origin) - 1.0;
-        const double discriminant = b * b - 4.0 * a * c;
-        if (a <= 1.0e-24 || discriminant < 0.0) return false;
-        const double root = std::sqrt(std::max(0.0, discriminant));
+        const double b_squared = b * b;
+        const double four_ac = 4.0 * a * c;
+        const double discriminant = b_squared - four_ac;
+        // A raster sample exactly on the analytic silhouette is a valid
+        // tangent hit. Rotation and inverse-scale roundoff can otherwise make
+        // the CPU's double result a tiny negative while a float GPU reports
+        // zero (or vice versa), producing a conspicuous one-pixel outline.
+        // Use the float raster contract on both backends so classification is
+        // stable without materially expanding the sphere.
+        const double discriminant_tolerance =
+            8.0 * static_cast<double>((std::numeric_limits<float>::epsilon)())
+            * std::max({1.0, std::fabs(b_squared), std::fabs(four_ac)});
+        if (a <= 1.0e-24 || discriminant < -discriminant_tolerance) {
+            return false;
+        }
+        const double stable_discriminant =
+            std::fabs(discriminant) <= discriminant_tolerance
+                ? 0.0 : discriminant;
+        const double root = std::sqrt(std::max(0.0, stable_discriminant));
         double first = (-b - root) / (2.0 * a);
         double second = (-b + root) / (2.0 * a);
         if (first > second) std::swap(first, second);
