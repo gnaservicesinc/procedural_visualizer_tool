@@ -7,7 +7,7 @@
 
 namespace pvt::detail {
 
-inline constexpr std::uint32_t kLayerConfigFormatVersion = 12U;
+inline constexpr std::uint32_t kLayerConfigFormatVersion = 13U;
 inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 7U;
 inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 2U;
 inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 5U;
@@ -21,6 +21,17 @@ PVT_API bool serialize_setup_config(const RenderConfig& config,
 PVT_API bool deserialize_setup_config(const std::string& serialized,
                                       RenderConfig& destination,
                                       std::string* error = nullptr);
+// Used only while a portable RenderData block has no final canvas. These
+// retain every normal parser/semantic bound and defer the single
+// canvas-dependent aggregate particle admission decision.
+PVT_API bool serialize_setup_config_without_particle_admission(
+    const RenderConfig& config,
+    std::string& serialized,
+    std::string* error = nullptr);
+PVT_API bool deserialize_setup_config_without_particle_admission(
+    const std::string& serialized,
+    RenderConfig& destination,
+    std::string* error = nullptr);
 
 // Appends bounded unknown records and rejected-value recovery envelopes after
 // a canonical codec has selected its layer/output subset.

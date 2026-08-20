@@ -89,6 +89,7 @@ struct alignas(16) GpuEffect {
     Float4 placement;
     Float4 glow_area;
     UInt4 blur;
+    Float4 particle;
 };
 
 struct alignas(16) GpuSurface {
@@ -108,6 +109,7 @@ struct alignas(16) GpuMotion {
 
 struct alignas(16) GpuParticlePoint {
     Float4 geometry;
+    Float4 appearance;
 };
 
 struct alignas(16) GpuParticleGrid {
@@ -120,11 +122,11 @@ static_assert(sizeof(Float4) == 16U);
 static_assert(sizeof(GpuFrameConstants) == 320U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
-static_assert(sizeof(GpuEffect) == 80U);
+static_assert(sizeof(GpuEffect) == 96U);
 static_assert(sizeof(GpuSurface) == 32U);
 static_assert(sizeof(GpuSourceImage) == 32U);
 static_assert(sizeof(GpuMotion) == 32U);
-static_assert(sizeof(GpuParticlePoint) == 16U);
+static_assert(sizeof(GpuParticlePoint) == 32U);
 static_assert(sizeof(GpuParticleGrid) == 16U);
 
 bool cancelled(const std::atomic_bool* cancel) {
@@ -136,6 +138,25 @@ bool fail(std::string* error, std::string message) {
         *error = std::move(message);
     }
     return false;
+}
+
+bool checked_size_multiply(std::size_t left, std::size_t right,
+                           std::size_t& result) {
+    if (left != 0U
+        && right > (std::numeric_limits<std::size_t>::max)() / left) {
+        return false;
+    }
+    result = left * right;
+    return true;
+}
+
+bool checked_size_add(std::size_t left, std::size_t right,
+                      std::size_t& result) {
+    if (right > (std::numeric_limits<std::size_t>::max)() - left) {
+        return false;
+    }
+    result = left + right;
+    return true;
 }
 
 template <typename T>
@@ -649,9 +670,17 @@ GpuEffect make_effect(const PreparedEffect& effect) {
     result.blur = {effect.type == EffectType::ParticleField
                        ? static_cast<std::uint32_t>(effect.particle_shape)
                        : static_cast<std::uint32_t>(effect.blur_type),
-                   static_cast<std::uint32_t>(effect.blur_samples),
-                   static_cast<std::uint32_t>(effect.blur_passes),
+                   effect.type == EffectType::ParticleField
+                       ? static_cast<std::uint32_t>(effect.particle_profile)
+                       : static_cast<std::uint32_t>(effect.blur_samples),
+                   effect.type == EffectType::ParticleField
+                       ? static_cast<std::uint32_t>(effect.particle_orientation)
+                       : static_cast<std::uint32_t>(effect.blur_passes),
                    static_cast<std::uint32_t>(effect.id >> 32U)};
+    result.particle = {static_cast<float>(effect.particle_definition),
+                       static_cast<float>(effect.particle_size_variation),
+                       static_cast<float>(effect.particle_twinkle),
+                       static_cast<float>(effect.particle_rotation_radians)};
     return result;
 }
 
@@ -667,15 +696,128 @@ double particle_unit(std::uint64_t value) {
            * (1.0 / 9007199254740992.0);
 }
 
+template <typename Effect>
+bool particle_acceleration_requirements(const RenderConfig& config,
+                                        const Effect& effect,
+                                        std::size_t& bytes,
+                                        std::string* reason) {
+    bytes = 0U;
+    if (!std::isfinite(effect.frequency) || effect.frequency < 1.0
+        || effect.frequency
+               > static_cast<double>((std::numeric_limits<int>::max)())
+        || std::floor(effect.frequency) != effect.frequency
+        || !std::isfinite(effect.radius_pixels)
+        || effect.radius_pixels <= 0.0
+        || !std::isfinite(effect.secondary) || effect.secondary < 0.0
+        || effect.secondary > 1.0
+        || !std::isfinite(effect.particle_size_variation)
+        || effect.particle_size_variation < 0.0
+        || effect.particle_size_variation > 1.0) {
+        if (reason != nullptr) {
+            *reason = "The particle field has invalid GPU acceleration inputs.";
+        }
+        return false;
+    }
+    const std::size_t count = static_cast<std::size_t>(effect.frequency);
+    const std::size_t trail_steps = effective_particle_trail_steps(
+        config.width, config.height, effect);
+    std::size_t point_count = 0U;
+    if (!checked_size_multiply(count, trail_steps, point_count)
+        || point_count > (std::numeric_limits<std::uint32_t>::max)()) {
+        if (reason != nullptr) {
+            *reason = "The particle count and trail amount exceed Metal's 32-bit point index.";
+        }
+        return false;
+    }
+
+    constexpr std::size_t kTileSize = 32U;
+    const std::size_t tiles_across =
+        (static_cast<std::size_t>(config.width) + kTileSize - 1U)
+        / kTileSize;
+    const std::size_t tiles_down =
+        (static_cast<std::size_t>(config.height) + kTileSize - 1U)
+        / kTileSize;
+    std::size_t tile_count = 0U;
+    if (!checked_size_multiply(tiles_across, tiles_down, tile_count)
+        || tile_count > (std::numeric_limits<std::uint32_t>::max)()) {
+        if (reason != nullptr) {
+            *reason = "The canvas exceeds Metal's 32-bit particle tile grid.";
+        }
+        return false;
+    }
+    const long double maximum_radius = std::max<long double>(
+        0.5L, static_cast<long double>(effect.radius_pixels)
+                  * (1.0L
+                     + static_cast<long double>(
+                         effect.particle_size_variation)));
+    const long double bound = effect.particle_profile
+                                      == ParticleRenderProfile::Defined
+                                  ? 3.5L
+                                  : 2.5L;
+    const long double diameter_long = std::ceil(
+        2.0L * bound * maximum_radius + 1.0L);
+    if (!std::isfinite(diameter_long)
+        || diameter_long
+               > static_cast<long double>(
+                   (std::numeric_limits<std::size_t>::max)()
+                   - (kTileSize - 1U))) {
+        if (reason != nullptr) {
+            *reason = "The particle radius overflows Metal's tile estimate.";
+        }
+        return false;
+    }
+    const std::size_t diameter = static_cast<std::size_t>(diameter_long);
+    const std::size_t tiles_per_axis =
+        (diameter + kTileSize - 1U) / kTileSize + 2U;
+    std::size_t tiles_per_point = 0U;
+    if (!checked_size_multiply(tiles_per_axis, tiles_per_axis,
+                               tiles_per_point)) {
+        if (reason != nullptr) {
+            *reason = "The particle radius overflows Metal's tile coverage.";
+        }
+        return false;
+    }
+    tiles_per_point = std::min(tiles_per_point, tile_count);
+    std::size_t index_count = 0U;
+    if (!checked_size_multiply(point_count, tiles_per_point, index_count)
+        || index_count > (std::numeric_limits<std::uint32_t>::max)()) {
+        if (reason != nullptr) {
+            *reason = "The particle field exceeds Metal's 32-bit tile index.";
+        }
+        return false;
+    }
+
+    std::size_t point_bytes = 0U;
+    std::size_t offset_bytes = 0U;
+    std::size_t index_bytes = 0U;
+    std::size_t combined = 0U;
+    if (!checked_size_multiply(point_count, sizeof(GpuParticlePoint),
+                               point_bytes)
+        || !checked_size_multiply(tile_count + 1U,
+                                  sizeof(std::uint32_t), offset_bytes)
+        || !checked_size_multiply(index_count, sizeof(std::uint32_t),
+                                  index_bytes)
+        || !checked_size_add(point_bytes, offset_bytes, combined)
+        || !checked_size_add(combined, index_bytes, bytes)) {
+        if (reason != nullptr) {
+            *reason = "The particle acceleration-buffer estimate overflowed.";
+        }
+        return false;
+    }
+    return true;
+}
+
 struct ParticleData {
     GpuParticleGrid grid;
     std::vector<GpuParticlePoint> points;
     std::vector<std::uint32_t> tile_offsets;
     std::vector<std::uint32_t> tile_indices;
+    bool was_cancelled = false;
 };
 
 ParticleData make_particles(const RenderConfig& config,
-                            const PreparedEffect& effect) {
+                            const PreparedEffect& effect,
+                            const std::atomic_bool* cancel) {
     constexpr std::uint32_t kTileSize = 32U;
     const std::uint32_t width = static_cast<std::uint32_t>(config.width);
     const std::uint32_t height = static_cast<std::uint32_t>(config.height);
@@ -688,8 +830,12 @@ ParticleData make_particles(const RenderConfig& config,
 
     const int count = static_cast<int>(std::llround(effect.frequency));
     const double radius = std::max(0.5, effect.radius_pixels);
-    const int trail_steps = 1 + static_cast<int>(std::llround(
-        std::clamp(effect.secondary, 0.0, 1.0) * 12.0));
+    const double size_variation = std::clamp(
+        effect.particle_size_variation, 0.0, 1.0);
+    const double maximum_radius = std::max(
+        0.5, radius * (1.0 + size_variation));
+    const int trail_steps = static_cast<int>(
+        effective_particle_trail_steps(config.width, config.height, effect));
     const double progress = std::fmod(effect.phase / (2.0 * M_PI), 1.0);
     const double wrapped_progress = progress < 0.0 ? progress + 1.0 : progress;
     const double direction_x = std::cos(effect.angle_radians);
@@ -697,8 +843,10 @@ ParticleData make_particles(const RenderConfig& config,
     const double short_side = static_cast<double>(
         std::min(config.width, config.height));
     const double travel = effect.magnitude * short_side;
-    const double span_x = static_cast<double>(config.width) + 4.0 * radius;
-    const double span_y = static_cast<double>(config.height) + 4.0 * radius;
+    const double span_x = static_cast<double>(config.width)
+                          + 4.0 * maximum_radius;
+    const double span_y = static_cast<double>(config.height)
+                          + 4.0 * maximum_radius;
     const std::size_t point_count = static_cast<std::size_t>(count)
                                     * static_cast<std::size_t>(trail_steps);
     if (point_count > (std::numeric_limits<std::uint32_t>::max)()) {
@@ -720,19 +868,35 @@ ParticleData make_particles(const RenderConfig& config,
     std::vector<std::uint64_t> tile_counts(tile_count, 0U);
 
     for (int particle = 0; particle < count; ++particle) {
+        if (cancelled(cancel)) {
+            result.was_cancelled = true;
+            return result;
+        }
+        const std::uint64_t pattern_seed = effect.particle_seed == 0U
+                                               ? effect.id
+                                               : effect.particle_seed;
         const std::uint64_t seed = particle_hash(
-            effect.id ^ (static_cast<std::uint64_t>(particle) + 1U)
+            pattern_seed ^ (static_cast<std::uint64_t>(particle) + 1U)
                             * UINT64_C(0xd1b54a32d192ed03));
-        const double start_x = particle_unit(seed) * span_x - 2.0 * radius;
+        const double particle_radius = std::max(
+            0.5, radius * (1.0 + size_variation
+                                   * (2.0 * particle_unit(
+                                       seed ^ UINT64_C(0x8cb92baa31f3d8d7))
+                                      - 1.0)));
+        const double start_x = particle_unit(seed) * span_x
+                               - 2.0 * maximum_radius;
         const double start_y = particle_unit(seed ^ UINT64_C(0x94d049bb133111eb))
-                               * span_y - 2.0 * radius;
+                               * span_y - 2.0 * maximum_radius;
         const int cycles = 1 + particle % 3;
         const double orbit_offset = 2.0 * M_PI * particle_unit(
             seed ^ UINT64_C(0xbf58476d1ce4e5b9));
-        const double twinkle = 0.55 + 0.45 * std::sin(
+        const double animated_twinkle = 0.55 + 0.45 * std::sin(
             2.0 * M_PI
             * (wrapped_progress * (1.0 + static_cast<double>(particle % 5))
                + particle_unit(seed ^ UINT64_C(0x632be59bd9b4e019))));
+        const double twinkle = 1.0
+            + (animated_twinkle - 1.0)
+                  * std::clamp(effect.particle_twinkle, 0.0, 1.0);
         const double orbit = 2.0 * M_PI * wrapped_progress
                                  * static_cast<double>(cycles)
                              + orbit_offset;
@@ -740,38 +904,78 @@ ParticleData make_particles(const RenderConfig& config,
         const double across = travel * 0.28 * std::cos(orbit);
         double center_x = start_x + direction_x * along - direction_y * across;
         double center_y = start_y + direction_y * along + direction_x * across;
-        center_x = std::fmod(center_x + 2.0 * radius, span_x);
-        center_y = std::fmod(center_y + 2.0 * radius, span_y);
+        center_x = std::fmod(center_x + 2.0 * maximum_radius, span_x);
+        center_y = std::fmod(center_y + 2.0 * maximum_radius, span_y);
         if (center_x < 0.0) center_x += span_x;
         if (center_y < 0.0) center_y += span_y;
-        center_x -= 2.0 * radius;
-        center_y -= 2.0 * radius;
+        center_x -= 2.0 * maximum_radius;
+        center_y -= 2.0 * maximum_radius;
+
+        double motion_x = direction_x;
+        double motion_y = direction_y;
+        if (travel > 1.0e-12) {
+            motion_x = direction_x * std::cos(orbit)
+                       + direction_y * 0.28 * std::sin(orbit);
+            motion_y = direction_y * std::cos(orbit)
+                       - direction_x * 0.28 * std::sin(orbit);
+            const double motion_length = std::hypot(motion_x, motion_y);
+            if (motion_length > 1.0e-12) {
+                motion_x /= motion_length;
+                motion_y /= motion_length;
+            } else {
+                motion_x = direction_x;
+                motion_y = direction_y;
+            }
+        }
+        const bool fixed_orientation = effect.particle_orientation
+                                       == ParticleOrientation::Fixed;
+        const double trail_x = fixed_orientation ? direction_x : motion_x;
+        const double trail_y = fixed_orientation ? direction_y : motion_y;
+        double shape_angle = effect.particle_rotation_radians;
+        if (effect.particle_orientation == ParticleOrientation::FollowMotion) {
+            shape_angle += std::atan2(motion_y, motion_x);
+        } else if (effect.particle_orientation == ParticleOrientation::Random) {
+            shape_angle += 2.0 * M_PI * particle_unit(
+                seed ^ UINT64_C(0xa24baed4963ee407));
+        }
+        const float shape_cosine = static_cast<float>(std::cos(shape_angle));
+        const float shape_sine = static_cast<float>(std::sin(shape_angle));
+        const double bound = effect.particle_profile
+                                     == ParticleRenderProfile::Defined
+                                 ? 3.5
+                                 : 2.5;
 
         for (int trail = trail_steps - 1; trail >= 0; --trail) {
+            if (cancelled(cancel)) {
+                result.was_cancelled = true;
+                return result;
+            }
             const double trail_fraction = trail_steps <= 1
                 ? 0.0 : static_cast<double>(trail)
                             / static_cast<double>(trail_steps - 1);
-            const double local_radius = radius * (1.0 - 0.58 * trail_fraction);
-            const double trail_distance = radius * 1.35
+            const double local_radius = particle_radius
+                                        * (1.0 - 0.58 * trail_fraction);
+            const double trail_distance = particle_radius * 1.35
                                           * static_cast<double>(trail);
-            const double px = center_x - direction_x * trail_distance;
-            const double py = center_y - direction_y * trail_distance;
+            const double px = center_x - trail_x * trail_distance;
+            const double py = center_y - trail_y * trail_distance;
             const int minimum_x = std::max(
-                0, static_cast<int>(std::floor(px - 2.5 * local_radius)));
+                0, static_cast<int>(std::floor(px - bound * local_radius)));
             const int maximum_x = std::min(
                 config.width - 1,
-                static_cast<int>(std::ceil(px + 2.5 * local_radius)));
+                static_cast<int>(std::ceil(px + bound * local_radius)));
             const int minimum_y = std::max(
-                0, static_cast<int>(std::floor(py - 2.5 * local_radius)));
+                0, static_cast<int>(std::floor(py - bound * local_radius)));
             const int maximum_y = std::min(
                 config.height - 1,
-                static_cast<int>(std::ceil(py + 2.5 * local_radius)));
+                static_cast<int>(std::ceil(py + bound * local_radius)));
             if (minimum_x > maximum_x || minimum_y > maximum_y) continue;
             const float gain = static_cast<float>(
                 (1.0 - 0.82 * trail_fraction) * twinkle);
-            result.points.push_back({{
-                static_cast<float>(px), static_cast<float>(py),
-                static_cast<float>(local_radius), gain}});
+            result.points.push_back({
+                {static_cast<float>(px), static_cast<float>(py),
+                 static_cast<float>(local_radius), gain},
+                {shape_cosine, shape_sine, 0.0F, 0.0F}});
             const TileBounds point_bounds = {
                 static_cast<std::uint32_t>(minimum_x) / kTileSize,
                 static_cast<std::uint32_t>(maximum_x) / kTileSize,
@@ -780,6 +984,10 @@ ParticleData make_particles(const RenderConfig& config,
             bounds.push_back(point_bounds);
             for (std::uint32_t tile_y = point_bounds.minimum_y;
                  tile_y <= point_bounds.maximum_y; ++tile_y) {
+                if (cancelled(cancel)) {
+                    result.was_cancelled = true;
+                    return result;
+                }
                 for (std::uint32_t tile_x = point_bounds.minimum_x;
                      tile_x <= point_bounds.maximum_x; ++tile_x) {
                     ++tile_counts[static_cast<std::size_t>(tile_y)
@@ -792,6 +1000,10 @@ ParticleData make_particles(const RenderConfig& config,
     result.tile_offsets.resize(tile_count + 1U, 0U);
     std::uint64_t total_tile_indices = 0U;
     for (std::size_t tile = 0U; tile < tile_count; ++tile) {
+        if ((tile & 1023U) == 0U && cancelled(cancel)) {
+            result.was_cancelled = true;
+            return result;
+        }
         total_tile_indices += tile_counts[tile];
         if (total_tile_indices
             > (std::numeric_limits<std::uint32_t>::max)()) {
@@ -804,9 +1016,17 @@ ParticleData make_particles(const RenderConfig& config,
     result.tile_indices.resize(result.tile_offsets.back());
     std::vector<std::uint32_t> cursor = result.tile_offsets;
     for (std::size_t point = 0U; point < result.points.size(); ++point) {
+        if ((point & 63U) == 0U && cancelled(cancel)) {
+            result.was_cancelled = true;
+            return result;
+        }
         const TileBounds& point_bounds = bounds[point];
         for (std::uint32_t tile_y = point_bounds.minimum_y;
              tile_y <= point_bounds.maximum_y; ++tile_y) {
+            if (cancelled(cancel)) {
+                result.was_cancelled = true;
+                return result;
+            }
             for (std::uint32_t tile_x = point_bounds.minimum_x;
                  tile_x <= point_bounds.maximum_x; ++tile_x) {
                 const std::size_t tile = static_cast<std::size_t>(tile_y)
@@ -964,8 +1184,24 @@ bool metal_backend_available(std::string* device_name,
 
 bool metal_backend_supports(const RenderConfig& config,
                             std::string* reason) {
-    (void)config;
     if (reason != nullptr) reason->clear();
+    if (config.width <= 0 || config.height <= 0) {
+        if (reason != nullptr) {
+            *reason = "Metal particle preflight requires positive canvas dimensions.";
+        }
+        return false;
+    }
+    for (const EffectConfig& effect : config.effects) {
+        if (!effect.enabled || effect.type != EffectType::ParticleField
+            || effect.intensity <= 0.0) {
+            continue;
+        }
+        std::size_t ignored_bytes = 0U;
+        if (!particle_acceleration_requirements(
+                config, effect, ignored_bytes, reason)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1028,15 +1264,36 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error, "Metal working buffer size overflowed.");
     }
     const std::size_t frame_working_bytes = frame_bytes * 3U;
+    std::size_t particle_working_bytes = 0U;
+    for (const PreparedEffect& effect : prepared.effects) {
+        if (effect.type != EffectType::ParticleField) continue;
+        std::size_t effect_bytes = 0U;
+        std::string particle_reason;
+        if (!particle_acceleration_requirements(
+                config, effect, effect_bytes, &particle_reason)
+            || !checked_size_add(particle_working_bytes, effect_bytes,
+                                 particle_working_bytes)) {
+            return fail(
+                error,
+                particle_reason.empty()
+                    ? "The Metal particle working-buffer estimate overflowed."
+                    : particle_reason);
+        }
+    }
     if (starting_image_bytes
         > std::numeric_limits<std::size_t>::max() - frame_working_bytes) {
         return fail(error,
                     "The Metal working buffers and starting image overflowed.");
     }
-    const std::size_t working_bytes = frame_working_bytes
-                                      + starting_image_bytes;
+    std::size_t working_bytes = frame_working_bytes + starting_image_bytes;
+    if (!checked_size_add(working_bytes, particle_working_bytes,
+                          working_bytes)) {
+        return fail(error,
+                    "The Metal frame and particle working buffers overflowed.");
+    }
     // Reserve no more than three quarters of the device's advisory working set
-    // across all callers. Input arrays are tiny and the remaining quarter also
+    // across all callers. Particle point/tile arrays are included because their
+    // Metal buffers remain retained until command completion; the final quarter
     // leaves the driver and the rest of the application breathing room.
     const std::uint64_t recommended =
         context.device()->recommendedMaxWorkingSetSize();
@@ -1048,7 +1305,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                                          : static_cast<std::size_t>(recommended_budget);
     if (memory_budget != 0U && working_bytes > memory_budget) {
         return fail(error,
-                    "This Metal frame's working buffers and source image would exceed the bounded GPU working-set budget.");
+                    "This Metal frame's working buffers, source image, and particle acceleration data would exceed the bounded GPU working-set budget.");
     }
     AdmissionPermit permit(options.maximum_gpu_frames_in_flight,
                            working_bytes, memory_budget, cancel);
@@ -1152,7 +1409,11 @@ bool render_prepared_frame_metal(const RenderConfig& config,
             GpuEffect effect = make_effect(prepared_effect);
             if (prepared_effect.type == EffectType::ParticleField) {
                 const ParticleData particles = make_particles(
-                    config, prepared_effect);
+                    config, prepared_effect, cancel);
+                if (particles.was_cancelled) {
+                    effect_buffer_failure = true;
+                    return;
+                }
                 auto point_buffer = make_input_buffer(
                     context.device(), particles.points);
                 auto offset_buffer = make_input_buffer(
@@ -1290,6 +1551,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
 
     encode_effect_stage(EffectSpace::Texture);
     if (effect_buffer_failure) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Metal particle preparation was cancelled; destination was unchanged.");
+        }
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }
@@ -1363,6 +1628,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     }
     encode_effect_stage(EffectSpace::Surface);
     if (effect_buffer_failure) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "Metal particle preparation was cancelled; destination was unchanged.");
+        }
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }

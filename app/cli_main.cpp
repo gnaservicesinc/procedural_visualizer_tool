@@ -903,6 +903,11 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                      {pvt::ParticleShape::Ring, "Ring"},
                      {pvt::ParticleShape::Diamond, "Diamond"},
                      {pvt::ParticleShape::Star, "Star"}})
+                || !prompt_enum(
+                    "Render profile", effect.particle_profile,
+                    {{pvt::ParticleRenderProfile::LegacyGlow, "Legacy glow"},
+                     {pvt::ParticleRenderProfile::Defined,
+                      "Defined silhouette"}})
                 || !prompt_real("Particle brightness", effect.intensity, 0.0, 100.0)
                 || !prompt_real("Travel per loop (fraction of short edge)",
                                 effect.magnitude, 0.0, 10.0)
@@ -914,6 +919,23 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                 || !prompt_real("Particle radius (pixels)", effect.radius_pixels,
                                 0.01,
                                 static_cast<double>((std::numeric_limits<int>::max)()))
+                || !prompt_real("Size variation", effect.particle_size_variation,
+                                0.0, 1.0)
+                || !prompt_real("Shape definition", effect.particle_definition,
+                                0.0, 1.0)
+                || !prompt_real("Twinkle amount", effect.particle_twinkle,
+                                0.0, 1.0)
+                || !prompt_uint64("Deterministic seed (0 uses effect ID)",
+                                  effect.particle_seed)
+                || !prompt_enum(
+                    "Shape/trail orientation", effect.particle_orientation,
+                    {{pvt::ParticleOrientation::Fixed, "Fixed angle"},
+                     {pvt::ParticleOrientation::FollowMotion, "Follow motion"},
+                     {pvt::ParticleOrientation::Random,
+                      "Random shape angles"}})
+                || !prompt_real("Particle rotation (degrees)",
+                                effect.particle_rotation_degrees,
+                                -36000.0, 36000.0)
                 || !prompt_real("White-hot core", effect.threshold, 0.0, 1.0)
                 || !prompt_real("Glow softness", effect.soft_knee, 0.0, 1.0)) {
                 return false;

@@ -1276,6 +1276,7 @@ ValidationResult validate(const LiveConfig& live) {
         }
 
         std::unordered_set<std::string> active_clock_targets;
+        std::optional<std::string> active_audio_clock_endpoint;
         for (std::size_t index = 0U; index < live.clock_inputs.size(); ++index) {
             const LiveClockInputConfig& clock = live.clock_inputs[index];
             if (!valid_live_enum(clock.target)
@@ -1325,6 +1326,14 @@ ValidationResult validate(const LiveConfig& live) {
                 || !live_direction_has_input(endpoint->second->direction)) {
                 return invalid_result(
                     "An enabled Live clock input requires a compatible logical input endpoint.");
+            }
+            if (clock.source == LiveClockInputSource::AudioStream) {
+                if (active_audio_clock_endpoint.has_value()
+                    && *active_audio_clock_endpoint != clock.endpoint_uuid) {
+                    return invalid_result(
+                        "Enabled Live audio clocks must share one logical audio input endpoint because the desktop runtime owns one capture engine.");
+                }
+                active_audio_clock_endpoint = clock.endpoint_uuid;
             }
         }
 
@@ -1447,6 +1456,14 @@ ValidationResult validate(const ProjectConfig& project) {
         }
         file_ids.reserve(project.layers.size());
         std::size_t worst_layer_peak = 0U;
+        std::size_t aggregate_particle_work = 0U;
+        std::size_t aggregate_particle_budget = 0U;
+        if (!detail::particle_stamp_budget_for_canvas(
+                project.canvas.width, project.canvas.height,
+                aggregate_particle_budget)) {
+            return invalid_result(
+                "The project canvas overflows the particle workload estimate.");
+        }
         bool has_contributing_layer = false;
         bool enabled_stack_is_guaranteed_opaque = false;
         std::string master_count_error;
@@ -1525,6 +1542,21 @@ ValidationResult validate(const ProjectConfig& project) {
             }
             if (layer_effectively_enabled(project, layer)
                 && layer.opacity > 0.0) {
+                detail::ParticleStampWorkloadEstimate layer_particles;
+                if (!detail::estimate_particle_stamp_workload(
+                        render, layer_particles)) {
+                    return invalid_result(
+                        "Layer " + std::to_string(index + 1U)
+                        + " has an invalid particle workload estimate.");
+                }
+                if (layer_particles.work
+                    > aggregate_particle_budget - aggregate_particle_work) {
+                    return invalid_result(
+                        "The enabled project layers exceed the aggregate bounded particle stamp workload at layer "
+                        + std::to_string(index + 1U)
+                        + "; reduce particle count, size, variation, trails, or the number of contributing particle layers.");
+                }
+                aggregate_particle_work += layer_particles.work;
                 const bool erases_lower_layers =
                     layer.blend_mode == BlendMode::Erase
                     || layer.blend_mode == BlendMode::ColorEraseTones

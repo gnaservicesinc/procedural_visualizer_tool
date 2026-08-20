@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 14;
+constexpr std::uint32_t kSetupFormatVersion = 15;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -111,6 +111,23 @@ enum class ParticleShape : std::uint8_t {
     Ring,
     Diamond,
     Star
+};
+
+// LegacyGlow reproduces setup-format 14 particle falloff exactly when the
+// appended particle controls retain their compatibility defaults. Defined
+// keeps a crisp, antialiased silhouette under the optional soft halo.
+enum class ParticleRenderProfile : std::uint8_t {
+    LegacyGlow = 0,
+    Defined
+};
+
+// Fixed preserves the historical authored travel-angle alignment. FollowMotion
+// aligns both trails and silhouettes with instantaneous orbital motion. Random
+// follows motion for trails but gives each silhouette a deterministic angle.
+enum class ParticleOrientation : std::uint8_t {
+    Fixed = 0,
+    FollowMotion,
+    Random
 };
 
 enum class BlurType : std::uint8_t {
@@ -722,6 +739,11 @@ struct SwingConfig {
 //              frequency (maximum multiplier), secondary (whole quantization
 //              steps, where 0 is smooth). The animated multiplier is applied
 //              to RenderConfig::block_size at this position in the stack.
+// ParticleField: intensity (HDR brightness), magnitude (travel as a short-edge
+//              fraction), frequency (whole particle count), secondary (trail
+//              amount), angle, radius_pixels (exact full-resolution radius),
+//              threshold (white core), soft_knee (halo softness), and the
+//              appended particle controls below.
 //
 // All types use enabled, synchronized, cycles_per_loop, and phase_degrees.
 // Synchronized effects use the swung master clock; otherwise they use their
@@ -771,6 +793,16 @@ struct EffectConfig {
     // Procedural particle silhouettes require no external assets and retain
     // CPU/Metal parity. Spark preserves the historical field appearance.
     ParticleShape particle_shape = ParticleShape::Spark;
+    // Appended setup-format 15 controls. Their defaults reproduce the old
+    // renderer for source and persisted-project compatibility. New particle
+    // effects created by default_effect() deliberately select Defined.
+    ParticleRenderProfile particle_profile = ParticleRenderProfile::LegacyGlow;
+    double particle_size_variation = 0.0;
+    double particle_definition = 0.7;
+    double particle_twinkle = 1.0;
+    std::uint64_t particle_seed = 0U; // zero derives the pattern from effect ID
+    ParticleOrientation particle_orientation = ParticleOrientation::Fixed;
+    double particle_rotation_degrees = 0.0;
 };
 
 enum class PaletteColorEncoding : std::uint8_t {
@@ -1456,6 +1488,8 @@ PVT_API bool load_setup(const std::string& path,
 
 PVT_API const char* effect_type_name(EffectType value);
 PVT_API const char* particle_shape_name(ParticleShape value);
+PVT_API const char* particle_render_profile_name(ParticleRenderProfile value);
+PVT_API const char* particle_orientation_name(ParticleOrientation value);
 PVT_API const char* blur_type_name(BlurType value);
 PVT_API const char* effect_space_name(EffectSpace value);
 PVT_API const char* edge_mode_name(EdgeMode value);

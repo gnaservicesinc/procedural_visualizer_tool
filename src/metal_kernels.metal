@@ -48,6 +48,7 @@ struct GpuEffect {
     float4 placement; // secondary, center x/y, angle radians
     float4 glow_area; // radius, threshold, soft knee, area radius
     uint4 blur; // BlurType, samples, passes, horizontal-pass flag
+    float4 particle; // definition, size variation, twinkle, rotation
 };
 
 struct GpuSurface {
@@ -67,6 +68,7 @@ struct GpuMotion {
 
 struct GpuParticlePoint {
     float4 geometry; // center x/y, local radius, trail gain
+    float4 appearance; // local-axis cosine/sine, reserved...
 };
 
 struct GpuParticleGrid {
@@ -1575,6 +1577,58 @@ kernel void block_scale(constant FrameConstants& frame [[buffer(0)]],
     }
 }
 
+float particle_edge_coverage(float signed_distance, float antialias_width) {
+    const float width = max(1.0e-6f, antialias_width);
+    const float value = clamp_unit(
+        (width - signed_distance) / (2.0f * width));
+    return value * value * (3.0f - 2.0f * value);
+}
+
+float defined_particle_mask(uint shape, float dx, float dy,
+                            float local_radius, float definition,
+                            float softness) {
+    const float detail = clamp_unit(definition);
+    const float edge = max(0.04f, 0.80f / max(0.5f, local_radius));
+    const float radius_squared = dx * dx + dy * dy;
+    const float radial = sqrt(radius_squared);
+    if (shape == 1u) {
+        const float solid = particle_edge_coverage(radial - 0.70f, edge);
+        const float halo = exp(
+            -radius_squared / (0.16f + 1.10f * max(0.05f, softness)));
+        return max(solid * (0.48f + 0.42f * detail), halo);
+    }
+
+    float signed_distance = 0.0f;
+    if (shape == 0u) {
+        const float arm = 0.34f - 0.24f * detail;
+        const float horizontal = sqrt(
+            dx * dx + (dy / arm) * (dy / arm)) - 1.0f;
+        const float vertical = sqrt(
+            (dx / arm) * (dx / arm) + dy * dy) - 1.0f;
+        signed_distance = min(horizontal, vertical);
+    } else if (shape == 2u) {
+        const float half_width = 0.26f - 0.17f * detail;
+        signed_distance = fabs(radial - 0.78f) - half_width;
+    } else if (shape == 3u) {
+        signed_distance = fabs(dx) + fabs(dy) - 1.0f;
+    } else if (shape == 4u) {
+        const float lobe = 0.5f + 0.5f * cos(5.0f * atan2(dy, dx));
+        const float sharpened = pow(
+            max(0.0f, lobe), 2.0f + 6.0f * detail);
+        const float inner_radius = 0.72f - 0.34f * detail;
+        const float boundary = inner_radius
+                               + (1.0f - inner_radius) * sharpened;
+        signed_distance = radial / max(0.05f, boundary) - 1.0f;
+    }
+    const float silhouette = particle_edge_coverage(signed_distance, edge);
+    const float outside = max(0.0f, signed_distance);
+    const float halo = (0.10f + 0.30f * max(0.05f, softness))
+                       * exp(-(outside * outside)
+                             / (0.012f
+                                + 0.20f * max(0.05f, softness)));
+    return max(silhouette, halo);
+}
+
 kernel void particle_field(
     constant FrameConstants& frame [[buffer(0)]],
     constant GpuEffect& effect [[buffer(1)]],
@@ -1601,26 +1655,40 @@ kernel void particle_field(
         const uint point_index = tile_indices[slot];
         if (point_index >= grid.layout.w) continue;
         const float4 point = points[point_index].geometry;
+        const float4 appearance = points[point_index].appearance;
         const float dx = (float(gid.x) - point.x) / point.z;
         const float dy = (float(gid.y) - point.y) / point.z;
         const float distance_squared = dx * dx + dy * dy;
-        if (distance_squared > 6.25f) continue;
-        float shape_distance_squared = distance_squared;
-        if (effect.blur.x == 1u) {
-            shape_distance_squared *= 0.38f;
-        } else if (effect.blur.x == 2u) {
-            const float ring_distance = (sqrt(distance_squared) - 1.0f) * 3.2f;
-            shape_distance_squared = ring_distance * ring_distance;
-        } else if (effect.blur.x == 3u) {
-            const float diamond = fabs(dx) + fabs(dy);
-            shape_distance_squared = 0.55f * diamond * diamond;
-        } else if (effect.blur.x == 4u) {
-            const float boundary = 1.0f + 0.42f * cos(5.0f * atan2(dy, dx));
-            const float star_distance = sqrt(distance_squared) / boundary;
-            shape_distance_squared = star_distance * star_distance;
+        const bool defined_profile = effect.blur.y == 1u;
+        const float bound = defined_profile ? 3.5f : 2.5f;
+        if (distance_squared > bound * bound) continue;
+        const float local_dx = dx * appearance.x + dy * appearance.y;
+        const float local_dy = -dx * appearance.y + dy * appearance.x;
+        float gaussian = 0.0f;
+        if (defined_profile) {
+            gaussian = defined_particle_mask(
+                effect.blur.x, local_dx, local_dy, point.z,
+                effect.particle.x, softness);
+        } else {
+            float shape_distance_squared = distance_squared;
+            if (effect.blur.x == 1u) {
+                shape_distance_squared *= 0.38f;
+            } else if (effect.blur.x == 2u) {
+                const float ring_distance =
+                    (sqrt(distance_squared) - 1.0f) * 3.2f;
+                shape_distance_squared = ring_distance * ring_distance;
+            } else if (effect.blur.x == 3u) {
+                const float diamond = fabs(local_dx) + fabs(local_dy);
+                shape_distance_squared = 0.55f * diamond * diamond;
+            } else if (effect.blur.x == 4u) {
+                const float boundary = 1.0f + 0.42f * cos(
+                    5.0f * atan2(local_dy, local_dx));
+                const float star_distance = sqrt(distance_squared) / boundary;
+                shape_distance_squared = star_distance * star_distance;
+            }
+            gaussian = exp(
+                -shape_distance_squared / (0.22f + 1.55f * softness));
         }
-        const float gaussian = exp(
-            -shape_distance_squared / (0.22f + 1.55f * softness));
         const float area = circular_influence(
             effect.placement.y, effect.placement.z, effect.glow_area.w,
             float(gid.x), float(gid.y), width, height);

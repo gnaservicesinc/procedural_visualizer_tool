@@ -442,6 +442,12 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          Version 7.0.0 adds GUI-only Mic (Live) clock authoring for the project and active layer. Detected input devices bind to portable logical Audio roles through machine-local identities, with visible gain, sensitivity, filtering, EQ, frequency-range, metering, latency, and tap-calibration controls. Continuous beat routing now preserves detected or tapped tempo, advances through short callback gaps, and keeps offline and command-line rendering deterministic.
+
+          Live Preview Output presents the editor preview or Preview Solo on a selected display at Auto, Full, 75%, 50%, or 25% quality without starting performance Live inputs, mappings, scenes, routes, or sleep prevention. Presentation, performance Live, export, project I/O, and music analysis use explicit lifecycle guards, revision-gated coalesced rendering, watchdog adaptation, and display-aware output state.
+
+          Particle Field gains a Defined profile with distinct antialiased Spark, Soft Orb, Ring, Diamond, and Star silhouettes plus size, variation, definition, twinkle, deterministic seed/reseed, orientation, rotation, and improved trail authoring. Legacy projects retain the prior glow profile. Canvas-aware aggregate workload admission, bounded Metal allocation, cooperative cancellation, transactional unsafe-workload recovery, and independent-copy Live-path remapping harden rendering and persistence. Setup format advances to 15, layer records to 13, and the public C++ ABI to SONAME 7; installed-library clients must rebuild.
+
           Version 6.0.1 fixes the blank Live pop-out introduced in 6.0.0. Choosing LIVE now opens a populated companion window immediately while the editor remains available, with no prompt or intermediate screen. Edit Project brings the editor forward without stopping the active runtime; closing the Live window stops capture/render/output, releases sleep prevention, restores the workspace, and supports a clean subsequent reopen. The public API, SONAME 6 ABI, setup format 14, layer format 12, and bundle formats are unchanged.
 
           Version 6.0.0 adds pre-analysis high-pass and low-pass filters, a ten-band graphical EQ, and stable named frequency streams for Music and Live audio. The full band or any named stream can drive the project clock or an active-layer clock, while flat processing and the full-band route remain the compatibility defaults.

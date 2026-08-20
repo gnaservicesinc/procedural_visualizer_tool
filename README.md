@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **6.0.1**. The version is read from `VERSION` by every
+Current product version: **7.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,70 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 7.0.0 Mic clocks and Live Preview Output
+
+The standard project and active-layer clock selectors now include **Mic
+(Live)...**. Choosing it opens a detected-device selector and the existing Live
+audio analysis/calibration surface, creates a portable logical Audio role and
+beat-clock route, keeps the host device binding and measured device correction
+machine-local, and starts the performance workspace. Project and layer Mic
+clocks share the one physical capture role supported by the current runtime;
+offline rendering and `pvt-render` remain deterministic because the underlying
+authored clock is preserved instead of adding a hardware-only core clock mode.
+
+Live beat routing now uses the capture analyzer's continuous beat position, so
+detected or tapped tempo changes its rate instead of algebraically cancelling
+out. Named frequency streams use their own onset/tempo state. Device identity is
+duplicate-safe, missing saved devices remain visibly unavailable rather than
+falling back silently, calibration separates portable phase intent from local
+device latency, and dropout/last-good behavior no longer mistakes a deterministic
+fallback frame for recovered audio.
+
+**Live Preview Output** is a general presentation output for the normal editor
+preview (including Preview Solo). It streams to a selected display at Auto,
+Full, 75%, 50%, or 25% render scale through the selected CPU/Metal policy,
+without starting audio, MIDI, OSC, scenes, mappings, or sleep prevention.
+Presentation and performance Live share display/quality preferences while
+remaining mutually exclusive with frame/video export. Rendering is
+device-pixel-ratio aware, revision-gated, and coalesces to one in-flight plus the
+latest pending frame so slow rendering does not starve output indefinitely.
+
+## 7.0.0 particle authoring expansion
+
+Particle Field now has two explicit rendering profiles. **Legacy Glow** is the
+compatibility profile used by setup formats through 14 and layer formats
+through 12, preserving their prior pixels and defaults. Newly created particle
+effects use **Defined**: larger antialiased Spark, Soft Orb, Ring, Diamond, and
+Star silhouettes whose shape remains readable at full output resolution.
+
+The effect editor provides a prominent logarithmic **Particle size** scale plus
+an exact base radius in output pixels. Artists can independently vary size,
+shape definition, twinkle, deterministic seed, orientation, and rotation; a
+**Surprise me - reseed** action makes quick variations playful without changing
+the particle count or other authored controls. Follow-motion orientation uses
+the actual loop path, while stationary Defined fields avoid inventing a fake
+directional trail. The CLI exposes every control; the Live mapping registry
+exposes count, size, shape, profile, variation, definition, twinkle,
+orientation, and rotation (the stable Live `radius` path remains unchanged).
+Seed stays editor/CLI-only because Live targets use doubles and therefore cannot
+preserve every unsigned 64-bit seed exactly.
+
+CPU and Metal use matching deterministic silhouettes and conservative bounds.
+Validation admits only a checked, canvas-aware aggregate particle stamp budget,
+and Metal admission also accounts for particle point, tile-grid, and tile-index
+buffers retained through command completion. Cancellation is checked within
+particle generation and raster loops. A formerly valid legacy file whose active
+particle workload exceeds the new safety bound still loads transactionally: the
+effect is disabled, its authored values and prior enabled state are preserved in
+a non-applying compatibility record, and a recovery note explains how to make
+it safe. The disabled state remains authoritative even after the artist reduces
+the workload; re-enabling is always deliberate.
+
+Portable persistence advances to setup format 15 and layer format 13. The new
+fields append to the public by-value `EffectConfig`, so version 7.0.0 advances
+the installed shared library to SONAME 7. Existing projects remain migration
+inputs, while installed-library clients must rebuild against the new ABI.
 
 ## 6.0.1 automatic Live companion window
 
@@ -415,7 +479,7 @@ sudo apt install procedural-visualizer-tool
   Swing. Mixing defaults off in both migrated and newly created projects, so an
   active layer clock retains the historical replace behavior.
 - An ordered dynamic effect stack with endless zoom, ripple, shake, flag wave,
-  glow, animated block scaling, deterministic spark/trail particles, Blur,
+  glow, animated block scaling, deterministic antialiased particle fields, Blur,
   scanline/RGB-split Glitch, radial Starburst, and barrel/pincushion Lens
   Distortion, linear-light Sobel Edge Detect, and seamless Twirl distortion.
   Every effect can be enabled, synchronized, duplicated, removed, and reordered.
@@ -431,7 +495,9 @@ sudo apt install procedural-visualizer-tool
   rather than editing its source 3D geometry. Controls
   include type-specific centers, edges, frequencies, harmonics/attenuation,
   glow bloom parameters, and block scale
-  range/mix/quantization steps.
+  range/mix/quantization steps. Particle fields add an output-pixel size scale,
+  exact radius, size variation, definition, twinkle, deterministic reseeding,
+  orientation, rotation, trail amount, count, and five distinct silhouettes.
 - Per-layer closed motion presets: orbit, figure eight, bounce, and Lissajous,
   with center, horizontal/vertical travel, integer loop cycles, phase, rotation,
   and optional scale pulsing. Starting phase is additive and independent of the
@@ -1029,8 +1095,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-13 remain importable;
-current explicit legacy output is setup format 14. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-14 remain importable;
+current explicit legacy output is setup format 15. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1049,8 +1115,9 @@ output preferences, and fail-safe policy. Format 13 adds generated Plane
 displacement settings and the height-map attachment identity. Format 14 adds
 pre-analysis audio filtering/EQ, named frequency-stream analyses and clock
 selection, Live sleep prevention, Edge Detect/Twirl, and procedural particle
-shape selection. Project layer records use the corresponding current layer
-format 12.
+shape selection. Format 15 adds independent particle rendering profile, size
+variation, definition, twinkle, seed, orientation, and rotation. Project layer
+records use the corresponding current layer format 13.
 Older files receive neutral compatibility
 defaults. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,

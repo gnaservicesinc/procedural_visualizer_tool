@@ -232,6 +232,17 @@ bool is_setup_v14_key(std::string_view key) {
                && has_suffix(key, ".frequency_stream_uuid"));
 }
 
+bool is_setup_v15_key(std::string_view key) {
+    return starts_with(key, "effects.")
+           && (has_suffix(key, ".particle_profile")
+               || has_suffix(key, ".particle_size_variation")
+               || has_suffix(key, ".particle_definition")
+               || has_suffix(key, ".particle_twinkle")
+               || has_suffix(key, ".particle_seed")
+               || has_suffix(key, ".particle_orientation")
+               || has_suffix(key, ".particle_rotation_degrees"));
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -249,7 +260,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 8U ? 10U
                     : layer_version == 9U ? 11U
                     : layer_version == 10U ? 12U
-                    : layer_version == 11U ? 13U : 14U;
+                    : layer_version == 11U ? 13U
+                    : layer_version == 12U ? 14U : 15U;
     return true;
 }
 
@@ -512,6 +524,9 @@ bool synthesize_setup(const std::string& partial,
         if (setup_version < 14U && is_setup_v14_key(key)) {
             continue;
         }
+        if (setup_version < 15U && is_setup_v15_key(key)) {
+            continue;
+        }
         if (is_render_key(key) != partial_is_render) {
             destination.append(line);
             destination.push_back('\n');
@@ -662,15 +677,15 @@ bool serialize_layer_config(const RenderData& render,
         // Layer validity must not depend on an arbitrary final RGB/RGBA choice.
         // The project-global output codec validates that choice separately.
         project.output.write_alpha = true;
-        const ValidationResult validation = validate(project);
-        if (!validation.ok) {
-            return fail(error, "Cannot save invalid layer: " + validation.message);
-        }
         const RenderConfig config =
             apply_global_config(project.canvas, project.output,
                                 project.layers.front().render);
         std::string setup;
-        if (!serialize_setup_config(config, setup, error)) {
+        // A portable layer has no final canvas. Validate every structural and
+        // hostile-input bound now, but defer the one canvas-dependent particle
+        // workload decision until the RenderData is assembled into a project.
+        if (!serialize_setup_config_without_particle_admission(
+                config, setup, error)) {
             return false;
         }
         if (!filter_setup(setup, true,
@@ -708,7 +723,8 @@ bool deserialize_layer_config(const std::string& serialized,
             return false;
         }
         RenderConfig loaded;
-        if (!deserialize_setup_config(setup, loaded, error)) {
+        if (!deserialize_setup_config_without_particle_admission(
+                setup, loaded, error)) {
             return false;
         }
         for (const PreservedConfigRecord& record :

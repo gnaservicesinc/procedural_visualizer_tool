@@ -24,6 +24,8 @@ public:
         QString error;
         double render_milliseconds = 0.0;
         std::uint64_t sequence = 0U;
+        std::uint64_t session_generation = 0U;
+        std::uint64_t document_revision = 0U;
         std::uint64_t dropped_requests = 0U;
         bool late = false;
         bool cancelled = false;
@@ -34,26 +36,36 @@ public:
     ~LiveFrameController() override;
 
     void request(pvt::ProjectConfig project, double normalizedPhase,
+                 std::optional<int> synchronizedFrame,
                  const QSize& displayPixels, double resolutionScale,
-                 int watchdogMilliseconds,
-                 const pvt::FrameRenderOptions& options);
+                 double deadlineMilliseconds, int watchdogMilliseconds,
+                 const pvt::FrameRenderOptions& options,
+                 std::uint64_t sessionGeneration,
+                 std::uint64_t documentRevision);
+    void cancelCurrent();
     void stop();
     bool isRendering() const;
     std::uint64_t droppedRequests() const noexcept;
 
 signals:
     void frameFinished(const LiveFrameController::Result& result);
-    void watchdogExpired(std::uint64_t sequence);
+    void watchdogExpired(std::uint64_t sequence,
+                         std::uint64_t sessionGeneration,
+                         std::uint64_t documentRevision);
 
 private:
     struct Request {
         pvt::ProjectConfig project;
         double phase = 0.0;
+        std::optional<int> synchronized_frame;
         QSize display_pixels;
         double resolution_scale = 1.0;
+        double deadline_milliseconds = 100.0;
         int watchdog_milliseconds = 100;
         pvt::FrameRenderOptions options;
         std::uint64_t sequence = 0U;
+        std::uint64_t session_generation = 0U;
+        std::uint64_t document_revision = 0U;
         std::uint64_t dropped_requests = 0U;
     };
 
@@ -69,6 +81,8 @@ private:
     QTimer watchdog_timer_;
     std::uint64_t next_sequence_ = 1U;
     std::uint64_t active_sequence_ = 0U;
+    std::uint64_t active_session_generation_ = 0U;
+    std::uint64_t active_document_revision_ = 0U;
     std::uint64_t dropped_requests_ = 0U;
     bool stopping_ = false;
 };

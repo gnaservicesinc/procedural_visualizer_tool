@@ -678,6 +678,16 @@ if(BUILD_TESTING)
     pvt_enable_warnings(pvt_audio_analysis_tests)
     add_test(NAME pvt_audio_analysis COMMAND pvt_audio_analysis_tests)
 
+    add_executable(pvt_live_audio_clock_tests
+        tests/live_audio_clock_test.cpp)
+    target_compile_features(pvt_live_audio_clock_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_live_audio_clock_tests PROPERTIES
+        CXX_EXTENSIONS NO)
+    target_link_libraries(pvt_live_audio_clock_tests PRIVATE
+        ProceduralVisualizerTool::Audio)
+    pvt_enable_warnings(pvt_live_audio_clock_tests)
+    add_test(NAME pvt_live_audio_clock COMMAND pvt_live_audio_clock_tests)
+
     if(APPLE)
         add_executable(pvt_video_export_tests
             tests/video_export_test.mm
@@ -896,9 +906,23 @@ if(PVT_BUILD_QT_GUI)
             DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
     endif()
     if(PVT_DEPLOY_QT_RUNTIME)
-        qt_generate_deploy_app_script(
-            TARGET ProceduralVisualizerToolGui
-            OUTPUT_SCRIPT pvt_qt_deploy_script)
+        if(APPLE)
+            # Qt 6.8's deploy-app helper emits the bundle name without quotes.
+            # An OUTPUT_NAME containing spaces is then parsed as several CMake
+            # arguments during install. Generate the equivalent deployment
+            # script with an explicitly quoted bundle path.
+            qt6_generate_deploy_script(
+                TARGET ProceduralVisualizerToolGui
+                OUTPUT_SCRIPT pvt_qt_deploy_script
+                CONTENT "
+qt6_deploy_runtime_dependencies(
+    EXECUTABLE \"$<TARGET_FILE_NAME:ProceduralVisualizerToolGui>.app\"
+)")
+        else()
+            qt_generate_deploy_app_script(
+                TARGET ProceduralVisualizerToolGui
+                OUTPUT_SCRIPT pvt_qt_deploy_script)
+        endif()
         install(SCRIPT "${pvt_qt_deploy_script}")
         if(WIN32)
             if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)

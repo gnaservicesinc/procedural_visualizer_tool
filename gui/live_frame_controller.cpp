@@ -2,6 +2,8 @@
 
 #include <QtConcurrent>
 
+#include <QColorSpace>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -52,6 +54,9 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
                 || effect.type == pvt::EffectType::ParticleField
                 || effect.type == pvt::EffectType::Blur) {
                 effect.radius_pixels *= pixel_scale;
+            } else if (effect.type == pvt::EffectType::EdgeDetect) {
+                effect.frequency = std::max(
+                    1.0, std::round(effect.frequency * pixel_scale));
             }
         }
     }
@@ -73,7 +78,8 @@ LiveFrameController::LiveFrameController(QObject* parent) : QObject(parent) {
         }
         watchdog_expired_->store(true, std::memory_order_relaxed);
         cancel_->store(true, std::memory_order_relaxed);
-        emit watchdogExpired(active_sequence_);
+        emit watchdogExpired(active_sequence_, active_session_generation_,
+                             active_document_revision_);
     });
     connect(&watcher_, &QFutureWatcher<Result>::finished, this, [this] {
         watchdog_timer_.stop();
@@ -101,19 +107,28 @@ LiveFrameController::~LiveFrameController() {
 
 void LiveFrameController::request(pvt::ProjectConfig project,
                                   double normalized_phase,
+                                  std::optional<int> synchronized_frame,
                                   const QSize& display_pixels,
                                   double resolution_scale,
+                                  double deadline_milliseconds,
                                   int watchdog_milliseconds,
-                                  const pvt::FrameRenderOptions& options) {
+                                  const pvt::FrameRenderOptions& options,
+                                  std::uint64_t session_generation,
+                                  std::uint64_t document_revision) {
     if (!std::isfinite(normalized_phase)) return;
     Request request;
     request.project = std::move(project);
     request.phase = normalized_phase - std::floor(normalized_phase);
+    request.synchronized_frame = synchronized_frame;
     request.display_pixels = display_pixels;
     request.resolution_scale = resolution_scale;
+    request.deadline_milliseconds = std::isfinite(deadline_milliseconds)
+        ? std::max(0.001, deadline_milliseconds) : 100.0;
     request.watchdog_milliseconds = std::max(1, watchdog_milliseconds);
     request.options = options;
     request.sequence = next_sequence_++;
+    request.session_generation = session_generation;
+    request.document_revision = document_revision;
     request.dropped_requests = dropped_requests_;
     if (watcher_.isRunning()) {
         if (pending_) ++dropped_requests_;
@@ -127,6 +142,8 @@ void LiveFrameController::request(pvt::ProjectConfig project,
 void LiveFrameController::launch(Request request) {
     stopping_ = false;
     active_sequence_ = request.sequence;
+    active_session_generation_ = request.session_generation;
+    active_document_revision_ = request.document_revision;
     cancel_ = std::make_shared<std::atomic_bool>(false);
     watchdog_expired_ = std::make_shared<std::atomic_bool>(false);
     const auto cancel = cancel_;
@@ -138,6 +155,11 @@ void LiveFrameController::launch(Request request) {
         }));
 }
 
+void LiveFrameController::cancelCurrent() {
+    pending_.reset();
+    if (cancel_ != nullptr) cancel_->store(true, std::memory_order_relaxed);
+}
+
 void LiveFrameController::stop() {
     stopping_ = true;
     pending_.reset();
@@ -146,6 +168,7 @@ void LiveFrameController::stop() {
     if (watcher_.isRunning()) watcher_.waitForFinished();
     cancel_.reset();
     watchdog_expired_.reset();
+    dropped_requests_ = 0U;
     stopping_ = false;
 }
 
@@ -159,6 +182,8 @@ LiveFrameController::Result LiveFrameController::render(
     const std::shared_ptr<std::atomic_bool>& watchdog_expired) {
     Result result;
     result.sequence = request.sequence;
+    result.session_generation = request.session_generation;
+    result.document_revision = request.document_revision;
     result.dropped_requests = request.dropped_requests;
     const auto started = std::chrono::steady_clock::now();
     try {
@@ -173,9 +198,15 @@ LiveFrameController::Result LiveFrameController::render(
                                 request.resolution_scale);
         pvt::Image image;
         std::string error;
-        if (!pvt::render_project_frame_at_phase(
-                request.project, request.phase, request.options, image,
-                cancel != nullptr ? cancel.get() : nullptr, &error)) {
+        const bool rendered = request.synchronized_frame.has_value()
+            ? pvt::render_project_frame(
+                  request.project, *request.synchronized_frame,
+                  request.options, image,
+                  cancel != nullptr ? cancel.get() : nullptr, &error)
+            : pvt::render_project_frame_at_phase(
+                  request.project, request.phase, request.options, image,
+                  cancel != nullptr ? cancel.get() : nullptr, &error);
+        if (!rendered) {
             result.cancelled = cancel != nullptr
                 && cancel->load(std::memory_order_relaxed);
             if (!result.cancelled) result.error = QString::fromStdString(error);
@@ -186,6 +217,7 @@ LiveFrameController::Result LiveFrameController::render(
                 result.error = QObject::tr(
                     "The live frame display buffer could not be allocated.");
             } else {
+                result.image.setColorSpace(QColorSpace::SRgb);
                 for (int y = 0; y < image.height; ++y) {
                     if (cancel != nullptr
                         && cancel->load(std::memory_order_relaxed)) {
@@ -222,6 +254,6 @@ LiveFrameController::Result LiveFrameController::render(
         && watchdog_expired->load(std::memory_order_relaxed);
     result.late = result.watchdog_expired
                   || result.render_milliseconds
-                         > static_cast<double>(request.watchdog_milliseconds);
+                         > request.deadline_milliseconds;
     return result;
 }

@@ -15,6 +15,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -28,6 +29,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QList>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPixmap>
@@ -65,13 +67,90 @@ constexpr double kMaximumLiveMappingMagnitude =
 constexpr double kMaximumAudioPercent =
     kMaximumLiveMappingMagnitude * 100.0;
 
-int live_frame_interval_milliseconds(double fps) {
-    if (!std::isfinite(fps) || fps <= 0.0) return 1;
-    const double milliseconds = 1000.0 / fps;
-    if (milliseconds >= static_cast<double>(kMaximumUiInteger)) {
-        return kMaximumUiInteger;
+constexpr double kDefaultRealtimeFps = 60.0;
+
+QString screen_base_identifier(const QScreen* screen) {
+    if (screen == nullptr) return {};
+    if (!screen->serialNumber().isEmpty()) {
+        return QStringLiteral("serial:%1").arg(screen->serialNumber());
     }
-    return std::max(1, static_cast<int>(std::lround(milliseconds)));
+    // Screen arrangement and mode changes must not change the persisted
+    // identity. Qt's platform name is the best available discriminator when
+    // a display does not publish a serial number.
+    return QStringLiteral("screen:%1|%2|%3")
+        .arg(screen->name(), screen->manufacturer(), screen->model());
+}
+
+QString screen_identifier(const QScreen* screen,
+                          const QList<QScreen*>& screens) {
+    const QString base = screen_base_identifier(screen);
+    int duplicate_count = 0;
+    int ordinal = 0;
+    for (QScreen* candidate : screens) {
+        if (screen_base_identifier(candidate) != base) continue;
+        ++duplicate_count;
+        if (candidate == screen) ordinal = duplicate_count;
+    }
+    return duplicate_count > 1
+        ? base + QStringLiteral("|instance:%1").arg(std::max(1, ordinal))
+        : base;
+}
+
+QString screen_label(const QScreen* screen, bool primary,
+                     const QList<QScreen*>& screens) {
+    if (screen == nullptr) return {};
+    QString label = screen->name();
+    if (!screen->model().isEmpty() && screen->model() != screen->name()) {
+        label += QStringLiteral(" · %1").arg(screen->model());
+    }
+    const QString base = screen_base_identifier(screen);
+    int duplicate_count = 0;
+    int ordinal = 0;
+    for (QScreen* candidate : screens) {
+        if (screen_base_identifier(candidate) != base) continue;
+        ++duplicate_count;
+        if (candidate == screen) ordinal = duplicate_count;
+    }
+    if (duplicate_count > 1) {
+        label += QObject::tr(" · display %1 of %2")
+                     .arg(std::max(1, ordinal))
+                     .arg(duplicate_count);
+    }
+    label += primary ? QObject::tr(" · primary") : QObject::tr(" · stage");
+    return label;
+}
+
+double sanitized_realtime_fps(double fps) {
+    return std::isfinite(fps) && fps > 0.0 ? fps : kDefaultRealtimeFps;
+}
+
+double project_loop_duration_seconds(const pvt::ProjectConfig& project) {
+    const double fps = sanitized_realtime_fps(project.canvas.fps);
+    std::string frame_error;
+    const int effective_frames = pvt::effective_frame_count(
+        project.canvas, &frame_error);
+    const int frames = effective_frames > 0
+        ? effective_frames : std::max(1, project.canvas.total_frames);
+    return std::max(1.0 / fps, static_cast<double>(frames) / fps);
+}
+
+double live_audio_loss_age_seconds(
+    const pvt::audio::LiveAudioSnapshot& snapshot,
+    const QElapsedTimer& capture_start_clock) {
+    if (std::isfinite(snapshot.last_valid_callback_age_seconds)
+        && snapshot.last_valid_callback_age_seconds >= 0.0) {
+        return snapshot.last_valid_callback_age_seconds;
+    }
+    return capture_start_clock.isValid()
+        ? static_cast<double>(capture_start_clock.elapsed()) / 1000.0
+        : (std::numeric_limits<double>::infinity)();
+}
+
+QSize physical_widget_size(const QWidget* widget) {
+    if (widget == nullptr) return QSize(320, 180);
+    const double ratio = std::max(1.0, widget->devicePixelRatioF());
+    return QSize(std::max(1, static_cast<int>(std::lround(widget->width() * ratio))),
+                 std::max(1, static_cast<int>(std::lround(widget->height() * ratio))));
 }
 
 QString uuid_text() {
@@ -90,6 +169,16 @@ QString endpoint_key(const std::string& uuid, const QString& leaf) {
     return QStringLiteral("live/bindings/%1/%2").arg(qtext(uuid), leaf);
 }
 
+QString device_latency_key(const std::string& uuid,
+                           const QString& runtime_device_id) {
+    const QByteArray identity = runtime_device_id.isEmpty()
+        ? QByteArrayLiteral("system-default") : runtime_device_id.toUtf8();
+    const QString digest = QString::fromLatin1(QCryptographicHash::hash(
+        identity, QCryptographicHash::Sha256).toHex());
+    return endpoint_key(
+        uuid, QStringLiteral("deviceLatencyMicroseconds/%1").arg(digest));
+}
+
 QString clock_output_signature(const pvt::LiveConfig& live) {
     QString value;
     for (const auto& output : live.midi_clock_outputs) {
@@ -99,6 +188,24 @@ QString clock_output_signature(const pvt::LiveConfig& live) {
                      .arg(qtext(output.layer_uuid), qtext(output.endpoint_uuid))
                      .arg(output.send_transport ? 1 : 0)
                      .arg(output.send_song_position ? 1 : 0);
+    }
+    return value;
+}
+
+QString clock_input_signature(const pvt::LiveConfig& live,
+                              const std::string& active_layer_uuid) {
+    QString value = QStringLiteral("active:%1;").arg(qtext(active_layer_uuid));
+    for (const auto& input : live.clock_inputs) {
+        value += QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9;")
+                     .arg(input.enabled ? 1 : 0)
+                     .arg(static_cast<int>(input.target))
+                     .arg(qtext(input.layer_uuid))
+                     .arg(static_cast<int>(input.source))
+                     .arg(qtext(input.endpoint_uuid))
+                     .arg(input.audio_channel)
+                     .arg(input.follow_midi_transport ? 1 : 0)
+                     .arg(input.holdover_milliseconds)
+                     .arg(qtext(input.frequency_stream_uuid));
     }
     return value;
 }
@@ -287,10 +394,15 @@ struct LiveWorkspace::Impl {
 
     LiveWorkspace* q = nullptr;
     ProjectSnapshotProvider project_provider;
+    ProjectSnapshotProvider presentation_project_provider;
+    PresentationFrameProvider presentation_frame_provider;
+    RenderOptionsProvider render_options_provider;
+    DocumentRevisionProvider document_revision_provider;
     ActiveLayerUuidProvider active_layer_provider;
     AuthoredConfigEditor authored_editor;
     pvt::LiveConfig config;
     bool active = false;
+    bool presentation_active = false;
     bool rebuilding = false;
     bool user_freeze = false;
     bool user_blackout = false;
@@ -301,6 +413,11 @@ struct LiveWorkspace::Impl {
     int good_streak = 0;
     double adaptive_scale = 1.0;
     double tapped_bpm = 0.0;
+    std::uint64_t tapped_beat_count = 0U;
+    double tapped_beat_anchor_seconds = 0.0;
+    double scheduled_fps = kDefaultRealtimeFps;
+    std::uint64_t render_generation = 1U;
+    std::uint64_t frame_schedule_tick = 0U;
     QVector<qint64> tempo_taps;
 
     pvt::audio::LiveAudioCapture audio;
@@ -315,8 +432,13 @@ struct LiveWorkspace::Impl {
     QElapsedTimer run_clock;
     QElapsedTimer last_good_clock;
     QElapsedTimer audio_dropout_clock;
+    QElapsedTimer frame_schedule_clock;
+    QElapsedTimer presented_frame_clock;
     QImage last_image;
     pvt::audio::LiveAudioSnapshot audio_snapshot;
+    std::vector<pvt::audio::LiveAudioDevice> audio_devices;
+    QString runtime_input_signature;
+    QSet<QString> route_warnings;
     QHash<QString, OverrideValue> overrides;
     std::vector<LiveTargetDescriptor> target_cache;
     QHash<QString, int> target_index;
@@ -325,6 +447,7 @@ struct LiveWorkspace::Impl {
     QVector<ClockOutputRuntime> clock_outputs;
     pvt::ProjectConfig project_cache;
     bool project_cache_valid = false;
+    std::vector<QMetaObject::Connection> screen_connections;
 
     QLabel* monitor = nullptr;
     QLabel* fps_readout = nullptr;
@@ -368,6 +491,7 @@ struct LiveWorkspace::Impl {
     QSpinBox* audio_period = nullptr;
     QPushButton* audio_processing = nullptr;
     QSpinBox* latency = nullptr;
+    QSpinBox* device_latency = nullptr;
     QLabel* detected_tempo = nullptr;
     QComboBox* project_clock = nullptr;
     QComboBox* project_clock_role = nullptr;
@@ -385,10 +509,18 @@ struct LiveWorkspace::Impl {
 
     explicit Impl(LiveWorkspace* owner,
                   ProjectSnapshotProvider projectProvider,
+                  ProjectSnapshotProvider presentationProjectProvider,
+                  PresentationFrameProvider presentationFrameProvider,
+                  RenderOptionsProvider renderOptionsProvider,
+                  DocumentRevisionProvider documentRevisionProvider,
                   ActiveLayerUuidProvider layerProvider,
                   AuthoredConfigEditor editor)
         : q(owner),
           project_provider(std::move(projectProvider)),
+          presentation_project_provider(std::move(presentationProjectProvider)),
+          presentation_frame_provider(std::move(presentationFrameProvider)),
+          render_options_provider(std::move(renderOptionsProvider)),
+          document_revision_provider(std::move(documentRevisionProvider)),
           active_layer_provider(std::move(layerProvider)),
           authored_editor(std::move(editor)),
           midi(owner), osc(owner), renderer(owner), stage(nullptr) {
@@ -396,13 +528,19 @@ struct LiveWorkspace::Impl {
         connectRuntime();
         refreshScreens();
         refreshDevices();
+        runtime_input_signature = clock_input_signature(
+            config, active_layer_provider ? active_layer_provider()
+                                          : std::string{});
         render_timer.setTimerType(Qt::PreciseTimer);
+        render_timer.setSingleShot(true);
         ui_timer.setTimerType(Qt::PreciseTimer);
         midi_clock_timer.setTimerType(Qt::PreciseTimer);
         ui_timer.setInterval(kUiTickMilliseconds);
         midi_clock_timer.setInterval(1);
-        QObject::connect(&render_timer, &QTimer::timeout, q,
-                         [this] { requestFrame(); });
+        QObject::connect(&render_timer, &QTimer::timeout, q, [this] {
+            requestFrame();
+            scheduleNextFrame();
+        });
         QObject::connect(&ui_timer, &QTimer::timeout, q,
                          [this] { runtimeTick(); });
         QObject::connect(&midi_clock_timer, &QTimer::timeout, q,
@@ -410,6 +548,7 @@ struct LiveWorkspace::Impl {
     }
 
     ~Impl() {
+        setPresentationActive(false);
         setActive(false);
     }
 
@@ -426,8 +565,15 @@ struct LiveWorkspace::Impl {
     void refreshScenes();
     void refreshClockRouting();
     void refreshDevices();
+    void refreshRuntimeRouting();
     void refreshScreens();
     void setActive(bool value);
+    void setPresentationActive(bool value);
+    bool realtimeActive() const noexcept;
+    void resetRealtimeFrame();
+    void restartFrameSchedule(double fps);
+    void updateScheduledFps(double fps);
+    void scheduleNextFrame();
     void updateSleepPrevention();
     void startIo();
     void stopIo();
@@ -443,11 +589,19 @@ struct LiveWorkspace::Impl {
     void setBlackout(bool value);
     void updateOutputState();
     void toggleOutput();
+    void dismissOutput();
+    void showOutput();
+    void applyVisibleOutputPolicy();
     QScreen* selectedScreen() const;
     const pvt::LiveEndpointConfig* endpoint(const std::string& uuid) const;
     pvt::LiveEndpointConfig* endpoint(pvt::LiveConfig& value,
                                       const std::string& uuid) const;
     QString boundSource(const std::string& uuid) const;
+    std::string preferredAudioRole() const;
+    bool effectiveAudioRoute(const pvt::LiveClockInputConfig& input) const;
+    bool effectiveAudioClockReceiving() const;
+    bool shouldHoldAudioFrame() const;
+    void warnRouteOnce(const QString& key, const QString& message);
     QString sourceEndpoint(pvt::LiveEndpointProtocol protocol,
                            const QString& runtimeSource) const;
     void createStarterRig();
@@ -477,11 +631,12 @@ struct LiveWorkspace::Impl {
     pvt::ProjectConfig runtimeProject();
     void applyOverrides(pvt::ProjectConfig& project);
     double basePhase(const pvt::ProjectConfig& project) const;
-    double routedPhase(const pvt::ProjectConfig& project,
-                       const pvt::LiveClockInputConfig& input,
-                       double fallback) const;
-    void applyClockRoutes(pvt::ProjectConfig& project, double& projectPhase);
-    pvt::MusicAnalysis ephemeralAnalysis(double durationSeconds) const;
+    std::optional<double> routedPhase(
+        const pvt::ProjectConfig& project,
+        const pvt::LiveClockInputConfig& input);
+    bool applyClockRoutes(pvt::ProjectConfig& project, double& projectPhase);
+    pvt::MusicAnalysis ephemeralAnalysis(
+        double durationSeconds, const std::string& selectedStreamUuid) const;
     void sendClockOutputs();
     double outputBpm(const pvt::ProjectConfig& project,
                      const pvt::LiveMidiClockOutputConfig& output) const;
@@ -575,6 +730,7 @@ void LiveWorkspace::Impl::buildUi() {
 
     auto* transport = new QHBoxLayout;
     output_button = new QPushButton(q->tr("Full-screen Output"));
+    output_button->setObjectName(QStringLiteral("liveStageOutputButton"));
     output_button->setCheckable(true);
     freeze_button = new QPushButton(q->tr("FREEZE"));
     freeze_button->setObjectName(QStringLiteral("freezeButton"));
@@ -630,9 +786,14 @@ void LiveWorkspace::Impl::buildUi() {
                      [this](bool checked) { setFreeze(checked); });
     QObject::connect(blackout_button, &QPushButton::toggled, q,
                      [this](bool checked) { setBlackout(checked); });
-    QObject::connect(&stage, &StageOutputWindow::escapeRequested, q, [this] {
-        stage.hide();
-        output_button->setChecked(false);
+    QObject::connect(&stage, &StageOutputWindow::dismissRequested, q, [this] {
+        dismissOutput();
+    });
+    QObject::connect(&stage, &StageOutputWindow::outputMetricsChanged, q, [this] {
+        if (!realtimeActive()) return;
+        ++render_generation;
+        renderer.cancelCurrent();
+        requestFrame();
     });
 }
 
@@ -660,11 +821,17 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QWidget* inputs = titled_group(q->tr("INPUT RACK"), form);
     audio_role = new QComboBox;
     audio_device = new QComboBox;
+    audio_role->setObjectName(QStringLiteral("liveAudioRole"));
+    audio_device->setObjectName(QStringLiteral("liveAudioDevice"));
+    auto* audio_refresh = new QPushButton(q->tr("Refresh"));
+    audio_refresh->setObjectName(QStringLiteral("liveAudioRefresh"));
+    audio_refresh->setToolTip(q->tr("Detect connected microphone and audio-interface inputs again."));
     auto* audio_row = new QWidget;
     auto* audio_row_layout = new QHBoxLayout(audio_row);
     audio_row_layout->setContentsMargins(0, 0, 0, 0);
     audio_row_layout->addWidget(audio_role, 1);
     audio_row_layout->addWidget(audio_device, 2);
+    audio_row_layout->addWidget(audio_refresh);
     form->addRow(q->tr("Audio role / device"), audio_row);
     midi_role = new QComboBox;
     midi_device = new QComboBox;
@@ -763,6 +930,8 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     latency = new QSpinBox;
     latency->setRange((std::numeric_limits<int>::min)(), kMaximumUiInteger);
     latency->setSuffix(q->tr(" ms"));
+    latency->setToolTip(q->tr(
+        "Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source."));
     auto* calibrate = new QPushButton(q->tr("Tap beat to align"));
     auto* latency_row = new QWidget;
     auto* latency_layout = new QHBoxLayout(latency_row);
@@ -770,6 +939,14 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     latency_layout->addWidget(latency);
     latency_layout->addWidget(calibrate);
     audio_form->addRow(q->tr("Portable input offset"), latency_row);
+    device_latency = new QSpinBox;
+    device_latency->setObjectName(QStringLiteral("liveAudioDeviceLatency"));
+    device_latency->setRange((std::numeric_limits<int>::min)(),
+                             kMaximumUiInteger);
+    device_latency->setSuffix(q->tr(" ms"));
+    device_latency->setToolTip(q->tr(
+        "Machine-local correction for this logical role and selected device. Positive values advance late capture; it is never saved in the project."));
+    audio_form->addRow(q->tr("This device correction"), device_latency);
     detected_tempo = new QLabel(q->tr("Waiting for audio…"));
     audio_form->addRow(q->tr("Causal analysis"), detected_tempo);
     audio_processing = new QPushButton(q->tr("Filters, EQ + Frequency Streams…"));
@@ -827,7 +1004,9 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QFormLayout* output_form = nullptr;
     QWidget* output = titled_group(q->tr("STAGE OUTPUT"), output_form);
     screen = new QComboBox;
+    screen->setObjectName(QStringLiteral("liveOutputDisplay"));
     quality = new QComboBox;
+    quality->setObjectName(QStringLiteral("liveOutputQuality"));
     quality->addItem(q->tr("Auto · watchdog managed"), 0.0);
     quality->addItem(q->tr("Full resolution"), 1.0);
     quality->addItem(q->tr("75%"), 0.75);
@@ -884,12 +1063,39 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QObject::connect(starter, &QPushButton::clicked, q, [this] { createStarterRig(); });
     QObject::connect(add_role, &QPushButton::clicked, q, [this] { addLogicalRole(); });
     QObject::connect(audio_role, qOverload<int>(&QComboBox::currentIndexChanged), q,
-                     [this] { refreshDevices(); restartAudio(); });
+                     [this] {
+        if (!rebuilding) {
+            QSettings().setValue(QStringLiteral("live/audioRole"),
+                                 audio_role->currentData());
+        }
+        route_warnings.clear();
+        refreshDevices();
+        restartAudio();
+    });
     QObject::connect(audio_device, qOverload<int>(&QComboBox::currentIndexChanged), q, [this] {
         if (rebuilding || audio_role->currentData().toString().isEmpty()) return;
-        QSettings().setValue(endpoint_key(narrow(audio_role->currentData().toString()),
-                                          QStringLiteral("audioDevice")),
-                             audio_device->currentData());
+        const std::string role = narrow(audio_role->currentData().toString());
+        QSettings settings;
+        settings.setValue(endpoint_key(role, QStringLiteral("audioDevice")),
+                          audio_device->currentData());
+        settings.setValue(endpoint_key(role, QStringLiteral("audioDeviceName")),
+                          audio_device->currentData(Qt::UserRole + 1));
+        {
+            const QSignalBlocker blocker(device_latency);
+            device_latency->setValue(static_cast<int>(std::clamp<qint64>(
+                settings.value(device_latency_key(
+                                   role, audio_device->currentData().toString()),
+                               0)
+                    .toLongLong()
+                    / 1000,
+                (std::numeric_limits<int>::min)(), kMaximumUiInteger)));
+        }
+        emit q->audioInputsChanged();
+        restartAudio();
+    });
+    QObject::connect(audio_refresh, &QPushButton::clicked, q, [this] {
+        refreshDevices();
+        emit q->audioInputsChanged();
         restartAudio();
     });
     const auto store_midi_binding = [this](QComboBox* role, QComboBox* device) {
@@ -965,6 +1171,16 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
             commitConfig(std::move(next), q->tr("Change live input calibration"));
         }
     });
+    QObject::connect(
+        device_latency, qOverload<int>(&QSpinBox::valueChanged), q,
+        [this](int value) {
+        if (rebuilding) return;
+        const std::string role = narrow(audio_role->currentData().toString());
+        if (role.empty()) return;
+        QSettings().setValue(
+            device_latency_key(role, audio_device->currentData().toString()),
+            static_cast<qint64>(value) * 1000);
+    });
     QObject::connect(calibrate, &QPushButton::clicked, q, [this] { calibrateLatency(); });
     QObject::connect(audio_processing, &QPushButton::clicked, q, [this] {
         AudioProcessingDialog dialog(config.audio_processing,
@@ -996,13 +1212,11 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
                      [this] { editClockOutput(true); });
     QObject::connect(screen, qOverload<int>(&QComboBox::currentIndexChanged), q, [this] {
         if (rebuilding) return;
-        QSettings().setValue(QStringLiteral("live/outputScreen"), screen->currentData());
-        if (stage.isVisible()) stage.showOnScreen(selectedScreen());
+        q->setSelectedOutputDisplayId(screen->currentData().toString());
     });
     QObject::connect(quality, qOverload<int>(&QComboBox::currentIndexChanged), q, [this] {
         if (rebuilding) return;
-        QSettings().setValue(QStringLiteral("live/resolutionScale"), quality->currentData());
-        adaptive_scale = 1.0;
+        q->setOutputResolutionScale(quality->currentData().toDouble());
     });
     const auto author_output_safety = [this] {
         if (rebuilding) return;
@@ -1197,7 +1411,15 @@ void LiveWorkspace::Impl::connectRuntime() {
         frameFinished(result);
     });
     QObject::connect(&renderer, &LiveFrameController::watchdogExpired, q,
-                     [this](std::uint64_t sequence) {
+                     [this](std::uint64_t sequence,
+                            std::uint64_t session_generation,
+                            std::uint64_t document_revision) {
+        const std::uint64_t current_revision = document_revision_provider
+            ? document_revision_provider() : 0U;
+        if (!realtimeActive() || session_generation != render_generation
+            || document_revision != current_revision) {
+            return;
+        }
         ++late_streak;
         good_streak = 0;
         render_lamp->setState(StatusLamp::State::Warning);
@@ -1207,7 +1429,16 @@ void LiveWorkspace::Impl::connectRuntime() {
         if (quality->currentData().toDouble() == 0.0) {
             adaptive_scale = std::max(0.25, adaptive_scale * 0.8);
         }
-        if (config.safety.dropout_behavior == pvt::LiveDropoutBehavior::Blackout) {
+        if (presentation_active) {
+            emit q->runtimeStatusChanged(q->tr(
+                "Live Preview Output frame %1 exceeded its 60-second render watchdog; the last delivered frame remains visible and Auto quality was reduced.")
+                .arg(sequence));
+        }
+        // Presentation output has no performance safety blackout. Its shared
+        // quality controller still degrades and reports the timeout above.
+        if (active && !user_freeze
+            && config.safety.dropout_behavior
+                   == pvt::LiveDropoutBehavior::Blackout) {
             safety_blackout = true;
             updateOutputState();
         }
@@ -1244,6 +1475,8 @@ void LiveWorkspace::Impl::connectRuntime() {
                          [this](QScreen*) { refreshScreens(); });
         QObject::connect(app, &QGuiApplication::screenRemoved, q,
                          [this](QScreen*) { refreshScreens(); });
+        QObject::connect(app, &QGuiApplication::primaryScreenChanged, q,
+                         [this](QScreen*) { refreshScreens(); });
     }
 }
 
@@ -1271,6 +1504,8 @@ void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
             restartOsc();
         }
     }
+    refreshRuntimeRouting();
+    if (stage.isVisible()) applyVisibleOutputPolicy();
 }
 
 void LiveWorkspace::Impl::refreshConfigUi() {
@@ -1323,10 +1558,123 @@ pvt::LiveEndpointConfig* LiveWorkspace::Impl::endpoint(
     return found == value.endpoints.end() ? nullptr : &*found;
 }
 
+std::string LiveWorkspace::Impl::preferredAudioRole() const {
+    const auto usable = [this](const std::string& uuid) {
+        const auto* role = endpoint(uuid);
+        return role != nullptr
+            && role->protocol == pvt::LiveEndpointProtocol::Audio
+            && direction_has_input(role->direction);
+    };
+    const std::string active_layer = active_layer_provider
+        ? active_layer_provider() : std::string{};
+    for (const auto& route : config.clock_inputs) {
+        if (route.enabled
+            && route.source == pvt::LiveClockInputSource::AudioStream
+            && route.target == pvt::LiveClockTarget::Project
+            && usable(route.endpoint_uuid)) {
+            return route.endpoint_uuid;
+        }
+    }
+    for (const auto& route : config.clock_inputs) {
+        if (route.enabled
+            && route.source == pvt::LiveClockInputSource::AudioStream
+            && route.target == pvt::LiveClockTarget::Layer
+            && route.layer_uuid == active_layer
+            && usable(route.endpoint_uuid)) {
+            return route.endpoint_uuid;
+        }
+    }
+    const std::string stored = narrow(
+        QSettings().value(QStringLiteral("live/audioRole")).toString());
+    if (usable(stored)) return stored;
+    const std::string current = audio_role == nullptr
+        ? std::string{} : narrow(audio_role->currentData().toString());
+    return usable(current) ? current : std::string{};
+}
+
+bool LiveWorkspace::Impl::effectiveAudioRoute(
+    const pvt::LiveClockInputConfig& input) const {
+    if (!input.enabled
+        || input.source != pvt::LiveClockInputSource::AudioStream) {
+        return false;
+    }
+    if (input.target == pvt::LiveClockTarget::Project) return true;
+    const std::string active_layer = active_layer_provider
+        ? active_layer_provider() : std::string{};
+    return !active_layer.empty() && input.layer_uuid == active_layer;
+}
+
+bool LiveWorkspace::Impl::effectiveAudioClockReceiving() const {
+    const std::string selected_role = audio_role == nullptr
+        ? std::string{} : narrow(audio_role->currentData().toString());
+    bool found = false;
+    for (const auto& input : config.clock_inputs) {
+        if (!effectiveAudioRoute(input)) continue;
+        found = true;
+        if (input.endpoint_uuid != selected_role
+            || !pvt::audio::live_audio_callback_within_holdover(
+                live_audio_loss_age_seconds(
+                    audio_snapshot, audio_dropout_clock),
+                input.holdover_milliseconds)) {
+            return false;
+        }
+        if (!input.frequency_stream_uuid.empty()) {
+            const bool stream_found = std::any_of(
+                audio_snapshot.frequency_streams.begin(),
+                audio_snapshot.frequency_streams.end(),
+                [&input](
+                    const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                    return item.uuid == input.frequency_stream_uuid;
+                });
+            if (!stream_found) return false;
+        }
+    }
+    return !found || audio_snapshot.receiving;
+}
+
+bool LiveWorkspace::Impl::shouldHoldAudioFrame() const {
+    if (!active || config.safety.dropout_behavior
+                       != pvt::LiveDropoutBehavior::LastGoodFrame) {
+        return false;
+    }
+    const std::string selected_role = audio_role == nullptr
+        ? std::string{} : narrow(audio_role->currentData().toString());
+    for (const auto& input : config.clock_inputs) {
+        if (!effectiveAudioRoute(input)) continue;
+        if (input.endpoint_uuid != selected_role) return true;
+        if (!input.frequency_stream_uuid.empty()) {
+            const bool stream_found = std::any_of(
+                audio_snapshot.frequency_streams.begin(),
+                audio_snapshot.frequency_streams.end(),
+                [&input](
+                    const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                    return item.uuid == input.frequency_stream_uuid;
+                });
+            if (!stream_found) return true;
+        }
+        if (!pvt::audio::live_audio_callback_within_holdover(
+                live_audio_loss_age_seconds(
+                    audio_snapshot, audio_dropout_clock),
+                input.holdover_milliseconds)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void LiveWorkspace::Impl::warnRouteOnce(const QString& key,
+                                        const QString& message) {
+    if (route_warnings.contains(key)) return;
+    route_warnings.insert(key);
+    emit q->runtimeStatusChanged(message);
+}
+
 void LiveWorkspace::Impl::refreshRoleCombos() {
     const auto fill = [this](QComboBox* combo, pvt::LiveEndpointProtocol protocol,
-                             bool input, bool output) {
-        const QString before = combo->currentData().toString();
+                             bool input, bool output,
+                             const QString& preferred) {
+        const QString before = preferred.isEmpty()
+            ? combo->currentData().toString() : preferred;
         QSignalBlocker block(combo);
         combo->clear();
         combo->addItem(q->tr("No logical role"), QString{});
@@ -1340,12 +1688,17 @@ void LiveWorkspace::Impl::refreshRoleCombos() {
         if (index < 0 && combo->count() > 1) index = 1;
         combo->setCurrentIndex(std::max(0, index));
     };
-    fill(audio_role, pvt::LiveEndpointProtocol::Audio, true, false);
-    fill(midi_role, pvt::LiveEndpointProtocol::Midi, true, false);
-    fill(foot_role, pvt::LiveEndpointProtocol::FootController, true, false);
-    fill(osc_role, pvt::LiveEndpointProtocol::Osc, true, false);
-    fill(project_clock_out_role, pvt::LiveEndpointProtocol::Midi, false, true);
-    fill(layer_clock_out_role, pvt::LiveEndpointProtocol::Midi, false, true);
+    fill(audio_role, pvt::LiveEndpointProtocol::Audio, true, false,
+         qtext(preferredAudioRole()));
+    fill(midi_role, pvt::LiveEndpointProtocol::Midi, true, false, {});
+    fill(foot_role, pvt::LiveEndpointProtocol::FootController, true, false, {});
+    fill(osc_role, pvt::LiveEndpointProtocol::Osc, true, false, {});
+    fill(project_clock_out_role, pvt::LiveEndpointProtocol::Midi, false, true, {});
+    fill(layer_clock_out_role, pvt::LiveEndpointProtocol::Midi, false, true, {});
+    if (!audio_role->currentData().toString().isEmpty()) {
+        QSettings().setValue(QStringLiteral("live/audioRole"),
+                             audio_role->currentData());
+    }
 }
 
 void LiveWorkspace::Impl::refreshMappings() {
@@ -1506,8 +1859,25 @@ void LiveWorkspace::Impl::refreshClockRouting() {
     const auto* audio_endpoint = endpoint(narrow(audio_role->currentData().toString()));
     {
         QSignalBlocker block(latency);
-        latency->setValue(audio_endpoint == nullptr ? 0
-            : static_cast<int>(audio_endpoint->input_latency_microseconds / 1000));
+        const qint64 authored_milliseconds = audio_endpoint == nullptr ? 0
+            : audio_endpoint->input_latency_microseconds / 1000;
+        const qint64 minimum = static_cast<qint64>(
+            (std::numeric_limits<int>::min)());
+        const qint64 maximum = static_cast<qint64>(kMaximumUiInteger);
+        const qint64 displayed = std::clamp(
+            authored_milliseconds, minimum, maximum);
+        latency->setValue(static_cast<int>(displayed));
+        const bool clipped = displayed != authored_milliseconds;
+        latency->setToolTip(clipped
+            ? q->tr("The authored portable offset is outside this editor's range. The boundary is displayed, but the exact project value is preserved until you edit it.")
+            : q->tr("Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source."));
+        if (clipped && audio_endpoint != nullptr) {
+            warnRouteOnce(
+                qtext(audio_endpoint->uuid)
+                    + QStringLiteral(":portable-latency-ui-range"),
+                q->tr("The portable input offset for %1 is outside the millisecond editor range; its exact authored value remains preserved.")
+                    .arg(qtext(audio_endpoint->name)));
+        }
     }
 }
 
@@ -1523,24 +1893,77 @@ void LiveWorkspace::Impl::refreshDevices() {
         if (index < 0 && combo->count() > 1) index = 1;
         combo->setCurrentIndex(std::max(0, index));
     };
-    // Store and pass the backend name rather than the decorated display text.
     {
         QSignalBlocker block(audio_device);
         audio_device->clear();
         audio_device->addItem(q->tr("System default"), QString{});
-        const auto devices = audio.devices(nullptr);
-        for (const auto& device : devices) {
+        audio_device->setItemData(0, q->tr("System default"),
+                                  Qt::UserRole + 1);
+        std::string discovery_error;
+        audio_devices = audio.devices(&discovery_error);
+        for (const auto& device : audio_devices) {
             audio_device->addItem(device.is_default
-                                      ? q->tr("%1 · default").arg(qtext(device.name))
-                                      : qtext(device.name),
-                                  qtext(device.name));
+                                      ? q->tr("%1 · default").arg(
+                                            qtext(device.display_name))
+                                      : qtext(device.display_name),
+                                  qtext(device.runtime_id));
+            audio_device->setItemData(
+                audio_device->count() - 1, qtext(device.name),
+                Qt::UserRole + 1);
         }
         const std::string role = narrow(audio_role->currentData().toString());
-        const QString stored = QSettings().value(
+        QSettings settings;
+        const QString stored = settings.value(
             endpoint_key(role, QStringLiteral("audioDevice"))).toString();
-        int index = audio_device->findData(stored);
+        QString selected = stored;
+        if (!stored.isEmpty()) {
+            std::string match_error;
+            const auto match = pvt::audio::find_live_audio_device(
+                audio_devices, narrow(stored), &match_error);
+            if (match.has_value()) {
+                selected = qtext(audio_devices[*match].runtime_id);
+                settings.setValue(
+                    endpoint_key(role, QStringLiteral("audioDevice")),
+                    selected);
+                settings.setValue(
+                    endpoint_key(role, QStringLiteral("audioDeviceName")),
+                    qtext(audio_devices[*match].name));
+            }
+        }
+        int index = audio_device->findData(selected);
+        if (!stored.isEmpty() && index < 0) {
+            QString hint = settings.value(
+                endpoint_key(role, QStringLiteral("audioDeviceName")))
+                               .toString().trimmed();
+            if (hint.isEmpty()) hint = q->tr("previously selected input");
+            audio_device->insertItem(
+                1, q->tr("Unavailable · %1").arg(hint), stored);
+            audio_device->setItemData(1, hint, Qt::UserRole + 1);
+            index = 1;
+        }
         if (index < 0) index = 0;
         audio_device->setCurrentIndex(index);
+        if (device_latency != nullptr) {
+            const qint64 local_microseconds = settings.value(
+                device_latency_key(role, audio_device->currentData().toString()),
+                0).toLongLong();
+            device_latency->setValue(static_cast<int>(std::clamp<qint64>(
+                local_microseconds / 1000,
+                (std::numeric_limits<int>::min)(), kMaximumUiInteger)));
+            device_latency->setEnabled(!role.empty());
+        }
+        if (!discovery_error.empty()) {
+            audio_device->setToolTip(q->tr("Input discovery failed: %1")
+                                         .arg(qtext(discovery_error)));
+        } else if (!stored.isEmpty() && index == 1
+                   && audio_device->itemText(1).startsWith(
+                       q->tr("Unavailable"))) {
+            audio_device->setToolTip(q->tr(
+                "The saved microphone is unavailable. Live will not capture the system default unless you choose it explicitly."));
+        } else {
+            audio_device->setToolTip(q->tr(
+                "This device binding is stored only on this computer."));
+        }
     }
     const QStringList midi_names = midi.inputNames();
     const auto fill_midi = [&](QComboBox* role, QComboBox* device) {
@@ -1553,28 +1976,124 @@ void LiveWorkspace::Impl::refreshDevices() {
     fill_midi(foot_role, foot_device);
     rebuilding = false;
     refreshClockRouting();
+    emit q->audioInputsChanged();
+}
+
+void LiveWorkspace::Impl::refreshRuntimeRouting() {
+    const QString next = clock_input_signature(
+        config, active_layer_provider ? active_layer_provider()
+                                      : std::string{});
+    if (next == runtime_input_signature) return;
+    runtime_input_signature = next;
+    route_warnings.clear();
+    audio_dropout_clock.restart();
+    if (active) {
+        // Clock-input edits and active-layer changes can select a different
+        // MIDI source or Audio role even when endpoint/output tables did not
+        // structurally change.
+        restartAudio();
+        configureClockOutputs();
+    }
 }
 
 void LiveWorkspace::Impl::refreshScreens() {
     const QString stored = QSettings().value(QStringLiteral("live/outputScreen")).toString();
     const QString before = screen == nullptr ? QString{} : screen->currentData().toString();
+    const QString before_name = screen == nullptr
+        ? QString{} : screen->currentData(Qt::UserRole + 1).toString();
     if (screen == nullptr) return;
+    for (const auto& connection : screen_connections) {
+        QObject::disconnect(connection);
+    }
+    screen_connections.clear();
     QSignalBlocker block(screen);
     screen->clear();
     const auto screens = QGuiApplication::screens();
     for (int index = 0; index < screens.size(); ++index) {
         QScreen* item = screens[index];
         const bool primary = item == QGuiApplication::primaryScreen();
-        screen->addItem(primary ? q->tr("%1 · primary").arg(item->name())
-                                : q->tr("%1 · stage").arg(item->name()),
-                        item->name());
+        screen->addItem(screen_label(item, primary, screens),
+                        screen_identifier(item, screens));
+        screen->setItemData(index, item->name(), Qt::UserRole + 1);
+        screen->setItemData(index, screen_base_identifier(item),
+                            Qt::UserRole + 2);
+        screen_connections.push_back(QObject::connect(
+            item, &QScreen::geometryChanged, q,
+            [this](const QRect&) { refreshScreens(); }));
+        screen_connections.push_back(QObject::connect(
+            item, &QScreen::availableGeometryChanged, q,
+            [this](const QRect&) { refreshScreens(); }));
+        screen_connections.push_back(QObject::connect(
+            item, &QScreen::logicalDotsPerInchChanged, q,
+            [this](qreal) { refreshScreens(); }));
     }
     QString wanted = before.isEmpty() ? stored : before;
     int index = screen->findData(wanted);
+    if (index < 0) {
+        for (int candidate = 0; candidate < screen->count(); ++candidate) {
+            if (screen->itemData(candidate, Qt::UserRole + 2).toString()
+                == wanted) {
+                index = candidate;
+                break;
+            }
+        }
+    }
+    if (index < 0) {
+        const QString legacy_name = before_name.isEmpty() ? stored : before_name;
+        for (int candidate = 0; candidate < screen->count(); ++candidate) {
+            if (screen->itemData(candidate, Qt::UserRole + 1).toString()
+                == legacy_name) {
+                index = candidate;
+                break;
+            }
+        }
+    }
     if (index < 0 && config.output.prefer_secondary_display && screens.size() > 1) {
         index = screens.indexOf(QGuiApplication::primaryScreen()) == 0 ? 1 : 0;
     }
     screen->setCurrentIndex(std::max(0, index));
+    if (screen->currentIndex() >= 0) {
+        QSettings().setValue(QStringLiteral("live/outputScreen"),
+                             screen->currentData().toString());
+    }
+    if (stage.isVisible()) applyVisibleOutputPolicy();
+    emit q->runtimeOutputSettingsChanged();
+}
+
+bool LiveWorkspace::Impl::realtimeActive() const noexcept {
+    return active || presentation_active;
+}
+
+void LiveWorkspace::Impl::updateScheduledFps(double fps) {
+    const double sanitized = sanitized_realtime_fps(fps);
+    if (std::abs(scheduled_fps - sanitized) <= 1.0e-9
+        && frame_schedule_clock.isValid()) {
+        return;
+    }
+    scheduled_fps = sanitized;
+    frame_schedule_tick = 0U;
+    frame_schedule_clock.restart();
+}
+
+void LiveWorkspace::Impl::restartFrameSchedule(double fps) {
+    render_timer.stop();
+    scheduled_fps = sanitized_realtime_fps(fps);
+    frame_schedule_tick = 0U;
+    frame_schedule_clock.restart();
+    scheduleNextFrame();
+}
+
+void LiveWorkspace::Impl::scheduleNextFrame() {
+    if (!realtimeActive()) return;
+    if (!frame_schedule_clock.isValid()) frame_schedule_clock.start();
+    const double elapsed = static_cast<double>(frame_schedule_clock.elapsed());
+    const std::uint64_t elapsed_tick = static_cast<std::uint64_t>(
+        std::max(0.0, std::floor(elapsed * scheduled_fps / 1000.0)));
+    frame_schedule_tick = std::max(frame_schedule_tick + 1U, elapsed_tick + 1U);
+    const double due = static_cast<double>(frame_schedule_tick)
+                       * 1000.0 / scheduled_fps;
+    const int delay = std::max(1, static_cast<int>(std::ceil(due - elapsed)));
+    render_timer.start(delay);
 }
 
 void LiveWorkspace::Impl::setActive(bool value) {
@@ -1584,6 +2103,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         updateSleepPrevention();
         return;
     }
+    if (value && presentation_active) setPresentationActive(false);
     active = value;
     {
         QSignalBlocker block(live_button);
@@ -1591,8 +2111,17 @@ void LiveWorkspace::Impl::setActive(bool value) {
         live_button->setText(value ? q->tr("LIVE · ON") : q->tr("GO LIVE"));
     }
     if (value) {
+        ++render_generation;
+        renderer.cancelCurrent();
+        last_image = {};
+        stage.clearFrame();
+        presented_frame_clock.invalidate();
         updateSleepPrevention();
         run_clock.restart();
+        tempo_taps.clear();
+        tapped_bpm = 0.0;
+        tapped_beat_count = 0U;
+        tapped_beat_anchor_seconds = 0.0;
         last_good_clock.invalidate();
         audio_dropout_clock.restart();
         late_streak = 0;
@@ -1604,13 +2133,14 @@ void LiveWorkspace::Impl::setActive(bool value) {
         startIo();
         const pvt::ProjectConfig project = project_provider
             ? project_provider() : pvt::default_project();
-        render_timer.start(live_frame_interval_milliseconds(project.canvas.fps));
+        restartFrameSchedule(project.canvas.fps);
         ui_timer.start();
         midi_clock_timer.start();
         if (!config.startup_scene_uuid.empty()) takeScene(config.startup_scene_uuid);
         requestFrame();
         emit q->runtimeStatusChanged(q->tr("Live performance runtime started."));
     } else {
+        ++render_generation;
         (void)sleep_guard.setPrevented(false);
         render_timer.stop();
         ui_timer.stop();
@@ -1620,6 +2150,10 @@ void LiveWorkspace::Impl::setActive(bool value) {
         scene_transition = {};
         overrides.clear();
         mapping_runtime.clear();
+        tempo_taps.clear();
+        tapped_bpm = 0.0;
+        tapped_beat_count = 0U;
+        tapped_beat_anchor_seconds = 0.0;
         learn_mapping = -1;
         user_freeze = false;
         user_blackout = false;
@@ -1636,6 +2170,9 @@ void LiveWorkspace::Impl::setActive(bool value) {
         stage.setFrozen(false);
         stage.setBlackout(false);
         stage.hide();
+        stage.clearFrame();
+        last_image = {};
+        presented_frame_clock.invalidate();
         output_button->setChecked(false);
         render_lamp->setState(StatusLamp::State::Off);
         render_lamp->setText(q->tr("STANDBY"));
@@ -1644,6 +2181,62 @@ void LiveWorkspace::Impl::setActive(bool value) {
         monitor->setText(q->tr("PROGRAM OUTPUT\nStandby"));
         emit q->runtimeStatusChanged(q->tr("Live performance runtime stopped."));
     }
+}
+
+void LiveWorkspace::Impl::setPresentationActive(bool value) {
+    if (presentation_active == value) return;
+    if (value && active) setActive(false);
+    presentation_active = value;
+    ++render_generation;
+    if (value) {
+        renderer.cancelCurrent();
+        adaptive_scale = 1.0;
+        late_streak = 0;
+        good_streak = 0;
+        render_failed = false;
+        safety_blackout = false;
+        last_image = {};
+        stage.clearFrame();
+        stage.setFrozen(false);
+        stage.setBlackout(false);
+        presented_frame_clock.invalidate();
+        render_lamp->setState(StatusLamp::State::Warning);
+        render_lamp->setText(q->tr("STARTING"));
+        fps_readout->setText(q->tr("0.0 fps delivered"));
+        frame_readout->setText(q->tr("Waiting for first frame"));
+        const pvt::ProjectConfig project = presentation_project_provider
+            ? presentation_project_provider()
+            : (project_provider ? project_provider() : pvt::default_project());
+        restartFrameSchedule(project.canvas.fps);
+        showOutput();
+        requestFrame();
+        emit q->runtimeStatusChanged(
+            q->tr("Live Preview Output started without performance inputs."));
+    } else {
+        render_timer.stop();
+        // Do not report the real-time output as inactive while a Metal frame
+        // can still drain: export admission relies on this synchronous,
+        // cooperative teardown having completed.
+        renderer.stop();
+        stage.setFrozen(false);
+        stage.setBlackout(false);
+        stage.hide();
+        stage.clearFrame();
+        last_image = {};
+        presented_frame_clock.invalidate();
+        emit q->runtimeStatusChanged(q->tr("Live Preview Output stopped."));
+    }
+    emit q->presentationActiveChanged(value);
+}
+
+void LiveWorkspace::Impl::resetRealtimeFrame() {
+    ++render_generation;
+    renderer.cancelCurrent();
+    last_image = {};
+    stage.clearFrame();
+    last_good_clock.invalidate();
+    presented_frame_clock.invalidate();
+    if (realtimeActive()) requestFrame();
 }
 
 void LiveWorkspace::Impl::updateSleepPrevention() {
@@ -1751,17 +2344,30 @@ void LiveWorkspace::Impl::configureClockOutputs() {
         ? static_cast<double>(run_clock.elapsed()) / 1000.0 : 0.0;
     for (auto& item : clock_outputs) item.next_seconds = now;
     QString selected_clock_source;
+    bool accept_all_clock_sources = false;
     const std::string active_layer = active_layer_provider
         ? active_layer_provider() : std::string{};
     for (const auto& input : config.clock_inputs) {
-        if (!input.enabled || input.source != pvt::LiveClockInputSource::MidiClock) continue;
-        if (input.target == pvt::LiveClockTarget::Project
-            || (selected_clock_source.isEmpty() && input.layer_uuid == active_layer)) {
-            selected_clock_source = boundSource(input.endpoint_uuid);
-            if (input.target == pvt::LiveClockTarget::Project) break;
+        if (!input.enabled
+            || input.source != pvt::LiveClockInputSource::MidiClock
+            || (input.target == pvt::LiveClockTarget::Layer
+                && input.layer_uuid != active_layer)) {
+            continue;
+        }
+        const QString source = boundSource(input.endpoint_uuid);
+        if (source.isEmpty()) {
+            accept_all_clock_sources = true;
+        } else if (selected_clock_source.isEmpty()) {
+            selected_clock_source = source;
+        } else if (selected_clock_source != source) {
+            // CoreMIDI keeps a clock state per source. Accept both here and
+            // let routedPhase query the bound source explicitly; selecting
+            // just the project source would silently starve a layer route.
+            accept_all_clock_sources = true;
         }
     }
-    (void)midi.selectClockInput(selected_clock_source);
+    (void)midi.selectClockInput(
+        accept_all_clock_sources ? QString{} : selected_clock_source);
     if (active) {
         int output_index = 0;
         for (const auto& output : config.midi_clock_outputs) {
@@ -1774,44 +2380,85 @@ void LiveWorkspace::Impl::configureClockOutputs() {
 }
 
 QScreen* LiveWorkspace::Impl::selectedScreen() const {
-    const QString name = screen->currentData().toString();
-    for (QScreen* item : QGuiApplication::screens()) {
-        if (item->name() == name) return item;
+    const QString id = screen == nullptr ? QString{} : screen->currentData().toString();
+    const QString legacy_name = screen == nullptr
+        ? QString{} : screen->currentData(Qt::UserRole + 1).toString();
+    const auto screens = QGuiApplication::screens();
+    for (QScreen* item : screens) {
+        if (screen_identifier(item, screens) == id
+            || (!legacy_name.isEmpty() && item->name() == legacy_name)
+            || item->name() == id) {
+            return item;
+        }
     }
     return QGuiApplication::primaryScreen();
 }
 
+void LiveWorkspace::Impl::applyVisibleOutputPolicy() {
+    if (!stage.isVisible()) return;
+    QScreen* target = selectedScreen();
+    const bool fullscreen = presentation_active
+        ? QSettings().value(QStringLiteral("previewOutput/fullscreen"), true).toBool()
+        : config.output.fullscreen;
+    const bool hide_cursor = presentation_active
+        ? QSettings().value(QStringLiteral("previewOutput/hideCursor"), true).toBool()
+        : config.output.hide_cursor;
+    stage.setCursor(hide_cursor ? Qt::BlankCursor : Qt::ArrowCursor);
+    if (fullscreen) {
+        stage.showOnScreen(target);
+        return;
+    }
+    const QRect available = target == nullptr
+        ? QRect(100, 100, 960, 540) : target->availableGeometry();
+    const int width = std::min(
+        std::max(1, available.width()),
+        std::max(320, available.width() * 4 / 5));
+    const int height = std::min(
+        std::max(1, available.height()),
+        std::max(180, available.height() * 4 / 5));
+    const QSize size(width, height);
+    stage.showWindowedOnScreen(
+        target,
+        QRect(available.center() - QPoint(size.width() / 2, size.height() / 2),
+              size));
+}
+
+void LiveWorkspace::Impl::showOutput() {
+    stage.setSmoothScaling(true);
+    stage.setFrame(last_image);
+    stage.show();
+    applyVisibleOutputPolicy();
+    output_button->setChecked(active && stage.isVisible());
+}
+
+void LiveWorkspace::Impl::dismissOutput() {
+    if (presentation_active) {
+        setPresentationActive(false);
+        return;
+    }
+    stage.hide();
+    output_button->setChecked(false);
+}
+
 void LiveWorkspace::Impl::toggleOutput() {
     if (stage.isVisible()) {
-        stage.hide();
-        output_button->setChecked(false);
+        dismissOutput();
         return;
     }
     if (!active) setActive(true);
-    stage.setSmoothScaling(true);
-    stage.setCursor(config.output.hide_cursor ? Qt::BlankCursor : Qt::ArrowCursor);
-    stage.setFrame(last_image);
-    if (config.output.fullscreen) {
-        stage.showOnScreen(selectedScreen());
-    } else {
-        QScreen* target = selectedScreen();
-        const QRect available = target == nullptr
-            ? QRect(100, 100, 960, 540) : target->availableGeometry();
-        const QSize size(std::max(640, available.width() * 4 / 5),
-                         std::max(360, available.height() * 4 / 5));
-        stage.setGeometry(QRect(
-            available.center() - QPoint(size.width() / 2, size.height() / 2), size));
-        stage.showNormal();
-        stage.raise();
-    }
-    output_button->setChecked(stage.isVisible());
+    showOutput();
 }
 
 void LiveWorkspace::Impl::setFreeze(bool value) {
     user_freeze = value;
+    if (value) {
+        render_failed = false;
+        safety_blackout = false;
+    }
     stage.setFrozen(value);
     freeze_button->setText(value ? q->tr("FROZEN") : q->tr("FREEZE"));
     updateOutputState();
+    if (!value) requestFrame();
 }
 
 void LiveWorkspace::Impl::setBlackout(bool value) {
@@ -1841,31 +2488,105 @@ void LiveWorkspace::Impl::updateMonitor() {
 }
 
 void LiveWorkspace::Impl::requestFrame() {
-    if (!active || user_freeze || renderer.isRendering()) return;
-    pvt::ProjectConfig project = runtimeProject();
-    double phase = basePhase(project);
-    applyClockRoutes(project, phase);
-    QSize output_size = monitor->size();
-    if (stage.isVisible() && selectedScreen() != nullptr) {
-        output_size = selectedScreen()->geometry().size();
+    if (!realtimeActive() || (active && user_freeze)) return;
+    if (active && shouldHoldAudioFrame()) {
+        const std::string selected_role = narrow(
+            audio_role->currentData().toString());
+        for (const auto& input : config.clock_inputs) {
+            if (!effectiveAudioRoute(input)) continue;
+            if (input.endpoint_uuid != selected_role) {
+                warnRouteOnce(
+                    qtext(input.endpoint_uuid)
+                        + QStringLiteral(":wrong-audio-role"),
+                    q->tr("An effective audio clock uses a different logical role than the active microphone. The last good frame is being held; choose the same role in Live or edit the advanced route."));
+            } else if (!input.frequency_stream_uuid.empty()
+                       && std::none_of(
+                           audio_snapshot.frequency_streams.begin(),
+                           audio_snapshot.frequency_streams.end(),
+                           [&input](const pvt::audio::LiveAudioSnapshot::FrequencyStream& stream) {
+                               return stream.uuid
+                                   == input.frequency_stream_uuid;
+                           })) {
+                warnRouteOnce(
+                    qtext(input.frequency_stream_uuid)
+                        + QStringLiteral(":missing-frequency-stream"),
+                    q->tr("An effective audio clock's named frequency stream is unavailable. The last good frame is being held; choose an authored stream or edit the advanced route."));
+            }
+        }
+        updateSafety();
+        return;
     }
+    pvt::ProjectConfig project = presentation_active
+        ? (presentation_project_provider
+               ? presentation_project_provider()
+               : (project_provider ? project_provider() : pvt::default_project()))
+        : runtimeProject();
+    updateScheduledFps(project.canvas.fps);
+    double phase = 0.0;
+    std::optional<int> synchronized_frame;
+    if (presentation_active) {
+        const int frame = std::max(
+            0, presentation_frame_provider ? presentation_frame_provider() : 0);
+        synchronized_frame = frame;
+        std::string frame_error;
+        const int frame_count = std::max(
+            1, pvt::effective_frame_count(project.canvas, &frame_error));
+        phase = static_cast<double>(frame % frame_count)
+                / static_cast<double>(frame_count);
+    } else {
+        phase = basePhase(project);
+        const bool project_routed = applyClockRoutes(project, phase);
+        if (!project_routed) {
+            // Feed an authoritative wall-clock frame through the normal core
+            // evaluator so Frame/Time/Meter/Music, reverse, and authored
+            // offsets remain the actual Live fallback. A routed layer can
+            // still override its own local clock in the temporary project.
+            std::string frame_error;
+            const int frame_count = std::max(
+                1, pvt::effective_frame_count(project.canvas, &frame_error));
+            synchronized_frame = std::clamp(
+                static_cast<int>(std::floor(
+                    phase * static_cast<double>(frame_count))),
+                0, frame_count - 1);
+        }
+    }
+    QSize output_size = stage.isVisible()
+        ? stage.outputPixelSize() : physical_widget_size(monitor);
     output_size.setWidth(std::max(320, output_size.width()));
     output_size.setHeight(std::max(180, output_size.height()));
-    const double selected = quality->currentData().toDouble();
+    const double selected = q->outputResolutionScale();
     const double resolution_scale = selected > 0.0 ? selected : adaptive_scale;
-    pvt::FrameRenderOptions options;
-    options.backend = pvt::RenderBackend::CpuAndGpu;
-    renderer.request(std::move(project), phase, output_size, resolution_scale,
-                     config.safety.frame_time_watchdog_enabled
-                         ? config.safety.watchdog_timeout_milliseconds : 60000,
-                     options);
+    pvt::FrameRenderOptions options = render_options_provider
+        ? render_options_provider() : pvt::FrameRenderOptions{};
+    const double deadline_milliseconds = 1000.0 / scheduled_fps;
+    const int watchdog_milliseconds = active
+        && config.safety.frame_time_watchdog_enabled
+            ? config.safety.watchdog_timeout_milliseconds : 60000;
+    const std::uint64_t revision = document_revision_provider
+        ? document_revision_provider() : 0U;
+    renderer.request(std::move(project), phase, synchronized_frame,
+                     output_size, resolution_scale, deadline_milliseconds,
+                     watchdog_milliseconds, options, render_generation,
+                     revision);
 }
 
 void LiveWorkspace::Impl::frameFinished(
     const LiveFrameController::Result& result) {
-    if (!active || result.cancelled) return;
+    const std::uint64_t current_revision = document_revision_provider
+        ? document_revision_provider() : 0U;
+    if (!realtimeActive() || result.cancelled
+        || result.session_generation != render_generation
+        || result.document_revision != current_revision) {
+        return;
+    }
+    // A render requested immediately before an audio loss must not replace the
+    // genuine last-good image with its deterministic fallback.
+    if (active && shouldHoldAudioFrame()) {
+        updateSafety();
+        return;
+    }
     if (!result.error.isEmpty() || result.image.isNull()) {
-        render_failed = true;
+        render_failed = active;
         ++late_streak;
         good_streak = 0;
         render_lamp->setState(StatusLamp::State::Fault);
@@ -1873,7 +2594,15 @@ void LiveWorkspace::Impl::frameFinished(
         render_lamp->setToolTip(result.error);
         frame_readout->setText(q->tr("Last good · %1 dropped")
                                    .arg(result.dropped_requests));
-        if (config.safety.dropout_behavior == pvt::LiveDropoutBehavior::Blackout) {
+        if (presentation_active) {
+            emit q->runtimeStatusChanged(q->tr(
+                "Live Preview Output is holding the last frame: %1")
+                    .arg(result.error));
+            return;
+        }
+        if (!user_freeze
+            && config.safety.dropout_behavior
+                   == pvt::LiveDropoutBehavior::Blackout) {
             safety_blackout = true;
             updateOutputState();
         }
@@ -1884,14 +2613,20 @@ void LiveWorkspace::Impl::frameFinished(
     emit q->livePreviewFrame(result.image);
     render_failed = false;
     last_good_clock.restart();
-    if (!user_freeze) stage.setFrame(result.image);
+    if (presentation_active || !user_freeze) stage.setFrame(result.image);
     if (!user_blackout && !safety_blackout) updateMonitor();
     frame_readout->setText(q->tr("%1 ms · %2 dropped")
                                .arg(result.render_milliseconds, 0, 'f', 1)
                                .arg(result.dropped_requests));
-    const double effective_fps = result.render_milliseconds > 0.0
-        ? 1000.0 / result.render_milliseconds : 0.0;
-    fps_readout->setText(q->tr("%1 fps").arg(effective_fps, 0, 'f', 1));
+    double delivered_fps = 0.0;
+    if (presented_frame_clock.isValid()) {
+        const qint64 elapsed = presented_frame_clock.restart();
+        if (elapsed > 0) delivered_fps = 1000.0 / static_cast<double>(elapsed);
+    } else {
+        presented_frame_clock.start();
+    }
+    fps_readout->setText(q->tr("%1 fps delivered")
+                              .arg(delivered_fps, 0, 'f', 1));
     if (result.late) {
         ++late_streak;
         good_streak = 0;
@@ -1911,7 +2646,7 @@ void LiveWorkspace::Impl::frameFinished(
             good_streak = 0;
         }
     }
-    updateSafety();
+    if (active) updateSafety();
 }
 
 void LiveWorkspace::Impl::runtimeTick() {
@@ -1919,16 +2654,38 @@ void LiveWorkspace::Impl::runtimeTick() {
     audio_snapshot = audio.snapshot();
     audio_meter->setLevel(audio_snapshot.features.energy);
     audio_meter->setPeakWarning(audio_snapshot.features.energy > 0.97F);
-    if (audio_snapshot.receiving) {
+    if (effectiveAudioClockReceiving()) {
         audio_lamp->setState(StatusLamp::State::Ready);
-        audio_dropout_clock.restart();
     } else if (audio.is_running()) {
         audio_lamp->setState(StatusLamp::State::Warning);
     }
-    detected_tempo->setText(audio_snapshot.detected_bpm > 0.0
+    double display_bpm = audio_snapshot.detected_bpm;
+    double display_phase = audio_snapshot.beat_phase;
+    const auto selected_route = std::find_if(
+        config.clock_inputs.begin(), config.clock_inputs.end(),
+        [this](const pvt::LiveClockInputConfig& input) {
+            return effectiveAudioRoute(input)
+                && input.endpoint_uuid
+                       == narrow(audio_role->currentData().toString());
+        });
+    if (selected_route != config.clock_inputs.end()
+        && !selected_route->frequency_stream_uuid.empty()) {
+        const auto selected_stream = std::find_if(
+            audio_snapshot.frequency_streams.begin(),
+            audio_snapshot.frequency_streams.end(),
+            [&selected_route](
+                const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                return item.uuid == selected_route->frequency_stream_uuid;
+            });
+        if (selected_stream != audio_snapshot.frequency_streams.end()) {
+            display_bpm = selected_stream->detected_bpm;
+            display_phase = selected_stream->beat_phase;
+        }
+    }
+    detected_tempo->setText(display_bpm > 0.0
         ? q->tr("%1 BPM · phase %2 · %3 ms input")
-              .arg(audio_snapshot.detected_bpm, 0, 'f', 1)
-              .arg(audio_snapshot.beat_phase, 0, 'f', 2)
+              .arg(display_bpm, 0, 'f', 1)
+              .arg(display_phase, 0, 'f', 2)
               .arg(audio_snapshot.estimated_input_latency_ms, 0, 'f', 1)
         : q->tr("Listening · causal features active"));
     const auto midi_clock = midi.clockSnapshot();
@@ -1940,6 +2697,14 @@ void LiveWorkspace::Impl::runtimeTick() {
 }
 
 void LiveWorkspace::Impl::updateSafety() {
+    if (!active) return;
+    if (user_freeze) {
+        if (safety_blackout) {
+            safety_blackout = false;
+            updateOutputState();
+        }
+        return;
+    }
     bool dropout = render_failed;
     if (last_good_clock.isValid()
         && config.safety.last_good_frame_timeout_milliseconds > 0
@@ -1949,14 +2714,41 @@ void LiveWorkspace::Impl::updateSafety() {
     }
     const bool audio_clock_enabled = std::any_of(
         config.clock_inputs.begin(), config.clock_inputs.end(),
-        [](const pvt::LiveClockInputConfig& item) {
-            return item.enabled
-                && item.source == pvt::LiveClockInputSource::AudioStream;
+        [this](const pvt::LiveClockInputConfig& item) {
+            return effectiveAudioRoute(item);
         });
-    if (audio_clock_enabled && audio_dropout_clock.isValid()
-        && audio_dropout_clock.elapsed()
-               > config.safety.audio_dropout_grace_milliseconds) {
-        dropout = true;
+    if (audio_clock_enabled) {
+        const std::string selected_role = narrow(
+            audio_role->currentData().toString());
+        bool bindings_match = true;
+        for (const auto& input : config.clock_inputs) {
+            if (!effectiveAudioRoute(input)) continue;
+            if (input.endpoint_uuid != selected_role) {
+                bindings_match = false;
+                break;
+            }
+            if (!input.frequency_stream_uuid.empty()
+                && std::none_of(
+                    audio_snapshot.frequency_streams.begin(),
+                    audio_snapshot.frequency_streams.end(),
+                    [&input](const pvt::audio::LiveAudioSnapshot::FrequencyStream& stream) {
+                        return stream.uuid == input.frequency_stream_uuid;
+                    })) {
+                bindings_match = false;
+                break;
+            }
+        }
+        const double age_seconds = bindings_match
+            ? live_audio_loss_age_seconds(
+                  audio_snapshot, audio_dropout_clock)
+            : (audio_dropout_clock.isValid()
+                   ? static_cast<double>(audio_dropout_clock.elapsed()) / 1000.0
+                   : (std::numeric_limits<double>::infinity)());
+        if (!pvt::audio::live_audio_callback_within_holdover(
+                age_seconds,
+                config.safety.audio_dropout_grace_milliseconds)) {
+            dropout = true;
+        }
     }
     const bool timed_last_good = last_good_clock.isValid()
         && config.safety.last_good_frame_timeout_milliseconds > 0
@@ -2103,29 +2895,65 @@ void LiveWorkspace::Impl::addLogicalRole() {
 }
 
 void LiveWorkspace::Impl::calibrateLatency() {
-    if (!audio_snapshot.receiving || audio_snapshot.detected_bpm <= 0.0
+    double detected_bpm = audio_snapshot.detected_bpm;
+    double beat_phase = audio_snapshot.beat_phase;
+    const auto selected_route = std::find_if(
+        config.clock_inputs.begin(), config.clock_inputs.end(),
+        [this](const pvt::LiveClockInputConfig& input) {
+            return effectiveAudioRoute(input)
+                && input.endpoint_uuid
+                       == narrow(audio_role->currentData().toString());
+        });
+    if (selected_route != config.clock_inputs.end()
+        && !selected_route->frequency_stream_uuid.empty()) {
+        const auto selected_stream = std::find_if(
+            audio_snapshot.frequency_streams.begin(),
+            audio_snapshot.frequency_streams.end(),
+            [&selected_route](
+                const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                return item.uuid == selected_route->frequency_stream_uuid;
+            });
+        if (selected_stream != audio_snapshot.frequency_streams.end()) {
+            detected_bpm = selected_stream->detected_bpm;
+            beat_phase = selected_stream->beat_phase;
+        }
+    }
+    if (!audio_snapshot.receiving || detected_bpm <= 0.0
         || audio_role->currentData().toString().isEmpty()) {
         QMessageBox::information(q, q->tr("Align audio beat"),
             q->tr("Start Live and play a steady beat first. Tap this button on the beat; "
-                  "the current causal beat phase becomes the portable rig offset."));
+                  "the current causal beat phase becomes a correction for this computer and device."));
         return;
     }
-    double phase = audio_snapshot.beat_phase;
+    double phase = beat_phase;
     if (phase > 0.5) phase -= 1.0;
-    const double beat_ms = 60000.0 / audio_snapshot.detected_bpm;
-    const double requested = std::round(
-        audio_snapshot.estimated_input_latency_ms - phase * beat_ms);
+    const double beat_ms = 60000.0 / detected_bpm;
+    // The user taps against the physical beat. A late capture presents as a
+    // small negative wrapped phase at that instant, so negate that measured
+    // phase. Do not also add the backend buffer estimate: that would double
+    // count the same observed delay on common devices.
+    const double requested = std::round(-phase * beat_ms);
     const int correction = static_cast<int>(std::clamp(
         requested,
         static_cast<double>((std::numeric_limits<int>::min)()),
         static_cast<double>(kMaximumUiInteger)));
-    latency->setValue(correction);
+    device_latency->setValue(correction);
+    emit q->runtimeStatusChanged(q->tr(
+        "Saved a %1 ms machine-local correction for this microphone. The portable rig offset was left unchanged.")
+        .arg(correction));
 }
 
 void LiveWorkspace::Impl::tapTempo() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (!tempo_taps.isEmpty() && now - tempo_taps.back() > 2500) tempo_taps.clear();
+    if (!tempo_taps.isEmpty() && now - tempo_taps.back() > 2500) {
+        tempo_taps.clear();
+        tapped_beat_count = 0U;
+        tapped_bpm = 0.0;
+    }
     tempo_taps.push_back(now);
+    ++tapped_beat_count;
+    tapped_beat_anchor_seconds = run_clock.isValid()
+        ? static_cast<double>(run_clock.elapsed()) / 1000.0 : 0.0;
     while (tempo_taps.size() > 8) tempo_taps.removeFirst();
     if (tempo_taps.size() < 2) return;
     double total = 0.0;
@@ -2836,71 +3664,146 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
 }
 
 double LiveWorkspace::Impl::basePhase(const pvt::ProjectConfig& project) const {
-    const double fps = std::isfinite(project.canvas.fps)
-                           && project.canvas.fps > 0.0
-                       ? project.canvas.fps : 1.0;
-    const double duration = std::max(
-        1.0 / fps,
-        static_cast<double>(project.canvas.total_frames) / fps);
+    const double duration = project_loop_duration_seconds(project);
     const double seconds = run_clock.isValid()
         ? static_cast<double>(run_clock.elapsed()) / 1000.0 : 0.0;
     double phase = std::fmod(seconds / duration, 1.0);
     return phase < 0.0 ? phase + 1.0 : phase;
 }
 
-double LiveWorkspace::Impl::routedPhase(
+std::optional<double> LiveWorkspace::Impl::routedPhase(
     const pvt::ProjectConfig& project,
-    const pvt::LiveClockInputConfig& input, double fallback) const {
+    const pvt::LiveClockInputConfig& input) {
     const auto* role = endpoint(input.endpoint_uuid);
-    const double fps = std::isfinite(project.canvas.fps)
-                           && project.canvas.fps > 0.0
-                       ? project.canvas.fps : 1.0;
-    const double duration = std::max(
-        1.0 / fps,
-        static_cast<double>(project.canvas.total_frames) / fps);
-    double result = fallback;
+    const double duration = project_loop_duration_seconds(project);
+    const pvt::ClockConfig* reference_clock = &project.canvas.clock;
+    if (input.target == pvt::LiveClockTarget::Layer) {
+        const auto layer = std::find_if(
+            project.layers.begin(), project.layers.end(),
+            [&input](const pvt::LayerConfig& item) {
+                return item.uuid == input.layer_uuid;
+            });
+        if (layer != project.layers.end()) {
+            reference_clock = &layer->render.layer_clock.clock;
+        }
+    }
+    const double reference_bpm = std::isfinite(reference_clock->meter.bpm)
+                                      && reference_clock->meter.bpm > 0.0
+        ? reference_clock->meter.bpm : 120.0;
+    const double reference_beats_per_loop = duration * reference_bpm / 60.0;
+    const auto transform = [reference_clock](double phase) {
+        phase = (reference_clock->reverse ? -phase : phase)
+            + reference_clock->phase_offset_degrees / 360.0;
+        phase -= std::floor(phase);
+        return phase < 0.0 ? phase + 1.0 : phase;
+    };
+    const double portable_latency_seconds = role == nullptr ? 0.0
+        : static_cast<double>(role->input_latency_microseconds) / 1000000.0;
     if (input.source == pvt::LiveClockInputSource::MidiClock) {
         const auto snapshot = midi.clockSnapshot(boundSource(input.endpoint_uuid));
         if (!snapshot.receiving || (input.follow_midi_transport && !snapshot.running)) {
-            return fallback;
+            return std::nullopt;
         }
-        const double bpm = snapshot.bpm > 0.0 ? snapshot.bpm
-                                               : project.canvas.clock.meter.bpm;
-        const double beats_per_loop = std::max(1.0, duration * bpm / 60.0);
-        result = (static_cast<double>(snapshot.ticks) / 24.0) / beats_per_loop;
-    } else {
-        const bool holding = audio_dropout_clock.isValid()
-            && audio_dropout_clock.elapsed() <= input.holdover_milliseconds;
-        if (!audio_snapshot.receiving && !holding) return fallback;
-        double detected_bpm = audio_snapshot.detected_bpm;
-        if (!input.frequency_stream_uuid.empty()) {
-            const auto stream = std::find_if(
-                audio_snapshot.frequency_streams.begin(),
-                audio_snapshot.frequency_streams.end(),
-                [&input](const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
-                    return item.uuid == input.frequency_stream_uuid;
-                });
-            if (stream != audio_snapshot.frequency_streams.end()) {
-                detected_bpm = stream->detected_bpm;
-            }
+        const double live_bpm = std::isfinite(snapshot.bpm) && snapshot.bpm > 0.0
+            ? snapshot.bpm : reference_bpm;
+        const auto phase = pvt::audio::live_beat_route_phase(
+            1U, static_cast<double>(snapshot.ticks) / 24.0,
+            reference_beats_per_loop,
+            portable_latency_seconds * live_bpm / 60.0);
+        return phase.has_value()
+            ? std::optional<double>(transform(*phase)) : std::nullopt;
+    }
+
+    const std::string selected_role = narrow(
+        audio_role->currentData().toString());
+    if (selected_role != input.endpoint_uuid) {
+        warnRouteOnce(
+            qtext(input.endpoint_uuid) + QStringLiteral(":wrong-audio-role"),
+            q->tr("An effective audio clock uses a different logical role than the active microphone. Its deterministic clock is being used instead; choose the same role in Live or edit the advanced route."));
+        return std::nullopt;
+    }
+    const double callback_age_seconds = live_audio_loss_age_seconds(
+        audio_snapshot, audio_dropout_clock);
+    if (!pvt::audio::live_audio_callback_within_holdover(
+            callback_age_seconds, input.holdover_milliseconds)) {
+        return std::nullopt;
+    }
+
+    std::uint64_t beat_count = audio_snapshot.beat_count;
+    double beat_position = audio_snapshot.beat_position;
+    double anchor_seconds = audio_snapshot.beat_anchor_seconds;
+    double detected_bpm = audio_snapshot.detected_bpm;
+    if (!input.frequency_stream_uuid.empty()) {
+        const auto stream = std::find_if(
+            audio_snapshot.frequency_streams.begin(),
+            audio_snapshot.frequency_streams.end(),
+            [&input](
+                const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                return item.uuid == input.frequency_stream_uuid;
+            });
+        if (stream == audio_snapshot.frequency_streams.end()) {
+            warnRouteOnce(
+                qtext(input.frequency_stream_uuid)
+                    + QStringLiteral(":missing-frequency-stream"),
+                q->tr("An audio clock's frequency stream is unavailable. Its deterministic clock is being used instead."));
+            return std::nullopt;
         }
-        const double bpm = detected_bpm > 0.0
-            ? detected_bpm
-            : (tapped_bpm > 0.0 ? tapped_bpm : project.canvas.clock.meter.bpm);
-        const double beats_per_loop = std::max(1.0, duration * bpm / 60.0);
-        const double analyzed_beats = audio_snapshot.stream_seconds * bpm / 60.0;
-        result = analyzed_beats / beats_per_loop;
+        beat_count = stream->beat_count;
+        beat_position = stream->beat_position;
+        anchor_seconds = stream->beat_anchor_seconds;
+        detected_bpm = stream->detected_bpm;
     }
-    if (role != nullptr) {
-        result -= static_cast<double>(role->input_latency_microseconds)
-            / 1000000.0 / duration;
+
+    const double live_bpm = std::isfinite(detected_bpm) && detected_bpm > 0.0
+        ? detected_bpm
+        : (std::isfinite(tapped_bpm) && tapped_bpm > 0.0
+               ? tapped_bpm : reference_bpm);
+    bool used_tapped_fallback = false;
+    if (beat_count > 0U && (!(std::isfinite(detected_bpm))
+                            || detected_bpm <= 0.0)) {
+        const double elapsed = std::max(
+            0.0, audio_snapshot.stream_seconds - anchor_seconds);
+        beat_position = static_cast<double>(beat_count - 1U)
+            + elapsed * live_bpm / 60.0;
+    } else if (beat_count == 0U && tapped_beat_count > 0U
+               && tapped_bpm > 0.0) {
+        const double now_seconds = run_clock.isValid()
+            ? static_cast<double>(run_clock.elapsed()) / 1000.0 : 0.0;
+        beat_count = tapped_beat_count;
+        beat_position = static_cast<double>(beat_count - 1U)
+            + std::max(0.0, now_seconds - tapped_beat_anchor_seconds)
+                  * tapped_bpm / 60.0;
+        used_tapped_fallback = true;
     }
-    result -= std::floor(result);
-    return result < 0.0 ? result + 1.0 : result;
+    if (beat_count == 0U) return std::nullopt;
+    // The snapshot position ends at the last callback containing samples.
+    // Extrapolate once from that callback's monotonic age during both normal
+    // callback spacing and dropout holdover. This makes the transition across
+    // the 500 ms receiving indicator continuous and avoids a second timer.
+    if (audio_snapshot.last_valid_callback_age_seconds >= 0.0
+        && !used_tapped_fallback) {
+        beat_position = pvt::audio::live_audio_extrapolated_beat_position(
+            beat_position, live_bpm,
+            audio_snapshot.last_valid_callback_age_seconds);
+    }
+
+    const qint64 local_latency_microseconds = QSettings().value(
+        device_latency_key(input.endpoint_uuid,
+                           audio_device->currentData().toString()),
+        0).toLongLong();
+    const double signed_latency_beats =
+        (portable_latency_seconds
+         + static_cast<double>(local_latency_microseconds) / 1000000.0)
+        * live_bpm / 60.0;
+    const auto phase = pvt::audio::live_beat_route_phase(
+        beat_count, beat_position, reference_beats_per_loop,
+        signed_latency_beats);
+    return phase.has_value()
+        ? std::optional<double>(transform(*phase)) : std::nullopt;
 }
 
 pvt::MusicAnalysis LiveWorkspace::Impl::ephemeralAnalysis(
-    double durationSeconds) const {
+    double durationSeconds, const std::string& selectedStreamUuid) const {
     pvt::MusicAnalysis analysis;
     analysis.schema_version = 1;
     analysis.analyzer_version = "pvt-live-causal-1";
@@ -2914,21 +3817,71 @@ pvt::MusicAnalysis LiveWorkspace::Impl::ephemeralAnalysis(
                 std::max(1.0 / 48000.0, durationSeconds) * 48000.0)));
     analysis.duration_seconds = static_cast<double>(analysis.source_frame_count)
         / static_cast<double>(analysis.source_sample_rate);
+    pvt::MusicFeatureSample selected_features = audio_snapshot.features;
+    double selected_bpm = audio_snapshot.detected_bpm;
+    std::uint64_t selected_beat_count = audio_snapshot.beat_count;
+    if (!selectedStreamUuid.empty()) {
+        const auto selected = std::find_if(
+            audio_snapshot.frequency_streams.begin(),
+            audio_snapshot.frequency_streams.end(),
+            [&selectedStreamUuid](
+                const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                return item.uuid == selectedStreamUuid;
+            });
+        if (selected != audio_snapshot.frequency_streams.end()) {
+            selected_features = selected->features;
+            selected_bpm = selected->detected_bpm;
+            selected_beat_count = selected->beat_count;
+        }
+    }
     analysis.detected_bpm = std::clamp(
-        audio_snapshot.detected_bpm > 0.0 ? audio_snapshot.detected_bpm
-                                          : (tapped_bpm > 0.0 ? tapped_bpm : 120.0),
+        selected_bpm > 0.0 ? selected_bpm
+                           : (tapped_bpm > 0.0 ? tapped_bpm : 120.0),
         std::numeric_limits<double>::min(),
         pvt::maximum_render_parameter_magnitude());
-    analysis.tempo_confidence = audio_snapshot.receiving ? 0.75 : 0.0;
+    analysis.tempo_confidence = audio_snapshot.receiving
+        ? (selected_beat_count > 1U ? 0.75 : 0.25) : 0.0;
     analysis.beat_times_seconds = {0.0};
     analysis.tempo_points = {{0.0, analysis.detected_bpm,
                               analysis.tempo_confidence}};
-    analysis.feature_samples = {audio_snapshot.features,
-                                audio_snapshot.features};
+    analysis.feature_samples = {selected_features, selected_features};
+    analysis.input_processing = config.audio_processing;
+    analysis.frequency_streams.reserve(
+        config.audio_processing.frequency_streams.size());
+    for (const auto& authored : config.audio_processing.frequency_streams) {
+        pvt::MusicFrequencyStreamAnalysis stream;
+        stream.uuid = authored.uuid;
+        stream.low_hz = authored.low_hz;
+        stream.high_hz = authored.high_hz;
+        pvt::MusicFeatureSample features;
+        double bpm = 0.0;
+        std::uint64_t beat_count = 0U;
+        const auto captured = std::find_if(
+            audio_snapshot.frequency_streams.begin(),
+            audio_snapshot.frequency_streams.end(),
+            [&authored](
+                const pvt::audio::LiveAudioSnapshot::FrequencyStream& item) {
+                return item.uuid == authored.uuid;
+            });
+        if (captured != audio_snapshot.frequency_streams.end()) {
+            features = captured->features;
+            bpm = captured->detected_bpm;
+            beat_count = captured->beat_count;
+        }
+        stream.detected_bpm = bpm > 0.0 ? bpm
+            : (tapped_bpm > 0.0 ? tapped_bpm : 120.0);
+        stream.tempo_confidence = audio_snapshot.receiving
+            ? (beat_count > 1U ? 0.75 : 0.25) : 0.0;
+        stream.beat_times_seconds = {0.0};
+        stream.tempo_points = {{0.0, stream.detected_bpm,
+                                stream.tempo_confidence}};
+        stream.feature_samples = {features, features};
+        analysis.frequency_streams.push_back(std::move(stream));
+    }
     return analysis;
 }
 
-void LiveWorkspace::Impl::applyClockRoutes(pvt::ProjectConfig& project,
+bool LiveWorkspace::Impl::applyClockRoutes(pvt::ProjectConfig& project,
                                            double& projectPhase) {
     const std::string active_layer = active_layer_provider
         ? active_layer_provider() : std::string{};
@@ -2937,42 +3890,51 @@ void LiveWorkspace::Impl::applyClockRoutes(pvt::ProjectConfig& project,
         [](const pvt::LiveClockInputConfig& item) {
             return item.enabled && item.target == pvt::LiveClockTarget::Project;
         });
-    if (project_route != config.clock_inputs.end()) {
-        projectPhase = routedPhase(project, *project_route, projectPhase);
-        project.canvas.clock.mode = pvt::ClockMode::Default;
-        project.canvas.clock.phase_offset_degrees = 0.0;
-        project.canvas.clock.reverse = false;
-    }
     const auto layer_route = std::find_if(
         config.clock_inputs.begin(), config.clock_inputs.end(),
         [&active_layer](const pvt::LiveClockInputConfig& item) {
             return item.enabled && item.target == pvt::LiveClockTarget::Layer
                 && item.layer_uuid == active_layer;
         });
-    const bool project_audio = project_route != config.clock_inputs.end()
-        && project_route->source == pvt::LiveClockInputSource::AudioStream;
-    const bool layer_audio = layer_route != config.clock_inputs.end()
-        && layer_route->source == pvt::LiveClockInputSource::AudioStream;
-    if (project_audio || layer_audio) {
-        const double duration = std::max(
-            1.0 / std::max(1.0, project.canvas.fps),
-            static_cast<double>(project.canvas.total_frames)
-                / std::max(1.0, project.canvas.fps));
-        project.canvas.clock.music = ephemeralAnalysis(duration);
-        project.canvas.clock.mode = pvt::ClockMode::Music;
-        project.canvas.clock.music_tempo = pvt::MusicTempoMode::Detected;
+    const auto project_routed = project_route == config.clock_inputs.end()
+        ? std::optional<double>{} : routedPhase(project, *project_route);
+    const auto layer_routed = layer_route == config.clock_inputs.end()
+        ? std::optional<double>{} : routedPhase(project, *layer_route);
+    const double duration = project_loop_duration_seconds(project);
+    const auto prepare_audio_clock =
+        [this, duration](pvt::ClockConfig& clock,
+                         const std::string& selected_stream) {
+        const bool stream_is_authored = selected_stream.empty()
+            || std::any_of(
+                config.audio_processing.frequency_streams.begin(),
+                config.audio_processing.frequency_streams.end(),
+                [&selected_stream](
+                    const pvt::AudioFrequencyStreamConfig& item) {
+                    return item.uuid == selected_stream;
+                });
+        clock.audio_processing = config.audio_processing;
+        clock.frequency_stream_uuid = stream_is_authored
+            ? selected_stream : std::string{};
+        clock.music = ephemeralAnalysis(duration,
+                                        clock.frequency_stream_uuid);
+        clock.mode = pvt::ClockMode::Music;
+        clock.music_tempo = pvt::MusicTempoMode::Detected;
+    };
+
+    if (project_routed.has_value()) {
+        projectPhase = *project_routed;
+        if (project_route->source
+            == pvt::LiveClockInputSource::AudioStream) {
+            prepare_audio_clock(project.canvas.clock,
+                                project_route->frequency_stream_uuid);
+        } else {
+            project.canvas.clock.mode = pvt::ClockMode::Default;
+        }
         project.canvas.clock.phase_offset_degrees = 0.0;
         project.canvas.clock.reverse = false;
-        if (layer_audio && !project_audio) {
-            for (auto& layer : project.layers) {
-                if (layer.uuid == active_layer) continue;
-                layer.render.audio_reactive_override_enabled = true;
-                layer.render.audio_reactive.enabled = false;
-            }
-        }
     }
-    if (layer_route != config.clock_inputs.end()) {
-        const double desired = routedPhase(project, *layer_route, projectPhase);
+    if (layer_routed.has_value()) {
+        const double desired = *layer_routed;
         const auto found = std::find_if(
             project.layers.begin(), project.layers.end(),
             [&active_layer](const pvt::LayerConfig& layer) {
@@ -2980,7 +3942,16 @@ void LiveWorkspace::Impl::applyClockRoutes(pvt::ProjectConfig& project,
             });
         if (found != project.layers.end()) {
             found->render.layer_clock.enabled = true;
-            found->render.layer_clock.clock.mode = pvt::ClockMode::Default;
+            if (layer_route->source
+                == pvt::LiveClockInputSource::AudioStream) {
+                prepare_audio_clock(
+                    found->render.layer_clock.clock,
+                    layer_route->frequency_stream_uuid);
+                found->render.layer_clock.scale =
+                    pvt::LayerClockScale::StraightFit;
+            } else {
+                found->render.layer_clock.clock.mode = pvt::ClockMode::Default;
+            }
             found->render.layer_clock.clock.reverse = false;
             found->render.layer_clock.clock.phase_offset_degrees =
                 (desired - projectPhase) * 360.0;
@@ -2988,6 +3959,7 @@ void LiveWorkspace::Impl::applyClockRoutes(pvt::ProjectConfig& project,
             found->render.layer_clock.mix = pvt::LayerClockMixMode::Replace;
         }
     }
+    return project_routed.has_value();
 }
 
 double LiveWorkspace::Impl::outputBpm(
@@ -3185,11 +4157,19 @@ void LiveWorkspace::Impl::editClockOutput(bool layerTarget) {
 }
 
 LiveWorkspace::LiveWorkspace(ProjectSnapshotProvider projectProvider,
+                             ProjectSnapshotProvider presentationProjectProvider,
+                             PresentationFrameProvider presentationFrameProvider,
+                             RenderOptionsProvider renderOptionsProvider,
+                             DocumentRevisionProvider documentRevisionProvider,
                              ActiveLayerUuidProvider activeLayerProvider,
                              AuthoredConfigEditor authoredConfigEditor,
                              QWidget* parent)
     : QWidget(parent),
       impl_(std::make_unique<Impl>(this, std::move(projectProvider),
+                                   std::move(presentationProjectProvider),
+                                   std::move(presentationFrameProvider),
+                                   std::move(renderOptionsProvider),
+                                   std::move(documentRevisionProvider),
                                    std::move(activeLayerProvider),
                                    std::move(authoredConfigEditor))) {}
 
@@ -3211,16 +4191,25 @@ void LiveWorkspace::setProjectLiveConfig(const pvt::LiveConfig& config) {
             impl_->restartOsc();
         }
     }
+    impl_->refreshRuntimeRouting();
+    if (impl_->stage.isVisible()) impl_->applyVisibleOutputPolicy();
 }
 
 void LiveWorkspace::refreshProjectSnapshot() {
+    ++impl_->render_generation;
+    impl_->renderer.cancelCurrent();
     impl_->rebuildTargetCache();
     impl_->refreshConfigUi();
-    if (impl_->active) {
-        const pvt::ProjectConfig project = impl_->project_provider
-            ? impl_->project_provider() : pvt::default_project();
-        impl_->render_timer.setInterval(
-            live_frame_interval_milliseconds(project.canvas.fps));
+    impl_->refreshRuntimeRouting();
+    if (impl_->realtimeActive()) {
+        const pvt::ProjectConfig project = impl_->presentation_active
+            ? (impl_->presentation_project_provider
+                   ? impl_->presentation_project_provider()
+                   : pvt::default_project())
+            : (impl_->project_provider
+                   ? impl_->project_provider() : pvt::default_project());
+        impl_->restartFrameSchedule(project.canvas.fps);
+        impl_->requestFrame();
     }
 }
 
@@ -3230,4 +4219,240 @@ void LiveWorkspace::setLiveActive(bool active) {
 
 bool LiveWorkspace::isLiveActive() const noexcept {
     return impl_->active;
+}
+
+void LiveWorkspace::setPresentationActive(bool active) {
+    impl_->setPresentationActive(active);
+}
+
+bool LiveWorkspace::isPresentationActive() const noexcept {
+    return impl_->presentation_active;
+}
+
+bool LiveWorkspace::isRealtimeOutputActive() const noexcept {
+    return impl_->realtimeActive();
+}
+
+void LiveWorkspace::requestRealtimeFrame() {
+    if (impl_->realtimeActive()) impl_->requestFrame();
+}
+
+void LiveWorkspace::resetRealtimeFrame() {
+    impl_->resetRealtimeFrame();
+}
+
+QVector<LiveWorkspace::OutputDisplayChoice>
+LiveWorkspace::availableOutputDisplays() const {
+    QVector<OutputDisplayChoice> choices;
+    const auto screens = QGuiApplication::screens();
+    choices.reserve(screens.size());
+    for (QScreen* screen : screens) {
+        choices.push_back({screen_label(
+                               screen,
+                               screen == QGuiApplication::primaryScreen(),
+                               screens),
+                           screen_identifier(screen, screens)});
+    }
+    return choices;
+}
+
+QString LiveWorkspace::selectedOutputDisplayId() const {
+    if (impl_->screen != nullptr && impl_->screen->currentIndex() >= 0) {
+        return impl_->screen->currentData().toString();
+    }
+    return QSettings().value(QStringLiteral("live/outputScreen")).toString();
+}
+
+void LiveWorkspace::setSelectedOutputDisplayId(const QString& id) {
+    QString selected = id;
+    int index = impl_->screen == nullptr ? -1 : impl_->screen->findData(selected);
+    if (index < 0 && impl_->screen != nullptr) {
+        for (int candidate = 0; candidate < impl_->screen->count(); ++candidate) {
+            if (impl_->screen->itemData(candidate, Qt::UserRole + 1).toString()
+                    == selected
+                || impl_->screen->itemData(candidate,
+                                           Qt::UserRole + 2).toString()
+                       == selected) {
+                index = candidate;
+                selected = impl_->screen->itemData(candidate).toString();
+                break;
+            }
+        }
+    }
+    if (index < 0 && impl_->screen != nullptr && impl_->screen->count() > 0) {
+        index = 0;
+        selected = impl_->screen->itemData(0).toString();
+    }
+    QSettings().setValue(QStringLiteral("live/outputScreen"), selected);
+    if (impl_->screen != nullptr && index >= 0) {
+        const QSignalBlocker blocker(impl_->screen);
+        impl_->screen->setCurrentIndex(index);
+    }
+    ++impl_->render_generation;
+    impl_->renderer.cancelCurrent();
+    if (impl_->stage.isVisible()) impl_->applyVisibleOutputPolicy();
+    if (impl_->realtimeActive()) impl_->requestFrame();
+    emit runtimeOutputSettingsChanged();
+}
+
+double LiveWorkspace::outputResolutionScale() const {
+    const double stored = QSettings().value(
+        QStringLiteral("live/resolutionScale"), 0.0).toDouble();
+    for (const double allowed : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+        if (std::abs(stored - allowed) <= 1.0e-9) return allowed;
+    }
+    return 0.0;
+}
+
+void LiveWorkspace::setOutputResolutionScale(double scale) {
+    double selected = 0.0;
+    for (const double allowed : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+        if (std::isfinite(scale) && std::abs(scale - allowed) <= 1.0e-9) {
+            selected = allowed;
+            break;
+        }
+    }
+    QSettings().setValue(QStringLiteral("live/resolutionScale"), selected);
+    if (impl_->quality != nullptr) {
+        const QSignalBlocker blocker(impl_->quality);
+        const int index = impl_->quality->findData(selected);
+        impl_->quality->setCurrentIndex(index < 0 ? 0 : index);
+    }
+    impl_->adaptive_scale = 1.0;
+    ++impl_->render_generation;
+    impl_->renderer.cancelCurrent();
+    if (impl_->realtimeActive()) impl_->requestFrame();
+    emit runtimeOutputSettingsChanged();
+}
+
+QVector<LiveWorkspace::AudioInputChoice>
+LiveWorkspace::availableAudioInputs() const {
+    QVector<AudioInputChoice> choices;
+    choices.reserve(static_cast<qsizetype>(impl_->audio_devices.size()) + 1);
+    choices.push_back({tr("System default"), QString{}, true});
+    for (const auto& device : impl_->audio_devices) {
+        choices.push_back({
+            device.is_default
+                ? tr("%1 · default").arg(qtext(device.display_name))
+                : qtext(device.display_name),
+            qtext(device.runtime_id), device.is_default});
+    }
+    return choices;
+}
+
+void LiveWorkspace::refreshAudioInputs() {
+    impl_->refreshDevices();
+    impl_->restartAudio();
+}
+
+QString LiveWorkspace::audioInputBinding(const std::string& roleUuid) const {
+    return QSettings().value(
+        endpoint_key(roleUuid, QStringLiteral("audioDevice"))).toString();
+}
+
+QString LiveWorkspace::audioInputBindingLabel(
+    const std::string& roleUuid) const {
+    const QString binding = audioInputBinding(roleUuid);
+    if (binding.isEmpty()) return tr("System default");
+    const auto match = pvt::audio::find_live_audio_device(
+        impl_->audio_devices, narrow(binding));
+    if (match.has_value()) {
+        return qtext(impl_->audio_devices[*match].display_name);
+    }
+    QString hint = QSettings().value(
+        endpoint_key(roleUuid, QStringLiteral("audioDeviceName"))).toString();
+    if (hint.trimmed().isEmpty()) hint = tr("previously selected input");
+    return tr("Unavailable · %1").arg(hint);
+}
+
+bool LiveWorkspace::audioInputBindingAvailable(
+    const std::string& roleUuid) const {
+    const QString binding = audioInputBinding(roleUuid);
+    return binding.isEmpty()
+        || pvt::audio::find_live_audio_device(
+               impl_->audio_devices, narrow(binding)).has_value();
+}
+
+void LiveWorkspace::setAudioInputBinding(
+    const std::string& roleUuid, const QString& runtimeId,
+    const QString& displayLabel) {
+    const auto* role = impl_->endpoint(roleUuid);
+    if (role == nullptr || role->protocol != pvt::LiveEndpointProtocol::Audio
+        || !direction_has_input(role->direction)) {
+        emit runtimeStatusChanged(
+            tr("The selected Live role is not an audio input."));
+        return;
+    }
+    QString normalized_label = displayLabel.trimmed();
+    const QString unavailable_prefix = tr("Unavailable · ");
+    while (normalized_label.startsWith(unavailable_prefix)) {
+        normalized_label.remove(0, unavailable_prefix.size());
+    }
+    const QString default_suffix = tr(" · default");
+    if (normalized_label.endsWith(default_suffix)) {
+        normalized_label.chop(default_suffix.size());
+    }
+    if (normalized_label.isEmpty()) normalized_label = tr("System default");
+    QSettings settings;
+    settings.setValue(QStringLiteral("live/audioRole"), qtext(roleUuid));
+    settings.setValue(endpoint_key(roleUuid, QStringLiteral("audioDevice")),
+                      runtimeId);
+    settings.setValue(
+        endpoint_key(roleUuid, QStringLiteral("audioDeviceName")),
+        normalized_label);
+    if (impl_->audio_role != nullptr) {
+        const QSignalBlocker blocker(impl_->audio_role);
+        const int index = impl_->audio_role->findData(qtext(roleUuid));
+        if (index >= 0) impl_->audio_role->setCurrentIndex(index);
+    }
+    impl_->route_warnings.clear();
+    impl_->refreshDevices();
+    impl_->restartAudio();
+    emit audioInputsChanged();
+}
+
+void LiveWorkspace::revealAudioInputSetup(const std::string& roleUuid) {
+    if (impl_->audio_role != nullptr) {
+        const int index = impl_->audio_role->findData(qtext(roleUuid));
+        if (index >= 0) {
+            const QSignalBlocker blocker(impl_->audio_role);
+            impl_->audio_role->setCurrentIndex(index);
+            QSettings().setValue(QStringLiteral("live/audioRole"),
+                                 qtext(roleUuid));
+        }
+    }
+    impl_->route_warnings.clear();
+    impl_->refreshDevices();
+    if (!impl_->active) impl_->setActive(true);
+    else impl_->restartAudio();
+    if (impl_->tabs != nullptr) impl_->tabs->setCurrentIndex(0);
+    if (impl_->audio_device != nullptr) {
+        impl_->audio_device->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+bool LiveWorkspace::presentationFullscreen() const {
+    return QSettings().value(
+        QStringLiteral("previewOutput/fullscreen"), true).toBool();
+}
+
+void LiveWorkspace::setPresentationFullscreen(bool fullscreen) {
+    QSettings().setValue(QStringLiteral("previewOutput/fullscreen"), fullscreen);
+    if (impl_->presentation_active && impl_->stage.isVisible()) {
+        impl_->applyVisibleOutputPolicy();
+    }
+    emit runtimeOutputSettingsChanged();
+}
+
+bool LiveWorkspace::presentationHideCursor() const {
+    return QSettings().value(
+        QStringLiteral("previewOutput/hideCursor"), true).toBool();
+}
+
+void LiveWorkspace::setPresentationHideCursor(bool hide) {
+    QSettings().setValue(QStringLiteral("previewOutput/hideCursor"), hide);
+    if (impl_->presentation_active && impl_->stage.isVisible()) {
+        impl_->applyVisibleOutputPolicy();
+    }
+    emit runtimeOutputSettingsChanged();
 }

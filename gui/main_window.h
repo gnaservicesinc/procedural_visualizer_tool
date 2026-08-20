@@ -145,6 +145,8 @@ private:
     void setLiveMode(bool live);
     void showLiveWindow();
     void restoreLiveWorkspace(bool resumeEditorPreview);
+    void setLivePreviewOutputActive(bool active);
+    void refreshLivePreviewOutputControls();
     void applyAuthoredLiveConfig(const pvt::LiveConfig& live,
                                  const QString& reason);
     void connectEditors();
@@ -179,6 +181,13 @@ private:
     void applyEffectEditor(const QObject* changedEditor);
     void applyGlobalEditor(const QObject* changedEditor);
     void applyClockEditor(const QObject* changedEditor);
+    const pvt::LiveClockInputConfig* standardMicRoute(bool layerTarget) const;
+    std::optional<std::string> ensureStandardMicRoute(bool layerTarget,
+                                                      QString* error);
+    void removeStandardMicRoute(bool layerTarget);
+    void refreshStandardMicControls();
+    void applyStandardMicDeviceBinding(bool layerTarget);
+    void revealStandardMicSetup(bool layerTarget);
     void applyAudioReactiveEditor(const QObject* changedEditor);
     void ensureAlphaForTransparency();
     bool outputEditorsValid(QString* error = nullptr) const;
@@ -471,6 +480,7 @@ private:
     QAction* current_frame_export_action_ = nullptr;
     QAction* video_export_action_ = nullptr;
     QAction* cancel_export_action_ = nullptr;
+    QAction* live_preview_output_action_ = nullptr;
     QAction* new_action_ = nullptr;
     QAction* open_action_ = nullptr;
     QAction* open_folder_action_ = nullptr;
@@ -486,6 +496,13 @@ private:
     QAction* edit_mode_action_ = nullptr;
     QAction* live_mode_action_ = nullptr;
     QMenu* recent_projects_menu_ = nullptr;
+
+    QComboBox* live_preview_screen_ = nullptr;
+    QComboBox* live_preview_quality_ = nullptr;
+    QCheckBox* live_preview_fullscreen_ = nullptr;
+    QCheckBox* live_preview_hide_cursor_ = nullptr;
+    QPushButton* live_preview_output_button_ = nullptr;
+    QLabel* live_preview_output_status_ = nullptr;
 
     QDockWidget* layers_dock_ = nullptr;
     QListWidget* layer_list_ = nullptr;
@@ -533,6 +550,10 @@ private:
     QGroupBox* clock_group_ = nullptr;
     QFormLayout* clock_form_ = nullptr;
     QComboBox* clock_mode_ = nullptr;
+    QComboBox* project_mic_device_ = nullptr;
+    QPushButton* project_mic_refresh_ = nullptr;
+    QPushButton* project_mic_setup_ = nullptr;
+    QLabel* project_mic_status_ = nullptr;
     QComboBox* clock_interpolation_ = nullptr;
     QComboBox* clock_fit_ = nullptr;
     QSpinBox* clock_frame_interval_ = nullptr;
@@ -564,6 +585,10 @@ private:
     QComboBox* layer_clock_mix_mode_ = nullptr;
     QComboBox* layer_clock_scale_ = nullptr;
     QComboBox* layer_clock_mode_ = nullptr;
+    QComboBox* layer_mic_device_ = nullptr;
+    QPushButton* layer_mic_refresh_ = nullptr;
+    QPushButton* layer_mic_setup_ = nullptr;
+    QLabel* layer_mic_status_ = nullptr;
     QComboBox* layer_clock_interpolation_ = nullptr;
     QComboBox* layer_clock_fit_ = nullptr;
     QSpinBox* layer_clock_frame_interval_ = nullptr;
@@ -652,6 +677,15 @@ private:
     QDoubleSpinBox* effect_knee_ = nullptr;
     QDoubleSpinBox* effect_area_radius_ = nullptr;
     QComboBox* effect_particle_shape_ = nullptr;
+    QComboBox* effect_particle_profile_ = nullptr;
+    QSlider* effect_particle_size_scale_ = nullptr;
+    QDoubleSpinBox* effect_particle_size_variation_ = nullptr;
+    QDoubleSpinBox* effect_particle_definition_ = nullptr;
+    QDoubleSpinBox* effect_particle_twinkle_ = nullptr;
+    QLineEdit* effect_particle_seed_ = nullptr;
+    QPushButton* effect_particle_reseed_ = nullptr;
+    QComboBox* effect_particle_orientation_ = nullptr;
+    QDoubleSpinBox* effect_particle_rotation_ = nullptr;
     QComboBox* effect_blur_type_ = nullptr;
     QSpinBox* effect_blur_passes_ = nullptr;
     QSpinBox* effect_blur_samples_ = nullptr;

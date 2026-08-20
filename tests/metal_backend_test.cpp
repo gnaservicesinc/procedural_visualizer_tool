@@ -496,13 +496,20 @@ void test_backend_contract() {
         effect.id = pvt::allocate_id(particles);
         effect.enabled = true;
         effect.particle_shape = shape;
+        effect.particle_profile = pvt::ParticleRenderProfile::Defined;
         effect.intensity = 1.1;
         effect.magnitude = 0.18;
         effect.frequency = 24.0;
         effect.secondary = 0.4;
-        effect.radius_pixels = 3.0;
+        effect.radius_pixels = 8.0;
         effect.threshold = 0.55;
         effect.soft_knee = 0.5;
+        effect.particle_size_variation = 0.37;
+        effect.particle_definition = 0.83;
+        effect.particle_twinkle = 0.61;
+        effect.particle_seed = UINT64_C(0xfedcba9876543210);
+        effect.particle_orientation = pvt::ParticleOrientation::FollowMotion;
+        effect.particle_rotation_degrees = -23.0;
         effect.area_radius = 0.58;
         particles.effects.push_back(effect);
         CHECK(pvt::render_frame_at_phase(particles, 0.37, cpu_options,

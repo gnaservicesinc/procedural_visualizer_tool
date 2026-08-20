@@ -1,5 +1,6 @@
 #include "procedural_visualizer_tool.h"
 #include "config_codec.h"
+#include "frame_renderer_internal.h"
 #include "path_utf8.h"
 
 #include <algorithm>
@@ -76,7 +77,9 @@ namespace {
 // output preferences, and watchdog/dropout safety. Version 13 adds generated
 // plane-displacement geometry and its portable height-map attachment identity.
 // Version 14 adds pre-analysis audio filters/EQ, named frequency streams,
-// per-clock stream selection, and Live device-sleep policy.
+// per-clock stream selection, and Live device-sleep policy. Version 15 adds
+// independent particle profile, size variation, definition, twinkle, seed,
+// orientation, and rotation controls.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -88,8 +91,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 14U,
-              "config_io.cpp implements setup format version 14");
+static_assert(kSetupFormatVersion == 15U,
+              "config_io.cpp implements setup format version 15");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -239,6 +242,22 @@ bool setup_v14_record(std::string_view key) {
                                   - std::string_view(".frequency_stream_uuid").size(),
                               std::string_view(".frequency_stream_uuid").size(),
                               ".frequency_stream_uuid") == 0);
+}
+
+bool setup_v15_record(std::string_view key) {
+    if (!starts_with(key, "effects.")) return false;
+    const auto suffix = [key](std::string_view value) {
+        return key.size() >= value.size()
+               && key.compare(key.size() - value.size(), value.size(), value)
+                      == 0;
+    };
+    return suffix(".particle_profile")
+           || suffix(".particle_size_variation")
+           || suffix(".particle_definition")
+           || suffix(".particle_twinkle")
+           || suffix(".particle_seed")
+           || suffix(".particle_orientation")
+           || suffix(".particle_rotation_degrees");
 }
 
 void clear_error(std::string* error) {
@@ -844,6 +863,19 @@ constexpr std::array<std::pair<std::string_view, ParticleShape>, 5U>
     {"diamond", ParticleShape::Diamond},
     {"star", ParticleShape::Star},
 }};
+
+constexpr std::array<std::pair<std::string_view, ParticleRenderProfile>, 2U>
+    kParticleProfiles{{
+        {"legacy_glow", ParticleRenderProfile::LegacyGlow},
+        {"defined", ParticleRenderProfile::Defined},
+    }};
+
+constexpr std::array<std::pair<std::string_view, ParticleOrientation>, 3U>
+    kParticleOrientations{{
+        {"fixed", ParticleOrientation::Fixed},
+        {"follow_motion", ParticleOrientation::FollowMotion},
+        {"random", ParticleOrientation::Random},
+    }};
 
 constexpr std::array<std::pair<std::string_view, StartingColorMode>, 8U>
     kStartingColorModes{{
@@ -1687,8 +1719,11 @@ bool validate_persistence_bounds(const RenderConfig& config,
 
 bool serialize_setup(const RenderConfig& config,
                      std::string& serialized,
-                     std::string* error) {
-    const ValidationResult validation = validate(config);
+                     std::string* error,
+                     bool enforce_particle_workload = true) {
+    const ValidationResult validation = enforce_particle_workload
+        ? validate(config)
+        : detail::validate_render_config_structure(config);
     if (!validation.ok) {
         return fail(error, "Cannot save invalid configuration: " + validation.message);
     }
@@ -1839,6 +1874,22 @@ bool serialize_setup(const RenderConfig& config,
                          effect.blur_type, kBlurTypes);
         builder.add_enum(indexed_key("effects", index, "particle_shape"),
                          effect.particle_shape, kParticleShapes);
+        builder.add_enum(indexed_key("effects", index, "particle_profile"),
+                         effect.particle_profile, kParticleProfiles);
+        builder.add_double(
+            indexed_key("effects", index, "particle_size_variation"),
+            effect.particle_size_variation);
+        builder.add_double(indexed_key("effects", index, "particle_definition"),
+                           effect.particle_definition);
+        builder.add_double(indexed_key("effects", index, "particle_twinkle"),
+                           effect.particle_twinkle);
+        builder.add_integer(indexed_key("effects", index, "particle_seed"),
+                            effect.particle_seed);
+        builder.add_enum(indexed_key("effects", index, "particle_orientation"),
+                         effect.particle_orientation, kParticleOrientations);
+        builder.add_double(
+            indexed_key("effects", index, "particle_rotation_degrees"),
+            effect.particle_rotation_degrees);
         builder.add_integer(indexed_key("effects", index, "blur_passes"),
                             effect.blur_passes);
         builder.add_integer(indexed_key("effects", index, "blur_samples"),
@@ -2695,7 +2746,8 @@ bool consume_path_binding_records(Records& records,
 bool deserialize_setup(Records& records,
                        std::uint32_t setup_version,
                        RenderConfig& candidate,
-                       std::string* error) {
+                       std::string* error,
+                       bool enforce_particle_workload = true) {
     if (!consume_integer(records, "canvas.width", candidate.width, error)
         || !consume_integer(records, "canvas.height", candidate.height, error)
         || !consume_integer(records, "canvas.block_size", candidate.block_size, error)
@@ -3078,6 +3130,13 @@ bool deserialize_setup(Records& records,
     if (!consume_count(records, "effects.count", kMaximumEffects, effect_count, error)) {
         return false;
     }
+    if (effect_count > records.size()) {
+        return fail(
+            error,
+            record_error(
+                "Collection count exceeds the records available to decode in setup key",
+                "effects.count"));
+    }
     candidate.effects.clear();
     candidate.effects.resize(effect_count);
     for (std::size_t index = 0; index < effect_count; ++index) {
@@ -3167,6 +3226,33 @@ bool deserialize_setup(Records& records,
             && !consume_enum(records,
                              indexed_key("effects", index, "particle_shape"),
                              effect.particle_shape, kParticleShapes, error)) {
+            return false;
+        }
+        if (setup_version >= 15U
+            && (!consume_enum(
+                    records, indexed_key("effects", index, "particle_profile"),
+                    effect.particle_profile, kParticleProfiles, error)
+                || !consume_double(
+                    records,
+                    indexed_key("effects", index, "particle_size_variation"),
+                    effect.particle_size_variation, error)
+                || !consume_double(
+                    records, indexed_key("effects", index, "particle_definition"),
+                    effect.particle_definition, error)
+                || !consume_double(
+                    records, indexed_key("effects", index, "particle_twinkle"),
+                    effect.particle_twinkle, error)
+                || !consume_integer(
+                    records, indexed_key("effects", index, "particle_seed"),
+                    effect.particle_seed, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("effects", index, "particle_orientation"),
+                    effect.particle_orientation, kParticleOrientations, error)
+                || !consume_double(
+                    records,
+                    indexed_key("effects", index, "particle_rotation_degrees"),
+                    effect.particle_rotation_degrees, error))) {
             return false;
         }
         if (setup_version >= 7U
@@ -3500,7 +3586,9 @@ bool deserialize_setup(Records& records,
         candidate.output.dither_enabled = false;
     }
 
-    const ValidationResult validation = validate(candidate);
+    const ValidationResult validation = enforce_particle_workload
+        ? validate(candidate)
+        : detail::validate_render_config_structure(candidate);
     if (!validation.ok) {
         return fail(error, "Loaded setup failed validation: " + validation.message);
     }
@@ -3620,6 +3708,157 @@ void extract_rejected_envelope(Records& records,
     }
 }
 
+void repair_unsafe_particle_workloads(Records& records,
+                                      std::uint32_t setup_version,
+                                      ConfigCompatibility& compatibility) {
+    int width = 0;
+    int height = 0;
+    std::size_t effect_count = 0U;
+    const auto width_record = records.find("canvas.width");
+    const auto height_record = records.find("canvas.height");
+    const auto count_record = records.find("effects.count");
+    if (width_record == records.end() || height_record == records.end()
+        || count_record == records.end()
+        || !parse_integer_exact(width_record->second, width)
+        || !parse_integer_exact(height_record->second, height)
+        || !parse_integer_exact(count_record->second, effect_count)
+        || effect_count > kMaximumEffects
+        // Every real effect contributes many distinct records. This weaker
+        // necessary condition is enough to keep a tiny hostile document from
+        // turning pre-recovery inspection into billions of empty iterations.
+        || effect_count > records.size()
+        || width <= 0 || height <= 0) {
+        return;
+    }
+    std::size_t budget = 0U;
+    if (!detail::particle_stamp_budget_for_canvas(width, height, budget)) {
+        return;
+    }
+    std::size_t admitted_work = 0U;
+
+    for (std::size_t index = 0U; index < effect_count; ++index) {
+        const std::string enabled_key = indexed_key("effects", index, "enabled");
+        const auto enabled_record = records.find(enabled_key);
+        const auto type_record = records.find(indexed_key("effects", index, "type"));
+        const auto intensity_record = records.find(
+            indexed_key("effects", index, "intensity"));
+        const auto magnitude_record = records.find(
+            indexed_key("effects", index, "magnitude"));
+        const auto frequency_record = records.find(
+            indexed_key("effects", index, "frequency"));
+        const auto trail_record = records.find(
+            indexed_key("effects", index, "secondary"));
+        const auto radius_record = records.find(
+            indexed_key("effects", index, "radius_pixels"));
+        if (enabled_record == records.end() || type_record == records.end()
+            || intensity_record == records.end()
+            || magnitude_record == records.end()
+            || frequency_record == records.end()
+            || trail_record == records.end() || radius_record == records.end()
+            || type_record->second != "particle_field") {
+            continue;
+        }
+        bool enabled = false;
+        double intensity = 0.0;
+        double magnitude = 0.0;
+        double frequency = 0.0;
+        double trail = 0.0;
+        double radius = 0.0;
+        if (!parse_bool_exact(enabled_record->second, enabled) || !enabled
+            || !parse_double_exact(intensity_record->second, intensity)
+            || intensity <= 0.0
+            || !parse_double_exact(magnitude_record->second, magnitude)
+            || !parse_double_exact(frequency_record->second, frequency)
+            || frequency < 1.0
+            || frequency
+                   > static_cast<double>((std::numeric_limits<int>::max)())
+            || std::floor(frequency) != frequency
+            || !parse_double_exact(trail_record->second, trail)
+            || trail < 0.0 || trail > 1.0
+            || !parse_double_exact(radius_record->second, radius)
+            || radius <= 0.0) {
+            continue;
+        }
+
+        ParticleRenderProfile profile = ParticleRenderProfile::LegacyGlow;
+        ParticleOrientation orientation = ParticleOrientation::Fixed;
+        double size_variation = 0.0;
+        bool workload_metadata_valid = true;
+        if (setup_version >= 15U) {
+            const auto profile_record = records.find(
+                indexed_key("effects", index, "particle_profile"));
+            const auto variation_record = records.find(
+                indexed_key("effects", index, "particle_size_variation"));
+            const auto orientation_record = records.find(
+                indexed_key("effects", index, "particle_orientation"));
+            if (profile_record == records.end()
+                || variation_record == records.end()
+                || orientation_record == records.end()
+                || (profile_record->second != "legacy_glow"
+                    && profile_record->second != "defined")
+                || (orientation_record->second != "fixed"
+                    && orientation_record->second != "follow_motion"
+                    && orientation_record->second != "random")
+                || !parse_double_exact(variation_record->second,
+                                       size_variation)
+                || size_variation < 0.0 || size_variation > 1.0) {
+                // The typed recovery pass can replace malformed v15 fields,
+                // but it runs after this workload gate. Conservatively
+                // disable the effect now instead of letting a later semantic
+                // failure discard the entire effects collection. The
+                // authored enabled value and malformed field are both kept
+                // by the compatibility envelope for deliberate repair.
+                workload_metadata_valid = false;
+            } else {
+                profile = profile_record->second == "defined"
+                    ? ParticleRenderProfile::Defined
+                    : ParticleRenderProfile::LegacyGlow;
+                if (orientation_record->second == "follow_motion") {
+                    orientation = ParticleOrientation::FollowMotion;
+                } else if (orientation_record->second == "random") {
+                    orientation = ParticleOrientation::Random;
+                }
+            }
+        }
+        EffectConfig particle;
+        particle.type = EffectType::ParticleField;
+        particle.enabled = enabled;
+        particle.intensity = intensity;
+        particle.magnitude = magnitude;
+        particle.frequency = frequency;
+        particle.secondary = trail;
+        particle.radius_pixels = radius;
+        particle.particle_profile = profile;
+        particle.particle_size_variation = size_variation;
+        particle.particle_orientation = orientation;
+        std::size_t work = 0U;
+        const bool unsafe = !workload_metadata_valid
+                            || !detail::particle_effect_stamp_workload(
+                                width, height, particle, work)
+                            || work > budget - admitted_work;
+        if (!unsafe) {
+            admitted_work += work;
+            continue;
+        }
+
+        // Rejected records are retried automatically on the next load. Keep
+        // the old enabled state under a deliberately non-applying, render-
+        // scoped compatibility key instead, so reducing the workload while
+        // leaving the effect disabled cannot silently re-enable it later.
+        const std::string recovered_enabled_key = indexed_key(
+            "effects", index, "recovery_unsafe_particle_enabled");
+        remember_preserved(compatibility, recovered_enabled_key,
+                           enabled_record->second, false);
+        enabled_record->second = "0";
+        remember_note(
+            compatibility,
+            "Disabled unsafe particle workload at field '" + enabled_key
+                + "' while preserving its authored enabled value under non-applying recovery field '"
+                + recovered_enabled_key
+                + "'; reduce particle count, radius, size variation, or trail amount before re-enabling it deliberately.");
+    }
+}
+
 bool record_belongs_to_version(std::string_view key,
                                std::uint32_t setup_version) {
     return !((setup_version < 2U && setup_v2_record(key))
@@ -3633,7 +3872,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 11U && setup_v11_record(key))
              || (setup_version < 12U && setup_v12_record(key))
              || (setup_version < 13U && setup_v13_record(key))
-             || (setup_version < 14U && setup_v14_record(key)));
+             || (setup_version < 14U && setup_v14_record(key))
+             || (setup_version < 15U && setup_v15_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -3675,7 +3915,8 @@ RecoveryAttempt decode_with_record_repair(
     std::uint32_t setup_version,
     RenderConfig& destination,
     ConfigCompatibility& compatibility,
-    std::string* error) {
+    std::string* error,
+    bool enforce_particle_workload) {
     // Every unsuccessful repair either erases one authored key or inserts/
     // replaces one key with its default. This exact state-transition bound
     // prevents cycles without imposing an unrelated attempt ceiling.
@@ -3689,7 +3930,8 @@ RecoveryAttempt decode_with_record_repair(
         Records decoding = working;
         RenderConfig candidate;
         std::string failure;
-        if (deserialize_setup(decoding, setup_version, candidate, &failure)) {
+        if (deserialize_setup(decoding, setup_version, candidate, &failure,
+                              enforce_particle_workload)) {
             destination = std::move(candidate);
             if (error != nullptr) error->clear();
             return RecoveryAttempt::Success;
@@ -3774,9 +4016,22 @@ bool recover_setup_records(Records records,
                            std::uint32_t setup_version,
                            RenderConfig& destination,
                            ConfigCompatibility& compatibility,
-                           std::string* error) {
+                           std::string* error,
+                           bool enforce_particle_workload = true) {
     Records authored = records;
     extract_rejected_envelope(records, authored, compatibility);
+    authored = records;
+    if (enforce_particle_workload) {
+        repair_unsafe_particle_workloads(records, setup_version,
+                                         compatibility);
+    }
+    // When enabled, the safety repair preserves the original enabled value
+    // under its explicit non-applying recovery key. Treat the resulting
+    // records as authored for every later recovery strategy too; otherwise an
+    // unrelated semantic error can make the greedy group pass retry the unsafe
+    // enabled value and discard the entire effects collection. The standalone
+    // layer path deliberately has no canvas and therefore performs no such
+    // repair here.
     authored = records;
 
     Records defaults;
@@ -3786,7 +4041,7 @@ bool recover_setup_records(Records records,
     RenderConfig candidate;
     const RecoveryAttempt direct = decode_with_record_repair(
         working, defaults, authored, setup_version, candidate,
-        compatibility, error);
+        compatibility, error, enforce_particle_workload);
     if (direct == RecoveryAttempt::Success) {
         destination = std::move(candidate);
         return true;
@@ -3831,7 +4086,8 @@ bool recover_setup_records(Records records,
             std::string trial_error;
             const RecoveryAttempt result = decode_with_record_repair(
                 trial, defaults, authored, setup_version, trial_candidate,
-                trial_compatibility, &trial_error);
+                trial_compatibility, &trial_error,
+                enforce_particle_workload);
             if (result == RecoveryAttempt::Success) {
                 accepted = std::move(trial);
                 candidate = std::move(trial_candidate);
@@ -3856,7 +4112,7 @@ bool recover_setup_records(Records records,
     ConfigCompatibility final_compatibility = greedy_compatibility;
     const RecoveryAttempt final_result = decode_with_record_repair(
         final_records, defaults, authored, setup_version, candidate,
-        final_compatibility, error);
+        final_compatibility, error, enforce_particle_workload);
     if (final_result != RecoveryAttempt::Success) return false;
     compatibility = std::move(final_compatibility);
     destination = std::move(candidate);
@@ -4273,6 +4529,57 @@ bool deserialize_setup_config(const std::string& serialized,
         return fail(error,
                     std::string("Unexpected error while loading setup; destination was not changed: ")
                         + exception.what());
+    }
+}
+
+bool serialize_setup_config_without_particle_admission(
+    const RenderConfig& config,
+    std::string& serialized,
+    std::string* error) {
+    clear_error(error);
+    try {
+        return serialize_setup(config, serialized, error, false);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to serialize layer setup.");
+    } catch (const std::exception& exception) {
+        return fail(error,
+                    std::string("Unexpected error while serializing layer setup: ")
+                        + exception.what());
+    }
+}
+
+bool deserialize_setup_config_without_particle_admission(
+    const std::string& serialized,
+    RenderConfig& destination,
+    std::string* error) {
+    clear_error(error);
+    try {
+        if (serialized.size() > kMaximumSetupBytes) {
+            return fail(error, "Setup data exceeds the signed-int input limit.");
+        }
+        Records records;
+        std::uint32_t setup_version = 0U;
+        if (!parse_records(serialized, records, setup_version, error)) {
+            return false;
+        }
+        RenderConfig candidate;
+        ConfigCompatibility compatibility;
+        if (!recover_setup_records(std::move(records), setup_version,
+                                   candidate, compatibility, error, false)) {
+            return false;
+        }
+        distribute_compatibility(candidate, std::move(compatibility));
+        destination = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(
+            error,
+            "Not enough memory to load layer setup; destination was not changed.");
+    } catch (const std::exception& exception) {
+        return fail(
+            error,
+            std::string("Unexpected error while loading layer setup; destination was not changed: ")
+                + exception.what());
     }
 }
 

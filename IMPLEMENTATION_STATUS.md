@@ -1,10 +1,93 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 7.0.0 Mic clocks and realtime preview output
+
+Both standard clock selectors expose a GUI-only **Mic (Live)...** choice. It
+authors project or active-layer Live Audio routes while retaining a deterministic
+offline clock, binds detected hardware only in machine-local settings, and
+reveals the full gain, sensitivity, filter/EQ/range, meter, tap-calibration, and
+latency controls. Duplicate device names receive distinct runtime identities;
+stale bindings stay unavailable instead of silently selecting System default.
+The single-capture runtime enforces one shared Audio role across simultaneous
+project/layer Mic clocks.
+
+The analyzer publishes coherent continuous beat positions for the full-band and
+each named frequency stream. Route phase uses detected/tapped tempo only as the
+beat-rate numerator and the authored project beats-per-loop as its divisor,
+fixing the former cancellation to elapsed project time. Holdover, last-good,
+blackout, role matching, capture-null callbacks, authored processing tuples,
+calibration locality, input signatures, and layer-removal cleanup were audited
+and corrected. Hardware-free beat-clock tests cover tempo rate, missed-onset
+continuation, latency, wrapping, invalid inputs, and duplicate device names.
+Independent project copies now remap layer/group-scoped Live clock routes, MIDI
+outputs, setting mappings, and scene values along with regenerated identities,
+so a copied Mic or particle-control setup remains connected.
+
+**Live Preview Output** presents the ordinary preview or Preview Solo on a
+chosen display using shared Auto/Full/75%/50%/25% quality and the selected
+CPU/Metal backend, but starts none of performance Live's inputs, routes, scenes,
+or sleep policy. Its device-pixel-ratio-aware frame controller is revision and
+session gated, keeps one render in flight with a latest-pending request, and
+handles watchdog adaptation without applying performance blackout semantics.
+Presentation Escape/close stops presentation; performance-stage Escape hides
+only the stage. Realtime output and export are excluded in both UI state and
+entry-point guards. Project load/save and music-analysis transactions stop
+presentation first, and their reverse transition into performance LIVE is
+guarded at both the action state and entry point.
+
+Known follow-ups are recorded in `REALTIME_OUTPUT_FOLLOWUP.md`. In particular,
+the current capture engine is intentionally mono; making the persisted
+`audio_channel` selector meaningful requires a multichannel/per-endpoint capture
+manager rather than pretending one mono stream is several inputs.
+
+## 7.0.0 particle authoring expansion
+
+New Particle Field effects default to the **Defined** profile with a 9-output-
+pixel base radius, visible size variation, and motion-following orientation.
+Existing setups and layers migrate to **Legacy Glow**, retaining their prior
+defaults and pixels. Defined Spark, Soft Orb, Ring, Diamond, and Star masks are
+deterministic, antialiased, and shared by CPU and Metal. Artist controls now
+include a logarithmic particle-size scale, exact output-pixel radius, variation,
+definition, twinkle, seed/reseed, orientation, rotation, trail, and count. CLI,
+randomization, validation, persistence, and focused tests share those semantics.
+Live exposes the exactly representable particle controls (not the 64-bit seed),
+uses an integer count target, and leaves its stable `radius` path unchanged.
+
+Particle work admission is checked against canvas dimensions and an aggregate
+stamp budget before backend allocation. Metal preflight additionally budgets
+retained point, tile-grid, offset, and tile-index buffers, checks 32-bit address
+limits, and both paths poll cancellation inside generation/raster loops. Defined
+stationary fields with non-fixed orientation collapse the visual trail instead
+of fabricating authored-direction motion. Unsafe workloads from setup <=14 or
+layer <=12 load with the effect disabled, all particle values preserved, the
+authored enabled value retained under a non-applying compatibility key, and an
+explicit recovery note. Making the workload safe does not auto-enable it on a
+later load.
+
+Persistence is setup format 15 and layer format 13. Appending these controls to
+the exported by-value `EffectConfig` changes public ABI. Version 7.0.0 therefore
+advances the installed shared library to SONAME 7; existing projects remain
+migration inputs, while installed-library clients must rebuild against it.
+
+Local 7.0.0 release validation passes all 24 native Release tests, including
+Cocoa GUI smoke and real Metal parity; all 23 C++20 tests; all 23 AddressSanitizer
+plus UndefinedBehaviorSanitizer tests; and all 24 shared-library tests. A clean
+install produced `libProceduralVisualizerTool.7.dylib`, and an external CMake
+consumer configured, linked, and ran against that install. The macOS
+distribution verifier checked 26 Mach-O files; deep strict signing, embedded
+CLI version/self-test, packaged Cocoa smoke, arm64, plist version, macOS 13
+deployment target, and `/usr/lib` RPATH checks pass. A freshly archived and
+extracted package has one expected package root containing only the application,
+README, and license, and its SHA-256 check passes. Physical microphone and
+multi-display lab testing and the long performance soak remain manual follow-up;
+Linux and Windows packages remain the tag-triggered CI release matrix's
+responsibility until those jobs complete.
 
 ## 6.0.1 automatic Live window reliability
 
@@ -860,7 +943,7 @@ consumers do not inherit minizip requirements.
 | 3 | Toggle/add/remove/reorder any quantity | Complete | Dynamic wave, swing, and effect collections support zero through the signed-int UI/API index capacity; memory availability is the practical lower boundary. |
 | 4 | Direction from horizontal through radial to vertical | Complete | Continuous `0.0` horizontal, `0.5` radial/default, `1.0` vertical control. |
 | 4a-f | Endless zoom, ripple, shake, flag wave, glow, block scale | Complete | Ordered, configurable effects; coordinate effects support alpha/black/white/reflected edges; Glow uses visible straight-alpha-safe HDR bloom; Block Scale animates smooth or stepped pixel grouping at its stack position. |
-| 4g | Particle field | Complete | Deterministic loop-safe warm spark particles provide configurable count, spread, size, trails, direction, intensity, locality, and composable Texture/Mapped-object staging. |
+| 4g | Particle field | Complete; release matrix pending | Legacy-compatible or Defined antialiased particles provide five distinct silhouettes, output-pixel size, variation, definition, twinkle, deterministic reseeding, orientation/rotation, motion-following trails, count, intensity, locality, and composable Texture/Mapped-object staging with bounded CPU/Metal work. |
 | 5 | 8/16-bit PNG and 32-bit float EXR | Complete | RGB/RGBA PNG at 8 or 16 bits per channel with compression levels 0-9 (default 5); RGB/RGBA uncompressed scanline EXR with FLOAT channels. |
 | 6 | Optional alpha throughout | Complete | Internal images are straight float RGBA, including meaningful RGB at zero alpha; RGB export drops only the fourth channel. |
 | 7 | Float processing and lower-depth dithering | Complete | Linear float image pipeline; sRGB conversion plus blue-noise-like, Bayer, or Floyd-Steinberg dithering for PNG; dither is off/ignored for EXR. |
@@ -910,7 +993,7 @@ consumers do not inherit minizip requirements.
 | 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and representation-bounded controls. |
 | 52 | Pre-analysis audio processing and named clock streams | Complete; hardware qualification pending | Music and Live apply optional HP/LP plus graphical EQ before analysis, then expose stable named frequency-range analyses to project and active-layer clocks. Defaults are flat/full-band; validation, transactional reanalysis, setup-14 persistence, and causal/offline tests cover routing. |
 | 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, LIVE opens automatically in a visible companion window while the editor remains available, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
-| 54 | Edge/Twirl effects and particle shapes | Complete | Linear-light Edge Detect, seamless Twirl, and five deterministic procedural particle shapes share CPU/Metal, GUI, CLI, randomization, validation, and persistence semantics. Custom PNG sprites remain deferred. |
+| 54 | Edge/Twirl effects and particle shapes | Complete; release matrix pending | Linear-light Edge Detect, seamless Twirl, and five visibly distinct deterministic particle silhouettes share CPU/Metal, GUI, CLI, Live mapping, randomization, validation, migration, and persistence semantics. Custom PNG sprites remain deferred. |
 
 ## Important implementation map
 

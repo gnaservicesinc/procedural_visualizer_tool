@@ -198,6 +198,25 @@ bool valid_enum(ParticleShape value) {
     return false;
 }
 
+bool valid_enum(ParticleRenderProfile value) {
+    switch (value) {
+        case ParticleRenderProfile::LegacyGlow:
+        case ParticleRenderProfile::Defined:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(ParticleOrientation value) {
+    switch (value) {
+        case ParticleOrientation::Fixed:
+        case ParticleOrientation::FollowMotion:
+        case ParticleOrientation::Random:
+            return true;
+    }
+    return false;
+}
+
 bool valid_enum(BlurType value) {
     switch (value) {
         case BlurType::Gaussian:
@@ -1909,6 +1928,23 @@ const char* particle_shape_name(ParticleShape value) {
     return "Unknown";
 }
 
+const char* particle_render_profile_name(ParticleRenderProfile value) {
+    switch (value) {
+        case ParticleRenderProfile::LegacyGlow: return "Legacy glow";
+        case ParticleRenderProfile::Defined: return "Defined silhouette";
+    }
+    return "Unknown";
+}
+
+const char* particle_orientation_name(ParticleOrientation value) {
+    switch (value) {
+        case ParticleOrientation::Fixed: return "Fixed angle";
+        case ParticleOrientation::FollowMotion: return "Follow motion";
+        case ParticleOrientation::Random: return "Random shape angles";
+    }
+    return "Unknown";
+}
+
 const char* blur_type_name(BlurType value) {
     switch (value) {
         case BlurType::Gaussian: return "Gaussian";
@@ -2147,12 +2183,17 @@ EffectConfig default_effect(EffectType type) {
         case EffectType::ParticleField:
             effect.intensity = 1.4;
             effect.magnitude = 0.22; // travel per loop, in canvas widths
-            effect.frequency = 96.0; // deterministic particle count
+            effect.frequency = 72.0; // deterministic particle count
             effect.secondary = 0.35; // trail amount
             effect.angle_degrees = -75.0;
-            effect.radius_pixels = 3.5;
+            effect.radius_pixels = 9.0;
             effect.threshold = 0.55; // core brightness
             effect.soft_knee = 0.55; // glow softness
+            effect.particle_profile = ParticleRenderProfile::Defined;
+            effect.particle_size_variation = 0.35;
+            effect.particle_definition = 0.78;
+            effect.particle_twinkle = 0.65;
+            effect.particle_orientation = ParticleOrientation::FollowMotion;
             break;
         case EffectType::Blur:
             effect.intensity = 0.65;
@@ -2512,7 +2553,8 @@ bool valid_music_series(const std::vector<double>& beats,
 }
 
 ValidationResult validate_impl(const RenderConfig& config, bool include_export,
-                               bool validate_layer_clock = true) {
+                               bool validate_layer_clock = true,
+                               bool validate_particle_workload = true) {
     if (config.width < 16 || config.width > kMaximumDimension
         || config.height < 16 || config.height > kMaximumDimension) {
         return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
@@ -2720,7 +2762,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         layer_clock_probe.clock = config.layer_clock.clock;
         layer_clock_probe.layer_clock = {};
         const ValidationResult layer_clock_validation =
-            validate_impl(layer_clock_probe, false, false);
+            validate_impl(layer_clock_probe, false, false,
+                          validate_particle_workload);
         if (!layer_clock_validation.ok) {
             return invalid_result(
                 "The saved active-layer clock is invalid: "
@@ -2833,6 +2876,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !valid_enum(effect.edge_mode)
             || !valid_enum(effect.blur_type)
             || !valid_enum(effect.particle_shape)
+            || !valid_enum(effect.particle_profile)
+            || !valid_enum(effect.particle_orientation)
             || !finite_render_parameter(effect.phase_degrees)
             || !nonnegative_render_parameter(effect.intensity)
             || !nonnegative_render_parameter(effect.magnitude)
@@ -2851,6 +2896,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !finite_in_range(effect.blur_maximum, 0.0, 1.0)
             || effect.blur_minimum > effect.blur_maximum
             || effect.blur_pulses_per_cycle < 1
+            || !finite_in_range(effect.particle_size_variation, 0.0, 1.0)
+            || !finite_in_range(effect.particle_definition, 0.0, 1.0)
+            || !finite_in_range(effect.particle_twinkle, 0.0, 1.0)
+            || !finite_render_parameter(effect.particle_rotation_degrees)
             || !valid_path_binding(effect.path, config.motion_paths)) {
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
@@ -2967,8 +3016,9 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             if (active_glow) {
                 logarithmic_color_bound += std::log1p(maximum_intensity);
             } else {
-                const double trails = 1.0 + std::round(
-                    clamp_value(effect.secondary, 0.0, 1.0) * 12.0);
+                const double trails = static_cast<double>(
+                    detail::effective_particle_trail_steps(
+                        config.width, config.height, effect));
                 const double maximum_addition = 2.0 * maximum_intensity
                                                 * effect.frequency * trails;
                 if (maximum_addition > 0.0) {
@@ -2980,6 +3030,26 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                         + std::exp(addition_log - high));
                 }
             }
+        }
+    }
+    if (validate_particle_workload) {
+        detail::ParticleStampWorkloadEstimate particle_workload;
+        if (!detail::estimate_particle_stamp_workload(config,
+                                                      particle_workload)) {
+            const std::size_t one_based =
+                particle_workload.offending_effect
+                        == (std::numeric_limits<std::size_t>::max)()
+                    ? 0U
+                    : particle_workload.offending_effect + 1U;
+            const std::string effect_label = one_based == 0U
+                ? "Particle workload"
+                : "Particle field effect " + std::to_string(one_based);
+            return invalid_result(
+                effect_label
+                + (particle_workload.exceeds_budget
+                       ? " exceeds the bounded dimension-aware stamp workload; "
+                         "reduce particle count, radius, size variation, or trail amount."
+                       : " overflows its dimension-aware stamp estimate."));
         }
     }
     if (logarithmic_color_bound
@@ -4558,6 +4628,69 @@ double particle_unit(std::uint64_t value) {
            * (1.0 / 9007199254740992.0);
 }
 
+double particle_edge_coverage(double signed_distance, double antialias_width) {
+    const double width = std::max(1.0e-6, antialias_width);
+    const double value = clamp_value(
+        (width - signed_distance) / (2.0 * width), 0.0, 1.0);
+    return value * value * (3.0 - 2.0 * value);
+}
+
+double defined_particle_mask(ParticleShape shape, double dx, double dy,
+                             double local_radius, double definition,
+                             double softness) {
+    const double detail = clamp_value(definition, 0.0, 1.0);
+    const double edge = std::max(0.04, 0.80 / std::max(0.5, local_radius));
+    const double radius_squared = dx * dx + dy * dy;
+    const double radial = std::sqrt(radius_squared);
+    if (shape == ParticleShape::SoftOrb) {
+        const double solid = particle_edge_coverage(radial - 0.70, edge);
+        const double halo = std::exp(
+            -radius_squared / (0.16 + 1.10 * std::max(0.05, softness)));
+        return std::max(solid * (0.48 + 0.42 * detail), halo);
+    }
+
+    double signed_distance = 0.0;
+    switch (shape) {
+        case ParticleShape::Spark: {
+            const double arm = 0.34 - 0.24 * detail;
+            const double horizontal = std::sqrt(
+                dx * dx + (dy / arm) * (dy / arm)) - 1.0;
+            const double vertical = std::sqrt(
+                (dx / arm) * (dx / arm) + dy * dy) - 1.0;
+            signed_distance = std::min(horizontal, vertical);
+            break;
+        }
+        case ParticleShape::SoftOrb:
+            break;
+        case ParticleShape::Ring: {
+            const double half_width = 0.26 - 0.17 * detail;
+            signed_distance = std::abs(radial - 0.78) - half_width;
+            break;
+        }
+        case ParticleShape::Diamond:
+            signed_distance = std::abs(dx) + std::abs(dy) - 1.0;
+            break;
+        case ParticleShape::Star: {
+            const double lobe = 0.5 + 0.5 * std::cos(
+                5.0 * std::atan2(dy, dx));
+            const double sharpened = std::pow(
+                std::max(0.0, lobe), 2.0 + 6.0 * detail);
+            const double inner_radius = 0.72 - 0.34 * detail;
+            const double boundary = inner_radius
+                                    + (1.0 - inner_radius) * sharpened;
+            signed_distance = radial / std::max(0.05, boundary) - 1.0;
+            break;
+        }
+    }
+    const double silhouette = particle_edge_coverage(signed_distance, edge);
+    const double outside = std::max(0.0, signed_distance);
+    const double halo = (0.10 + 0.30 * std::max(0.05, softness))
+                        * std::exp(
+                            -(outside * outside)
+                            / (0.012 + 0.20 * std::max(0.05, softness)));
+    return std::max(silhouette, halo);
+}
+
 void apply_particle_field(const Image& source, Image& destination,
                           const EffectConfig& effect, double phase,
                           const std::atomic_bool* cancel) {
@@ -4565,8 +4698,13 @@ void apply_particle_field(const Image& source, Image& destination,
     destination = source;
     const int count = static_cast<int>(std::llround(effect.frequency));
     const double radius = std::max(0.5, effect.radius_pixels);
-    const int trail_steps = 1 + static_cast<int>(std::llround(
-        clamp_value(effect.secondary, 0.0, 1.0) * 12.0));
+    const double size_variation = clamp_value(
+        effect.particle_size_variation, 0.0, 1.0);
+    const double maximum_radius = std::max(
+        0.5, radius * (1.0 + size_variation));
+    const int trail_steps = static_cast<int>(
+        detail::effective_particle_trail_steps(
+            source.width, source.height, effect));
     const double progress = wrap_unit(phase / kTau);
     const double angle = radians(effect.angle_degrees);
     const double direction_x = std::cos(angle);
@@ -4574,94 +4712,159 @@ void apply_particle_field(const Image& source, Image& destination,
     const double short_side = static_cast<double>(
         std::min(source.width, source.height));
     const double travel = effect.magnitude * short_side;
-    const double span_x = static_cast<double>(source.width) + 4.0 * radius;
-    const double span_y = static_cast<double>(source.height) + 4.0 * radius;
+    const double span_x = static_cast<double>(source.width)
+                          + 4.0 * maximum_radius;
+    const double span_y = static_cast<double>(source.height)
+                          + 4.0 * maximum_radius;
     const double base_brightness = std::max(0.0, effect.intensity);
     const double core = clamp_value(effect.threshold, 0.0, 1.0);
     const double softness = std::max(0.05, effect.soft_knee);
 
     for (int particle = 0; particle < count; ++particle) {
         if ((particle & 15) == 0) throw_if_cancelled(cancel);
+        const std::uint64_t pattern_seed = effect.particle_seed == 0U
+                                               ? effect.id
+                                               : effect.particle_seed;
         const std::uint64_t seed = particle_hash(
-            effect.id ^ (static_cast<std::uint64_t>(particle) + 1U)
+            pattern_seed ^ (static_cast<std::uint64_t>(particle) + 1U)
                             * UINT64_C(0xd1b54a32d192ed03));
-        const double start_x = particle_unit(seed) * span_x - 2.0 * radius;
+        const double particle_radius = std::max(
+            0.5, radius * (1.0 + size_variation
+                                   * (2.0 * particle_unit(
+                                       seed ^ UINT64_C(0x8cb92baa31f3d8d7))
+                                      - 1.0)));
+        const double start_x = particle_unit(seed) * span_x
+                               - 2.0 * maximum_radius;
         const double start_y = particle_unit(seed ^ UINT64_C(0x94d049bb133111eb))
-                               * span_y - 2.0 * radius;
+                               * span_y - 2.0 * maximum_radius;
         const int cycles = 1 + static_cast<int>(particle % 3);
         const double orbit_offset = kTau * particle_unit(
             seed ^ UINT64_C(0xbf58476d1ce4e5b9));
-        const double twinkle = 0.55 + 0.45 * std::sin(
+        const double animated_twinkle = 0.55 + 0.45 * std::sin(
             kTau * (progress * (1.0 + static_cast<double>(particle % 5))
                     + particle_unit(seed ^ UINT64_C(0x632be59bd9b4e019))));
+        const double twinkle = mix_value(
+            1.0, animated_twinkle,
+            clamp_value(effect.particle_twinkle, 0.0, 1.0));
         const double orbit = kTau * progress * static_cast<double>(cycles)
                              + orbit_offset;
         const double along = travel * std::sin(orbit);
         const double across = travel * 0.28 * std::cos(orbit);
         double center_x = start_x + direction_x * along - direction_y * across;
         double center_y = start_y + direction_y * along + direction_x * across;
-        center_x = std::fmod(center_x + 2.0 * radius, span_x);
-        center_y = std::fmod(center_y + 2.0 * radius, span_y);
+        center_x = std::fmod(center_x + 2.0 * maximum_radius, span_x);
+        center_y = std::fmod(center_y + 2.0 * maximum_radius, span_y);
         if (center_x < 0.0) center_x += span_x;
         if (center_y < 0.0) center_y += span_y;
-        center_x -= 2.0 * radius;
-        center_y -= 2.0 * radius;
+        center_x -= 2.0 * maximum_radius;
+        center_y -= 2.0 * maximum_radius;
+
+        double motion_x = direction_x;
+        double motion_y = direction_y;
+        if (travel > 1.0e-12) {
+            motion_x = direction_x * std::cos(orbit)
+                       + direction_y * 0.28 * std::sin(orbit);
+            motion_y = direction_y * std::cos(orbit)
+                       - direction_x * 0.28 * std::sin(orbit);
+            const double motion_length = std::hypot(motion_x, motion_y);
+            if (motion_length > 1.0e-12) {
+                motion_x /= motion_length;
+                motion_y /= motion_length;
+            } else {
+                motion_x = direction_x;
+                motion_y = direction_y;
+            }
+        }
+        const bool fixed_orientation = effect.particle_orientation
+                                       == ParticleOrientation::Fixed;
+        const double trail_x = fixed_orientation ? direction_x : motion_x;
+        const double trail_y = fixed_orientation ? direction_y : motion_y;
+        double shape_angle = radians(effect.particle_rotation_degrees);
+        if (effect.particle_orientation == ParticleOrientation::FollowMotion) {
+            shape_angle += std::atan2(motion_y, motion_x);
+        } else if (effect.particle_orientation == ParticleOrientation::Random) {
+            shape_angle += kTau * particle_unit(
+                seed ^ UINT64_C(0xa24baed4963ee407));
+        }
+        const double shape_cosine = std::cos(shape_angle);
+        const double shape_sine = std::sin(shape_angle);
+        const bool rotate_shape = std::abs(shape_angle) > 1.0e-14;
+        const double bound = effect.particle_profile
+                                     == ParticleRenderProfile::Defined
+                                 ? 3.5
+                                 : 2.5;
 
         for (int trail = trail_steps - 1; trail >= 0; --trail) {
+            throw_if_cancelled(cancel);
             const double trail_fraction = trail_steps <= 1
                 ? 0.0 : static_cast<double>(trail)
                             / static_cast<double>(trail_steps - 1);
-            const double local_radius = radius * (1.0 - 0.58 * trail_fraction);
-            const double trail_distance = radius * 1.35
+            const double local_radius = particle_radius
+                                        * (1.0 - 0.58 * trail_fraction);
+            const double trail_distance = particle_radius * 1.35
                                           * static_cast<double>(trail);
-            const double px = center_x - direction_x * trail_distance;
-            const double py = center_y - direction_y * trail_distance;
+            const double px = center_x - trail_x * trail_distance;
+            const double py = center_y - trail_y * trail_distance;
             const int minimum_x = std::max(
-                0, clamped_floor_int(px - 2.5 * local_radius));
+                0, clamped_floor_int(px - bound * local_radius));
             const int maximum_x = std::min(
                 source.width - 1,
-                clamped_ceil_int(px + 2.5 * local_radius));
+                clamped_ceil_int(px + bound * local_radius));
             const int minimum_y = std::max(
-                0, clamped_floor_int(py - 2.5 * local_radius));
+                0, clamped_floor_int(py - bound * local_radius));
             const int maximum_y = std::min(
                 source.height - 1,
-                clamped_ceil_int(py + 2.5 * local_radius));
+                clamped_ceil_int(py + bound * local_radius));
             const double trail_gain = (1.0 - 0.82 * trail_fraction) * twinkle;
             for (int y = minimum_y; y <= maximum_y; ++y) {
+                throw_if_cancelled(cancel);
                 for (int x = minimum_x; x <= maximum_x; ++x) {
                     const double dx = (static_cast<double>(x) - px) / local_radius;
                     const double dy = (static_cast<double>(y) - py) / local_radius;
                     const double distance2 = dx * dx + dy * dy;
-                    if (distance2 > 6.25) continue;
-                    double shape_distance2 = distance2;
-                    switch (effect.particle_shape) {
-                        case ParticleShape::Spark:
-                            break;
-                        case ParticleShape::SoftOrb:
-                            shape_distance2 *= 0.38;
-                            break;
-                        case ParticleShape::Ring: {
-                            const double ring_distance =
-                                (std::sqrt(distance2) - 1.0) * 3.2;
-                            shape_distance2 = ring_distance * ring_distance;
-                            break;
+                    if (distance2 > bound * bound) continue;
+                    const double local_dx = rotate_shape
+                        ? dx * shape_cosine + dy * shape_sine : dx;
+                    const double local_dy = rotate_shape
+                        ? -dx * shape_sine + dy * shape_cosine : dy;
+                    double gaussian = 0.0;
+                    if (effect.particle_profile
+                        == ParticleRenderProfile::Defined) {
+                        gaussian = defined_particle_mask(
+                            effect.particle_shape, local_dx, local_dy,
+                            local_radius, effect.particle_definition, softness);
+                    } else {
+                        double shape_distance2 = distance2;
+                        switch (effect.particle_shape) {
+                            case ParticleShape::Spark:
+                                break;
+                            case ParticleShape::SoftOrb:
+                                shape_distance2 *= 0.38;
+                                break;
+                            case ParticleShape::Ring: {
+                                const double ring_distance =
+                                    (std::sqrt(distance2) - 1.0) * 3.2;
+                                shape_distance2 = ring_distance * ring_distance;
+                                break;
+                            }
+                            case ParticleShape::Diamond: {
+                                const double diamond = std::abs(local_dx)
+                                                       + std::abs(local_dy);
+                                shape_distance2 = 0.55 * diamond * diamond;
+                                break;
+                            }
+                            case ParticleShape::Star: {
+                                const double boundary = 1.0 + 0.42 * std::cos(
+                                    5.0 * std::atan2(local_dy, local_dx));
+                                const double star_distance = std::sqrt(distance2)
+                                                             / boundary;
+                                shape_distance2 = star_distance * star_distance;
+                                break;
+                            }
                         }
-                        case ParticleShape::Diamond: {
-                            const double diamond = std::abs(dx) + std::abs(dy);
-                            shape_distance2 = 0.55 * diamond * diamond;
-                            break;
-                        }
-                        case ParticleShape::Star: {
-                            const double boundary = 1.0 + 0.42 * std::cos(
-                                5.0 * std::atan2(dy, dx));
-                            const double star_distance = std::sqrt(distance2)
-                                                         / boundary;
-                            shape_distance2 = star_distance * star_distance;
-                            break;
-                        }
+                        gaussian = std::exp(
+                            -shape_distance2 / (0.22 + 1.55 * softness));
                     }
-                    const double gaussian = std::exp(
-                        -shape_distance2 / (0.22 + 1.55 * softness));
                     const double area = circular_influence(
                         effect.center_x, effect.center_y, effect.area_radius,
                         static_cast<double>(x), static_cast<double>(y),
@@ -6122,6 +6325,11 @@ bool render_frame_at_timeline_sample_cancellable(
 } // namespace
 
 namespace detail {
+
+ValidationResult validate_render_config_structure(const RenderConfig& config) {
+    return validate_impl(config, true, true, false);
+}
+
 namespace {
 
 bool prepare_frame_for_backend_timeline(const RenderConfig& config,
@@ -6228,7 +6436,11 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              radians(effect.angle_degrees), effect.radius_pixels,
              effect.threshold, effect.soft_knee, effect.area_radius,
              effect.blur_type, effect.blur_passes, effect.blur_samples,
-             effect.particle_shape});
+             effect.particle_shape, effect.particle_profile,
+             effect.particle_size_variation, effect.particle_definition,
+             effect.particle_twinkle, effect.particle_seed,
+             effect.particle_orientation,
+             radians(effect.particle_rotation_degrees)});
     }
 
     candidate.motion = render.motion;

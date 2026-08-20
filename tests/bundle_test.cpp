@@ -282,6 +282,15 @@ void test_layer_codec_backward_compatibility() {
     original.waves.front().audio_response = pvt::AudioResponseMode::Beat;
     original.effects.front().audio_response = pvt::AudioResponseMode::Energy;
     original.effects.front().particle_shape = pvt::ParticleShape::Star;
+    original.effects.front().particle_profile =
+        pvt::ParticleRenderProfile::Defined;
+    original.effects.front().particle_size_variation = 0.41;
+    original.effects.front().particle_definition = 0.86;
+    original.effects.front().particle_twinkle = 0.28;
+    original.effects.front().particle_seed = UINT64_C(0xfedcba9876543210);
+    original.effects.front().particle_orientation =
+        pvt::ParticleOrientation::Random;
+    original.effects.front().particle_rotation_degrees = -21.5;
     original.waves.front().path.enabled = true;
     original.waves.front().path.path_id = 91U;
     original.waves.front().path.cycles_per_loop = 2;
@@ -321,7 +330,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t12\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t13\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -367,6 +376,16 @@ void test_layer_codec_backward_compatibility() {
           == pvt::AudioResponseMode::Energy);
     CHECK(current_round_trip.effects.front().particle_shape
           == pvt::ParticleShape::Star);
+    CHECK(current_round_trip.effects.front().particle_profile
+          == pvt::ParticleRenderProfile::Defined);
+    CHECK(current_round_trip.effects.front().particle_size_variation == 0.41);
+    CHECK(current_round_trip.effects.front().particle_definition == 0.86);
+    CHECK(current_round_trip.effects.front().particle_twinkle == 0.28);
+    CHECK(current_round_trip.effects.front().particle_seed
+          == UINT64_C(0xfedcba9876543210));
+    CHECK(current_round_trip.effects.front().particle_orientation
+          == pvt::ParticleOrientation::Random);
+    CHECK(current_round_trip.effects.front().particle_rotation_degrees == -21.5);
     CHECK(current_round_trip.waves.front().path.enabled);
     CHECK(current_round_trip.waves.front().path.path_id == 91U);
     CHECK(current_round_trip.layer_clock.mix
@@ -394,11 +413,117 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.surface.plane_displacement.path
           == "height-map.png");
 
+    // Layer v12/setup v14 predates the independent particle controls. Their
+    // compatibility defaults retain the old renderer exactly.
+    std::istringstream current_v13_input(current_layer);
+    std::ostringstream version_twelve_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_v13_input, line)));
+    CHECK(line == "PVT_LAYER\t13");
+    version_twelve_output << "PVT_LAYER\t12\n";
+    while (std::getline(current_v13_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v13_only = has_suffix(key, ".particle_profile")
+            || has_suffix(key, ".particle_size_variation")
+            || has_suffix(key, ".particle_definition")
+            || has_suffix(key, ".particle_twinkle")
+            || has_suffix(key, ".particle_seed")
+            || has_suffix(key, ".particle_orientation")
+            || has_suffix(key, ".particle_rotation_degrees");
+        if (!v13_only) version_twelve_output << line << '\n';
+    }
+    const std::string version_twelve = version_twelve_output.str();
+    pvt::RenderData loaded_version_twelve;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_twelve, loaded_version_twelve, &error, &motion_paths));
+    CHECK(loaded_version_twelve.effects.front().particle_profile
+          == pvt::ParticleRenderProfile::LegacyGlow);
+    CHECK(loaded_version_twelve.effects.front().particle_size_variation == 0.0);
+    CHECK(loaded_version_twelve.effects.front().particle_twinkle == 1.0);
+    CHECK(loaded_version_twelve.effects.front().particle_seed == 0U);
+    CHECK(loaded_version_twelve.effects.front().particle_orientation
+          == pvt::ParticleOrientation::Fixed);
+
+    // A portable layer has no canvas, so layer migration must preserve an
+    // authored particle workload verbatim. Admission and any recovery belong
+    // to the assembled project, whose real canvas establishes the budget.
+    const auto original_particles = std::find_if(
+        original.effects.begin(), original.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(original_particles != original.effects.end());
+    if (original_particles != original.effects.end()) {
+        const std::size_t particle_index = static_cast<std::size_t>(
+            std::distance(original.effects.begin(), original_particles));
+        const std::string prefix = "effects."
+                                   + std::to_string(particle_index) + ".";
+        std::string unsafe_version_twelve = version_twelve;
+        CHECK(replace_record_value(
+            unsafe_version_twelve, prefix + "enabled", "1"));
+        CHECK(replace_record_value(
+            unsafe_version_twelve, prefix + "intensity", "1"));
+        CHECK(replace_record_value(
+            unsafe_version_twelve, prefix + "frequency", "1001"));
+        CHECK(replace_record_value(
+            unsafe_version_twelve, prefix + "secondary", "1"));
+        CHECK(replace_record_value(
+            unsafe_version_twelve, prefix + "radius_pixels", "16384"));
+        pvt::RenderData recovered_unsafe;
+        CHECK(pvt::detail::deserialize_layer_config(
+            unsafe_version_twelve, recovered_unsafe, &error, &motion_paths));
+        const auto recovered_particles = std::find_if(
+            recovered_unsafe.effects.begin(), recovered_unsafe.effects.end(),
+            [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(recovered_particles != recovered_unsafe.effects.end());
+        if (recovered_particles != recovered_unsafe.effects.end()) {
+            CHECK(recovered_particles->enabled);
+            CHECK(recovered_particles->frequency == 1001.0);
+            CHECK(recovered_particles->secondary == 1.0);
+            CHECK(recovered_particles->radius_pixels == 16384.0);
+        }
+        const std::string recovery_key =
+            prefix + "recovery_unsafe_particle_enabled";
+        CHECK(!std::any_of(
+            recovered_unsafe.source_compatibility.records.begin(),
+            recovered_unsafe.source_compatibility.records.end(),
+            [&recovery_key](const pvt::PreservedConfigRecord& record) {
+                return record.key == recovery_key
+                       && record.value == "1" && !record.rejected;
+            }));
+
+        std::string recovered_layer;
+        CHECK(pvt::detail::serialize_layer_config(
+            recovered_unsafe, recovered_layer, &error, &motion_paths));
+        pvt::RenderData recovered_round_trip;
+        CHECK(pvt::detail::deserialize_layer_config(
+            recovered_layer, recovered_round_trip, &error, &motion_paths));
+        const auto round_trip_particles = std::find_if(
+            recovered_round_trip.effects.begin(),
+            recovered_round_trip.effects.end(), [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(round_trip_particles != recovered_round_trip.effects.end());
+        if (round_trip_particles != recovered_round_trip.effects.end()) {
+            CHECK(round_trip_particles->enabled);
+            CHECK(round_trip_particles->frequency == 1001.0);
+            CHECK(round_trip_particles->radius_pixels == 16384.0);
+        }
+        CHECK(!std::any_of(
+            recovered_round_trip.source_compatibility.records.begin(),
+            recovered_round_trip.source_compatibility.records.end(),
+            [&recovery_key](const pvt::PreservedConfigRecord& record) {
+                return record.key == recovery_key
+                       && record.value == "1" && !record.rejected;
+            }));
+    }
+
     // Layer v11/setup v13 predates audio-input processing, named frequency
     // streams, and procedural particle silhouettes.
-    std::istringstream current_v12_input(current_layer);
+    std::istringstream current_v12_input(version_twelve);
     std::ostringstream version_eleven_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(current_v12_input, line)));
     CHECK(line == "PVT_LAYER\t12");
     version_eleven_output << "PVT_LAYER\t11\n";
@@ -667,6 +792,280 @@ void test_layer_codec_backward_compatibility() {
         recovered, recovered_layer, &error, &motion_paths));
     CHECK(recovered_layer.find("timing.clock.mode\tdefault\n")
           != std::string::npos);
+}
+
+void test_particle_workload_canvas_and_project_boundaries() {
+    std::string error;
+
+    // This layer is too expensive on the old synthetic 1920x1080 codec canvas
+    // but valid on its real UHD project canvas. Standalone serialization must
+    // preserve it enabled and defer admission until project assembly.
+    pvt::ProjectConfig high_resolution = pvt::default_project();
+    for (auto& effect : high_resolution.layers.front().render.effects) {
+        effect.enabled = false;
+    }
+    auto particles = std::find_if(
+        high_resolution.layers.front().render.effects.begin(),
+        high_resolution.layers.front().render.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(particles
+          != high_resolution.layers.front().render.effects.end());
+    if (particles
+        == high_resolution.layers.front().render.effects.end()) {
+        return;
+    }
+    particles->enabled = true;
+    particles->intensity = 1.0;
+    particles->magnitude = 0.1;
+    particles->frequency = 10000.0;
+    particles->secondary = 0.0;
+    particles->radius_pixels = 9.0;
+    particles->particle_profile = pvt::ParticleRenderProfile::Defined;
+    particles->particle_size_variation = 0.0;
+    particles->particle_orientation = pvt::ParticleOrientation::Fixed;
+
+    std::string portable_layer;
+    CHECK(pvt::detail::serialize_layer_config(
+        high_resolution.layers.front().render, portable_layer, &error));
+    pvt::RenderData loaded_layer;
+    CHECK(pvt::detail::deserialize_layer_config(
+        portable_layer, loaded_layer, &error));
+    const auto loaded_particles = std::find_if(
+        loaded_layer.effects.begin(), loaded_layer.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(loaded_particles != loaded_layer.effects.end());
+    if (loaded_particles != loaded_layer.effects.end()) {
+        CHECK(loaded_particles->enabled);
+        CHECK(loaded_particles->frequency == 10000.0);
+    }
+    high_resolution.layers.front().render = loaded_layer;
+    CHECK(!pvt::validate(high_resolution).ok);
+    high_resolution.canvas.width = 3840;
+    high_resolution.canvas.height = 2160;
+    CHECK(pvt::validate(high_resolution).ok);
+
+    // A stationary Defined field with a non-fixed orientation draws one stamp
+    // per particle regardless of its authored trail amount. Both admission
+    // and rendering retain that exact rule; motion makes the same setup exceed
+    // the bound again.
+    pvt::ProjectConfig stationary = pvt::default_project();
+    for (auto& effect : stationary.layers.front().render.effects) {
+        effect.enabled = false;
+    }
+    auto stationary_particles = std::find_if(
+        stationary.layers.front().render.effects.begin(),
+        stationary.layers.front().render.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(stationary_particles
+          != stationary.layers.front().render.effects.end());
+    if (stationary_particles
+        != stationary.layers.front().render.effects.end()) {
+        stationary_particles->enabled = true;
+        stationary_particles->intensity = 1.0;
+        stationary_particles->magnitude = 0.0;
+        stationary_particles->frequency = 4000.0;
+        stationary_particles->secondary = 1.0;
+        stationary_particles->radius_pixels = 9.0;
+        stationary_particles->particle_profile =
+            pvt::ParticleRenderProfile::Defined;
+        stationary_particles->particle_size_variation = 0.0;
+        stationary_particles->particle_orientation =
+            pvt::ParticleOrientation::FollowMotion;
+        CHECK(pvt::validate(stationary).ok);
+        const pvt::RenderConfig stationary_config = pvt::apply_global_config(
+            stationary.canvas, stationary.output,
+            stationary.layers.front().render);
+        std::string stationary_setup;
+        CHECK(pvt::detail::serialize_setup_config(
+            stationary_config, stationary_setup, &error));
+        pvt::RenderConfig stationary_loaded;
+        CHECK(pvt::detail::deserialize_setup_config(
+            stationary_setup, stationary_loaded, &error));
+        const auto stationary_loaded_particles = std::find_if(
+            stationary_loaded.effects.begin(), stationary_loaded.effects.end(),
+            [](const pvt::EffectConfig& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(stationary_loaded_particles != stationary_loaded.effects.end());
+        if (stationary_loaded_particles != stationary_loaded.effects.end()) {
+            CHECK(stationary_loaded_particles->enabled);
+        }
+        stationary_particles->magnitude = 0.01;
+        CHECK(!pvt::validate(stationary).ok);
+    }
+
+    // Individually admissible layers still share one project-frame workload
+    // bound. Disabled, grouped-off, and zero-opacity layers are not charged.
+    pvt::ProjectConfig stacked = pvt::default_project();
+    for (auto& effect : stacked.layers.front().render.effects) {
+        effect.enabled = false;
+    }
+    auto stacked_particles = std::find_if(
+        stacked.layers.front().render.effects.begin(),
+        stacked.layers.front().render.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(stacked_particles != stacked.layers.front().render.effects.end());
+    if (stacked_particles != stacked.layers.front().render.effects.end()) {
+        stacked_particles->enabled = true;
+        stacked_particles->intensity = 1.0;
+        stacked_particles->magnitude = 0.1;
+        stacked_particles->frequency = 3000.0;
+        stacked_particles->secondary = 0.0;
+        stacked_particles->radius_pixels = 9.0;
+        stacked_particles->particle_profile =
+            pvt::ParticleRenderProfile::Defined;
+        stacked_particles->particle_size_variation = 0.0;
+        stacked_particles->particle_orientation =
+            pvt::ParticleOrientation::Fixed;
+        CHECK(pvt::validate(stacked).ok);
+        pvt::LayerConfig second = stacked.layers.front();
+        second.uuid = pvt::generate_uuid();
+        second.file_id += 1U;
+        second.name = "Layer 2";
+        stacked.layers.push_back(std::move(second));
+        CHECK(!pvt::validate(stacked).ok);
+        stacked.layers.back().opacity = 0.0;
+        CHECK(pvt::validate(stacked).ok);
+    }
+}
+
+void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Aggregate Particle Recovery";
+    pvt::LayerConfig& first = document.project.layers.front();
+    for (pvt::EffectConfig& effect : first.render.effects) {
+        effect.enabled = false;
+    }
+    auto first_particles = std::find_if(
+        first.render.effects.begin(), first.render.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(first_particles != first.render.effects.end());
+    if (first_particles == first.render.effects.end()) return;
+    const std::size_t particle_index = static_cast<std::size_t>(
+        std::distance(first.render.effects.begin(), first_particles));
+    first_particles->enabled = true;
+    first_particles->intensity = 1.0;
+    first_particles->magnitude = 0.1;
+    first_particles->frequency = 3100.0;
+    first_particles->secondary = 0.0;
+    first_particles->radius_pixels = 9.0;
+    first_particles->particle_profile =
+        pvt::ParticleRenderProfile::LegacyGlow;
+    first_particles->particle_size_variation = 0.0;
+    first_particles->particle_orientation =
+        pvt::ParticleOrientation::Fixed;
+
+    pvt::LayerConfig second = first;
+    second.uuid = pvt::generate_uuid();
+    second.file_id += 1U;
+    second.name = "Later current layer";
+    second.opacity = 0.0;
+    second.render.effects[particle_index].particle_profile =
+        pvt::ParticleRenderProfile::Defined;
+    document.project.layers.push_back(std::move(second));
+
+    // Each layer is safe alone. Enabling both exceeds the one-frame project
+    // budget, so the saved fixture temporarily hides the later layer and then
+    // simulates an older/directly edited snapshot that enables it.
+    CHECK(pvt::validate(document.project).ok);
+    pvt::ProjectConfig later_only = document.project;
+    later_only.layers.front().opacity = 0.0;
+    later_only.layers.back().opacity = 1.0;
+    CHECK(pvt::validate(later_only).ok);
+    pvt::ProjectConfig aggregate = document.project;
+    aggregate.layers.back().opacity = 1.0;
+    CHECK(!pvt::validate(aggregate).ok);
+
+    const fs::path bundle = directory
+                            / pvt::detail::path_from_utf8(
+                                portable_root(document.project.name));
+    std::string error;
+    pvt::BundleSaveReport report;
+    CHECK(pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+
+    // Keep one layer on the prior layer/setup schema and the other current.
+    // Their independent admission remains valid on the real project canvas.
+    const fs::path legacy_layer_path = bundle / "0" / "0.pvt";
+    std::istringstream current_layer(read_bytes(legacy_layer_path));
+    std::ostringstream legacy_layer;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_layer, line)));
+    CHECK(line == "PVT_LAYER\t13");
+    legacy_layer << "PVT_LAYER\t12\n";
+    const auto has_suffix = [](const std::string& value,
+                               const std::string& suffix) {
+        return value.size() >= suffix.size()
+               && value.compare(value.size() - suffix.size(), suffix.size(),
+                                suffix) == 0;
+    };
+    while (std::getline(current_layer, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool current_particle_field =
+            has_suffix(key, ".particle_profile")
+            || has_suffix(key, ".particle_size_variation")
+            || has_suffix(key, ".particle_definition")
+            || has_suffix(key, ".particle_twinkle")
+            || has_suffix(key, ".particle_seed")
+            || has_suffix(key, ".particle_orientation")
+            || has_suffix(key, ".particle_rotation_degrees");
+        if (!current_particle_field) legacy_layer << line << '\n';
+    }
+    CHECK(write_bytes(legacy_layer_path, legacy_layer.str()));
+
+    const fs::path version_metadata_path = bundle / "0" / "metadata.txt";
+    std::string version_metadata = read_bytes(version_metadata_path);
+    CHECK(replace_record_value(
+        version_metadata, "layers.1.opacity", "1"));
+    CHECK(write_bytes(version_metadata_path, version_metadata));
+
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    CHECK(loaded.project.layers.size() == 2U);
+    if (loaded.project.layers.size() != 2U) return;
+    const pvt::EffectConfig& admitted =
+        loaded.project.layers.front().render.effects[particle_index];
+    const pvt::EffectConfig& recovered =
+        loaded.project.layers.back().render.effects[particle_index];
+    CHECK(admitted.enabled);
+    CHECK(admitted.particle_profile
+          == pvt::ParticleRenderProfile::LegacyGlow);
+    CHECK(!recovered.enabled);
+    CHECK(recovered.particle_profile
+          == pvt::ParticleRenderProfile::Defined);
+    CHECK(pvt::validate(loaded.project).ok);
+
+    const std::string recovery_key =
+        "effects." + std::to_string(particle_index)
+        + ".recovery_unsafe_particle_enabled";
+    const pvt::ConfigCompatibility& compatibility =
+        loaded.project.layers.back().render.source_compatibility;
+    CHECK(std::count_if(
+              compatibility.records.begin(), compatibility.records.end(),
+              [&recovery_key](const pvt::PreservedConfigRecord& record) {
+                  return record.key == recovery_key && record.value == "1"
+                         && !record.rejected;
+              })
+          == 1);
+    CHECK(std::count_if(
+              compatibility.repair_notes.begin(),
+              compatibility.repair_notes.end(),
+              [&recovery_key](const std::string& note) {
+                  return note.find(recovery_key) != std::string::npos;
+              })
+          == 1);
 }
 
 void test_render_output_codec_backward_compatibility() {
@@ -1411,6 +1810,60 @@ void test_independent_current_state_copy(const fs::path& directory) {
     upper.name = "Upper layer";
     upper.file_id = 7U;
     source.project.layers.push_back(std::move(upper));
+    pvt::LayerGroup live_group;
+    live_group.uuid = pvt::generate_uuid();
+    live_group.name = "Live copy group";
+    source.project.groups.push_back(live_group);
+    source.project.layers.back().group_uuid = live_group.uuid;
+
+    const std::string live_audio_uuid = pvt::generate_uuid();
+    const std::string live_midi_uuid = pvt::generate_uuid();
+    pvt::LiveConfig& live = source.project.canvas.live;
+    live.enabled = true;
+    live.endpoints = {
+        {live_audio_uuid, "Copy microphone",
+         pvt::LiveEndpointProtocol::Audio,
+         pvt::LiveEndpointDirection::Input, 0, 0},
+        {live_midi_uuid, "Copy MIDI output",
+         pvt::LiveEndpointProtocol::Midi,
+         pvt::LiveEndpointDirection::Output, 0, 0},
+    };
+    pvt::LiveClockInputConfig live_input;
+    live_input.enabled = true;
+    live_input.target = pvt::LiveClockTarget::Layer;
+    live_input.layer_uuid = source.project.layers.back().uuid;
+    live_input.source = pvt::LiveClockInputSource::AudioStream;
+    live_input.endpoint_uuid = live_audio_uuid;
+    live_input.follow_midi_transport = false;
+    live.clock_inputs.push_back(live_input);
+    pvt::LiveMidiClockOutputConfig live_output;
+    live_output.enabled = true;
+    live_output.source = pvt::LiveClockTarget::Layer;
+    live_output.layer_uuid = source.project.layers.back().uuid;
+    live_output.endpoint_uuid = live_midi_uuid;
+    live.midi_clock_outputs.push_back(live_output);
+    pvt::LiveControlMapping layer_mapping;
+    layer_mapping.enabled = false;
+    layer_mapping.name = "Copied particle size";
+    layer_mapping.target_path = "layer/"
+        + source.project.layers.back().uuid
+        + "/effect/42/particle_size";
+    live.mappings.push_back(layer_mapping);
+    pvt::LiveControlMapping group_mapping = layer_mapping;
+    group_mapping.name = "Copied group visibility";
+    group_mapping.target_path = "group/" + live_group.uuid + "/enabled";
+    live.mappings.push_back(group_mapping);
+    pvt::LiveSceneConfig live_scene;
+    live_scene.uuid = pvt::generate_uuid();
+    live_scene.name = "Copied scene";
+    live_scene.values = {
+        {"layer/" + source.project.layers.back().uuid + "/opacity",
+         pvt::LiveSceneValueType::Real, "0.75"},
+        {"group/" + live_group.uuid + "/enabled",
+         pvt::LiveSceneValueType::Boolean, "1"},
+    };
+    live.scenes.push_back(live_scene);
+    live.startup_scene_uuid = live_scene.uuid;
     const fs::path source_path = directory / "independent-source.zip";
     pvt::BundleSaveReport report;
     std::string error;
@@ -1451,6 +1904,44 @@ void test_independent_current_state_copy(const fs::path& directory) {
               == static_cast<std::uint64_t>(index));
         CHECK(independent.project.layers[index].name
               == renamed_snapshot.layers[index].name);
+    }
+    CHECK(independent.project.groups.size() == 1U);
+    if (independent.project.groups.size() == 1U
+        && independent.project.layers.size() == 2U) {
+        const std::string& copied_layer_uuid =
+            independent.project.layers.back().uuid;
+        const std::string& copied_group_uuid =
+            independent.project.groups.front().uuid;
+        const pvt::LiveConfig& copied_live = independent.project.canvas.live;
+        CHECK(copied_group_uuid != live_group.uuid);
+        CHECK(independent.project.layers.back().group_uuid
+              == copied_group_uuid);
+        CHECK(copied_live.clock_inputs.size() == 1U);
+        CHECK(copied_live.midi_clock_outputs.size() == 1U);
+        CHECK(copied_live.mappings.size() == 2U);
+        CHECK(copied_live.scenes.size() == 1U);
+        if (copied_live.clock_inputs.size() == 1U) {
+            CHECK(copied_live.clock_inputs.front().layer_uuid
+                  == copied_layer_uuid);
+        }
+        if (copied_live.midi_clock_outputs.size() == 1U) {
+            CHECK(copied_live.midi_clock_outputs.front().layer_uuid
+                  == copied_layer_uuid);
+        }
+        if (copied_live.mappings.size() == 2U) {
+            CHECK(copied_live.mappings[0].target_path
+                  == "layer/" + copied_layer_uuid
+                         + "/effect/42/particle_size");
+            CHECK(copied_live.mappings[1].target_path
+                  == "group/" + copied_group_uuid + "/enabled");
+        }
+        if (copied_live.scenes.size() == 1U
+            && copied_live.scenes.front().values.size() == 2U) {
+            CHECK(copied_live.scenes.front().values[0].target_path
+                  == "layer/" + copied_layer_uuid + "/opacity");
+            CHECK(copied_live.scenes.front().values[1].target_path
+                  == "group/" + copied_group_uuid + "/enabled");
+        }
     }
     CHECK(pvt::validate(independent.project).ok);
 
@@ -2669,6 +3160,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
 int main() {
     TemporaryDirectory temporary;
     test_layer_codec_backward_compatibility();
+    test_particle_workload_canvas_and_project_boundaries();
+    test_aggregate_particle_bundle_recovery(temporary.path());
     test_render_output_codec_backward_compatibility();
     test_sha_and_archive_guards(temporary.path());
     test_archive_compare_and_swap(temporary.path());

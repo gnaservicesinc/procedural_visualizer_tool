@@ -23,6 +23,7 @@
 #include <QByteArray>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QColorSpace>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -118,12 +119,35 @@ const double kMaximumRenderParameter =
 constexpr double kMinimumPositiveUiValue = 0.000001;
 constexpr int kMinimumIntegerParameter = (std::numeric_limits<int>::min)();
 constexpr int kMaximumIntegerParameter = (std::numeric_limits<int>::max)();
+constexpr int kParticleSizeSliderSteps = 1000;
+constexpr int kMicLiveClockSentinel = -1000;
+constexpr double kParticleSizeSliderMinimum = 0.5;
+constexpr double kParticleSizeSliderMaximum = 256.0;
 // QDoubleSpinBox supplies double milliseconds while ClockConfig persists int64
 // microseconds. Leave a conversion margin so rounding cannot overflow int64.
 constexpr double kMaximumClockMilliseconds =
     static_cast<double>((std::numeric_limits<std::int64_t>::max)()
                         / INT64_C(1000000))
     * 1000.0;
+
+double particle_radius_from_slider(int position) {
+    const double unit = std::clamp(
+        static_cast<double>(position)
+            / static_cast<double>(kParticleSizeSliderSteps),
+        0.0, 1.0);
+    return kParticleSizeSliderMinimum * std::pow(
+        kParticleSizeSliderMaximum / kParticleSizeSliderMinimum, unit);
+}
+
+int particle_slider_from_radius(double radius) {
+    const double clamped = std::clamp(
+        radius, kParticleSizeSliderMinimum, kParticleSizeSliderMaximum);
+    const double unit = std::log(clamped / kParticleSizeSliderMinimum)
+                        / std::log(kParticleSizeSliderMaximum
+                                   / kParticleSizeSliderMinimum);
+    return static_cast<int>(std::llround(
+        unit * static_cast<double>(kParticleSizeSliderSteps)));
+}
 
 QString custom_new_project_defaults_path() {
     const QString root = QStandardPaths::writableLocation(
@@ -1155,6 +1179,9 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
                 || effect.type == pvt::EffectType::ParticleField
                 || effect.type == pvt::EffectType::Blur) {
                 effect.radius_pixels *= pixel_scale;
+            } else if (effect.type == pvt::EffectType::EdgeDetect) {
+                effect.frequency = std::max(
+                    1.0, std::round(effect.frequency * pixel_scale));
             }
         }
     }
@@ -1170,10 +1197,72 @@ void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
     }
 }
 
-bool effective_active_clock_is_music(const pvt::RenderConfig& config) {
-    return (config.layer_clock.enabled ? config.layer_clock.clock.mode
+bool clock_route_targets(const pvt::LiveClockInputConfig& route,
+                         pvt::LiveClockTarget target,
+                         const std::string& layer_uuid) {
+    return route.target == target
+        && (target == pvt::LiveClockTarget::Project
+            || route.layer_uuid == layer_uuid);
+}
+
+const pvt::LiveClockInputConfig* effective_audio_clock_route(
+    const pvt::LiveConfig& live, pvt::LiveClockTarget target,
+    const std::string& layer_uuid) {
+    const auto route = std::find_if(
+        live.clock_inputs.begin(), live.clock_inputs.end(),
+        [target, &layer_uuid](const pvt::LiveClockInputConfig& item) {
+            return item.enabled
+                && item.source == pvt::LiveClockInputSource::AudioStream
+                && clock_route_targets(item, target, layer_uuid);
+        });
+    return route == live.clock_inputs.end() ? nullptr : &*route;
+}
+
+const pvt::LiveClockInputConfig* first_enabled_audio_clock_route(
+    const pvt::LiveConfig& live) {
+    const auto route = std::find_if(
+        live.clock_inputs.begin(), live.clock_inputs.end(),
+        [](const pvt::LiveClockInputConfig& item) {
+            return item.enabled
+                && item.source == pvt::LiveClockInputSource::AudioStream;
+        });
+    return route == live.clock_inputs.end() ? nullptr : &*route;
+}
+
+void remove_layer_live_clock_routes(pvt::LiveConfig& live,
+                                    const std::string& layer_uuid) {
+    live.clock_inputs.erase(
+        std::remove_if(
+            live.clock_inputs.begin(), live.clock_inputs.end(),
+            [&layer_uuid](const pvt::LiveClockInputConfig& route) {
+                return route.target == pvt::LiveClockTarget::Layer
+                    && route.layer_uuid == layer_uuid;
+            }),
+        live.clock_inputs.end());
+    live.midi_clock_outputs.erase(
+        std::remove_if(
+            live.midi_clock_outputs.begin(), live.midi_clock_outputs.end(),
+            [&layer_uuid](const pvt::LiveMidiClockOutputConfig& output) {
+                return output.source == pvt::LiveClockTarget::Layer
+                    && output.layer_uuid == layer_uuid;
+            }),
+        live.midi_clock_outputs.end());
+}
+
+bool effective_active_clock_is_music(const pvt::RenderConfig& config,
+                                     const std::string& active_layer_uuid) {
+    const bool live_audio = effective_audio_clock_route(
+                                config.live,
+                                pvt::LiveClockTarget::Project, {})
+                            != nullptr
+        || effective_audio_clock_route(
+               config.live, pvt::LiveClockTarget::Layer,
+               active_layer_uuid)
+               != nullptr;
+    return live_audio
+        || (config.layer_clock.enabled ? config.layer_clock.clock.mode
                                        : config.clock.mode)
-           == pvt::ClockMode::Music;
+               == pvt::ClockMode::Music;
 }
 
 QString existing_writable_directory(const QString& path, bool allow_root = false) {
@@ -1514,14 +1603,24 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
         case pvt::EffectType::ParticleField:
             effect.particle_shape = static_cast<pvt::ParticleShape>(
                 random_integer(random, 0, 4));
+            effect.particle_profile = pvt::ParticleRenderProfile::Defined;
             effect.intensity = random_real(random, 0.45, 2.2);
             effect.magnitude = random_real(random, 0.05, 0.55);
             effect.frequency = static_cast<double>(random_integer(random, 24, 256));
             effect.secondary = random_real(random, 0.05, 0.85);
             effect.angle_degrees = random_real(random, -180.0, 180.0);
-            effect.radius_pixels = random_real(random, 1.0, 8.0);
+            effect.radius_pixels = random_real(random, 4.0, 28.0);
             effect.threshold = random_real(random, 0.25, 0.9);
             effect.soft_knee = random_real(random, 0.15, 0.8);
+            effect.particle_size_variation = random_real(random, 0.0, 0.7);
+            effect.particle_definition = random_real(random, 0.45, 1.0);
+            effect.particle_twinkle = random_real(random, 0.0, 1.0);
+            effect.particle_seed = random.generate64();
+            if (effect.particle_seed == 0U) effect.particle_seed = 1U;
+            effect.particle_orientation = static_cast<pvt::ParticleOrientation>(
+                random_integer(random, 0, 2));
+            effect.particle_rotation_degrees = random_real(
+                random, -180.0, 180.0);
             break;
         case pvt::EffectType::Blur:
             effect.blur_type = static_cast<pvt::BlurType>(
@@ -1879,6 +1978,10 @@ MainWindow::MainWindow(QWidget* parent)
     workspace_stack_->setObjectName(QStringLiteral("applicationModeHost"));
     live_workspace_ = new LiveWorkspace(
         [this] { return project_; },
+        [this] { return previewProjectSnapshot(); },
+        [this] { return timeline_ == nullptr ? 0 : timeline_->value(); },
+        [this] { return frameRenderOptions(); },
+        [this] { return document_revision_; },
         [this] { return active_layer_uuid_; },
         [this](const pvt::LiveConfig& live, const QString& reason) {
             applyAuthoredLiveConfig(live, reason);
@@ -1889,7 +1992,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(live_workspace_, &LiveWorkspace::livePreviewFrame,
             this, [this](const QImage& image) {
                 if (preview_ != nullptr && live_workspace_ != nullptr
-                    && live_workspace_->isLiveActive()
+                    && live_workspace_->isRealtimeOutputActive()
                     && (workspace_stack_ == nullptr
                         || workspace_stack_->currentWidget() != live_workspace_)) {
                     preview_->setPreview(image);
@@ -1898,10 +2001,36 @@ MainWindow::MainWindow(QWidget* parent)
     connect(live_workspace_, &LiveWorkspace::runtimeStatusChanged,
             this, [this](const QString& summary) {
                 if (status_ != nullptr && live_workspace_ != nullptr
-                    && live_workspace_->isLiveActive()) {
+                    && live_workspace_->isRealtimeOutputActive()) {
                     status_->setText(summary);
                 }
             });
+    connect(live_workspace_, &LiveWorkspace::runtimeOutputSettingsChanged,
+            this, &MainWindow::refreshLivePreviewOutputControls);
+    connect(live_workspace_, &LiveWorkspace::audioInputsChanged,
+            this, &MainWindow::refreshStandardMicControls);
+    connect(live_workspace_, &LiveWorkspace::presentationActiveChanged,
+            this, [this](bool active) {
+                if (live_preview_output_action_ != nullptr) {
+                    const QSignalBlocker blocker(live_preview_output_action_);
+                    live_preview_output_action_->setChecked(active);
+                }
+                if (live_preview_output_button_ != nullptr) {
+                    live_preview_output_button_->setText(
+                        active ? tr("Stop Live Preview Output")
+                               : tr("Start Live Preview Output"));
+                }
+                if (live_preview_output_status_ != nullptr) {
+                    live_preview_output_status_->setText(
+                        active
+                            ? tr("Streaming the editor preview; performance inputs remain off.")
+                            : tr("Stopped — start this to present the editor preview without entering LIVE."));
+                }
+                updateExportAvailability();
+                if (!active) schedulePreview();
+            });
+    refreshLivePreviewOutputControls();
+    refreshStandardMicControls();
     workspace_stack_->addWidget(editor_workspace_);
     workspace_stack_->addWidget(live_workspace_);
     workspace_stack_->setCurrentWidget(editor_workspace_);
@@ -1971,16 +2100,20 @@ MainWindow::MainWindow(QWidget* parent)
                     playback_preview_advanced_ = true;
                 }
                 last_previewed_frame_ = result.frame;
-                if (live_workspace_ == nullptr
-                    || !live_workspace_->isLiveActive()) {
+                const bool realtime_output = live_workspace_ != nullptr
+                    && live_workspace_->isRealtimeOutputActive();
+                if (!realtime_output) {
                     preview_->setPreview(result.image);
+                    const int frame_count = std::max(1, effectiveFrameCount());
+                    status_->setText(tr("Preview frame %1/%2")
+                                         .arg(result.frame + 1)
+                                         .arg(frame_count));
                 }
-                const int frame_count = std::max(1, effectiveFrameCount());
-                status_->setText(tr("Preview frame %1/%2")
-                                     .arg(result.frame + 1)
-                                     .arg(frame_count));
             } else {
-                status_->setText(result.error);
+                if (live_workspace_ == nullptr
+                    || !live_workspace_->isRealtimeOutputActive()) {
+                    status_->setText(result.error);
+                }
             }
         }
         if (preview_deferred_) {
@@ -2212,6 +2345,10 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
+    if (live_workspace_ != nullptr
+        && live_workspace_->isPresentationActive()) {
+        live_workspace_->setPresentationActive(false);
+    }
     restoreLiveWorkspace(false);
     if (audio_playback_ != nullptr) audio_playback_->stop();
     if (preview_cancel_ != nullptr) {
@@ -2448,15 +2585,26 @@ void MainWindow::updateWorkflowSummaries() {
     }
 
     if (driver_project_summary_ != nullptr) {
-        driver_project_summary_->setText(
-            tr("Project: %1")
-                .arg(QString::fromUtf8(pvt::clock_mode_name(config_.clock.mode))));
+        const bool mic = standardMicRoute(false) != nullptr;
+        driver_project_summary_->setText(mic
+            ? tr("Project: Mic (Live) · offline %1")
+                  .arg(QString::fromUtf8(
+                      pvt::clock_mode_name(config_.clock.mode)))
+            : tr("Project: %1")
+                  .arg(QString::fromUtf8(
+                      pvt::clock_mode_name(config_.clock.mode))));
         driver_project_summary_->setToolTip(
             tr("The project-wide clock is always the base timeline for synchronized items."));
     }
     if (driver_layer_summary_ != nullptr) {
+        const bool mic = standardMicRoute(true) != nullptr;
         driver_layer_summary_->setText(
-            config_.layer_clock.enabled
+            mic ? tr("Layer: Mic (Live) · offline %1")
+                      .arg(config_.layer_clock.enabled
+                          ? QString::fromUtf8(pvt::clock_mode_name(
+                                config_.layer_clock.clock.mode))
+                          : tr("Off"))
+            : config_.layer_clock.enabled
                 ? (config_.layer_clock.mix_enabled
                        ? tr("Layer: %1 · %2")
                              .arg(QString::fromUtf8(pvt::clock_mode_name(
@@ -2557,6 +2705,10 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     }
     cancelMusicAnalysis();
     stopPlayback();
+    if (live_workspace_ != nullptr
+        && live_workspace_->isPresentationActive()) {
+        live_workspace_->setPresentationActive(false);
+    }
     restoreLiveWorkspace(false);
     saveUserSettings();
     QMainWindow::closeEvent(event);
@@ -2768,7 +2920,8 @@ QWidget* MainWindow::createSynchronizationPage() {
     auto* clock_help = new QLabel(
         tr("The base clock drives every synchronized wave and effect in every layer. "
            "Frame, Time, and Time Signature modes can hold or interpolate the calculated "
-           "clock between pulses; Music follows the embedded source's analyzed beat map."));
+           "clock between pulses; Music follows the embedded source's analyzed beat map. "
+           "Mic (Live) follows a desktop input only while LIVE is running and preserves this authored clock for offline rendering."));
     clock_help->setWordWrap(true);
     clock_help->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     clock_layout->addWidget(clock_help);
@@ -2780,6 +2933,26 @@ QWidget* MainWindow::createSynchronizationPage() {
                             pvt::ClockMode::Music}) {
         add_enum_item(clock_mode_, QString::fromUtf8(pvt::clock_mode_name(mode)), mode);
     }
+    clock_mode_->addItem(tr("Mic (Live)…"), kMicLiveClockSentinel);
+    clock_mode_->setItemData(
+        clock_mode_->count() - 1,
+        tr("Use a detected microphone during LIVE while keeping the authored clock as the offline and CLI fallback."),
+        Qt::ToolTipRole);
+    project_mic_device_ = new QComboBox;
+    project_mic_device_->setObjectName(QStringLiteral("projectMicDevice"));
+    project_mic_refresh_ = new QPushButton(tr("Refresh"));
+    project_mic_refresh_->setObjectName(QStringLiteral("projectMicRefresh"));
+    project_mic_setup_ = new QPushButton(tr("Live controls…"));
+    project_mic_setup_->setObjectName(QStringLiteral("projectMicSetup"));
+    auto* project_mic_row = new QWidget;
+    auto* project_mic_layout = new QHBoxLayout(project_mic_row);
+    project_mic_layout->setContentsMargins(0, 0, 0, 0);
+    project_mic_layout->addWidget(project_mic_device_, 1);
+    project_mic_layout->addWidget(project_mic_refresh_);
+    project_mic_layout->addWidget(project_mic_setup_);
+    project_mic_status_ = new QLabel;
+    project_mic_status_->setObjectName(QStringLiteral("projectMicStatus"));
+    project_mic_status_->setWordWrap(true);
     clock_interpolation_ = new QComboBox;
     for (const auto value : {pvt::ClockInterpolation::Hold,
                              pvt::ClockInterpolation::Linear,
@@ -2827,6 +3000,8 @@ QWidget* MainWindow::createSynchronizationPage() {
         tr("Data only — mute during preview playback and movie export"));
 
     clock_form_->addRow(tr("Source"), clock_mode_);
+    clock_form_->addRow(tr("Microphone"), project_mic_row);
+    clock_form_->addRow(QString{}, project_mic_status_);
     clock_form_->addRow(tr("Between pulses"), clock_interpolation_);
     clock_form_->addRow(tr("Interval policy"), clock_fit_);
     clock_form_->addRow(tr("Pulse every"), clock_frame_interval_);
@@ -2946,6 +3121,26 @@ QWidget* MainWindow::createSynchronizationPage() {
         add_enum_item(layer_clock_mode_,
                       QString::fromUtf8(pvt::clock_mode_name(mode)), mode);
     }
+    layer_clock_mode_->addItem(tr("Mic (Live)…"), kMicLiveClockSentinel);
+    layer_clock_mode_->setItemData(
+        layer_clock_mode_->count() - 1,
+        tr("Use a detected microphone for this layer during LIVE while keeping its authored clock as the offline and CLI fallback."),
+        Qt::ToolTipRole);
+    layer_mic_device_ = new QComboBox;
+    layer_mic_device_->setObjectName(QStringLiteral("layerMicDevice"));
+    layer_mic_refresh_ = new QPushButton(tr("Refresh"));
+    layer_mic_refresh_->setObjectName(QStringLiteral("layerMicRefresh"));
+    layer_mic_setup_ = new QPushButton(tr("Live controls…"));
+    layer_mic_setup_->setObjectName(QStringLiteral("layerMicSetup"));
+    auto* layer_mic_row = new QWidget;
+    auto* layer_mic_layout = new QHBoxLayout(layer_mic_row);
+    layer_mic_layout->setContentsMargins(0, 0, 0, 0);
+    layer_mic_layout->addWidget(layer_mic_device_, 1);
+    layer_mic_layout->addWidget(layer_mic_refresh_);
+    layer_mic_layout->addWidget(layer_mic_setup_);
+    layer_mic_status_ = new QLabel;
+    layer_mic_status_->setObjectName(QStringLiteral("layerMicStatus"));
+    layer_mic_status_->setWordWrap(true);
     layer_clock_interpolation_ = new QComboBox;
     for (const auto value : {pvt::ClockInterpolation::Hold,
                              pvt::ClockInterpolation::Linear,
@@ -2996,6 +3191,8 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_clock_form_->addRow(tr("Mix operation"), layer_clock_mix_mode_);
     layer_clock_form_->addRow(tr("Duration mapping"), layer_clock_scale_);
     layer_clock_form_->addRow(tr("Source"), layer_clock_mode_);
+    layer_clock_form_->addRow(tr("Microphone"), layer_mic_row);
+    layer_clock_form_->addRow(QString{}, layer_mic_status_);
     layer_clock_form_->addRow(tr("Between pulses"), layer_clock_interpolation_);
     layer_clock_form_->addRow(tr("Interval policy"), layer_clock_fit_);
     layer_clock_form_->addRow(tr("Pulse every"), layer_clock_frame_interval_);
@@ -3491,6 +3688,35 @@ QWidget* MainWindow::createEffectPage() {
         add_enum_item(effect_particle_shape_,
                       QString::fromUtf8(pvt::particle_shape_name(shape)), shape);
     }
+    effect_particle_profile_ = new QComboBox;
+    for (const auto profile : {pvt::ParticleRenderProfile::LegacyGlow,
+                               pvt::ParticleRenderProfile::Defined}) {
+        add_enum_item(
+            effect_particle_profile_,
+            QString::fromUtf8(pvt::particle_render_profile_name(profile)),
+            profile);
+    }
+    effect_particle_size_scale_ = new QSlider(Qt::Horizontal);
+    effect_particle_size_scale_->setRange(0, kParticleSizeSliderSteps);
+    effect_particle_size_scale_->setPageStep(50);
+    effect_particle_size_scale_->setAccessibleName(tr("Particle size scale"));
+    effect_particle_size_variation_ = real_editor(0.0, 1.0, 3, 0.01);
+    effect_particle_definition_ = real_editor(0.0, 1.0, 3, 0.01);
+    effect_particle_twinkle_ = real_editor(0.0, 1.0, 3, 0.01);
+    effect_particle_seed_ = new QLineEdit;
+    effect_particle_seed_->setPlaceholderText(tr("0 uses effect ID"));
+    effect_particle_reseed_ = new QPushButton(tr("Surprise me — reseed"));
+    effect_particle_orientation_ = new QComboBox;
+    for (const auto orientation : {pvt::ParticleOrientation::Fixed,
+                                   pvt::ParticleOrientation::FollowMotion,
+                                   pvt::ParticleOrientation::Random}) {
+        add_enum_item(
+            effect_particle_orientation_,
+            QString::fromUtf8(pvt::particle_orientation_name(orientation)),
+            orientation);
+    }
+    effect_particle_rotation_ = real_editor(
+        -kMaximumRenderParameter, kMaximumRenderParameter, 2, 5.0);
     effect_blur_type_ = new QComboBox;
     for (const auto type : {pvt::BlurType::Gaussian, pvt::BlurType::Box,
                             pvt::BlurType::Directional, pvt::BlurType::Radial,
@@ -3523,6 +3749,20 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Glow soft knee"), effect_knee_);
     effect_form_->addRow(tr("Local area radius"), effect_area_radius_);
     effect_form_->addRow(tr("Particle shape"), effect_particle_shape_);
+    effect_form_->addRow(tr("Particle look"), effect_particle_profile_);
+    effect_form_->addRow(tr("Particle size scale"),
+                         effect_particle_size_scale_);
+    effect_form_->addRow(tr("Size variation"),
+                         effect_particle_size_variation_);
+    effect_form_->addRow(tr("Shape definition"),
+                         effect_particle_definition_);
+    effect_form_->addRow(tr("Twinkle amount"), effect_particle_twinkle_);
+    effect_form_->addRow(tr("Pattern seed"), effect_particle_seed_);
+    effect_form_->addRow(effect_particle_reseed_);
+    effect_form_->addRow(tr("Shape / trail orientation"),
+                         effect_particle_orientation_);
+    effect_form_->addRow(tr("Shape rotation (degrees)"),
+                         effect_particle_rotation_);
     effect_form_->addRow(tr("Blur algorithm"), effect_blur_type_);
     effect_form_->addRow(tr("Blur passes"), effect_blur_passes_);
     effect_form_->addRow(tr("Samples per pass"), effect_blur_samples_);
@@ -3538,6 +3778,22 @@ QWidget* MainWindow::createEffectPage() {
         tr("Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Clock synchronization is independent unless the profile explicitly limits response to synchronized items. Missing/null project data is Default."));
     effect_type_->setToolTip(
         tr("Changes the effect algorithm while preserving identity, routing, timing, center, and local area."));
+    effect_particle_profile_->setToolTip(
+        tr("Defined silhouette keeps shapes crisp and visibly different. Legacy glow reproduces the softer pre-format-15 look."));
+    effect_particle_size_scale_->setToolTip(
+        tr("Logarithmic hands-on size control from 0.5 to 256 full-resolution output pixels. The exact radius editor accepts values beyond this slider."));
+    effect_particle_size_variation_->setToolTip(
+        tr("Deterministically varies each particle radius around the exact base radius."));
+    effect_particle_definition_->setToolTip(
+        tr("Sharpens arms, corners, points, and ring thickness in Defined silhouette mode."));
+    effect_particle_twinkle_->setToolTip(
+        tr("Zero is steady; one uses the full deterministic brightness animation."));
+    effect_particle_seed_->setToolTip(
+        tr("Unsigned 64-bit deterministic seed. Zero derives a stable pattern from the effect ID."));
+    effect_particle_reseed_->setToolTip(
+        tr("Creates a new deterministic layout without changing the other authored controls."));
+    effect_particle_orientation_->setToolTip(
+        tr("Fixed preserves the authored travel-angle alignment. Follow motion makes trails point behind the actual orbit. Random keeps motion-following trails and rotates each silhouette independently."));
     effect_space_->setToolTip(
         tr("Texture is the normal choice and works whether surface mapping is on or off. Mapped surface is an advanced after-mapping placement for the uncommon cases that need it."));
     effect_blur_type_->setToolTip(
@@ -4550,6 +4806,48 @@ QWidget* MainWindow::createOutputPage() {
     output->addRow(overwrite_);
     export_layout->addWidget(output_group);
 
+    auto* live_preview_group = new QGroupBox(tr("Live Preview Output"));
+    live_preview_group->setObjectName(QStringLiteral("livePreviewOutputGroup"));
+    auto* live_preview_layout = new QVBoxLayout(live_preview_group);
+    auto* live_preview_intro = new QLabel(tr(
+        "Present the editor preview on another window or display without starting microphone, MIDI, OSC, scenes, routed clocks, or the LIVE performance workspace."));
+    live_preview_intro->setWordWrap(true);
+    live_preview_layout->addWidget(live_preview_intro);
+    auto* live_preview_form = new QFormLayout;
+    live_preview_screen_ = new QComboBox;
+    live_preview_screen_->setObjectName(
+        QStringLiteral("livePreviewOutputDisplay"));
+    live_preview_quality_ = new QComboBox;
+    live_preview_quality_->setObjectName(
+        QStringLiteral("livePreviewOutputQuality"));
+    live_preview_quality_->addItem(tr("Auto · frame-budget managed"), 0.0);
+    live_preview_quality_->addItem(tr("Full resolution"), 1.0);
+    live_preview_quality_->addItem(tr("75%"), 0.75);
+    live_preview_quality_->addItem(tr("50%"), 0.5);
+    live_preview_quality_->addItem(tr("25%"), 0.25);
+    live_preview_fullscreen_ = new QCheckBox(tr("Full-screen output"));
+    live_preview_fullscreen_->setObjectName(
+        QStringLiteral("livePreviewOutputFullscreen"));
+    live_preview_hide_cursor_ = new QCheckBox(tr("Hide pointer over output"));
+    live_preview_hide_cursor_->setObjectName(
+        QStringLiteral("livePreviewOutputHideCursor"));
+    live_preview_form->addRow(tr("Display"), live_preview_screen_);
+    live_preview_form->addRow(tr("Render quality"), live_preview_quality_);
+    live_preview_form->addRow({}, live_preview_fullscreen_);
+    live_preview_form->addRow({}, live_preview_hide_cursor_);
+    live_preview_layout->addLayout(live_preview_form);
+    live_preview_output_status_ = new QLabel(tr(
+        "Stopped — start this to present the editor preview without entering LIVE."));
+    live_preview_output_status_->setObjectName(
+        QStringLiteral("livePreviewOutputStatus"));
+    live_preview_output_status_->setWordWrap(true);
+    live_preview_layout->addWidget(live_preview_output_status_);
+    live_preview_output_button_ = new QPushButton(tr("Start Live Preview Output"));
+    live_preview_output_button_->setObjectName(
+        QStringLiteral("livePreviewOutputButton"));
+    live_preview_layout->addWidget(live_preview_output_button_, 0, Qt::AlignLeft);
+    export_layout->addWidget(live_preview_group);
+
     auto* export_actions = new QGroupBox(tr("Start export"));
     auto* export_actions_layout = new QHBoxLayout(export_actions);
     auto* export_frames = new QPushButton(tr("Export Frames…"));
@@ -4581,6 +4879,37 @@ QWidget* MainWindow::createOutputPage() {
     connect(export_video, &QPushButton::clicked, this, [this] {
         if (video_export_action_ != nullptr) video_export_action_->trigger();
     });
+    connect(live_preview_output_button_, &QPushButton::clicked, this, [this] {
+        if (live_preview_output_action_ != nullptr) {
+            live_preview_output_action_->trigger();
+        }
+    });
+    connect(live_preview_screen_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                if (live_workspace_ != nullptr) {
+                    live_workspace_->setSelectedOutputDisplayId(
+                        live_preview_screen_->currentData().toString());
+                }
+            });
+    connect(live_preview_quality_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                if (live_workspace_ != nullptr) {
+                    live_workspace_->setOutputResolutionScale(
+                        live_preview_quality_->currentData().toDouble());
+                }
+            });
+    connect(live_preview_fullscreen_, &QCheckBox::toggled, this,
+            [this](bool checked) {
+                if (live_workspace_ != nullptr) {
+                    live_workspace_->setPresentationFullscreen(checked);
+                }
+            });
+    connect(live_preview_hide_cursor_, &QCheckBox::toggled, this,
+            [this](bool checked) {
+                if (live_workspace_ != nullptr) {
+                    live_workspace_->setPresentationHideCursor(checked);
+                }
+            });
     return project_canvas_page_;
 }
 
@@ -4882,6 +5211,7 @@ void MainWindow::makeSelectedVersionCurrent() {
     ++document_revision_;
     refreshLayerList();
     refreshAll();
+    if (live_workspace_ != nullptr) live_workspace_->resetRealtimeFrame();
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
@@ -4932,6 +5262,7 @@ void MainWindow::revertSelectedVersion() {
     ++document_revision_;
     refreshLayerList();
     refreshAll();
+    if (live_workspace_ != nullptr) live_workspace_->resetRealtimeFrame();
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
@@ -5509,11 +5840,79 @@ void MainWindow::setLiveMode(bool live) {
         return;
     }
 
+    if (export_active_ || (export_watcher_ != nullptr
+                           && export_watcher_->isRunning())
+        || project_io_active_ || music_analysis_active_) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "Finish or cancel the active export, project operation, or music analysis before opening LIVE."));
+        }
+        return;
+    }
+    if (live_workspace_->isPresentationActive()) {
+        setLivePreviewOutputActive(false);
+    }
+
     stopPlayback();
     live_workspace_->setProjectLiveConfig(project_.canvas.live);
     live_workspace_->refreshProjectSnapshot();
     if (!live_workspace_->isLiveActive()) live_workspace_->setLiveActive(true);
     showLiveWindow();
+    updateExportAvailability();
+}
+
+void MainWindow::refreshLivePreviewOutputControls() {
+    if (live_workspace_ == nullptr || live_preview_screen_ == nullptr
+        || live_preview_quality_ == nullptr
+        || live_preview_fullscreen_ == nullptr
+        || live_preview_hide_cursor_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker screen_blocker(live_preview_screen_);
+    const QSignalBlocker quality_blocker(live_preview_quality_);
+    const QSignalBlocker fullscreen_blocker(live_preview_fullscreen_);
+    const QSignalBlocker cursor_blocker(live_preview_hide_cursor_);
+    const QString selected = live_workspace_->selectedOutputDisplayId();
+    live_preview_screen_->clear();
+    for (const auto& display : live_workspace_->availableOutputDisplays()) {
+        live_preview_screen_->addItem(display.label, display.id);
+    }
+    int screen_index = live_preview_screen_->findData(selected);
+    if (screen_index < 0 && live_preview_screen_->count() > 0) screen_index = 0;
+    live_preview_screen_->setCurrentIndex(screen_index);
+    const int quality_index = live_preview_quality_->findData(
+        live_workspace_->outputResolutionScale());
+    live_preview_quality_->setCurrentIndex(quality_index < 0 ? 0 : quality_index);
+    live_preview_fullscreen_->setChecked(
+        live_workspace_->presentationFullscreen());
+    live_preview_hide_cursor_->setChecked(
+        live_workspace_->presentationHideCursor());
+}
+
+void MainWindow::setLivePreviewOutputActive(bool active) {
+    if (live_workspace_ == nullptr) return;
+    if (active && (export_active_
+                   || (export_watcher_ != nullptr
+                       && export_watcher_->isRunning())
+                   || project_io_active_ || music_analysis_active_)) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "Finish the active export, project operation, or music analysis before starting Live Preview Output."));
+        }
+        if (live_preview_output_action_ != nullptr) {
+            const QSignalBlocker blocker(live_preview_output_action_);
+            live_preview_output_action_->setChecked(false);
+        }
+        return;
+    }
+    if (active && live_workspace_->isLiveActive()) {
+        restoreLiveWorkspace(false);
+    }
+    if (active && preview_cancel_ != nullptr) {
+        preview_cancel_->store(true, std::memory_order_relaxed);
+    }
+    live_workspace_->setPresentationActive(active);
+    updateExportAvailability();
 }
 
 void MainWindow::showLiveWindow() {
@@ -5585,6 +5984,7 @@ void MainWindow::restoreLiveWorkspace(bool resume_editor_preview) {
         live_mode_action_->setChecked(false);
     }
     if (status_ != nullptr) status_->setText(tr("Edit mode — Flow Workbench ready."));
+    updateExportAvailability();
     if (resume_editor_preview) schedulePreview();
 }
 
@@ -5617,6 +6017,10 @@ void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
         live_workspace_->setProjectLiveConfig(project_.canvas.live);
         live_workspace_->refreshProjectSnapshot();
     }
+    loadGlobalEditors();
+    updateSynchronizationState();
+    updateWorkflowSummaries();
+    refreshStandardMicControls();
 }
 
 void MainWindow::createToolbar() {
@@ -5681,6 +6085,12 @@ void MainWindow::createToolbar() {
         toolbar->addAction(tr("Export Current Frame…"));
     export_action_ = toolbar->addAction(tr("Export Frames"));
     video_export_action_ = toolbar->addAction(tr("Export Video…"));
+    live_preview_output_action_ = toolbar->addAction(tr("Live Preview Output"));
+    live_preview_output_action_->setObjectName(
+        QStringLiteral("livePreviewOutputAction"));
+    live_preview_output_action_->setCheckable(true);
+    live_preview_output_action_->setToolTip(tr(
+        "Stream the editor preview to the selected display without starting performance Live inputs."));
     cancel_export_action_ = toolbar->addAction(tr("Cancel export"));
     export_settings_action_->setIcon(
         style()->standardIcon(QStyle::SP_FileDialogDetailedView));
@@ -5690,6 +6100,8 @@ void MainWindow::createToolbar() {
         style()->standardIcon(QStyle::SP_DialogApplyButton));
     video_export_action_->setIcon(
         style()->standardIcon(QStyle::SP_MediaPlay));
+    live_preview_output_action_->setIcon(
+        style()->standardIcon(QStyle::SP_DesktopIcon));
     cancel_export_action_->setIcon(
         style()->standardIcon(QStyle::SP_DialogCancelButton));
     cancel_export_action_->setEnabled(false);
@@ -5698,6 +6110,11 @@ void MainWindow::createToolbar() {
     file_menu->addAction(current_frame_export_action_);
     file_menu->addAction(export_action_);
     file_menu->addAction(video_export_action_);
+    file_menu->addAction(live_preview_output_action_);
+    connect(live_preview_output_action_, &QAction::triggered,
+            this, [this](bool checked) {
+                setLivePreviewOutputActive(checked);
+            });
 
     undo_action_ = undo_stack_->createUndoAction(this, tr("Undo"));
     redo_action_ = undo_stack_->createRedoAction(this, tr("Redo"));
@@ -6495,6 +6912,16 @@ void MainWindow::connectEditors() {
             [this] { applyEffectEditor(effect_blur_type_); });
     connect(effect_particle_shape_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_particle_shape_); });
+    connect(effect_particle_profile_, &QComboBox::currentIndexChanged, this,
+            [this] { applyEffectEditor(effect_particle_profile_); });
+    connect(effect_particle_orientation_, &QComboBox::currentIndexChanged, this,
+            [this] { applyEffectEditor(effect_particle_orientation_); });
+    connect(effect_particle_size_scale_, &QSlider::valueChanged, this,
+            [this] { applyEffectEditor(effect_particle_size_scale_); });
+    connect(effect_particle_seed_, &QLineEdit::editingFinished, this,
+            [this] { applyEffectEditor(effect_particle_seed_); });
+    connect(effect_particle_reseed_, &QPushButton::clicked, this,
+            [this] { applyEffectEditor(effect_particle_reseed_); });
     connect(effect_space_, &QComboBox::currentIndexChanged, this,
             [this] { applyEffectEditor(effect_space_); });
     connect(effect_edge_, &QComboBox::currentIndexChanged, this,
@@ -6509,7 +6936,9 @@ void MainWindow::connectEditors() {
                          effect_frequency_, effect_secondary_, effect_center_x_,
                          effect_center_y_, effect_angle_, effect_radius_, effect_threshold_,
                          effect_knee_, effect_area_radius_, effect_blur_minimum_,
-                         effect_blur_maximum_}) {
+                         effect_blur_maximum_, effect_particle_size_variation_,
+                         effect_particle_definition_, effect_particle_twinkle_,
+                         effect_particle_rotation_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applyEffectEditor(editor); });
     }
@@ -6519,6 +6948,14 @@ void MainWindow::connectEditors() {
         connect(editor, &QComboBox::currentIndexChanged, this,
                 [this, editor] { applyClockEditor(editor); });
     }
+    connect(project_mic_device_, qOverload<int>(&QComboBox::activated), this,
+            [this](int) { applyStandardMicDeviceBinding(false); });
+    connect(project_mic_refresh_, &QPushButton::clicked, this, [this] {
+        if (live_workspace_ != nullptr) live_workspace_->refreshAudioInputs();
+        refreshStandardMicControls();
+    });
+    connect(project_mic_setup_, &QPushButton::clicked, this,
+            [this] { revealStandardMicSetup(false); });
     for (auto* editor : {clock_time_interval_ms_, meter_bpm_,
                          clock_phase_offset_, music_beat_offset_ms_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
@@ -6555,6 +6992,14 @@ void MainWindow::connectEditors() {
         connect(editor, &QComboBox::currentIndexChanged, this,
                 [this, editor] { applyClockEditor(editor); });
     }
+    connect(layer_mic_device_, qOverload<int>(&QComboBox::activated), this,
+            [this](int) { applyStandardMicDeviceBinding(true); });
+    connect(layer_mic_refresh_, &QPushButton::clicked, this, [this] {
+        if (live_workspace_ != nullptr) live_workspace_->refreshAudioInputs();
+        refreshStandardMicControls();
+    });
+    connect(layer_mic_setup_, &QPushButton::clicked, this,
+            [this] { revealStandardMicSetup(true); });
     for (auto* editor : {layer_clock_time_interval_ms_, layer_meter_bpm_,
                          layer_clock_phase_offset_, layer_music_beat_offset_ms_}) {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
@@ -7415,6 +7860,7 @@ void MainWindow::removeLayer() {
         }
         document_ = std::move(staged_document);
     }
+    remove_layer_live_clock_routes(project_.canvas.live, before_active);
     project_.layers.erase(project_.layers.begin() + static_cast<std::ptrdiff_t>(index));
     if (!removed_group_uuid.empty()
         && std::none_of(project_.layers.begin(), project_.layers.end(),
@@ -8545,6 +8991,10 @@ void MainWindow::showApplicationSettings() {
         if (preview_cancel_ != nullptr) {
             preview_cancel_->store(true, std::memory_order_relaxed);
         }
+        if (live_workspace_ != nullptr
+            && live_workspace_->isRealtimeOutputActive()) {
+            live_workspace_->resetRealtimeFrame();
+        }
         schedulePreview();
     }
     if (recent_limit_changed) {
@@ -8764,9 +9214,10 @@ void MainWindow::replaceWithNewProject() {
     loadActiveConfiguration();
     clearUndoHistory(false);
     undo_stack_->setClean();
+    ++document_revision_;
     refreshLayerList();
     refreshAll();
-    ++document_revision_;
+    if (live_workspace_ != nullptr) live_workspace_->resetRealtimeFrame();
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
@@ -8899,11 +9350,16 @@ void MainWindow::updateSynchronizationState() {
                                   && (owning_group == nullptr
                                       || !owning_group->locked);
     const bool layer_editable = editable && layer_accessible;
+    const bool project_mic = standardMicRoute(false) != nullptr;
+    const bool layer_mic = standardMicRoute(true) != nullptr;
     const bool pulse_clock = mode == pvt::ClockMode::Frame
                              || mode == pvt::ClockMode::Time
                              || mode == pvt::ClockMode::Meter
                              || mode == pvt::ClockMode::Music;
     clock_mode_->setEnabled(editable);
+    project_mic_device_->setEnabled(editable);
+    project_mic_refresh_->setEnabled(editable);
+    project_mic_setup_->setEnabled(editable && project_mic);
     music_data_only_->setEnabled(editable);
     music_processing_->setEnabled(editable);
     music_frequency_stream_->setEnabled(
@@ -8921,7 +9377,8 @@ void MainWindow::updateSynchronizationState() {
         editor->setEnabled(editable);
     }
     swings_group_->setEnabled(layer_editable);
-    const bool music_audio_available = effective_active_clock_is_music(config_);
+    const bool music_audio_available = effective_active_clock_is_music(
+        config_, active_layer_uuid_);
     project_audio_response_group_->setVisible(music_audio_available);
     audio_response_group_->setVisible(music_audio_available);
     audio_response_effective_->setVisible(music_audio_available);
@@ -9028,7 +9485,13 @@ void MainWindow::updateSynchronizationState() {
         layer_clock_scale_, local_mode == pvt::ClockMode::Music);
     layer_clock_scale_->setEnabled(
         local_enabled && local_mode == pvt::ClockMode::Music);
-    layer_clock_mode_->setEnabled(local_enabled);
+    // The Mic sentinel must remain reachable even when the authored offline
+    // layer-clock toggle is off. Other deterministic controls still follow
+    // the authored toggle.
+    layer_clock_mode_->setEnabled(layer_editable);
+    layer_mic_device_->setEnabled(layer_editable);
+    layer_mic_refresh_->setEnabled(layer_editable);
+    layer_mic_setup_->setEnabled(layer_editable && layer_mic);
     const bool local_pulse = local_mode == pvt::ClockMode::Frame
                              || local_mode == pvt::ClockMode::Time
                              || local_mode == pvt::ClockMode::Meter
@@ -9242,6 +9705,11 @@ void MainWindow::updateMusicSummary() {
 }
 
 void MainWindow::updateExportAvailability() {
+    const bool realtime_output = live_workspace_ != nullptr
+        && live_workspace_->isRealtimeOutputActive();
+    const bool transaction_idle = !music_analysis_active_ && !project_io_active_;
+    const QString realtime_tooltip = tr(
+        "Stop LIVE or Live Preview Output before exporting so the realtime display keeps its frame budget.");
     bit_depth_->setEnabled(true);
     png_compression_->setEnabled(config_.output.bit_depth != 32);
     dither_enabled_->setEnabled(config_.output.bit_depth != 32);
@@ -9251,24 +9719,44 @@ void MainWindow::updateExportAvailability() {
     first_frame_->setEnabled(true);
     filename_digits_->setEnabled(true);
     if (export_action_ != nullptr && !export_active_) {
-        export_action_->setEnabled(!music_analysis_active_ && !project_io_active_);
-        export_action_->setToolTip(QString{});
+        export_action_->setEnabled(transaction_idle && !realtime_output);
+        export_action_->setToolTip(realtime_output ? realtime_tooltip : QString{});
     }
     if (current_frame_export_action_ != nullptr && !export_active_) {
-        current_frame_export_action_->setEnabled(!music_analysis_active_
-                                                  && !project_io_active_);
+        current_frame_export_action_->setEnabled(transaction_idle
+                                                  && !realtime_output);
         current_frame_export_action_->setToolTip(
-            tr("Render the timeline's current frame at the full canvas resolution using the selected PNG/EXR quality settings."));
+            realtime_output
+                ? realtime_tooltip
+                : tr("Render the timeline's current frame at the full canvas resolution using the selected PNG/EXR quality settings."));
     }
     if (video_export_action_ != nullptr && !export_active_) {
         static const pvt::video::Capabilities video =
             pvt::video::capabilities();
-        video_export_action_->setEnabled(!music_analysis_active_
-                                         && !project_io_active_
+        video_export_action_->setEnabled(transaction_idle
+                                         && !realtime_output
                                          && video.available);
         video_export_action_->setToolTip(
-            video.available ? tr("Export a native macOS QuickTime movie without FFmpeg.")
-                            : QString::fromStdString(video.status));
+            realtime_output
+                ? realtime_tooltip
+                : (video.available
+                       ? tr("Export a native macOS QuickTime movie without FFmpeg.")
+                       : QString::fromStdString(video.status)));
+    }
+    if (live_preview_output_action_ != nullptr) {
+        const bool presentation_active = live_workspace_ != nullptr
+            && live_workspace_->isPresentationActive();
+        live_preview_output_action_->setEnabled(
+            presentation_active || (!export_active_ && transaction_idle));
+    }
+    if (live_preview_output_button_ != nullptr) {
+        const bool presentation_active = live_workspace_ != nullptr
+            && live_workspace_->isPresentationActive();
+        live_preview_output_button_->setEnabled(
+            presentation_active || (!export_active_ && transaction_idle));
+    }
+    if (live_mode_action_ != nullptr) {
+        live_mode_action_->setEnabled(!export_active_ && transaction_idle);
     }
 }
 
@@ -9450,7 +9938,7 @@ void MainWindow::loadSelectedWave() {
         wave_sync_->setChecked(wave.synchronized);
         select_enum(wave_audio_response_, wave.audio_response);
         wave_audio_response_->setEnabled(
-            effective_active_clock_is_music(config_));
+            effective_active_clock_is_music(config_, active_layer_uuid_));
         wave_x_->setValue(wave.x_percent);
         wave_y_->setValue(wave.y_percent);
         wave_amplitude_->setValue(wave.amplitude);
@@ -9515,6 +10003,8 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool has_center = !is_block_scale;
     const auto blur_type = static_cast<pvt::BlurType>(
         effect_blur_type_->currentData().toInt());
+    const auto particle_profile = static_cast<pvt::ParticleRenderProfile>(
+        effect_particle_profile_->currentData().toInt());
 
     effect_form_->setRowVisible(effect_edge_, coordinate_effect || is_blur);
     effect_form_->setRowVisible(effect_intensity_, !is_blur);
@@ -9533,6 +10023,15 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_knee_, is_glow || is_particles);
     effect_form_->setRowVisible(effect_area_radius_, !is_block_scale);
     effect_form_->setRowVisible(effect_particle_shape_, is_particles);
+    effect_form_->setRowVisible(effect_particle_profile_, is_particles);
+    effect_form_->setRowVisible(effect_particle_size_scale_, is_particles);
+    effect_form_->setRowVisible(effect_particle_size_variation_, is_particles);
+    effect_form_->setRowVisible(effect_particle_definition_, is_particles);
+    effect_form_->setRowVisible(effect_particle_twinkle_, is_particles);
+    effect_form_->setRowVisible(effect_particle_seed_, is_particles);
+    effect_form_->setRowVisible(effect_particle_reseed_, is_particles);
+    effect_form_->setRowVisible(effect_particle_orientation_, is_particles);
+    effect_form_->setRowVisible(effect_particle_rotation_, is_particles);
     effect_form_->setRowVisible(effect_blur_type_, is_blur);
     effect_form_->setRowVisible(effect_blur_passes_, is_blur);
     effect_form_->setRowVisible(effect_blur_samples_, is_blur);
@@ -9551,12 +10050,17 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_center_y_->setToolTip(tr("Normalized vertical center; 0 is top and 1 is bottom."));
     effect_radius_->setToolTip(
         is_blur ? tr("Blur radius in full-resolution output pixels.")
-                : tr("Glow blur radius in full-resolution output pixels."));
+                : (is_particles
+                       ? tr("Exact base particle radius in full-resolution output pixels.")
+                       : tr("Glow blur radius in full-resolution output pixels.")));
     effect_area_radius_->setToolTip(
         tr("Fraction of the shorter canvas edge. Zero affects the whole layer; "
            "positive values create a feathered draggable circle."));
     effect_threshold_->setToolTip(tr("Linear-light brightness where glow begins."));
     effect_knee_->setToolTip(tr("Soft transition width around the glow threshold."));
+    effect_particle_definition_->setEnabled(
+        is_particles
+        && particle_profile == pvt::ParticleRenderProfile::Defined);
 
     if (is_block_scale) {
         effect_intensity_->setRange(0.0, 1.0);
@@ -9749,7 +10253,8 @@ void MainWindow::updateEffectEditorVisibility() {
         set_form_label(effect_form_, effect_frequency_, tr("Particle count"));
         set_form_label(effect_form_, effect_secondary_, tr("Trail amount"));
         set_form_label(effect_form_, effect_angle_, tr("Travel angle (degrees)"));
-        set_form_label(effect_form_, effect_radius_, tr("Particle radius (pixels)"));
+        set_form_label(effect_form_, effect_radius_,
+                       tr("Exact base radius (output pixels)"));
         set_form_label(effect_form_, effect_threshold_, tr("White-hot core"));
         set_form_label(effect_form_, effect_knee_, tr("Glow softness"));
         effect_intensity_->setToolTip(
@@ -9759,7 +10264,7 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_secondary_->setToolTip(
             tr("Extends a fading trail behind each moving spark."));
         effect_radius_->setToolTip(
-            tr("Spark radius in full-resolution output pixels."));
+            tr("Exact base radius in full-resolution output pixels. Use the size slider for playful exploration and this editor for precise renders."));
         effect_threshold_->setToolTip(
             tr("Moves the particle color from warm ember toward a white-hot core."));
         effect_knee_->setToolTip(
@@ -9781,7 +10286,12 @@ void MainWindow::loadSelectedEffect() {
              effect_phase_, effect_edge_, effect_intensity_, effect_magnitude_,
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
              effect_angle_, effect_radius_, effect_threshold_, effect_knee_,
-             effect_area_radius_, effect_particle_shape_, effect_blur_type_, effect_blur_passes_,
+             effect_area_radius_, effect_particle_shape_, effect_particle_profile_,
+             effect_particle_size_scale_, effect_particle_size_variation_,
+             effect_particle_definition_, effect_particle_twinkle_,
+             effect_particle_seed_, effect_particle_reseed_,
+             effect_particle_orientation_, effect_particle_rotation_,
+             effect_blur_type_, effect_blur_passes_,
              effect_blur_samples_, effect_blur_minimum_, effect_blur_maximum_}) {
         widget->setEnabled(enabled);
     }
@@ -9792,7 +10302,7 @@ void MainWindow::loadSelectedEffect() {
         effect_sync_->setChecked(effect.synchronized);
         select_enum(effect_audio_response_, effect.audio_response);
         effect_audio_response_->setEnabled(
-            effective_active_clock_is_music(config_));
+            effective_active_clock_is_music(config_, active_layer_uuid_));
         select_enum(effect_type_, effect.type);
         select_enum(effect_space_, effect.space);
         updateEffectEditorVisibility();
@@ -9815,6 +10325,18 @@ void MainWindow::loadSelectedEffect() {
         effect_knee_->setValue(effect.soft_knee);
         effect_area_radius_->setValue(effect.area_radius);
         select_enum(effect_particle_shape_, effect.particle_shape);
+        select_enum(effect_particle_profile_, effect.particle_profile);
+        effect_particle_size_scale_->setValue(
+            particle_slider_from_radius(effect.radius_pixels));
+        effect_particle_size_variation_->setValue(
+            effect.particle_size_variation);
+        effect_particle_definition_->setValue(effect.particle_definition);
+        effect_particle_twinkle_->setValue(effect.particle_twinkle);
+        effect_particle_seed_->setText(
+            QString::number(static_cast<qulonglong>(effect.particle_seed)));
+        select_enum(effect_particle_orientation_, effect.particle_orientation);
+        effect_particle_rotation_->setValue(
+            effect.particle_rotation_degrees);
         select_enum(effect_blur_type_, effect.blur_type);
         effect_blur_passes_->setValue(effect.blur_passes);
         effect_blur_samples_->setValue(effect.blur_samples);
@@ -9833,7 +10355,12 @@ void MainWindow::loadGlobalEditors() {
     block_size_->setValue(config_.block_size);
     frames_->setValue(config_.total_frames);
     fps_->setValue(config_.fps);
-    select_enum(clock_mode_, config_.clock.mode);
+    if (standardMicRoute(false) != nullptr) {
+        clock_mode_->setCurrentIndex(
+            std::max(0, clock_mode_->findData(kMicLiveClockSentinel)));
+    } else {
+        select_enum(clock_mode_, config_.clock.mode);
+    }
     select_enum(clock_interpolation_, config_.clock.interpolation);
     select_enum(clock_fit_, config_.clock.fit);
     clock_frame_interval_->setValue(config_.clock.frame_interval);
@@ -9869,7 +10396,13 @@ void MainWindow::loadGlobalEditors() {
     layer_clock_mix_enabled_->setChecked(config_.layer_clock.mix_enabled);
     select_enum(layer_clock_mix_mode_, config_.layer_clock.mix);
     select_enum(layer_clock_scale_, config_.layer_clock.scale);
-    select_enum(layer_clock_mode_, config_.layer_clock.clock.mode);
+    if (standardMicRoute(true) != nullptr) {
+        layer_clock_mode_->setCurrentIndex(
+            std::max(0,
+                     layer_clock_mode_->findData(kMicLiveClockSentinel)));
+    } else {
+        select_enum(layer_clock_mode_, config_.layer_clock.clock.mode);
+    }
     select_enum(layer_clock_interpolation_,
                 config_.layer_clock.clock.interpolation);
     select_enum(layer_clock_fit_, config_.layer_clock.clock.fit);
@@ -10074,6 +10607,7 @@ void MainWindow::loadGlobalEditors() {
     filename_digits_->setValue(config_.output.filename_digits);
     overwrite_->setChecked(config_.output.overwrite_existing);
     populating_ = false;
+    refreshStandardMicControls();
     updateWaveOutputState();
     updateOutputEditorValidity();
     updateSynchronizationState();
@@ -11005,7 +11539,8 @@ void MainWindow::applyWaveEditor(const QObject* changed_editor) {
     } else if (changed_editor == wave_sync_) {
         wave.synchronized = wave_sync_->isChecked();
         wave_audio_response_->setEnabled(
-            wave.synchronized && effective_active_clock_is_music(config_));
+            wave.synchronized
+            && effective_active_clock_is_music(config_, active_layer_uuid_));
     } else if (changed_editor == wave_audio_response_) {
         wave.audio_response = static_cast<pvt::AudioResponseMode>(
             wave_audio_response_->currentData().toInt());
@@ -11093,6 +11628,269 @@ void MainWindow::applySwingEditor(const QObject* changed_editor) {
     recordActiveStateChange(tr("Edit swing"), std::move(before), key);
 }
 
+const pvt::LiveClockInputConfig* MainWindow::standardMicRoute(
+    bool layerTarget) const {
+    return effective_audio_clock_route(
+        config_.live,
+        layerTarget ? pvt::LiveClockTarget::Layer
+                    : pvt::LiveClockTarget::Project,
+        layerTarget ? active_layer_uuid_ : std::string{});
+}
+
+std::optional<std::string> MainWindow::ensureStandardMicRoute(
+    bool layerTarget, QString* error) {
+    if (error != nullptr) error->clear();
+    if (layerTarget && activeLayer() == nullptr) {
+        if (error != nullptr) {
+            *error = tr("Select an editable layer before assigning its microphone clock.");
+        }
+        return std::nullopt;
+    }
+    pvt::LiveConfig next = config_.live;
+    const pvt::LiveClockTarget target = layerTarget
+        ? pvt::LiveClockTarget::Layer : pvt::LiveClockTarget::Project;
+    const std::string layer_uuid = layerTarget ? active_layer_uuid_
+                                               : std::string{};
+    const bool first_mic_route = std::none_of(
+        next.clock_inputs.begin(), next.clock_inputs.end(),
+        [](const pvt::LiveClockInputConfig& route) {
+            return route.enabled
+                && route.source == pvt::LiveClockInputSource::AudioStream;
+        });
+    const auto usable_audio_endpoint = [&next](const std::string& uuid) {
+        const auto endpoint = std::find_if(
+            next.endpoints.begin(), next.endpoints.end(),
+            [&uuid](const pvt::LiveEndpointConfig& item) {
+                return item.uuid == uuid;
+            });
+        return endpoint != next.endpoints.end()
+            && endpoint->protocol == pvt::LiveEndpointProtocol::Audio
+            && (endpoint->direction == pvt::LiveEndpointDirection::Input
+                || endpoint->direction
+                       == pvt::LiveEndpointDirection::Bidirectional);
+    };
+
+    // The desktop runtime currently owns one capture engine. Standard Mic
+    // routes therefore share one logical role instead of pretending that two
+    // independently bound microphones can be sampled simultaneously.
+    std::string role_uuid;
+    for (const auto& route : next.clock_inputs) {
+        if (route.enabled
+            && route.source == pvt::LiveClockInputSource::AudioStream
+            && usable_audio_endpoint(route.endpoint_uuid)) {
+            role_uuid = route.endpoint_uuid;
+            break;
+        }
+    }
+    if (role_uuid.empty()) {
+        for (const auto& route : next.clock_inputs) {
+            if (clock_route_targets(route, target, layer_uuid)
+                && route.source == pvt::LiveClockInputSource::AudioStream
+                && usable_audio_endpoint(route.endpoint_uuid)) {
+                role_uuid = route.endpoint_uuid;
+                break;
+            }
+        }
+    }
+    if (role_uuid.empty()) {
+        const auto endpoint = std::find_if(
+            next.endpoints.begin(), next.endpoints.end(),
+            [](const pvt::LiveEndpointConfig& item) {
+                return item.protocol == pvt::LiveEndpointProtocol::Audio
+                    && (item.direction == pvt::LiveEndpointDirection::Input
+                        || item.direction
+                               == pvt::LiveEndpointDirection::Bidirectional);
+            });
+        if (endpoint != next.endpoints.end()) role_uuid = endpoint->uuid;
+    }
+    if (role_uuid.empty()) {
+        pvt::LiveEndpointConfig endpoint;
+        endpoint.uuid = pvt::generate_uuid();
+        endpoint.name = "Desktop microphone";
+        endpoint.protocol = pvt::LiveEndpointProtocol::Audio;
+        endpoint.direction = pvt::LiveEndpointDirection::Input;
+        role_uuid = endpoint.uuid;
+        next.endpoints.push_back(std::move(endpoint));
+    }
+
+    for (auto& route : next.clock_inputs) {
+        if (route.enabled && clock_route_targets(route, target, layer_uuid)) {
+            route.enabled = false;
+        }
+    }
+    auto route = std::find_if(
+        next.clock_inputs.begin(), next.clock_inputs.end(),
+        [target, &layer_uuid](const pvt::LiveClockInputConfig& item) {
+            return item.source == pvt::LiveClockInputSource::AudioStream
+                && clock_route_targets(item, target, layer_uuid);
+        });
+    if (route == next.clock_inputs.end()) {
+        pvt::LiveClockInputConfig created;
+        created.target = target;
+        created.layer_uuid = layer_uuid;
+        created.source = pvt::LiveClockInputSource::AudioStream;
+        next.clock_inputs.push_back(std::move(created));
+        route = std::prev(next.clock_inputs.end());
+    }
+    route->enabled = true;
+    route->target = target;
+    route->layer_uuid = layer_uuid;
+    route->source = pvt::LiveClockInputSource::AudioStream;
+    route->endpoint_uuid = role_uuid;
+    route->audio_channel = 0;
+    next.enabled = true;
+
+    const pvt::ValidationResult live_validation = pvt::validate(next);
+    if (!live_validation.ok) {
+        if (error != nullptr) {
+            *error = QString::fromStdString(live_validation.message);
+        }
+        return std::nullopt;
+    }
+    config_.live = std::move(next);
+    if (first_mic_route) {
+        if (layerTarget) {
+            config_.audio_reactive_override_enabled = true;
+            config_.audio_reactive.enabled = true;
+        } else {
+            config_.audio_reactive_defaults.enabled = true;
+        }
+    }
+    return role_uuid;
+}
+
+void MainWindow::removeStandardMicRoute(bool layerTarget) {
+    const pvt::LiveClockTarget target = layerTarget
+        ? pvt::LiveClockTarget::Layer : pvt::LiveClockTarget::Project;
+    const std::string layer_uuid = layerTarget ? active_layer_uuid_
+                                               : std::string{};
+    for (auto& route : config_.live.clock_inputs) {
+        if (route.enabled
+            && route.source == pvt::LiveClockInputSource::AudioStream
+            && clock_route_targets(route, target, layer_uuid)) {
+            // Retain the disabled advanced record (stream, holdover, channel)
+            // so selecting a deterministic clock does not destroy setup work.
+            route.enabled = false;
+        }
+    }
+}
+
+void MainWindow::refreshStandardMicControls() {
+    if (live_workspace_ == nullptr || project_mic_device_ == nullptr
+        || layer_mic_device_ == nullptr) {
+        return;
+    }
+    const auto choices = live_workspace_->availableAudioInputs();
+    const auto populate = [this, &choices](
+                              bool layerTarget, QComboBox* combo,
+                              QPushButton* setup, QLabel* status) {
+        const auto* route = standardMicRoute(layerTarget);
+        const auto* shared_route = route != nullptr
+            ? route : first_enabled_audio_clock_route(config_.live);
+        QString binding;
+        QString binding_label;
+        bool available = true;
+        if (shared_route != nullptr) {
+            binding = live_workspace_->audioInputBinding(
+                shared_route->endpoint_uuid);
+            binding_label = live_workspace_->audioInputBindingLabel(
+                shared_route->endpoint_uuid);
+            available = live_workspace_->audioInputBindingAvailable(
+                shared_route->endpoint_uuid);
+        } else {
+            QSettings settings;
+            binding = settings.value(
+                QStringLiteral("live/standardMicPendingDevice")).toString();
+            binding_label = settings.value(
+                QStringLiteral("live/standardMicPendingDeviceName"),
+                tr("System default")).toString();
+        }
+        const QSignalBlocker blocker(combo);
+        combo->clear();
+        for (const auto& choice : choices) {
+            combo->addItem(choice.label, choice.id);
+        }
+        int selected = combo->findData(binding);
+        if (!binding.isEmpty() && selected < 0) {
+            combo->insertItem(1, binding_label.startsWith(tr("Unavailable"))
+                                     ? binding_label
+                                     : tr("Unavailable · %1").arg(binding_label),
+                              binding);
+            selected = 1;
+            available = false;
+        }
+        combo->setCurrentIndex(selected >= 0 ? selected : 0);
+        setup->setEnabled(route != nullptr);
+        if (route == nullptr && shared_route != nullptr) {
+            status->setText(tr(
+                "All standard Mic clocks share this input. Changing it also changes the existing Mic clock; choose Mic (Live)… above to add this scope."));
+            status->setStyleSheet(available ? QString{}
+                                            : QStringLiteral("color: #b26a00;"));
+        } else if (route == nullptr) {
+            status->setText(tr(
+                "Choose Mic (Live)… above to use this input; System default works immediately."));
+            status->setStyleSheet(QString{});
+        } else if (!available) {
+            status->setText(tr(
+                "Saved input unavailable — LIVE will not silently switch to System default."));
+            status->setStyleSheet(QStringLiteral("color: #b26a00;"));
+        } else {
+            status->setText(tr(
+                "LIVE beat clock · offline fallback remains %1.")
+                    .arg(QString::fromUtf8(pvt::clock_mode_name(
+                        layerTarget ? config_.layer_clock.clock.mode
+                                    : config_.clock.mode))));
+            status->setStyleSheet(QString{});
+        }
+    };
+    populate(false, project_mic_device_, project_mic_setup_,
+             project_mic_status_);
+    populate(true, layer_mic_device_, layer_mic_setup_, layer_mic_status_);
+}
+
+void MainWindow::applyStandardMicDeviceBinding(bool layerTarget) {
+    QComboBox* combo = layerTarget ? layer_mic_device_
+                                   : project_mic_device_;
+    if (combo == nullptr) return;
+    const QString runtime_id = combo->currentData().toString();
+    QString label = combo->currentText();
+    const QString default_suffix = tr(" · default");
+    if (label.endsWith(default_suffix)) label.chop(default_suffix.size());
+    const auto* route = standardMicRoute(layerTarget);
+    const auto* shared_route = route != nullptr
+        ? route : first_enabled_audio_clock_route(config_.live);
+    if (shared_route != nullptr) {
+        live_workspace_->setAudioInputBinding(shared_route->endpoint_uuid,
+                                              runtime_id, label);
+    } else {
+        QSettings settings;
+        settings.setValue(QStringLiteral("live/standardMicPendingDevice"),
+                          runtime_id);
+        settings.setValue(
+            QStringLiteral("live/standardMicPendingDeviceName"), label);
+    }
+    refreshStandardMicControls();
+}
+
+void MainWindow::revealStandardMicSetup(bool layerTarget) {
+    const auto* route = standardMicRoute(layerTarget);
+    if (route == nullptr || live_workspace_ == nullptr) return;
+    if (export_active_
+        || (export_watcher_ != nullptr && export_watcher_->isRunning())
+        || project_io_active_ || music_analysis_active_) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "Finish the active export, project operation, or music analysis before starting microphone LIVE controls."));
+        }
+        return;
+    }
+    const std::string role_uuid = route->endpoint_uuid;
+    openLiveMode();
+    if (live_workspace_->isLiveActive()) {
+        live_workspace_->revealAudioInputSetup(role_uuid);
+    }
+}
+
 void MainWindow::applyClockEditor(const QObject* changed_editor) {
     if (populating_) return;
 
@@ -11130,18 +11928,71 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
             local.scale = static_cast<pvt::LayerClockScale>(
                 layer_clock_scale_->currentData().toInt());
         } else if (changed_editor == layer_clock_mode_) {
-            const auto requested = static_cast<pvt::ClockMode>(
-                layer_clock_mode_->currentData().toInt());
+            const int requested_value = layer_clock_mode_->currentData().toInt();
+            if (requested_value == kMicLiveClockSentinel) {
+                if (export_active_
+                    || (export_watcher_ != nullptr
+                        && export_watcher_->isRunning())
+                    || project_io_active_ || music_analysis_active_) {
+                    const QSignalBlocker blocker(layer_clock_mode_);
+                    select_enum(layer_clock_mode_, clock.mode);
+                    status_->setText(tr(
+                        "Finish the active export or project operation before enabling a microphone clock."));
+                    return;
+                }
+                const QString device_id = layer_mic_device_->currentData()
+                                              .toString();
+                const QString device_label = layer_mic_device_->currentText();
+                QString route_error;
+                const auto role = ensureStandardMicRoute(true, &route_error);
+                if (!role.has_value()) {
+                    const QSignalBlocker blocker(layer_clock_mode_);
+                    select_enum(layer_clock_mode_, clock.mode);
+                    status_->setText(tr("Layer Mic clock was not enabled: %1")
+                                         .arg(route_error));
+                    return;
+                }
+                syncActiveRender();
+                syncProjectGlobals();
+                updateSynchronizationState();
+                preview_->setConfiguration(config_);
+                schedulePreview();
+                recordActiveStateChange(
+                    tr("Use microphone for active-layer clock"),
+                    std::move(before));
+                if (live_workspace_ != nullptr) {
+                    live_workspace_->setProjectLiveConfig(
+                        project_.canvas.live);
+                    live_workspace_->refreshProjectSnapshot();
+                    // The visible choice always wins. When another standard
+                    // Mic route already exists both controls explicitly show
+                    // the same shared role, so this is deterministic rather
+                    // than silently ignoring the new scope's selection.
+                    live_workspace_->setAudioInputBinding(
+                        *role, device_id, device_label);
+                }
+                refreshStandardMicControls();
+                revealStandardMicSetup(true);
+                return;
+            }
+            const auto requested = static_cast<pvt::ClockMode>(requested_value);
             if (requested == pvt::ClockMode::Music
                 && (clock.music.source_sha256.empty()
                     || clock.music.beat_times_seconds.empty())) {
                 {
                     const QSignalBlocker blocker(layer_clock_mode_);
-                    select_enum(layer_clock_mode_, clock.mode);
+                    if (standardMicRoute(true) != nullptr) {
+                        layer_clock_mode_->setCurrentIndex(std::max(
+                            0, layer_clock_mode_->findData(
+                                   kMicLiveClockSentinel)));
+                    } else {
+                        select_enum(layer_clock_mode_, clock.mode);
+                    }
                 }
                 chooseLayerMusicSource();
                 return;
             }
+            removeStandardMicRoute(true);
             clock.mode = requested;
         } else if (changed_editor == layer_clock_interpolation_) {
             clock.interpolation = static_cast<pvt::ClockInterpolation>(
@@ -11192,6 +12043,7 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
                 layer_music_frequency_stream_->currentData().toString().toStdString();
         }
         syncActiveRender();
+        if (changed_editor == layer_clock_mode_) syncProjectGlobals();
         updateSynchronizationState();
         preview_->setConfiguration(config_);
         schedulePreview();
@@ -11209,19 +12061,71 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
                       .arg(QString::fromStdString(active_layer_uuid_))
                       .arg(reinterpret_cast<quintptr>(changed_editor))
                 : QString{});
+        if (changed_editor == layer_clock_mode_
+            && live_workspace_ != nullptr) {
+            live_workspace_->setProjectLiveConfig(project_.canvas.live);
+            live_workspace_->refreshProjectSnapshot();
+            refreshStandardMicControls();
+        }
         return;
     }
     if (changed_editor == clock_mode_) {
-        const auto requested = static_cast<pvt::ClockMode>(
-            clock_mode_->currentData().toInt());
+        const int requested_value = clock_mode_->currentData().toInt();
+        if (requested_value == kMicLiveClockSentinel) {
+            if (export_active_
+                || (export_watcher_ != nullptr
+                    && export_watcher_->isRunning())
+                || project_io_active_ || music_analysis_active_) {
+                const QSignalBlocker blocker(clock_mode_);
+                select_enum(clock_mode_, config_.clock.mode);
+                status_->setText(tr(
+                    "Finish the active export or project operation before enabling a microphone clock."));
+                return;
+            }
+            const QString device_id = project_mic_device_->currentData()
+                                          .toString();
+            const QString device_label = project_mic_device_->currentText();
+            QString route_error;
+            const auto role = ensureStandardMicRoute(false, &route_error);
+            if (!role.has_value()) {
+                const QSignalBlocker blocker(clock_mode_);
+                select_enum(clock_mode_, config_.clock.mode);
+                status_->setText(tr("Project Mic clock was not enabled: %1")
+                                     .arg(route_error));
+                return;
+            }
+            syncActiveRender();
+            syncProjectGlobals();
+            updateSynchronizationState();
+            preview_->setConfiguration(config_);
+            schedulePreview();
+            recordActiveStateChange(
+                tr("Use microphone for project clock"), std::move(before));
+            if (live_workspace_ != nullptr) {
+                live_workspace_->setProjectLiveConfig(project_.canvas.live);
+                live_workspace_->refreshProjectSnapshot();
+                live_workspace_->setAudioInputBinding(
+                    *role, device_id, device_label);
+            }
+            refreshStandardMicControls();
+            revealStandardMicSetup(false);
+            return;
+        }
+        const auto requested = static_cast<pvt::ClockMode>(requested_value);
         if (requested == pvt::ClockMode::Music && !musicRenderReady()) {
             {
                 const QSignalBlocker blocker(clock_mode_);
-                select_enum(clock_mode_, config_.clock.mode);
+                if (standardMicRoute(false) != nullptr) {
+                    clock_mode_->setCurrentIndex(std::max(
+                        0, clock_mode_->findData(kMicLiveClockSentinel)));
+                } else {
+                    select_enum(clock_mode_, config_.clock.mode);
+                }
             }
             chooseMusicSource();
             return;
         }
+        removeStandardMicRoute(false);
         config_.clock.mode = requested;
     } else if (changed_editor == clock_interpolation_) {
         config_.clock.interpolation = static_cast<pvt::ClockInterpolation>(
@@ -11286,6 +12190,11 @@ void MainWindow::applyClockEditor(const QObject* changed_editor) {
                                   .arg(reinterpret_cast<quintptr>(changed_editor))
                             : QString{};
     recordActiveStateChange(tr("Edit synchronized clock"), std::move(before), key);
+    if (changed_editor == clock_mode_ && live_workspace_ != nullptr) {
+        live_workspace_->setProjectLiveConfig(project_.canvas.live);
+        live_workspace_->refreshProjectSnapshot();
+        refreshStandardMicControls();
+    }
 }
 
 void MainWindow::applyAudioReactiveEditor(const QObject* changed_editor) {
@@ -11398,7 +12307,8 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_sync_) {
         effect.synchronized = effect_sync_->isChecked();
         effect_audio_response_->setEnabled(
-            effect.synchronized && effective_active_clock_is_music(config_));
+            effect.synchronized
+            && effective_active_clock_is_music(config_, active_layer_uuid_));
     } else if (changed_editor == effect_audio_response_) {
         effect.audio_response = static_cast<pvt::AudioResponseMode>(
             effect_audio_response_->currentData().toInt());
@@ -11451,6 +12361,46 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_particle_shape_) {
         effect.particle_shape = static_cast<pvt::ParticleShape>(
             effect_particle_shape_->currentData().toInt());
+    } else if (changed_editor == effect_particle_profile_) {
+        effect.particle_profile = static_cast<pvt::ParticleRenderProfile>(
+            effect_particle_profile_->currentData().toInt());
+    } else if (changed_editor == effect_particle_orientation_) {
+        effect.particle_orientation = static_cast<pvt::ParticleOrientation>(
+            effect_particle_orientation_->currentData().toInt());
+    } else if (changed_editor == effect_particle_size_scale_) {
+        effect.radius_pixels = particle_radius_from_slider(
+            effect_particle_size_scale_->value());
+        const QSignalBlocker blocker(effect_radius_);
+        effect_radius_->setValue(effect.radius_pixels);
+    } else if (changed_editor == effect_particle_size_variation_) {
+        effect.particle_size_variation =
+            effect_particle_size_variation_->value();
+    } else if (changed_editor == effect_particle_definition_) {
+        effect.particle_definition = effect_particle_definition_->value();
+    } else if (changed_editor == effect_particle_twinkle_) {
+        effect.particle_twinkle = effect_particle_twinkle_->value();
+    } else if (changed_editor == effect_particle_seed_) {
+        bool ok = false;
+        const qulonglong parsed = effect_particle_seed_->text().trimmed()
+                                      .toULongLong(&ok, 0);
+        if (!ok) {
+            const QSignalBlocker blocker(effect_particle_seed_);
+            effect_particle_seed_->setText(
+                QString::number(static_cast<qulonglong>(effect.particle_seed)));
+            statusBar()->showMessage(
+                tr("Particle seed must be an unsigned 64-bit whole number."),
+                5000);
+            return;
+        }
+        effect.particle_seed = static_cast<std::uint64_t>(parsed);
+    } else if (changed_editor == effect_particle_reseed_) {
+        effect.particle_seed = QRandomGenerator::global()->generate64();
+        if (effect.particle_seed == 0U) effect.particle_seed = 1U;
+        const QSignalBlocker blocker(effect_particle_seed_);
+        effect_particle_seed_->setText(
+            QString::number(static_cast<qulonglong>(effect.particle_seed)));
+    } else if (changed_editor == effect_particle_rotation_) {
+        effect.particle_rotation_degrees = effect_particle_rotation_->value();
     } else if (changed_editor == effect_cycles_) {
         effect.cycles_per_loop = effect_cycles_->value();
     } else if (changed_editor == effect_phase_) {
@@ -11477,6 +12427,11 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.angle_degrees = effect_angle_->value();
     } else if (changed_editor == effect_radius_) {
         effect.radius_pixels = effect_radius_->value();
+        if (effect.type == pvt::EffectType::ParticleField) {
+            const QSignalBlocker blocker(effect_particle_size_scale_);
+            effect_particle_size_scale_->setValue(
+                particle_slider_from_radius(effect.radius_pixels));
+        }
     } else if (changed_editor == effect_threshold_) {
         effect.threshold = effect_threshold_->value();
     } else if (changed_editor == effect_knee_) {
@@ -12562,8 +13517,15 @@ bool MainWindow::startMusicAnalysis(const QString& source_path,
         || music_analysis_watcher_->isRunning()) {
         return false;
     }
-    if (audio_playback_ != nullptr) audio_playback_->stop();
     music_analysis_active_ = true;
+    if (live_workspace_ != nullptr
+        && live_workspace_->isPresentationActive()) {
+        // Presentation owns the realtime renderer. Stop it before beginning a
+        // transaction just as the inverse entry path refuses to start output
+        // during analysis. Performance Live remains independently authorable.
+        setLivePreviewOutputActive(false);
+    }
+    if (audio_playback_ != nullptr) audio_playback_->stop();
     music_analysis_layer_clock_ = layer_clock;
     const std::uint64_t generation = ++music_analysis_generation_;
     const std::uint64_t revision = document_revision_;
@@ -12908,11 +13870,15 @@ void MainWindow::clearLayerMusicSource() {
 
 void MainWindow::schedulePreview() {
     ++preview_generation_;
-    // While Live is active, its renderer is the authoritative preview source:
-    // it includes MIDI/audio routes, transient mappings, and the actual Live
-    // clock phase. Do not let a normal editor render overwrite that frame with
-    // an authored-timeline preview a moment later.
-    if (live_workspace_ != nullptr && live_workspace_->isLiveActive()) {
+    // Realtime output owns the preview while active. Performance Live includes
+    // transient routes and clocks; presentation output uses the exact editor
+    // snapshot and timeline frame. A second editor render would only compete
+    // for the same CPU/GPU and could overwrite a newer delivered frame.
+    if (live_workspace_ != nullptr
+        && live_workspace_->isRealtimeOutputActive()) {
+        if (live_workspace_->isPresentationActive()) {
+            live_workspace_->requestRealtimeFrame();
+        }
         preview_deferred_ = false;
         if (preview_watcher_ != nullptr && preview_watcher_->isRunning()
             && preview_cancel_ != nullptr) {
@@ -13055,6 +14021,7 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
             result.error = tr("The preview image buffer could not be allocated.");
             return result;
         }
+        result.image.setColorSpace(QColorSpace::SRgb);
         for (int y = 0; y < image.height; ++y) {
             if (cancelled()) {
                 result.image = {};
@@ -13085,6 +14052,13 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
 }
 
 bool MainWindow::startCurrentFrameExport(const QString& path) {
+    if (live_workspace_ != nullptr
+        && live_workspace_->isRealtimeOutputActive()) {
+        status_->setText(tr(
+            "Stop LIVE or Live Preview Output before exporting."));
+        updateExportAvailability();
+        return false;
+    }
     cancel_export_.store(false);
     status_->setText(tr("Rendering current frame at full resolution…"));
     export_progress_->setRange(0, 0);
@@ -13158,6 +14132,13 @@ bool MainWindow::startCurrentFrameExport(const QString& path) {
 }
 
 bool MainWindow::startExport() {
+    if (live_workspace_ != nullptr
+        && live_workspace_->isRealtimeOutputActive()) {
+        status_->setText(tr(
+            "Stop LIVE or Live Preview Output before exporting."));
+        updateExportAvailability();
+        return false;
+    }
     cancel_export_.store(false);
     status_->setText(tr("Exporting image sequence…"));
     export_progress_->setRange(0, 1000);
@@ -13236,6 +14217,13 @@ bool MainWindow::startExport() {
 
 bool MainWindow::startVideoExport() {
     if (export_watcher_ == nullptr || export_watcher_->isRunning()) return false;
+    if (live_workspace_ != nullptr
+        && live_workspace_->isRealtimeOutputActive()) {
+        status_->setText(tr(
+            "Stop LIVE or Live Preview Output before exporting."));
+        updateExportAvailability();
+        return false;
+    }
     const pvt::video::Capabilities available = pvt::video::capabilities();
     if (!available.available) {
         QMessageBox::information(this, tr("Video export unavailable"),
@@ -13589,6 +14577,7 @@ bool MainWindow::adoptLoadedProject(pvt::ProjectDocument loaded,
     ++document_revision_;
     refreshLayerList();
     refreshAll();
+    if (live_workspace_ != nullptr) live_workspace_->resetRealtimeFrame();
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
@@ -13599,6 +14588,10 @@ bool MainWindow::adoptLoadedProject(pvt::ProjectDocument loaded,
 
 void MainWindow::setProjectIoActive(bool active, const QString& message) {
     project_io_active_ = active;
+    if (active && live_workspace_ != nullptr
+        && live_workspace_->isPresentationActive()) {
+        setLivePreviewOutputActive(false);
+    }
     if (project_io_progress_ != nullptr) {
         project_io_progress_->setVisible(active);
     }
@@ -13689,6 +14682,34 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const auto* live_audio_sensitivity = live_workspace_ != nullptr
         ? live_workspace_->findChild<QDoubleSpinBox*>(
               QStringLiteral("liveAudioSensitivityValue")) : nullptr;
+    auto* live_stage_output = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("liveStageOutputButton")) : nullptr;
+    auto* presentation_display = findChild<QComboBox*>(
+        QStringLiteral("livePreviewOutputDisplay"));
+    auto* presentation_quality = findChild<QComboBox*>(
+        QStringLiteral("livePreviewOutputQuality"));
+    auto* presentation_fullscreen = findChild<QCheckBox*>(
+        QStringLiteral("livePreviewOutputFullscreen"));
+    auto* presentation_cursor = findChild<QCheckBox*>(
+        QStringLiteral("livePreviewOutputHideCursor"));
+    auto* presentation_button = findChild<QPushButton*>(
+        QStringLiteral("livePreviewOutputButton"));
+    auto* presentation_status = findChild<QLabel*>(
+        QStringLiteral("livePreviewOutputStatus"));
+    const auto output_displays = live_workspace_ != nullptr
+        ? live_workspace_->availableOutputDisplays()
+        : QVector<LiveWorkspace::OutputDisplayChoice>{};
+    bool output_display_identities_valid = !output_displays.isEmpty();
+    for (qsizetype index = 0; index < output_displays.size(); ++index) {
+        output_display_identities_valid = output_display_identities_valid
+            && !output_displays[index].id.isEmpty()
+            && !output_displays[index].label.isEmpty();
+        for (qsizetype other = 0; other < index; ++other) {
+            output_display_identities_valid = output_display_identities_valid
+                && output_displays[index].id != output_displays[other].id;
+        }
+    }
     if (settings_action_ == nullptr || settings_menu == nullptr
         || edit_menu == nullptr || view_menu == nullptr || mode_menu == nullptr
         || project_toolbar == nullptr
@@ -13702,6 +14723,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !mode_menu->actions().contains(live_mode_action_)
         || !project_toolbar->actions().contains(live_mode_action_)
         || live_mode_action_->isCheckable()
+        || live_preview_output_action_ == nullptr
+        || !live_preview_output_action_->isCheckable()
+        || !project_toolbar->actions().contains(live_preview_output_action_)
+        || presentation_display == nullptr
+        || presentation_display->count() < 1
+        || !output_display_identities_valid
+        || presentation_quality == nullptr
+        || presentation_quality->count() != 5
+        || presentation_fullscreen == nullptr
+        || presentation_cursor == nullptr
+        || presentation_button == nullptr
+        || presentation_status == nullptr
+        || presentation_status->text().isEmpty()
         || workspace_stack_ == nullptr || workspace_stack_->count() != 2
         || editor_workspace_ == nullptr || live_workspace_ == nullptr
         || workspace_stack_->indexOf(editor_workspace_) < 0
@@ -13725,6 +14759,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_audio_sensitivity->maximum() <= 400.0
         || live_freeze == nullptr || !live_freeze->isCheckable()
         || live_blackout == nullptr || !live_blackout->isCheckable()
+        || live_stage_output == nullptr || !live_stage_output->isCheckable()
         || export_action_ == nullptr || current_frame_export_action_ == nullptr
         || video_export_action_ == nullptr
         || cancel_export_action_ == nullptr || export_progress_ == nullptr
@@ -13735,6 +14770,154 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || project_toolbar->actions().contains(randomize_mix_action_)) {
         if (error != nullptr) {
             *error = tr("The toolbar, Edit/LIVE mode host, or guarded settings actions are incomplete or exposed in the wrong place.");
+        }
+        return false;
+    }
+
+    const auto stage_output_window = []() -> QWidget* {
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            if (widget != nullptr
+                && widget->objectName() == QStringLiteral("stageOutputWindow")) {
+                return widget;
+            }
+        }
+        return nullptr;
+    };
+
+    // Presentation output is intentionally independent from performance Live.
+    // Keep requesting while the first frame renders: an implementation that
+    // cancels on every tick will never deliver, while the controller's
+    // one-in-flight/one-latest policy completes and then coalesces the rest.
+    {
+        QSettings output_settings;
+        const QString quality_key = QStringLiteral("live/resolutionScale");
+        const QString fullscreen_key = QStringLiteral("previewOutput/fullscreen");
+        const QString cursor_key = QStringLiteral("previewOutput/hideCursor");
+        const bool had_quality = output_settings.contains(quality_key);
+        const bool had_fullscreen = output_settings.contains(fullscreen_key);
+        const bool had_cursor = output_settings.contains(cursor_key);
+        const QVariant saved_quality = output_settings.value(quality_key);
+        const QVariant saved_fullscreen = output_settings.value(fullscreen_key);
+        const QVariant saved_cursor = output_settings.value(cursor_key);
+        const pvt::RenderBackend saved_render_backend = render_backend_;
+        ScopeExit restore_output_settings([
+            this, quality_key, fullscreen_key, cursor_key, had_quality,
+            had_fullscreen, had_cursor, saved_quality, saved_fullscreen,
+            saved_cursor, saved_render_backend] {
+            render_backend_ = saved_render_backend;
+            live_workspace_->setOutputResolutionScale(
+                had_quality ? saved_quality.toDouble() : 0.0);
+            live_workspace_->setPresentationFullscreen(
+                had_fullscreen ? saved_fullscreen.toBool() : true);
+            live_workspace_->setPresentationHideCursor(
+                had_cursor ? saved_cursor.toBool() : true);
+            QSettings settings;
+            if (!had_quality) settings.remove(quality_key);
+            if (!had_fullscreen) settings.remove(fullscreen_key);
+            if (!had_cursor) settings.remove(cursor_key);
+            refreshLivePreviewOutputControls();
+        });
+
+        // Keep this lifecycle/coalescing check independent of whether a user
+        // persisted strict GPU on a build that intentionally lacks Metal.
+        render_backend_ = pvt::RenderBackend::Cpu;
+        live_workspace_->setOutputResolutionScale(0.25);
+        live_workspace_->setPresentationFullscreen(false);
+        live_workspace_->setPresentationHideCursor(false);
+        refreshLivePreviewOutputControls();
+        if (presentation_quality->currentData().toDouble() != 0.25
+            || presentation_fullscreen->isChecked()
+            || presentation_cursor->isChecked()
+            || QSettings().value(quality_key).toDouble() != 0.25) {
+            if (error != nullptr) {
+                *error = tr("Live Preview Output settings did not persist or synchronize with LIVE quality controls.");
+            }
+            return false;
+        }
+
+        int delivered_frames = 0;
+        QEventLoop delivery_loop;
+        const QMetaObject::Connection delivery_connection = connect(
+            live_workspace_, &LiveWorkspace::livePreviewFrame, &delivery_loop,
+            [&delivered_frames, &delivery_loop](const QImage&) {
+                ++delivered_frames;
+                delivery_loop.quit();
+            });
+        live_preview_output_action_->trigger();
+        QTimer pressure;
+        pressure.setInterval(1);
+        connect(&pressure, &QTimer::timeout, live_workspace_,
+                [this] { live_workspace_->requestRealtimeFrame(); });
+        pressure.start();
+        QTimer::singleShot(5000, &delivery_loop, &QEventLoop::quit);
+        delivery_loop.exec();
+        pressure.stop();
+        disconnect(delivery_connection);
+        QApplication::processEvents();
+        QWidget* const presentation_stage = stage_output_window();
+        const bool observed_presentation =
+            live_workspace_->isPresentationActive();
+        const bool observed_performance = live_workspace_->isLiveActive();
+        const bool observed_companion = live_popout_window_ != nullptr;
+        const bool observed_stage = presentation_stage != nullptr;
+        const bool observed_visible = presentation_stage != nullptr
+            && presentation_stage->isVisible();
+        const bool observed_checked = live_preview_output_action_->isChecked();
+        if (delivered_frames == 0 || !observed_presentation
+            || observed_performance || observed_companion || !observed_stage
+            || !observed_visible || !observed_checked) {
+            live_workspace_->setPresentationActive(false);
+            if (error != nullptr) {
+                *error = tr(
+                    "Live Preview Output did not coalesce repeated requests into a visible presentation-only frame (frames=%1, presentation=%2, performance=%3, companion=%4, stage=%5, visible=%6, checked=%7).")
+                    .arg(delivered_frames)
+                    .arg(observed_presentation)
+                    .arg(observed_performance)
+                    .arg(observed_companion)
+                    .arg(observed_stage)
+                    .arg(observed_visible)
+                    .arg(observed_checked);
+            }
+            return false;
+        }
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(presentation_stage, &escape);
+        QApplication::processEvents();
+        if (live_workspace_->isPresentationActive()
+            || live_workspace_->isLiveActive()
+            || presentation_stage->isVisible()
+            || live_preview_output_action_->isChecked()
+            || live_popout_window_ != nullptr) {
+            live_workspace_->setPresentationActive(false);
+            if (error != nullptr) {
+                *error = tr("Escape did not fully stop presentation-only output.");
+            }
+            return false;
+        }
+    }
+
+    // Realtime presentation and project transactions have symmetric
+    // admission. Beginning a load/save must drain presentation first, and a
+    // direct LIVE request cannot use that transition window to start the
+    // performance runtime while the transaction is active.
+    live_workspace_->setPresentationActive(true);
+    QApplication::processEvents();
+    setProjectIoActive(true, QString{});
+    QApplication::processEvents();
+    setLiveMode(true);
+    QApplication::processEvents();
+    const bool transaction_output_guarded =
+        !live_workspace_->isPresentationActive()
+        && !live_workspace_->isLiveActive()
+        && live_mode_action_ != nullptr
+        && !live_mode_action_->isEnabled();
+    setProjectIoActive(false);
+    if (!transaction_output_guarded) {
+        live_workspace_->setPresentationActive(false);
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr(
+                "A project transaction did not stop presentation output and block the reverse transition into performance LIVE.");
         }
         return false;
     }
@@ -13759,6 +14942,32 @@ bool MainWindow::runSmokeChecks(QString* error) {
         restoreLiveWorkspace(false);
         if (error != nullptr) {
             *error = tr("Opening LIVE did not create a populated, visible companion window while preserving the editor.");
+        }
+        return false;
+    }
+
+    // Dismissing only the stage surface must not tear down performance Live.
+    live_stage_output->click();
+    QApplication::processEvents();
+    QWidget* const performance_stage = stage_output_window();
+    if (performance_stage == nullptr || !performance_stage->isVisible()) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr("Performance Live could not open its stage output.");
+        }
+        return false;
+    }
+    QKeyEvent performance_escape(
+        QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(performance_stage, &performance_escape);
+    QApplication::processEvents();
+    if (!live_workspace_->isLiveActive() || performance_stage->isVisible()
+        || live_stage_output->isChecked()
+        || live_popout_window_ != automatic_live_window
+        || !automatic_live_window->isVisible()) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr("Escape from the performance stage incorrectly stopped LIVE.");
         }
         return false;
     }
@@ -14610,6 +15819,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || effect_blur_type_ == nullptr || effect_blur_type_->count() != 5
         || effect_particle_shape_ == nullptr
         || effect_particle_shape_->count() != 5
+        || effect_particle_profile_ == nullptr
+        || effect_particle_profile_->count() != 2
+        || effect_particle_orientation_ == nullptr
+        || effect_particle_orientation_->count() != 3
+        || effect_particle_size_scale_ == nullptr
+        || effect_particle_size_variation_ == nullptr
+        || effect_particle_definition_ == nullptr
+        || effect_particle_twinkle_ == nullptr
+        || effect_particle_seed_ == nullptr
+        || effect_particle_reseed_ == nullptr
+        || effect_particle_rotation_ == nullptr
         || effect_blur_passes_ == nullptr || effect_blur_samples_ == nullptr
         || effect_blur_minimum_ == nullptr || effect_blur_maximum_ == nullptr
         || starting_color_mode_ == nullptr
@@ -14851,6 +16071,185 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const pvt::ProjectConfig synchronization_project = project_;
     const pvt::RenderConfig synchronization_config = config_;
     const std::string synchronization_layer = active_layer_uuid_;
+
+    // Exercise the GUI-only Mic sentinel through the same signal path a user
+    // takes, but detach the companion temporarily so this remains a
+    // hardware-free smoke test. The authored enum must stay deterministic,
+    // the export gate must refuse admission, and the first accepted selection
+    // must be one undo transaction.
+    bool mic_sentinel_valid = true;
+    QString mic_sentinel_detail;
+    LiveWorkspace* const smoke_live_workspace = live_workspace_;
+    const bool smoke_export_active = export_active_;
+    live_workspace_ = nullptr;
+    for (auto& route : config_.live.clock_inputs) {
+        if (route.source == pvt::LiveClockInputSource::AudioStream) {
+            route.enabled = false;
+        }
+    }
+    config_.clock.mode = pvt::ClockMode::Frame;
+    syncActiveRender();
+    syncProjectGlobals();
+    loadGlobalEditors();
+    const int mic_sentinel_index = clock_mode_->findData(
+        kMicLiveClockSentinel);
+    const int mic_undo_before = undo_stack_->count();
+    const int mic_undo_index_before = undo_stack_->index();
+    if (mic_sentinel_index < 0) {
+        mic_sentinel_valid = false;
+        mic_sentinel_detail = tr("the project Mic sentinel is missing");
+    } else {
+        export_active_ = true;
+        clock_mode_->setCurrentIndex(mic_sentinel_index);
+        export_active_ = smoke_export_active;
+        mic_sentinel_valid = standardMicRoute(false) == nullptr
+            && config_.clock.mode == pvt::ClockMode::Frame
+            && clock_mode_->currentData().toInt()
+                   == static_cast<int>(pvt::ClockMode::Frame)
+            && undo_stack_->count() == mic_undo_before
+            && undo_stack_->index() == mic_undo_index_before;
+        if (!mic_sentinel_valid) {
+            mic_sentinel_detail = tr(
+                "the export admission guard changed a clock or undo state");
+        }
+    }
+    if (mic_sentinel_valid) {
+        clock_mode_->setCurrentIndex(mic_sentinel_index);
+        const auto* project_route = standardMicRoute(false);
+        mic_sentinel_valid = project_route != nullptr
+            && config_.clock.mode == pvt::ClockMode::Frame
+            && config_.live.enabled
+            && config_.audio_reactive_defaults.enabled
+            && clock_mode_->currentData().toInt() == kMicLiveClockSentinel
+            && undo_stack_->count() == mic_undo_before + 1
+            && undo_stack_->index() == mic_undo_index_before + 1;
+        if (!mic_sentinel_valid) {
+            mic_sentinel_detail = tr(
+                "first Mic selection did not preserve the authored clock or create exactly one undo entry");
+        } else {
+            const std::string project_role = project_route->endpoint_uuid;
+            const bool layer_enabled_before = config_.layer_clock.enabled;
+            const pvt::ClockMode layer_mode_before =
+                config_.layer_clock.clock.mode;
+            QString route_error;
+            const auto layer_role = ensureStandardMicRoute(
+                true, &route_error);
+            syncActiveRender();
+            syncProjectGlobals();
+            mic_sentinel_valid = layer_role.has_value()
+                && *layer_role == project_role
+                && standardMicRoute(true) != nullptr
+                && config_.layer_clock.enabled == layer_enabled_before
+                && config_.layer_clock.clock.mode == layer_mode_before
+                && pvt::validate(project_).ok;
+            if (!mic_sentinel_valid) {
+                mic_sentinel_detail = route_error.isEmpty()
+                    ? tr("project/layer Mic routes did not share one role or altered the offline layer clock")
+                    : route_error;
+            } else {
+                const int deterministic_index = clock_mode_->findData(
+                    static_cast<int>(pvt::ClockMode::Default));
+                clock_mode_->setCurrentIndex(deterministic_index);
+                mic_sentinel_valid = standardMicRoute(false) == nullptr
+                    && standardMicRoute(true) != nullptr
+                    && config_.clock.mode == pvt::ClockMode::Default
+                    && pvt::validate(project_).ok;
+                if (!mic_sentinel_valid) {
+                    mic_sentinel_detail = tr(
+                        "a deterministic project clock removed the wrong Live route or produced an invalid project");
+                }
+            }
+        }
+    }
+    export_active_ = smoke_export_active;
+    live_workspace_ = smoke_live_workspace;
+
+    // The layer-deletion invariant is pure and hardware free: removing a
+    // layer must remove every clock input and MIDI output that names it while
+    // preserving project-wide routes. Validate a complete project before and
+    // after the synthetic deletion when the layer bound permits it.
+    bool layer_route_cleanup_valid = true;
+    if (synchronization_project.layers.size() < pvt::kMaximumLayers) {
+        pvt::ProjectConfig deletion = synchronization_project;
+        pvt::LayerConfig disposable = deletion.layers.front();
+        disposable.uuid = pvt::generate_uuid();
+        disposable.file_id = pvt::allocate_layer_file_id(deletion);
+        disposable.group_uuid.clear();
+        disposable.name = "Live route cleanup smoke layer";
+        const std::string deleted_uuid = disposable.uuid;
+        deletion.layers.push_back(std::move(disposable));
+        deletion.canvas.live = {};
+        deletion.canvas.live.enabled = true;
+
+        pvt::LiveEndpointConfig audio_endpoint;
+        audio_endpoint.uuid = pvt::generate_uuid();
+        audio_endpoint.name = "Smoke audio input";
+        audio_endpoint.protocol = pvt::LiveEndpointProtocol::Audio;
+        audio_endpoint.direction = pvt::LiveEndpointDirection::Input;
+        pvt::LiveEndpointConfig midi_endpoint;
+        midi_endpoint.uuid = pvt::generate_uuid();
+        midi_endpoint.name = "Smoke layer MIDI output";
+        midi_endpoint.protocol = pvt::LiveEndpointProtocol::Midi;
+        midi_endpoint.direction = pvt::LiveEndpointDirection::Output;
+        pvt::LiveEndpointConfig project_midi_endpoint = midi_endpoint;
+        project_midi_endpoint.uuid = pvt::generate_uuid();
+        project_midi_endpoint.name = "Smoke project MIDI output";
+        deletion.canvas.live.endpoints = {
+            audio_endpoint, midi_endpoint, project_midi_endpoint};
+
+        pvt::LiveClockInputConfig layer_input;
+        layer_input.enabled = true;
+        layer_input.target = pvt::LiveClockTarget::Layer;
+        layer_input.layer_uuid = deleted_uuid;
+        layer_input.source = pvt::LiveClockInputSource::AudioStream;
+        layer_input.endpoint_uuid = audio_endpoint.uuid;
+        pvt::LiveClockInputConfig project_input = layer_input;
+        project_input.target = pvt::LiveClockTarget::Project;
+        project_input.layer_uuid.clear();
+        pvt::LiveMidiClockOutputConfig layer_output;
+        layer_output.enabled = true;
+        layer_output.source = pvt::LiveClockTarget::Layer;
+        layer_output.layer_uuid = deleted_uuid;
+        layer_output.endpoint_uuid = midi_endpoint.uuid;
+        pvt::LiveMidiClockOutputConfig project_output = layer_output;
+        project_output.source = pvt::LiveClockTarget::Project;
+        project_output.layer_uuid.clear();
+        project_output.endpoint_uuid = project_midi_endpoint.uuid;
+        deletion.canvas.live.clock_inputs = {layer_input, project_input};
+        deletion.canvas.live.midi_clock_outputs = {
+            layer_output, project_output};
+
+        const bool valid_before_cleanup = pvt::validate(deletion).ok;
+        remove_layer_live_clock_routes(deletion.canvas.live, deleted_uuid);
+        deletion.layers.pop_back();
+        const bool kept_project_input =
+            deletion.canvas.live.clock_inputs.size() == 1U
+            && deletion.canvas.live.clock_inputs.front().target
+                   == pvt::LiveClockTarget::Project;
+        const bool kept_project_output =
+            deletion.canvas.live.midi_clock_outputs.size() == 1U
+            && deletion.canvas.live.midi_clock_outputs.front().source
+                   == pvt::LiveClockTarget::Project;
+        layer_route_cleanup_valid = valid_before_cleanup
+            && kept_project_input && kept_project_output
+            && pvt::validate(deletion).ok;
+    }
+
+    project_ = synchronization_project;
+    config_ = synchronization_config;
+    active_layer_uuid_ = synchronization_layer;
+    loadActiveConfiguration();
+    refreshLayerList();
+    refreshAll();
+    if (!mic_sentinel_valid || !layer_route_cleanup_valid) {
+        if (error != nullptr) {
+            *error = !mic_sentinel_valid
+                ? tr("Mic clock smoke failed: %1").arg(mic_sentinel_detail)
+                : tr("Deleting a layer did not clean its Live clock routes without disturbing project routes.");
+        }
+        return false;
+    }
+
     const auto set_clock_mode_for_smoke = [this](pvt::ClockMode mode) {
         config_.clock.mode = mode;
         const QSignalBlocker blocker(clock_mode_);
@@ -17050,6 +18449,7 @@ bool MainWindow::saveIndependentRenamedCopy(
     updateCompatibilityWarning();
     refreshLayerList();
     refreshAll();
+    if (live_workspace_ != nullptr) live_workspace_->resetRealtimeFrame();
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();

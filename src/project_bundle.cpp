@@ -3,6 +3,7 @@
 #include "audio_analysis.h"
 #include "bundle_archive.h"
 #include "config_codec.h"
+#include "frame_renderer_internal.h"
 #include "path_utf8.h"
 
 #include <algorithm>
@@ -1919,6 +1920,97 @@ struct ProjectComponentDigests {
     std::vector<std::string> layers;
 };
 
+const LayerGroup* snapshot_layer_group(const ProjectConfig& project,
+                                       std::string_view uuid) {
+    if (uuid.empty()) return nullptr;
+    const auto found = std::find_if(
+        project.groups.begin(), project.groups.end(),
+        [uuid](const LayerGroup& group) { return group.uuid == uuid; });
+    return found == project.groups.end() ? nullptr : &*found;
+}
+
+bool snapshot_layer_effectively_enabled(const ProjectConfig& project,
+                                        const LayerConfig& layer) {
+    if (!layer.enabled) return false;
+    const LayerGroup* group = snapshot_layer_group(project, layer.group_uuid);
+    return group == nullptr || group->enabled;
+}
+
+void remember_snapshot_particle_recovery(ConfigCompatibility& compatibility,
+                                         std::string key,
+                                         std::string note) {
+    const auto record = std::find_if(
+        compatibility.records.begin(), compatibility.records.end(),
+        [&key](const PreservedConfigRecord& value) {
+            return value.key == key;
+        });
+    if (record == compatibility.records.end()) {
+        compatibility.records.push_back({std::move(key), "1", false});
+    } else {
+        record->value = "1";
+        record->rejected = false;
+    }
+    if (std::find(compatibility.repair_notes.begin(),
+                  compatibility.repair_notes.end(), note)
+        == compatibility.repair_notes.end()) {
+        compatibility.repair_notes.push_back(std::move(note));
+    }
+}
+
+// Portable layer files cannot enforce a canvas-dependent particle-work bound.
+// Recover an older/current snapshot only after its real canvas and complete
+// contributing layer stack have been assembled. Authored in-memory projects
+// still take the ordinary strict validation path when saved or rendered.
+void recover_snapshot_particle_workload(ProjectConfig& project) {
+    std::size_t budget = 0U;
+    if (!detail::particle_stamp_budget_for_canvas(
+            project.canvas.width, project.canvas.height, budget)) {
+        return;
+    }
+    std::size_t admitted_work = 0U;
+    for (std::size_t layer_index = 0U;
+         layer_index < project.layers.size(); ++layer_index) {
+        LayerConfig& layer = project.layers[layer_index];
+        if (!snapshot_layer_effectively_enabled(project, layer)
+            || layer.opacity <= 0.0) {
+            continue;
+        }
+        for (std::size_t effect_index = 0U;
+             effect_index < layer.render.effects.size(); ++effect_index) {
+            EffectConfig& effect = layer.render.effects[effect_index];
+            if (!effect.enabled || effect.type != EffectType::ParticleField
+                || effect.intensity <= 0.0 || effect.frequency < 1.0
+                || effect.radius_pixels <= 0.0) {
+                continue;
+            }
+            std::size_t effect_work = 0U;
+            const bool admitted = detail::particle_effect_stamp_workload(
+                                      project.canvas.width,
+                                      project.canvas.height,
+                                      effect, effect_work)
+                                  && effect_work <= budget - admitted_work;
+            if (admitted) {
+                admitted_work += effect_work;
+                continue;
+            }
+
+            const std::string enabled_key =
+                "effects." + std::to_string(effect_index) + ".enabled";
+            const std::string recovery_key =
+                "effects." + std::to_string(effect_index)
+                + ".recovery_unsafe_particle_enabled";
+            effect.enabled = false;
+            remember_snapshot_particle_recovery(
+                layer.render.source_compatibility, recovery_key,
+                "Disabled unsafe aggregate particle workload at field '"
+                    + enabled_key
+                    + "' while preserving its authored enabled value under non-applying recovery field '"
+                    + recovery_key
+                    + "'; reduce particle count, radius, size variation, trail amount, or contributing particle layers before re-enabling it deliberately.");
+        }
+    }
+}
+
 bool load_snapshot(const detail::BundleFileSet& files,
                    const RootMetadata& root,
                    std::uint64_t version,
@@ -2598,6 +2690,7 @@ bool load_snapshot(const detail::BundleFileSet& files,
                                    + entry.first + "'.");
         }
     }
+    recover_snapshot_particle_workload(candidate);
     const ValidationResult validation = validate(candidate);
     if (!validation.ok) {
         return fail(error, "Version project failed validation: " + validation.message);
@@ -3801,9 +3894,14 @@ bool make_independent_project_copy(const ProjectConfig& project,
             group.uuid = fresh_uuid();
             group_remap.emplace(old_uuid, group.uuid);
         }
+        std::unordered_map<std::string, std::string> layer_remap;
+        layer_remap.reserve(candidate.project.layers.size());
         for (std::size_t index = 0U;
              index < candidate.project.layers.size(); ++index) {
+            const std::string old_uuid = candidate.project.layers[index].uuid;
             candidate.project.layers[index].uuid = fresh_uuid();
+            layer_remap.emplace(
+                old_uuid, candidate.project.layers[index].uuid);
             if (!candidate.project.layers[index].group_uuid.empty()) {
                 const auto remapped = group_remap.find(
                     candidate.project.layers[index].group_uuid);
@@ -3818,6 +3916,61 @@ bool make_independent_project_copy(const ProjectConfig& project,
             // compact, deterministic file layout.
             candidate.project.layers[index].file_id =
                 static_cast<std::uint64_t>(index);
+        }
+
+        // Live routes and setting paths are project-local identities too.
+        // Independent copies regenerate their layer/group UUIDs, so every
+        // portable reference must follow that identity change. Include
+        // disabled routes and unresolved mapping/scene paths: users may enable
+        // or repair those records later, and a copy must not silently point
+        // back at identities that exist only in the source project.
+        LiveConfig& live = candidate.project.canvas.live;
+        for (LiveClockInputConfig& input : live.clock_inputs) {
+            if (input.target != LiveClockTarget::Layer) continue;
+            const auto remapped = layer_remap.find(input.layer_uuid);
+            if (remapped != layer_remap.end()) {
+                input.layer_uuid = remapped->second;
+            }
+        }
+        for (LiveMidiClockOutputConfig& output : live.midi_clock_outputs) {
+            if (output.source != LiveClockTarget::Layer) continue;
+            const auto remapped = layer_remap.find(output.layer_uuid);
+            if (remapped != layer_remap.end()) {
+                output.layer_uuid = remapped->second;
+            }
+        }
+        const auto remap_target_path = [&layer_remap, &group_remap](
+                                           std::string& path) {
+            const auto replace_scoped_uuid = [&path](
+                std::string_view scope,
+                const auto& replacements) {
+                for (const auto& replacement : replacements) {
+                    const std::string prefix = std::string(scope) + '/'
+                        + replacement.first + '/';
+                    if (path.rfind(prefix, 0U) != 0U) continue;
+                    path.replace(scope.size() + 1U,
+                                 replacement.first.size(),
+                                 replacement.second);
+                    return true;
+                }
+                return false;
+            };
+            // Singular is the current registry. Plural covers portable keys
+            // authored by early Live builds without rewriting unrelated text.
+            if (!replace_scoped_uuid("layer", layer_remap)) {
+                (void)replace_scoped_uuid("layers", layer_remap);
+            }
+            if (!replace_scoped_uuid("group", group_remap)) {
+                (void)replace_scoped_uuid("groups", group_remap);
+            }
+        };
+        for (LiveControlMapping& mapping : live.mappings) {
+            remap_target_path(mapping.target_path);
+        }
+        for (LiveSceneConfig& scene : live.scenes) {
+            for (LiveSceneValue& value : scene.values) {
+                remap_target_path(value.target_path);
+            }
         }
         candidate.bundle_root_name = portable_root_name(candidate.project.name);
         candidate.dirty = true;

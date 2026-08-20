@@ -12,6 +12,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 namespace pvt::audio {
@@ -20,6 +21,7 @@ namespace {
 constexpr ma_uint32 kCaptureChannels = 1U;
 constexpr ma_uint32 kCaptureSampleRate = 48000U;
 constexpr double kPi = 3.141592653589793238462643383279502884;
+constexpr std::string_view kRuntimeDevicePrefix = "miniaudio-device-v1:";
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) *error = std::move(message);
@@ -42,7 +44,166 @@ float unit(float value) noexcept {
     return std::clamp(value, 0.0F, 1.0F);
 }
 
+double positive_fraction(double value) noexcept {
+    value = std::fmod(value, 1.0);
+    return value < 0.0 ? value + 1.0 : value;
+}
+
+std::string runtime_device_id(ma_backend backend, const ma_device_id& id) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&id);
+    std::string result;
+    result.reserve(kRuntimeDevicePrefix.size() + 12U + 2U * sizeof(id));
+    result.append(kRuntimeDevicePrefix);
+    result.append(std::to_string(static_cast<unsigned int>(backend)));
+    result.push_back(':');
+    for (std::size_t index = 0U; index < sizeof(id); ++index) {
+        result.push_back(kHex[bytes[index] >> 4U]);
+        result.push_back(kHex[bytes[index] & 0x0fU]);
+    }
+    return result;
+}
+
+std::vector<LiveAudioDevice> describe_devices(
+    ma_backend backend, const ma_device_info* captures, ma_uint32 count) {
+    std::vector<LiveAudioDevice> result;
+    result.reserve(count);
+    for (ma_uint32 index = 0U; index < count; ++index) {
+        LiveAudioDevice device;
+        device.name = captures[index].name;
+        device.is_default = captures[index].isDefault == MA_TRUE;
+        device.runtime_id = runtime_device_id(backend, captures[index].id);
+        device.display_name = device.name.empty() ? "Unnamed audio input"
+                                                   : device.name;
+        result.push_back(std::move(device));
+    }
+    for (std::size_t index = 0U; index < result.size(); ++index) {
+        std::size_t duplicate_count = 0U;
+        std::size_t ordinal = 0U;
+        for (std::size_t candidate = 0U; candidate < result.size(); ++candidate) {
+            if (result[candidate].name != result[index].name) continue;
+            ++duplicate_count;
+            if (candidate <= index) ++ordinal;
+        }
+        if (duplicate_count > 1U) {
+            result[index].display_name += " (" + std::to_string(ordinal)
+                + " of " + std::to_string(duplicate_count) + ')';
+        }
+    }
+    return result;
+}
+
 } // namespace
+
+std::optional<std::size_t> find_live_audio_device(
+    const std::vector<LiveAudioDevice>& devices,
+    const std::string& runtime_id_or_name,
+    std::string* error) {
+    if (error != nullptr) error->clear();
+    if (runtime_id_or_name.empty()) {
+        fail(error, "A non-default live audio device selection is empty.");
+        return std::nullopt;
+    }
+    for (std::size_t index = 0U; index < devices.size(); ++index) {
+        if (!devices[index].runtime_id.empty()
+            && devices[index].runtime_id == runtime_id_or_name) {
+            return index;
+        }
+    }
+    std::optional<std::size_t> name_match;
+    for (std::size_t index = 0U; index < devices.size(); ++index) {
+        if (devices[index].name != runtime_id_or_name) continue;
+        if (name_match.has_value()) {
+            fail(error,
+                 "Multiple live audio devices have this name; refresh and select a specific device.");
+            return std::nullopt;
+        }
+        name_match = index;
+    }
+    if (!name_match.has_value()) {
+        fail(error, "The selected live audio device is no longer available.");
+    }
+    return name_match;
+}
+
+LiveBeatTiming live_beat_timing(std::uint64_t detected_beat_count,
+                                std::uint64_t current_frame,
+                                std::uint64_t anchor_frame,
+                                std::uint32_t sample_rate,
+                                double detected_bpm) noexcept {
+    LiveBeatTiming result;
+    if (detected_beat_count == 0U || sample_rate == 0U
+        || !std::isfinite(detected_bpm) || detected_bpm <= 0.0) {
+        return result;
+    }
+    const double rate = static_cast<double>(sample_rate);
+    result.anchor_seconds = static_cast<double>(anchor_frame) / rate;
+    const std::uint64_t elapsed_frames = current_frame >= anchor_frame
+        ? current_frame - anchor_frame : 0U;
+    const double elapsed_beats = static_cast<double>(elapsed_frames) / rate
+        * detected_bpm / 60.0;
+    result.position = static_cast<double>(detected_beat_count - 1U)
+        + elapsed_beats;
+    if (!std::isfinite(result.position)) {
+        result.position = static_cast<double>(detected_beat_count - 1U);
+    }
+    result.phase = positive_fraction(result.position);
+    return result;
+}
+
+std::optional<double> live_beat_route_phase(
+    std::uint64_t detected_beat_count,
+    double beat_position,
+    double reference_beats_per_loop,
+    double signed_latency_beats) noexcept {
+    if (detected_beat_count == 0U || !std::isfinite(beat_position)
+        || !std::isfinite(reference_beats_per_loop)
+        || reference_beats_per_loop <= 0.0
+        || !std::isfinite(signed_latency_beats)) {
+        return std::nullopt;
+    }
+    // Positive input latency means the physical beat happened before its
+    // sample reached the analyzer, so compensate by advancing the musical
+    // position. Negative values deliberately delay an early source.
+    const double loops = (beat_position + signed_latency_beats)
+        / reference_beats_per_loop;
+    if (!std::isfinite(loops)) return std::nullopt;
+    return positive_fraction(loops);
+}
+
+std::uint64_t live_audio_frame_clock_increment(
+    std::uint32_t callback_frames, bool has_input_samples) noexcept {
+    return has_input_samples ? callback_frames : 0U;
+}
+
+double live_audio_extrapolated_beat_position(
+    double beat_position_at_last_callback, double beats_per_minute,
+    double last_valid_callback_age_seconds) noexcept {
+    if (!std::isfinite(beat_position_at_last_callback)
+        || !std::isfinite(beats_per_minute) || beats_per_minute <= 0.0
+        || !std::isfinite(last_valid_callback_age_seconds)
+        || last_valid_callback_age_seconds <= 0.0) {
+        return beat_position_at_last_callback;
+    }
+    const double extrapolated = beat_position_at_last_callback
+        + last_valid_callback_age_seconds * beats_per_minute / 60.0;
+    return std::isfinite(extrapolated)
+        ? extrapolated : beat_position_at_last_callback;
+}
+
+bool live_audio_callback_within_holdover(
+    double last_valid_callback_age_seconds,
+    int holdover_milliseconds) noexcept {
+    if (!std::isfinite(last_valid_callback_age_seconds)
+        || last_valid_callback_age_seconds < 0.0) {
+        return false;
+    }
+    const int allowed_milliseconds = std::max(
+        kLiveAudioNormalCallbackToleranceMilliseconds,
+        std::max(0, holdover_milliseconds));
+    return last_valid_callback_age_seconds * 1000.0
+        <= static_cast<double>(allowed_milliseconds);
+}
 
 struct LiveAudioCapture::Impl {
     struct FrequencyStreamState {
@@ -51,6 +212,12 @@ struct LiveAudioCapture::Impl {
         std::atomic<float> energy{0.0F};
         std::atomic<float> onset{0.0F};
         std::atomic<double> bpm{0.0};
+        // Even values publish a coherent (count, BPM, anchor) tuple. The
+        // callback is the only writer; readers retry while an onset update is
+        // in progress. This remains lock-free and allocation-free on the
+        // hardware callback.
+        std::atomic<std::uint64_t> beat_generation{0U};
+        std::atomic<std::uint64_t> beat_count{0U};
         std::atomic<std::uint64_t> last_beat_frame{0U};
         double squared = 0.0;
         double previous_energy = 0.0;
@@ -82,6 +249,7 @@ struct LiveAudioCapture::Impl {
             const std::uint64_t refractory = kCaptureSampleRate / 4U;
             if (attack >= 0.55F
                 && (previous == 0U || now_frame - previous >= refractory)) {
+                beat_generation.fetch_add(1U, std::memory_order_acq_rel);
                 if (previous != 0U) {
                     const double interval = static_cast<double>(now_frame - previous)
                                             / kCaptureSampleRate;
@@ -94,6 +262,10 @@ struct LiveAudioCapture::Impl {
                     }
                 }
                 last_beat_frame.store(now_frame, std::memory_order_relaxed);
+                beat_count.store(
+                    beat_count.load(std::memory_order_relaxed) + 1U,
+                    std::memory_order_relaxed);
+                beat_generation.fetch_add(1U, std::memory_order_release);
             }
         }
 
@@ -101,8 +273,11 @@ struct LiveAudioCapture::Impl {
             filter.reset();
             energy.store(0.0F, std::memory_order_relaxed);
             onset.store(0.0F, std::memory_order_relaxed);
+            beat_generation.fetch_add(1U, std::memory_order_acq_rel);
             bpm.store(0.0, std::memory_order_relaxed);
+            beat_count.store(0U, std::memory_order_relaxed);
             last_beat_frame.store(0U, std::memory_order_relaxed);
+            beat_generation.fetch_add(1U, std::memory_order_release);
             squared = 0.0;
             previous_energy = 0.0;
             adaptive_peak = 0.02;
@@ -127,6 +302,8 @@ struct LiveAudioCapture::Impl {
     std::atomic<float> chroma_strength{0.0F};
     std::atomic<double> bpm{0.0};
     std::atomic<std::uint64_t> received_frames{0U};
+    std::atomic<std::uint64_t> beat_generation{0U};
+    std::atomic<std::uint64_t> beat_count{0U};
     std::atomic<std::uint64_t> last_beat_frame{0U};
     std::atomic<std::uint64_t> dropouts{0U};
     std::atomic<std::int64_t> last_callback_ns{0};
@@ -147,15 +324,14 @@ struct LiveAudioCapture::Impl {
         auto* self = static_cast<Impl*>(source != nullptr
                                            ? source->pUserData : nullptr);
         if (self == nullptr || frame_count == 0U) return;
-        const std::uint64_t first_frame = self->received_frames.fetch_add(
-            frame_count, std::memory_order_relaxed);
-        if (input == nullptr) {
+        const std::uint64_t valid_frames = live_audio_frame_clock_increment(
+            frame_count, input != nullptr);
+        if (valid_frames == 0U) {
             self->dropouts.fetch_add(1U, std::memory_order_relaxed);
             return;
         }
-        self->last_callback_ns.store(monotonic_nanoseconds(),
-                                     std::memory_order_relaxed);
-
+        const std::uint64_t first_frame = self->received_frames.fetch_add(
+            valid_frames, std::memory_order_relaxed);
         const auto* samples = static_cast<const float*>(input);
         const double input_gain = static_cast<double>(
             self->gain.load(std::memory_order_relaxed));
@@ -263,6 +439,7 @@ struct LiveAudioCapture::Impl {
         if (normalized_onset >= 0.55F
             && (previous_beat_frame == 0U
                 || now_frame - previous_beat_frame >= refractory)) {
+            self->beat_generation.fetch_add(1U, std::memory_order_acq_rel);
             if (previous_beat_frame != 0U) {
                 const double interval = static_cast<double>(
                     now_frame - previous_beat_frame) / kCaptureSampleRate;
@@ -278,7 +455,16 @@ struct LiveAudioCapture::Impl {
             }
             self->last_beat_frame.store(now_frame,
                                         std::memory_order_relaxed);
+            self->beat_count.store(
+                self->beat_count.load(std::memory_order_relaxed) + 1U,
+                std::memory_order_relaxed);
+            self->beat_generation.fetch_add(1U, std::memory_order_release);
         }
+        // received_frames describes the end of this valid sample block, so
+        // publish its wall-clock anchor after the analysis reaches that same
+        // point. Null callbacks deliberately never refresh this timestamp.
+        self->last_callback_ns.store(monotonic_nanoseconds(),
+                                     std::memory_order_release);
     }
 
     void uninitialize() noexcept {
@@ -304,9 +490,12 @@ struct LiveAudioCapture::Impl {
         flatness.store(0.0F, std::memory_order_relaxed);
         chroma_hue.store(0.0F, std::memory_order_relaxed);
         chroma_strength.store(0.0F, std::memory_order_relaxed);
-        bpm.store(0.0, std::memory_order_relaxed);
         received_frames.store(0U, std::memory_order_relaxed);
+        beat_generation.fetch_add(1U, std::memory_order_acq_rel);
+        bpm.store(0.0, std::memory_order_relaxed);
+        beat_count.store(0U, std::memory_order_relaxed);
         last_beat_frame.store(0U, std::memory_order_relaxed);
+        beat_generation.fetch_add(1U, std::memory_order_release);
         dropouts.store(0U, std::memory_order_relaxed);
         last_callback_ns.store(0, std::memory_order_relaxed);
         low_state = 0.0;
@@ -341,11 +530,7 @@ std::vector<LiveAudioDevice> LiveAudioCapture::devices(
     std::vector<LiveAudioDevice> found;
     if (result == MA_SUCCESS) {
         try {
-            found.reserve(capture_count);
-            for (ma_uint32 index = 0U; index < capture_count; ++index) {
-                found.push_back({captures[index].name,
-                                 captures[index].isDefault == MA_TRUE});
-            }
+            found = describe_devices(context.backend, captures, capture_count);
         } catch (...) {
             fail(error, "Not enough memory to list capture devices.");
             found.clear();
@@ -358,7 +543,7 @@ std::vector<LiveAudioDevice> LiveAudioCapture::devices(
     return found;
 }
 
-bool LiveAudioCapture::start(const std::string& runtime_device_name,
+bool LiveAudioCapture::start(const std::string& runtime_device_id_or_name,
                              std::uint32_t requested_period_frames,
                              std::string* error) {
     if (error != nullptr) error->clear();
@@ -378,7 +563,7 @@ bool LiveAudioCapture::start(const std::string& runtime_device_name,
 
     ma_device_id selected_id{};
     const ma_device_id* selected = nullptr;
-    if (!runtime_device_name.empty()) {
+    if (!runtime_device_id_or_name.empty()) {
         ma_device_info* captures = nullptr;
         ma_uint32 capture_count = 0U;
         result = ma_context_get_devices(&impl_->context, nullptr, nullptr,
@@ -388,18 +573,23 @@ bool LiveAudioCapture::start(const std::string& runtime_device_name,
             return fail(error, miniaudio_error(
                 "Could not enumerate live audio devices", result));
         }
-        for (ma_uint32 index = 0U; index < capture_count; ++index) {
-            if (runtime_device_name == captures[index].name) {
-                selected_id = captures[index].id;
-                selected = &selected_id;
-                break;
-            }
-        }
-        if (selected == nullptr) {
+        std::vector<LiveAudioDevice> available;
+        try {
+            available = describe_devices(impl_->context.backend, captures,
+                                         capture_count);
+        } catch (...) {
             impl_->uninitialize();
             return fail(error,
-                        "The selected live audio device is no longer available.");
+                        "Not enough memory to select a live audio device.");
         }
+        const auto selected_index = find_live_audio_device(
+            available, runtime_device_id_or_name, error);
+        if (!selected_index.has_value()) {
+            impl_->uninitialize();
+            return false;
+        }
+        selected_id = captures[*selected_index].id;
+        selected = &selected_id;
     }
 
     impl_->clear_analysis();
@@ -467,45 +657,94 @@ LiveAudioSnapshot LiveAudioCapture::snapshot() const {
         std::memory_order_relaxed);
     value.features.chroma_strength = impl_->chroma_strength.load(
         std::memory_order_relaxed);
-    value.detected_bpm = impl_->bpm.load(std::memory_order_relaxed);
     const std::uint64_t frames = impl_->received_frames.load(
         std::memory_order_relaxed);
-    const std::uint64_t beat_frame = impl_->last_beat_frame.load(
-        std::memory_order_relaxed);
+    std::uint64_t beat_frame = 0U;
+    for (;;) {
+        const std::uint64_t before = impl_->beat_generation.load(
+            std::memory_order_acquire);
+        if ((before & 1U) != 0U) continue;
+        value.beat_count = impl_->beat_count.load(std::memory_order_relaxed);
+        value.detected_bpm = impl_->bpm.load(std::memory_order_relaxed);
+        beat_frame = impl_->last_beat_frame.load(std::memory_order_relaxed);
+        const std::uint64_t after = impl_->beat_generation.load(
+            std::memory_order_acquire);
+        if (before == after) break;
+    }
     value.stream_seconds = static_cast<double>(frames) / kCaptureSampleRate;
-    if (beat_frame != 0U && frames >= beat_frame) {
-        const double seconds_since = static_cast<double>(frames - beat_frame)
-                                     / kCaptureSampleRate;
-        const double beat_period = value.detected_bpm > 0.0
-                                       ? 60.0 / value.detected_bpm : 0.5;
-        value.beat_phase = std::fmod(seconds_since / beat_period, 1.0);
-        value.features.beat = unit(static_cast<float>(
-            1.0 - seconds_since / std::min(0.16, beat_period)));
+    if (value.beat_count != 0U) {
+        value.beat_anchor_seconds = static_cast<double>(beat_frame)
+            / kCaptureSampleRate;
+        value.beat_position = static_cast<double>(value.beat_count - 1U);
+        if (frames >= beat_frame) {
+            const double seconds_since = static_cast<double>(
+                frames - beat_frame) / kCaptureSampleRate;
+            const double beat_period = value.detected_bpm > 0.0
+                                           ? 60.0 / value.detected_bpm : 0.5;
+            if (value.detected_bpm > 0.0) {
+                const auto timing = live_beat_timing(
+                    value.beat_count, frames, beat_frame,
+                    kCaptureSampleRate, value.detected_bpm);
+                value.beat_position = timing.position;
+                value.beat_phase = timing.phase;
+            }
+            value.features.beat = unit(static_cast<float>(
+                1.0 - seconds_since / std::min(0.16, beat_period)));
+        }
     }
     value.estimated_input_latency_ms = impl_->estimated_latency_ms.load(
         std::memory_order_relaxed);
     value.callback_dropouts = impl_->dropouts.load(std::memory_order_relaxed);
     const std::int64_t callback_ns = impl_->last_callback_ns.load(
-        std::memory_order_relaxed);
-    value.receiving = is_running() && callback_ns != 0
-        && monotonic_nanoseconds() - callback_ns < INT64_C(500000000);
+        std::memory_order_acquire);
+    if (callback_ns != 0) {
+        const std::int64_t age_ns = std::max<std::int64_t>(
+            0, monotonic_nanoseconds() - callback_ns);
+        value.last_valid_callback_age_seconds =
+            static_cast<double>(age_ns) / 1000000000.0;
+    }
+    value.receiving = is_running()
+        && value.last_valid_callback_age_seconds >= 0.0
+        && value.last_valid_callback_age_seconds < 0.5;
     value.frequency_streams.reserve(impl_->frequency_streams.size());
     for (const auto& stream : impl_->frequency_streams) {
         LiveAudioSnapshot::FrequencyStream item;
         item.uuid = stream->uuid;
         item.features.energy = stream->energy.load(std::memory_order_relaxed);
         item.features.onset = stream->onset.load(std::memory_order_relaxed);
-        item.detected_bpm = stream->bpm.load(std::memory_order_relaxed);
-        const std::uint64_t stream_beat = stream->last_beat_frame.load(
-            std::memory_order_relaxed);
-        if (stream_beat != 0U && frames >= stream_beat) {
-            const double seconds_since = static_cast<double>(frames - stream_beat)
-                                         / kCaptureSampleRate;
-            const double period = item.detected_bpm > 0.0
-                                      ? 60.0 / item.detected_bpm : 0.5;
-            item.beat_phase = std::fmod(seconds_since / period, 1.0);
-            item.features.beat = unit(static_cast<float>(
-                1.0 - seconds_since / std::min(0.16, period)));
+        std::uint64_t stream_beat = 0U;
+        for (;;) {
+            const std::uint64_t before = stream->beat_generation.load(
+                std::memory_order_acquire);
+            if ((before & 1U) != 0U) continue;
+            item.beat_count = stream->beat_count.load(
+                std::memory_order_relaxed);
+            item.detected_bpm = stream->bpm.load(std::memory_order_relaxed);
+            stream_beat = stream->last_beat_frame.load(
+                std::memory_order_relaxed);
+            const std::uint64_t after = stream->beat_generation.load(
+                std::memory_order_acquire);
+            if (before == after) break;
+        }
+        if (item.beat_count != 0U) {
+            item.beat_anchor_seconds = static_cast<double>(stream_beat)
+                / kCaptureSampleRate;
+            item.beat_position = static_cast<double>(item.beat_count - 1U);
+            if (frames >= stream_beat) {
+                const double seconds_since = static_cast<double>(
+                    frames - stream_beat) / kCaptureSampleRate;
+                const double period = item.detected_bpm > 0.0
+                                          ? 60.0 / item.detected_bpm : 0.5;
+                if (item.detected_bpm > 0.0) {
+                    const auto timing = live_beat_timing(
+                        item.beat_count, frames, stream_beat,
+                        kCaptureSampleRate, item.detected_bpm);
+                    item.beat_position = timing.position;
+                    item.beat_phase = timing.phase;
+                }
+                item.features.beat = unit(static_cast<float>(
+                    1.0 - seconds_since / std::min(0.16, period)));
+            }
         }
         value.frequency_streams.push_back(std::move(item));
     }

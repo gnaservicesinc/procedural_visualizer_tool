@@ -499,7 +499,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t14\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t15\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -534,6 +534,20 @@ void test_live_control_model_and_setup_codec() {
     invalid = live;
     invalid.clock_inputs.push_back(invalid.clock_inputs.front());
     CHECK(!pvt::validate(invalid).ok);
+    invalid = live;
+    const std::string second_audio_uuid =
+        "78888888-8888-4888-8888-888888888888";
+    invalid.endpoints.push_back(
+        {second_audio_uuid, "Second audio input",
+         pvt::LiveEndpointProtocol::Audio,
+         pvt::LiveEndpointDirection::Input, 0, 0});
+    invalid.clock_inputs[0].source =
+        pvt::LiveClockInputSource::AudioStream;
+    invalid.clock_inputs[0].endpoint_uuid = second_audio_uuid;
+    invalid.clock_inputs[0].follow_midi_transport = false;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid.clock_inputs[0].endpoint_uuid = audio_uuid;
+    CHECK(pvt::validate(invalid).ok);
     invalid = live;
     invalid.midi_clock_outputs[1].endpoint_uuid = midi_uuid;
     CHECK(!pvt::validate(invalid).ok);
@@ -2661,6 +2675,10 @@ void test_particle_straight_alpha_emission() {
     particles.secondary = 0.0;
     particles.radius_pixels = 4.0;
     particles.threshold = 0.5;
+    particles.particle_profile = pvt::ParticleRenderProfile::LegacyGlow;
+    particles.particle_size_variation = 0.0;
+    particles.particle_twinkle = 1.0;
+    particles.particle_orientation = pvt::ParticleOrientation::Fixed;
     config.effects.push_back(particles);
 
     pvt::Image image;
@@ -2680,6 +2698,87 @@ void test_particle_straight_alpha_emission() {
         }
     }
     CHECK(found_soft_particle_edge);
+}
+
+void test_defined_particle_controls_and_silhouettes() {
+    const pvt::EffectConfig defaults = pvt::default_effect(
+        pvt::EffectType::ParticleField);
+    CHECK(defaults.particle_profile == pvt::ParticleRenderProfile::Defined);
+    CHECK(defaults.radius_pixels >= 8.0);
+    CHECK(defaults.particle_size_variation > 0.0);
+    CHECK(defaults.particle_orientation
+          == pvt::ParticleOrientation::FollowMotion);
+
+    auto config = pvt::default_config();
+    make_small(config);
+    config.width = 96;
+    config.height = 96;
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.hue_cycles = 0;
+    config.palette.enabled = true;
+    config.palette.colors = {
+        {0.0, 0.0, 0.0, 1.0, {}, pvt::PaletteColorEncoding::Srgb}};
+    config.alpha.enabled = true;
+    config.alpha.minimum = 0.0;
+    config.alpha.maximum = 0.0;
+    config.output.write_alpha = true;
+
+    auto particles = defaults;
+    particles.id = pvt::allocate_id(config);
+    particles.enabled = true;
+    particles.intensity = 0.7;
+    particles.magnitude = 0.0;
+    particles.frequency = 8.0;
+    particles.secondary = 0.0;
+    particles.radius_pixels = 10.0;
+    particles.particle_size_variation = 0.0;
+    particles.particle_definition = 0.9;
+    particles.particle_twinkle = 0.0;
+    particles.particle_seed = 1234567U;
+    particles.particle_orientation = pvt::ParticleOrientation::FollowMotion;
+    config.effects.push_back(particles);
+
+    std::vector<pvt::Image> shapes;
+    std::string error;
+    for (const auto shape : {pvt::ParticleShape::Spark,
+                             pvt::ParticleShape::SoftOrb,
+                             pvt::ParticleShape::Ring,
+                             pvt::ParticleShape::Diamond,
+                             pvt::ParticleShape::Star}) {
+        config.effects.front().particle_shape = shape;
+        pvt::Image image;
+        CHECK(pvt::render_frame_at_phase(config, 0.37, image, &error));
+        shapes.push_back(std::move(image));
+    }
+    CHECK(mean_absolute_difference(shapes[0], shapes[3]) > 0.001);
+    CHECK(mean_absolute_difference(shapes[0], shapes[4]) > 0.001);
+    CHECK(mean_absolute_difference(shapes[3], shapes[4]) > 0.001);
+    CHECK(mean_absolute_difference(shapes[1], shapes[2]) > 0.001);
+
+    // A stationary motion-following field has no meaningful behind direction.
+    // Trail amount must not manufacture a fixed-angle streak or stack repeated
+    // copies at the same point.
+    config.effects.front().particle_shape = pvt::ParticleShape::Star;
+    config.effects.front().secondary = 0.0;
+    pvt::Image no_trail;
+    pvt::Image stationary_trail;
+    CHECK(pvt::render_frame_at_phase(config, 0.37, no_trail, &error));
+    config.effects.front().secondary = 1.0;
+    CHECK(pvt::render_frame_at_phase(config, 0.37, stationary_trail, &error));
+    CHECK(mean_absolute_difference(no_trail, stationary_trail) < 1.0e-12);
+
+    config.effects.front().particle_seed = 7654321U;
+    pvt::Image reseeded;
+    CHECK(pvt::render_frame_at_phase(config, 0.37, reseeded, &error));
+    CHECK(mean_absolute_difference(stationary_trail, reseeded) > 0.0001);
+
 }
 
 void test_block_scale_and_default_glow_visibility() {
@@ -3233,9 +3332,21 @@ void test_validation_limits() {
     particles.frequency = 1001.0;
     particles.secondary = 1.0;
     particles.radius_pixels = 16384.0;
-    CHECK(pvt::validate(config).ok); // Former count/stamp-work caps are gone.
+    CHECK(!pvt::validate(config).ok);
     particles.radius_pixels = 2.0;
     CHECK(pvt::validate(config).ok);
+    particles.particle_size_variation = 1.01;
+    CHECK(!pvt::validate(config).ok);
+    particles.particle_size_variation = 0.25;
+    particles.particle_definition = -0.01;
+    CHECK(!pvt::validate(config).ok);
+    particles.particle_definition = 0.8;
+    particles.particle_twinkle = 1.01;
+    CHECK(!pvt::validate(config).ok);
+    particles.particle_twinkle = 0.5;
+    particles.particle_orientation =
+        static_cast<pvt::ParticleOrientation>(255);
+    CHECK(!pvt::validate(config).ok);
 
     config = pvt::default_config();
     config.starting_colors.kaleidoscope.mirrored_segments = 1;
@@ -3440,6 +3551,23 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.effects.back().center_x = 0.42;
     original.effects.back().center_y = 0.61;
     original.effects.back().area_radius = 0.24;
+    const auto original_particles = std::find_if(
+        original.effects.begin(), original.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(original_particles != original.effects.end());
+    if (original_particles != original.effects.end()) {
+        original_particles->particle_shape = pvt::ParticleShape::Diamond;
+        original_particles->particle_profile =
+            pvt::ParticleRenderProfile::Defined;
+        original_particles->particle_size_variation = 0.44;
+        original_particles->particle_definition = 0.87;
+        original_particles->particle_twinkle = 0.23;
+        original_particles->particle_seed = UINT64_C(0xfedcba9876543210);
+        original_particles->particle_orientation =
+            pvt::ParticleOrientation::Random;
+        original_particles->particle_rotation_degrees = -37.5;
+    }
     original.alpha.enabled = true;
     original.alpha.use_source_alpha = false;
     original.starting_colors.mode = pvt::StartingColorMode::Random;
@@ -3639,6 +3767,24 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
+    const auto loaded_particles = std::find_if(
+        loaded.effects.begin(), loaded.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(loaded_particles != loaded.effects.end());
+    if (loaded_particles != loaded.effects.end()) {
+        CHECK(loaded_particles->particle_shape == pvt::ParticleShape::Diamond);
+        CHECK(loaded_particles->particle_profile
+              == pvt::ParticleRenderProfile::Defined);
+        CHECK(loaded_particles->particle_size_variation == 0.44);
+        CHECK(loaded_particles->particle_definition == 0.87);
+        CHECK(loaded_particles->particle_twinkle == 0.23);
+        CHECK(loaded_particles->particle_seed
+              == UINT64_C(0xfedcba9876543210));
+        CHECK(loaded_particles->particle_orientation
+              == pvt::ParticleOrientation::Random);
+        CHECK(loaded_particles->particle_rotation_degrees == -37.5);
+    }
     CHECK(!loaded.alpha.use_source_alpha);
     CHECK(loaded.starting_colors.mode == pvt::StartingColorMode::Random);
     CHECK(loaded.starting_colors.include_alpha);
@@ -3857,12 +4003,256 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         }
     };
 
-    const auto version_fourteen_bytes = read_bytes(first);
-    CHECK(std::string(version_fourteen_bytes.begin(),
-                      version_fourteen_bytes.end())
-              .rfind("PVT_SETUP\t14\n", 0U) == 0U);
-    std::string version_thirteen(version_fourteen_bytes.begin(),
-                                 version_fourteen_bytes.end());
+    const auto current_version_bytes = read_bytes(first);
+    CHECK(std::string(current_version_bytes.begin(),
+                      current_version_bytes.end())
+              .rfind("PVT_SETUP\t15\n", 0U) == 0U);
+    std::string version_fourteen(current_version_bytes.begin(),
+                                 current_version_bytes.end());
+    version_fourteen.replace(0U, std::string("PVT_SETUP\t15").size(),
+                             "PVT_SETUP\t14");
+    for (const char* field : {"particle_profile", "particle_size_variation",
+                              "particle_definition", "particle_twinkle",
+                              "particle_seed", "particle_orientation",
+                              "particle_rotation_degrees"}) {
+        erase_records_with_fragment(version_fourteen, field);
+    }
+    pvt::RenderConfig loaded_version_fourteen;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_fourteen, loaded_version_fourteen, &error));
+    const auto legacy_particles = std::find_if(
+        loaded_version_fourteen.effects.begin(),
+        loaded_version_fourteen.effects.end(), [](const auto& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(legacy_particles != loaded_version_fourteen.effects.end());
+    if (legacy_particles != loaded_version_fourteen.effects.end()) {
+        CHECK(legacy_particles->particle_profile
+              == pvt::ParticleRenderProfile::LegacyGlow);
+        CHECK(legacy_particles->particle_size_variation == 0.0);
+        CHECK(legacy_particles->particle_twinkle == 1.0);
+        CHECK(legacy_particles->particle_seed == 0U);
+        CHECK(legacy_particles->particle_orientation
+              == pvt::ParticleOrientation::Fixed);
+    }
+
+    // Workloads accepted by setup <=14 remain recoverable even when the
+    // dimension-aware renderer admission added in setup 15 considers them
+    // unsafe. The authored controls survive, only the effect is disabled, and
+    // the original enabled value remains in a non-applying compatibility
+    // record so reducing the workload cannot silently re-enable the effect.
+    if (original_particles != original.effects.end()) {
+        const auto replace_legacy_record = [](std::string& setup,
+                                              const std::string& key,
+                                              const std::string& value) {
+            const std::string prefix = key + "\t";
+            const std::size_t position = setup.find(prefix);
+            CHECK(position != std::string::npos);
+            if (position == std::string::npos) return;
+            const std::size_t newline = setup.find('\n', position);
+            CHECK(newline != std::string::npos);
+            if (newline != std::string::npos) {
+                setup.replace(position + prefix.size(),
+                              newline - position - prefix.size(), value);
+            }
+        };
+        const std::size_t particle_index = static_cast<std::size_t>(
+            std::distance(original.effects.begin(), original_particles));
+        const std::string prefix = "effects."
+                                   + std::to_string(particle_index) + ".";
+        std::string unsafe_legacy_particles = version_fourteen;
+        replace_legacy_record(unsafe_legacy_particles, prefix + "enabled", "1");
+        replace_legacy_record(unsafe_legacy_particles, prefix + "intensity", "1");
+        replace_legacy_record(unsafe_legacy_particles, prefix + "frequency", "1001");
+        replace_legacy_record(unsafe_legacy_particles, prefix + "secondary", "1");
+        replace_legacy_record(unsafe_legacy_particles, prefix + "radius_pixels",
+                              "16384");
+
+        pvt::RenderConfig recovered_unsafe_particles;
+        CHECK(pvt::detail::deserialize_setup_config(
+            unsafe_legacy_particles, recovered_unsafe_particles, &error));
+        const auto recovered_particles = std::find_if(
+            recovered_unsafe_particles.effects.begin(),
+            recovered_unsafe_particles.effects.end(), [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(recovered_particles != recovered_unsafe_particles.effects.end());
+        if (recovered_particles != recovered_unsafe_particles.effects.end()) {
+            CHECK(!recovered_particles->enabled);
+            CHECK(recovered_particles->frequency == 1001.0);
+            CHECK(recovered_particles->secondary == 1.0);
+            CHECK(recovered_particles->radius_pixels == 16384.0);
+        }
+        const std::string recovery_key =
+            prefix + "recovery_unsafe_particle_enabled";
+        const auto preserved_enabled = std::find_if(
+            recovered_unsafe_particles.source_compatibility.records.begin(),
+            recovered_unsafe_particles.source_compatibility.records.end(),
+            [&recovery_key](const pvt::PreservedConfigRecord& record) {
+                return record.key == recovery_key
+                       && record.value == "1" && !record.rejected;
+            });
+        CHECK(preserved_enabled
+              != recovered_unsafe_particles.source_compatibility.records.end());
+        CHECK(!recovered_unsafe_particles.source_compatibility.repair_notes.empty());
+
+        // A malformed v15-only workload field must not make the generic
+        // recovery path throw away the entire effects collection. Disable
+        // the unsafe particle conservatively, preserve its authored controls,
+        // and let field recovery retain the malformed value for inspection.
+        std::string malformed_current_particles(
+            current_version_bytes.begin(), current_version_bytes.end());
+        replace_legacy_record(malformed_current_particles,
+                              prefix + "enabled", "1");
+        replace_legacy_record(malformed_current_particles,
+                              prefix + "intensity", "1");
+        replace_legacy_record(malformed_current_particles,
+                              prefix + "frequency", "1001");
+        replace_legacy_record(malformed_current_particles,
+                              prefix + "secondary", "1");
+        replace_legacy_record(malformed_current_particles,
+                              prefix + "radius_pixels", "16384");
+        replace_legacy_record(malformed_current_particles,
+                              prefix + "particle_size_variation", "broken");
+        pvt::RenderConfig recovered_malformed_particles;
+        CHECK(pvt::detail::deserialize_setup_config(
+            malformed_current_particles, recovered_malformed_particles,
+            &error));
+        CHECK(recovered_malformed_particles.effects.size()
+              == original.effects.size());
+        const auto malformed_particles = std::find_if(
+            recovered_malformed_particles.effects.begin(),
+            recovered_malformed_particles.effects.end(),
+            [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(malformed_particles
+              != recovered_malformed_particles.effects.end());
+        if (malformed_particles
+            != recovered_malformed_particles.effects.end()) {
+            CHECK(!malformed_particles->enabled);
+            CHECK(malformed_particles->frequency == 1001.0);
+            CHECK(malformed_particles->radius_pixels == 16384.0);
+        }
+        CHECK(std::any_of(
+            recovered_malformed_particles.source_compatibility.records.begin(),
+            recovered_malformed_particles.source_compatibility.records.end(),
+            [&recovery_key](const pvt::PreservedConfigRecord& record) {
+                return record.key == recovery_key
+                       && record.value == "1" && !record.rejected;
+            }));
+        CHECK(std::any_of(
+            recovered_malformed_particles.source_compatibility.records.begin(),
+            recovered_malformed_particles.source_compatibility.records.end(),
+            [&prefix](const pvt::PreservedConfigRecord& record) {
+                return record.key == prefix + "particle_size_variation"
+                       && record.value == "broken" && record.rejected;
+            }));
+
+        // An unrelated semantic repair must not make the grouped fallback
+        // retry the unsafe authored enabled flag and throw away every effect.
+        std::string unsafe_with_bad_canvas = unsafe_legacy_particles;
+        replace_legacy_record(unsafe_with_bad_canvas, "canvas.block_size", "0");
+        pvt::RenderConfig recovered_unsafe_with_bad_canvas;
+        CHECK(pvt::detail::deserialize_setup_config(
+            unsafe_with_bad_canvas, recovered_unsafe_with_bad_canvas, &error));
+        const auto grouped_particles = std::find_if(
+            recovered_unsafe_with_bad_canvas.effects.begin(),
+            recovered_unsafe_with_bad_canvas.effects.end(),
+            [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(grouped_particles
+              != recovered_unsafe_with_bad_canvas.effects.end());
+        if (grouped_particles
+            != recovered_unsafe_with_bad_canvas.effects.end()) {
+            CHECK(!grouped_particles->enabled);
+            CHECK(grouped_particles->frequency == 1001.0);
+            CHECK(grouped_particles->radius_pixels == 16384.0);
+        }
+
+        const fs::path recovered_path =
+            directory / "legacy-unsafe-particle-recovery.pvt";
+        CHECK(pvt::save_setup(
+            recovered_unsafe_particles, recovered_path.string(), &error));
+        pvt::RenderConfig recovered_round_trip;
+        CHECK(pvt::load_setup(
+            recovered_path.string(), recovered_round_trip, &error));
+        const auto round_trip_particles = std::find_if(
+            recovered_round_trip.effects.begin(),
+            recovered_round_trip.effects.end(), [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(round_trip_particles != recovered_round_trip.effects.end());
+        if (round_trip_particles != recovered_round_trip.effects.end()) {
+            CHECK(!round_trip_particles->enabled);
+            CHECK(round_trip_particles->frequency == 1001.0);
+            CHECK(round_trip_particles->secondary == 1.0);
+            CHECK(round_trip_particles->radius_pixels == 16384.0);
+        }
+        CHECK(std::any_of(
+            recovered_round_trip.source_compatibility.records.begin(),
+            recovered_round_trip.source_compatibility.records.end(),
+            [&recovery_key](const pvt::PreservedConfigRecord& record) {
+                return record.key == recovery_key
+                       && record.value == "1" && !record.rejected;
+            }));
+
+        // Making the authored workload safe while retaining enabled=false is
+        // authoritative across another save/load; recovery metadata never
+        // auto-applies the historical true value.
+        if (round_trip_particles != recovered_round_trip.effects.end()) {
+            round_trip_particles->frequency = 8.0;
+            round_trip_particles->secondary = 0.0;
+            round_trip_particles->radius_pixels = 2.0;
+        }
+        const fs::path safe_disabled_path =
+            directory / "legacy-safe-disabled-particle-recovery.pvt";
+        CHECK(pvt::save_setup(
+            recovered_round_trip, safe_disabled_path.string(), &error));
+        pvt::RenderConfig safe_disabled_round_trip;
+        CHECK(pvt::load_setup(
+            safe_disabled_path.string(), safe_disabled_round_trip, &error));
+        const auto safe_disabled_particles = std::find_if(
+            safe_disabled_round_trip.effects.begin(),
+            safe_disabled_round_trip.effects.end(), [](const auto& effect) {
+                return effect.type == pvt::EffectType::ParticleField;
+            });
+        CHECK(safe_disabled_particles != safe_disabled_round_trip.effects.end());
+        if (safe_disabled_particles != safe_disabled_round_trip.effects.end()) {
+            CHECK(!safe_disabled_particles->enabled);
+            CHECK(safe_disabled_particles->frequency == 8.0);
+            CHECK(safe_disabled_particles->secondary == 0.0);
+            CHECK(safe_disabled_particles->radius_pixels == 2.0);
+        }
+
+        // Recovery preflight must never iterate or allocate from an authored
+        // count that cannot possibly match the available records. Both the
+        // signed-int API limit and the first value above it recover promptly.
+        for (const std::size_t hostile_count : {
+                 pvt::kMaximumEffects, pvt::kMaximumEffects + 1U}) {
+            std::string hostile_collection = version_fourteen;
+            replace_legacy_record(
+                hostile_collection, "effects.count",
+                std::to_string(hostile_count));
+            pvt::RenderConfig recovered_collection;
+            CHECK(pvt::detail::deserialize_setup_config(
+                hostile_collection, recovered_collection, &error));
+            CHECK(recovered_collection.effects.size()
+                  == pvt::default_config().effects.size());
+            CHECK(std::any_of(
+                recovered_collection.source_compatibility.records.begin(),
+                recovered_collection.source_compatibility.records.end(),
+                [hostile_count](const pvt::PreservedConfigRecord& record) {
+                    return record.key == "effects.count"
+                           && record.value == std::to_string(hostile_count)
+                           && record.rejected;
+                }));
+        }
+    }
+
+    std::string version_thirteen(version_fourteen.begin(),
+                                 version_fourteen.end());
     version_thirteen.replace(0U, std::string("PVT_SETUP\t14").size(),
                              "PVT_SETUP\t13");
     erase_records_with_fragment(version_thirteen, "audio_input.");
@@ -4855,6 +5245,7 @@ int main(int argc, char** argv) {
     test_configurable_blur_effects();
     test_partial_alpha_glow_composition();
     test_particle_straight_alpha_emission();
+    test_defined_particle_controls_and_silhouettes();
     test_block_scale_and_default_glow_visibility();
     test_palettes_transforms_and_spatial_stages();
     test_validation_limits();

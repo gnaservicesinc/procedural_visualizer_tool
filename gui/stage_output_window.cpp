@@ -1,8 +1,11 @@
 #include "stage_output_window.h"
 
+#include <QCloseEvent>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QPainter>
+#include <QResizeEvent>
 #include <QScreen>
 #include <QWindow>
 
@@ -30,6 +33,20 @@ void StageOutputWindow::showOnScreen(QScreen* requested) {
     if (windowHandle() != nullptr) windowHandle()->setScreen(screen);
     setGeometry(screen->geometry());
     showFullScreen();
+    raise();
+    activateWindow();
+    setFocus(Qt::OtherFocusReason);
+}
+
+void StageOutputWindow::showWindowedOnScreen(QScreen* requested,
+                                             const QRect& geometry) {
+    QScreen* screen = requested;
+    if (screen == nullptr) screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr) return;
+    (void)winId();
+    if (windowHandle() != nullptr) windowHandle()->setScreen(screen);
+    showNormal();
+    setGeometry(geometry);
     raise();
     activateWindow();
     setFocus(Qt::OtherFocusReason);
@@ -65,9 +82,32 @@ bool StageOutputWindow::hasGoodFrame() const noexcept {
     return !last_good_frame_.isNull();
 }
 
+QSize StageOutputWindow::outputPixelSize() const {
+    const double ratio = std::max(1.0, devicePixelRatioF());
+    return QSize(std::max(1, static_cast<int>(std::lround(width() * ratio))),
+                 std::max(1, static_cast<int>(std::lround(height() * ratio))));
+}
+
 void StageOutputWindow::clearFrame() {
     last_good_frame_ = {};
     update();
+}
+
+bool StageOutputWindow::event(QEvent* event) {
+    const bool metrics_changed = event != nullptr
+        && (event->type() == QEvent::ScreenChangeInternal
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+            || event->type() == QEvent::DevicePixelRatioChange
+#endif
+        );
+    const bool handled = QWidget::event(event);
+    if (metrics_changed) emit outputMetricsChanged();
+    return handled;
+}
+
+void StageOutputWindow::closeEvent(QCloseEvent* event) {
+    if (event != nullptr) event->ignore();
+    emit dismissRequested();
 }
 
 void StageOutputWindow::paintEvent(QPaintEvent*) {
@@ -91,9 +131,14 @@ void StageOutputWindow::paintEvent(QPaintEvent*) {
 
 void StageOutputWindow::keyPressEvent(QKeyEvent* event) {
     if (event != nullptr && event->key() == Qt::Key_Escape) {
-        emit escapeRequested();
+        emit dismissRequested();
         event->accept();
         return;
     }
     QWidget::keyPressEvent(event);
+}
+
+void StageOutputWindow::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    emit outputMetricsChanged();
 }
