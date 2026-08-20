@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 15;
+constexpr std::uint32_t kSetupFormatVersion = 16;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -158,6 +158,33 @@ enum class SurfaceMapping : std::uint8_t {
     Sphere,
     Cube,
     CustomObj
+};
+
+enum class SurfaceProjection : std::uint8_t {
+    Orthographic = 0,
+    Perspective
+};
+
+enum class SurfaceSizing : std::uint8_t {
+    Contain = 0,
+    Cover,
+    Stretch,
+    ShortSide
+};
+
+enum class SurfaceOutside : std::uint8_t {
+    Transparent = 0,
+    Source,
+    Reflect
+};
+
+enum class SurfaceRotationOrder : std::uint8_t {
+    XYZ = 0,
+    XZY,
+    YXZ,
+    YZX,
+    ZXY,
+    ZYX
 };
 
 enum class StartingImageFit : std::uint8_t {
@@ -974,13 +1001,45 @@ struct PlaneDisplacementConfig {
 struct SurfaceConfig {
     bool enabled = false;
     SurfaceMapping mapping = SurfaceMapping::Plane;
-    int rotations_per_loop = 0;
-    double phase_degrees = 0.0;
+    SurfaceProjection projection = SurfaceProjection::Orthographic;
+    SurfaceSizing sizing = SurfaceSizing::Contain;
+    SurfaceOutside outside = SurfaceOutside::Transparent;
+    SurfaceRotationOrder rotation_order = SurfaceRotationOrder::XYZ;
+    // Explicit Euler orientation in the authored order. Integer turns per
+    // loop make every animated axis close exactly at the project seam.
+    int rotation_x_turns_per_loop = 0;
+    int rotation_y_turns_per_loop = 0;
+    int rotation_z_turns_per_loop = 0;
+    double rotation_x_degrees = 0.0;
+    double rotation_y_degrees = 0.0;
+    double rotation_z_degrees = 0.0;
+    // Sizing chooses the visible canvas reference; size_percent and the three
+    // object-axis scales are always authored multipliers, never automatic
+    // animation. X/Y position is measured in canvas percent. Z is measured in
+    // normalized surface units and matters for Perspective projection.
+    double size_percent = 100.0;
+    double scale_x = 1.0;
+    double scale_y = 1.0;
+    double scale_z = 1.0;
+    double position_x_percent = 0.0;
+    double position_y_percent = 0.0;
+    double position_z = 0.0;
+    double camera_distance = 3.4;
+    double focal_length = 3.4;
     // For Cylinder/Sphere/Cube/CustomObj, values continuously interpolate from
     // the planar source at 0.0 to the full mapped, lit, and masked surface at
-    // 1.0. Plane uses phase/rotation but not curvature.
+    // 1.0. Plane uses curvature only for a displacement mesh.
     double curvature = 1.0;
-    double lighting = 0.35;
+    double lighting = 0.0;
+    double light_direction_x = -0.45;
+    double light_direction_y = -0.55;
+    double light_direction_z = 0.75;
+    double light_ambient = 0.28;
+    double light_diffuse = 0.72;
+    bool composite_backfaces = true;
+    // If true, imported OBJ bounds are recentered and their longest axis is
+    // normalized to two units before the authored scale is applied.
+    bool normalize_obj = true;
     // Used when mapping is CustomObj. obj_path is the current runtime/source
     // path and is deliberately not part of portable project semantics when an
     // embedded digest is present. New project bundles store the bytes at
@@ -1496,6 +1555,10 @@ PVT_API const char* effect_space_name(EffectSpace value);
 PVT_API const char* edge_mode_name(EdgeMode value);
 PVT_API const char* dither_method_name(DitherMethod value);
 PVT_API const char* surface_mapping_name(SurfaceMapping value);
+PVT_API const char* surface_projection_name(SurfaceProjection value);
+PVT_API const char* surface_sizing_name(SurfaceSizing value);
+PVT_API const char* surface_outside_name(SurfaceOutside value);
+PVT_API const char* surface_rotation_order_name(SurfaceRotationOrder value);
 PVT_API const char* starting_image_fit_name(StartingImageFit value);
 PVT_API const char* starting_color_mode_name(StartingColorMode value);
 PVT_API const char* waveform_name(Waveform value);

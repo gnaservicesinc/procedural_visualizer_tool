@@ -564,14 +564,104 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                            r.surface.plane_displacement.enabled = false;
                        }
                    });
-        add_nested(QStringLiteral("surface.rotations"), QObject::tr("Surface rotations"),
+        add_nested(QStringLiteral("surface.projection"), QObject::tr("Surface projection"),
+                   QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 1,
+                   static_cast<double>(render.surface.projection), [](pvt::RenderData& r, double v) { r.surface.projection = static_cast<pvt::SurfaceProjection>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.sizing"), QObject::tr("Surface fit policy"),
+                   QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 3,
+                   static_cast<double>(render.surface.sizing), [](pvt::RenderData& r, double v) { r.surface.sizing = static_cast<pvt::SurfaceSizing>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.outside"), QObject::tr("Surface outside pixels"),
+                   QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 2,
+                   static_cast<double>(render.surface.outside), [](pvt::RenderData& r, double v) { r.surface.outside = static_cast<pvt::SurfaceOutside>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.rotation_order"), QObject::tr("Surface rotation order"),
+                   QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 5,
+                   static_cast<double>(render.surface.rotation_order), [](pvt::RenderData& r, double v) { r.surface.rotation_order = static_cast<pvt::SurfaceRotationOrder>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.rotation_x_turns"), QObject::tr("Surface X rotations"),
                    QObject::tr("Surface"), LiveTargetKind::Integer,
                    kMinimumIntegerParameter, kMaximumIntegerParameter,
-                   render.surface.rotations_per_loop, [](pvt::RenderData& r, double v) { r.surface.rotations_per_loop = static_cast<int>(std::llround(v)); });
-        add_nested(QStringLiteral("surface.phase"), QObject::tr("Surface phase"),
+                   render.surface.rotation_x_turns_per_loop, [](pvt::RenderData& r, double v) { r.surface.rotation_x_turns_per_loop = static_cast<int>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.rotation_y_turns"), QObject::tr("Surface Y rotations"),
+                   QObject::tr("Surface"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
+                   render.surface.rotation_y_turns_per_loop, [](pvt::RenderData& r, double v) { r.surface.rotation_y_turns_per_loop = static_cast<int>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.rotation_z_turns"), QObject::tr("Surface Z rotations"),
+                   QObject::tr("Surface"), LiveTargetKind::Integer,
+                   kMinimumIntegerParameter, kMaximumIntegerParameter,
+                   render.surface.rotation_z_turns_per_loop, [](pvt::RenderData& r, double v) { r.surface.rotation_z_turns_per_loop = static_cast<int>(std::llround(v)); });
+        add_nested(QStringLiteral("surface.rotation_x"), QObject::tr("Surface X angle"),
                    QObject::tr("Surface"), LiveTargetKind::Real,
                    -kMaximumRenderParameter, kMaximumRenderParameter,
-                   render.surface.phase_degrees, [](pvt::RenderData& r, double v) { r.surface.phase_degrees = v; });
+                   render.surface.rotation_x_degrees, [](pvt::RenderData& r, double v) { r.surface.rotation_x_degrees = v; });
+        add_nested(QStringLiteral("surface.rotation_y"), QObject::tr("Surface Y angle"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.rotation_y_degrees, [](pvt::RenderData& r, double v) { r.surface.rotation_y_degrees = v; });
+        add_nested(QStringLiteral("surface.rotation_z"), QObject::tr("Surface Z angle"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.rotation_z_degrees, [](pvt::RenderData& r, double v) { r.surface.rotation_z_degrees = v; });
+        add_nested(QStringLiteral("surface.size"), QObject::tr("Surface visible size"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
+                   render.surface.size_percent, [](pvt::RenderData& r, double v) { r.surface.size_percent = v; });
+        add_nested(QStringLiteral("surface.scale_x"), QObject::tr("Surface X scale"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
+                   render.surface.scale_x, [](pvt::RenderData& r, double v) { r.surface.scale_x = v; });
+        add_nested(QStringLiteral("surface.scale_y"), QObject::tr("Surface Y scale"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
+                   render.surface.scale_y, [](pvt::RenderData& r, double v) { r.surface.scale_y = v; });
+        add_nested(QStringLiteral("surface.scale_z"), QObject::tr("Surface Z scale"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
+                   render.surface.scale_z, [](pvt::RenderData& r, double v) { r.surface.scale_z = v; });
+        add_nested(QStringLiteral("surface.position_x"), QObject::tr("Surface X position"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.position_x_percent, [](pvt::RenderData& r, double v) { r.surface.position_x_percent = v; });
+        add_nested(QStringLiteral("surface.position_y"), QObject::tr("Surface Y position"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.position_y_percent, [](pvt::RenderData& r, double v) { r.surface.position_y_percent = v; });
+        add_nested(QStringLiteral("surface.position_z"), QObject::tr("Surface Z position"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.position_z, [](pvt::RenderData& r, double v) { r.surface.position_z = v; });
+        add_nested(QStringLiteral("surface.camera_distance"), QObject::tr("Surface camera distance"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
+                   render.surface.camera_distance, [](pvt::RenderData& r, double v) { r.surface.camera_distance = v; });
+        add_nested(QStringLiteral("surface.focal_length"), QObject::tr("Surface focal length"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   kMinimumPositiveUiValue, kMaximumRenderParameter,
+                   render.surface.focal_length, [](pvt::RenderData& r, double v) { r.surface.focal_length = v; });
+        add_nested(QStringLiteral("surface.light_x"), QObject::tr("Surface light X"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.light_direction_x, [](pvt::RenderData& r, double v) { r.surface.light_direction_x = v; });
+        add_nested(QStringLiteral("surface.light_y"), QObject::tr("Surface light Y"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.light_direction_y, [](pvt::RenderData& r, double v) { r.surface.light_direction_y = v; });
+        add_nested(QStringLiteral("surface.light_z"), QObject::tr("Surface light Z"),
+                   QObject::tr("Surface"), LiveTargetKind::Real,
+                   -kMaximumRenderParameter, kMaximumRenderParameter,
+                   render.surface.light_direction_z, [](pvt::RenderData& r, double v) { r.surface.light_direction_z = v; });
+        add_nested(QStringLiteral("surface.light_ambient"), QObject::tr("Surface ambient light"),
+                   QObject::tr("Surface"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
+                   render.surface.light_ambient, [](pvt::RenderData& r, double v) { r.surface.light_ambient = v; });
+        add_nested(QStringLiteral("surface.light_diffuse"), QObject::tr("Surface diffuse light"),
+                   QObject::tr("Surface"), LiveTargetKind::Real, 0,
+                   kMaximumRenderParameter,
+                   render.surface.light_diffuse, [](pvt::RenderData& r, double v) { r.surface.light_diffuse = v; });
+        add_nested(QStringLiteral("surface.composite_backfaces"), QObject::tr("Surface rear compositing"),
+                   QObject::tr("Surface"), LiveTargetKind::Boolean, 0, 1,
+                   render.surface.composite_backfaces, [](pvt::RenderData& r, double v) { r.surface.composite_backfaces = v >= 0.5; });
+        add_nested(QStringLiteral("surface.normalize_obj"), QObject::tr("Normalize surface OBJ"),
+                   QObject::tr("Surface"), LiveTargetKind::Boolean, 0, 1,
+                   render.surface.normalize_obj, [](pvt::RenderData& r, double v) { r.surface.normalize_obj = v >= 0.5; });
         if (!render.surface.plane_displacement.path.empty()
             || !render.surface.plane_displacement.sha256.empty()) {
             add_nested(

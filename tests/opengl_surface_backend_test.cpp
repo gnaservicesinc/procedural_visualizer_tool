@@ -50,8 +50,11 @@ pvt::RenderConfig analytic_config(pvt::SurfaceMapping mapping) {
     config.surface.mapping = mapping;
     config.surface.curvature = 0.82;
     config.surface.lighting = 0.47;
-    config.surface.rotations_per_loop = 2;
-    config.surface.phase_degrees = 17.0;
+    config.surface.rotation_x_degrees = -11.0;
+    config.surface.rotation_y_turns_per_loop = 2;
+    config.surface.rotation_y_degrees = 17.0;
+    config.surface.rotation_z_degrees = 9.0;
+    config.surface.rotation_order = pvt::SurfaceRotationOrder::ZXY;
     config.starting_colors.mode = pvt::StartingColorMode::SquareSpiralRainbow;
     config.starting_colors.include_alpha = true;
     config.alpha.use_source_alpha = true;
@@ -81,13 +84,9 @@ int main(int argc, char** argv) {
     pvt::FrameRenderOptions gpu;
     gpu.backend = pvt::RenderBackend::Gpu;
 
-    std::vector<pvt::SurfaceMapping> accelerated_mappings = {
-        pvt::SurfaceMapping::Cylinder, pvt::SurfaceMapping::Sphere,
-        pvt::SurfaceMapping::Cube};
-#if defined(_WIN32)
-    accelerated_mappings.insert(accelerated_mappings.begin(),
-                                pvt::SurfaceMapping::Plane);
-#endif
+    const std::vector<pvt::SurfaceMapping> accelerated_mappings = {
+        pvt::SurfaceMapping::Plane, pvt::SurfaceMapping::Cylinder,
+        pvt::SurfaceMapping::Sphere, pvt::SurfaceMapping::Cube};
     for (const pvt::SurfaceMapping mapping : accelerated_mappings) {
         const pvt::RenderConfig config = analytic_config(mapping);
         pvt::Image reference;
@@ -111,10 +110,18 @@ int main(int argc, char** argv) {
             CHECK(pvt::render_frame(identity_config, 5, cpu, identity, nullptr,
                                     &error));
             pvt::RenderConfig inverse_config = config;
-            inverse_config.surface.rotations_per_loop =
-                -inverse_config.surface.rotations_per_loop;
-            inverse_config.surface.phase_degrees =
-                -inverse_config.surface.phase_degrees;
+            inverse_config.surface.rotation_x_turns_per_loop =
+                -inverse_config.surface.rotation_x_turns_per_loop;
+            inverse_config.surface.rotation_y_turns_per_loop =
+                -inverse_config.surface.rotation_y_turns_per_loop;
+            inverse_config.surface.rotation_z_turns_per_loop =
+                -inverse_config.surface.rotation_z_turns_per_loop;
+            inverse_config.surface.rotation_x_degrees =
+                -inverse_config.surface.rotation_x_degrees;
+            inverse_config.surface.rotation_y_degrees =
+                -inverse_config.surface.rotation_y_degrees;
+            inverse_config.surface.rotation_z_degrees =
+                -inverse_config.surface.rotation_z_degrees;
             pvt::Image inverse;
             CHECK(pvt::render_frame(inverse_config, 5, cpu, inverse, nullptr,
                                     &error));

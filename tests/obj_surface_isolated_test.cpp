@@ -59,6 +59,33 @@ float* pixel(pvt::Image& image, int x, int y) {
               + static_cast<std::size_t>(x)) * 4U;
 }
 
+bool apply_classic_obj_surface(const pvt::Image& source,
+                               pvt::Image& destination,
+                               const std::string& path,
+                               int rotations_per_loop,
+                               double phase_degrees,
+                               double curvature,
+                               double lighting,
+                               double loop_phase,
+                               std::string* error,
+                               const std::atomic_bool* cancel = nullptr) {
+    pvt::SurfaceConfig surface;
+    surface.enabled = true;
+    surface.mapping = pvt::SurfaceMapping::CustomObj;
+    surface.projection = pvt::SurfaceProjection::Perspective;
+    surface.sizing = pvt::SurfaceSizing::ShortSide;
+    surface.rotation_x_degrees = -20.0535228296;
+    surface.rotation_y_turns_per_loop = rotations_per_loop;
+    surface.rotation_y_degrees = phase_degrees + 31.5126787322;
+    surface.size_percent = 104.0;
+    surface.camera_distance = 3.4;
+    surface.focal_length = 2.5;
+    surface.curvature = curvature;
+    surface.lighting = lighting;
+    return pvt::detail::apply_obj_surface_mapping(
+        source, destination, path, surface, loop_phase, error, cancel);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -75,9 +102,8 @@ int main(int argc, char** argv) {
     // composite to alpha 0.75; nearest-only rendering would remain 0.5.
     const pvt::Image translucent = uniform_image(64, 64, 0.8F, 0.3F, 0.1F, 0.5F);
     pvt::Image layered;
-    if (!pvt::detail::apply_obj_surface_mapping(translucent, layered, cube,
-                                                0, 0.0, 1.0, 0.0, 0.0,
-                                                &error)) {
+    if (!apply_classic_obj_surface(translucent, layered, cube,
+                                   0, 0.0, 1.0, 0.0, 0.0, &error)) {
         return fail(1, "translucent cube render failed: " + error);
     }
     const float* center = pixel(layered, layered.width / 2, layered.height / 2);
@@ -94,10 +120,10 @@ int main(int argc, char** argv) {
     const pvt::Image opaque_gradient = uv_gradient_image(64, 64, 1.0F);
     pvt::Image layered_gradient;
     pvt::Image nearest_gradient;
-    if (!pvt::detail::apply_obj_surface_mapping(
+    if (!apply_classic_obj_surface(
             translucent_gradient, layered_gradient, cube,
             0, 0.0, 1.0, 0.0, 0.0, &error)
-        || !pvt::detail::apply_obj_surface_mapping(
+        || !apply_classic_obj_surface(
             opaque_gradient, nearest_gradient, cube,
             0, 0.0, 1.0, 0.0, 0.0, &error)) {
         return fail(8, "gradient rear-surface render failed: " + error);
@@ -130,7 +156,7 @@ int main(int argc, char** argv) {
     }
     pvt::Image colored_layers;
     constexpr double cancel_initial_y_degrees = -31.51267873219528;
-    if (!pvt::detail::apply_obj_surface_mapping(
+    if (!apply_classic_obj_surface(
             colored_source, colored_layers, layered_uv_cube, 0,
             cancel_initial_y_degrees, 1.0, 0.0, 0.0, &error)) {
         return fail(10, "colored layered cube render failed: " + error);
@@ -140,7 +166,11 @@ int main(int argc, char** argv) {
     if (colored_center[3] < 0.72F || colored_center[3] > 0.78F
         || colored_center[0] < 0.60F || colored_center[0] > 0.72F
         || colored_center[2] < 0.27F || colored_center[2] > 0.40F) {
-        return fail(11, "rear UV color was not composited behind the front UV color");
+        return fail(11, "rear UV color was not composited behind the front UV color: rgba="
+                            + std::to_string(colored_center[0]) + ","
+                            + std::to_string(colored_center[1]) + ","
+                            + std::to_string(colored_center[2]) + ","
+                            + std::to_string(colored_center[3]));
     }
 
     // The canonical 0..1 OBJ interval keeps u=1 on the right edge. Only
@@ -152,7 +182,7 @@ int main(int argc, char** argv) {
         right[2] = 1.0F;
     }
     pvt::Image edge_result;
-    if (!pvt::detail::apply_obj_surface_mapping(
+    if (!apply_classic_obj_surface(
             edge_source, edge_result, right_edge, 0, cancel_initial_y_degrees,
             1.0, 0.0, 0.0, &error)) {
         return fail(12, "UV boundary render failed: " + error);
@@ -165,10 +195,9 @@ int main(int argc, char** argv) {
 
     // Curvature zero is exactly neutral and does not require a readable mesh.
     pvt::Image neutral;
-    if (!pvt::detail::apply_obj_surface_mapping(translucent, neutral,
-                                                "/path/that/does/not/exist.obj",
-                                                3, 91.0, 0.0, 8.0, 4.0,
-                                                &error)
+    if (!apply_classic_obj_surface(translucent, neutral,
+                                   "/path/that/does/not/exist.obj",
+                                   3, 91.0, 0.0, 8.0, 4.0, &error)
         || neutral.pixels != translucent.pixels) {
         return fail(3, "zero-curvature OBJ mapping was not neutral");
     }
@@ -177,9 +206,8 @@ int main(int argc, char** argv) {
     // winding: coverage is opaque at the center and transparent outside.
     const pvt::Image opaque = uniform_image(64, 64, 0.2F, 0.6F, 0.9F, 1.0F);
     pvt::Image nearest;
-    if (!pvt::detail::apply_obj_surface_mapping(opaque, nearest, cube,
-                                                1, 17.0, 1.0, 0.0, 1.25,
-                                                &error)) {
+    if (!apply_classic_obj_surface(opaque, nearest, cube,
+                                   1, 17.0, 1.0, 0.0, 1.25, &error)) {
         return fail(4, "opaque cube render failed: " + error);
     }
     const float* opaque_center = pixel(nearest, nearest.width / 2,
@@ -193,10 +221,10 @@ int main(int argc, char** argv) {
     // renderer clamp of 10, just like the analytic surfaces and editor.
     pvt::Image lighting_ten;
     pvt::Image lighting_eleven;
-    if (!pvt::detail::apply_obj_surface_mapping(
+    if (!apply_classic_obj_surface(
             opaque, lighting_ten, right_edge,
             0, 5.729577951, 1.0, 10.0, 0.0, &error)
-        || !pvt::detail::apply_obj_surface_mapping(
+        || !apply_classic_obj_surface(
             opaque, lighting_eleven, right_edge,
             0, 5.729577951, 1.0, 11.0, 0.0, &error)
         || lighting_ten.pixels == lighting_eleven.pixels) {
@@ -207,29 +235,26 @@ int main(int argc, char** argv) {
     pvt::Image seam_start;
     pvt::Image seam_end;
     constexpr double tau = 6.283185307179586476925286766559;
-    if (!pvt::detail::apply_obj_surface_mapping(opaque, seam_start, cube,
-                                                2, -31.0, 1.0, 0.2, 0.0,
-                                                &error)
-        || !pvt::detail::apply_obj_surface_mapping(opaque, seam_end, cube,
-                                                   2, -31.0, 1.0, 0.2, tau,
-                                                   &error)
+    if (!apply_classic_obj_surface(opaque, seam_start, cube,
+                                   2, -31.0, 1.0, 0.2, 0.0, &error)
+        || !apply_classic_obj_surface(opaque, seam_end, cube,
+                                      2, -31.0, 1.0, 0.2, tau, &error)
         || seam_start.pixels != seam_end.pixels) {
         return fail(6, "OBJ rotation does not close exactly at the loop seam");
     }
 
     // Failure is transactional.
     pvt::Image unchanged = nearest;
-    if (pvt::detail::apply_obj_surface_mapping(opaque, unchanged,
-                                               "/path/that/does/not/exist.obj",
-                                               0, 0.0, 1.0, 0.0, 0.0,
-                                               &error)
+    if (apply_classic_obj_surface(opaque, unchanged,
+                                  "/path/that/does/not/exist.obj",
+                                  0, 0.0, 1.0, 0.0, 0.0, &error)
         || unchanged.pixels != nearest.pixels) {
         return fail(7, "OBJ render failure changed the destination");
     }
 
     std::atomic_bool cancelled {true};
     unchanged = nearest;
-    if (pvt::detail::apply_obj_surface_mapping(
+    if (apply_classic_obj_surface(
             opaque, unchanged, cube, 0, 0.0, 1.0, 0.0, 0.0, &error,
             &cancelled)
         || error.find("cancelled") == std::string::npos

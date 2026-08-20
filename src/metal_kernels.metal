@@ -52,8 +52,13 @@ struct GpuEffect {
 };
 
 struct GpuSurface {
-    uint4 kind; // mapping, unused...
-    float4 values; // phase, curvature, lighting, unused
+    uint4 kind; // mapping, projection, sizing, outside behavior
+    uint4 flags; // composite backfaces, rotation order, reserved...
+    float4 rotation_curvature; // authored XYZ radians, curvature
+    float4 scale_size; // object XYZ scale, visible size multiplier
+    float4 position_camera; // canvas X/Y percent, object Z, camera distance
+    float4 optical_lighting; // focal length, lighting, ambient, diffuse
+    float4 light; // authored world-space light XYZ, reserved
 };
 
 struct GpuSourceImage {
@@ -948,14 +953,58 @@ float3 rotate_y(float3 value, float angle) {
                   -sine * value.x + cosine * value.z);
 }
 
+float3 rotate_z(float3 value, float angle) {
+    const float cosine = cos(angle);
+    const float sine = sin(angle);
+    return float3(cosine * value.x - sine * value.y,
+                  sine * value.x + cosine * value.y, value.z);
+}
+
+float3 rotate_surface(float3 value, float3 angles, uint order) {
+    switch (order) {
+        case 0u: return rotate_z(rotate_y(rotate_x(value, angles.x), angles.y), angles.z);
+        case 1u: return rotate_y(rotate_z(rotate_x(value, angles.x), angles.z), angles.y);
+        case 2u: return rotate_z(rotate_x(rotate_y(value, angles.y), angles.x), angles.z);
+        case 3u: return rotate_x(rotate_z(rotate_y(value, angles.y), angles.z), angles.x);
+        case 4u: return rotate_y(rotate_x(rotate_z(value, angles.z), angles.x), angles.y);
+        case 5u: return rotate_x(rotate_y(rotate_z(value, angles.z), angles.y), angles.x);
+    }
+    return value;
+}
+
+float3 inverse_rotate_surface(float3 value, float3 angles, uint order) {
+    switch (order) {
+        case 0u: return rotate_x(rotate_y(rotate_z(value, -angles.z), -angles.y), -angles.x);
+        case 1u: return rotate_x(rotate_z(rotate_y(value, -angles.y), -angles.z), -angles.x);
+        case 2u: return rotate_y(rotate_x(rotate_z(value, -angles.z), -angles.x), -angles.y);
+        case 3u: return rotate_y(rotate_z(rotate_x(value, -angles.x), -angles.z), -angles.y);
+        case 4u: return rotate_z(rotate_x(rotate_y(value, -angles.y), -angles.x), -angles.z);
+        case 5u: return rotate_z(rotate_y(rotate_x(value, -angles.x), -angles.y), -angles.z);
+    }
+    return value;
+}
+
+float3 surface_object_ray(float3 value, float3 scale, float3 angles,
+                          uint order) {
+    return inverse_rotate_surface(value, angles, order) / scale;
+}
+
+float3 surface_world_normal(float3 normal, float3 scale, float3 angles,
+                            uint order) {
+    return normalize(rotate_surface(normal / scale, angles, order));
+}
+
 float3 orient_normal(float3 normal, float3 ray_direction) {
     return dot(normal, ray_direction) > 0.0f ? -normal : normal;
 }
 
-float4 shade_surface(float4 color, float3 normal, float lighting) {
-    const float3 light = normalize(float3(-0.45f, -0.55f, 0.75f));
+float4 shade_surface_explicit(float4 color, float3 normal,
+                              constant GpuSurface& surface,
+                              float lighting) {
+    const float3 light = normalize(surface.light.xyz);
     const float diffuse = max(0.0f, dot(normalize(normal), light));
-    const float lit = 0.28f + 0.72f * diffuse;
+    const float lit = surface.optical_lighting.z
+                      + surface.optical_lighting.w * diffuse;
     color.rgb *= max(0.0f, 1.0f + lighting * (lit - 1.0f));
     return color;
 }
@@ -970,25 +1019,6 @@ float4 composite_straight_over(float4 front, float4 back) {
     return float4((front.rgb * front_alpha + back.rgb * back_weight)
                       / output_alpha,
                   output_alpha);
-}
-
-float4 sample_sphere_side(const device float4* source,
-                          uint width, uint height,
-                          float normal_x, float normal_y, float normal_z,
-                          float phase, float lighting) {
-    const float3 normal = float3(normal_x, normal_y, normal_z);
-    const float3 texture_normal = rotate_y(normal, -phase);
-    const float longitude = atan2(texture_normal.x, texture_normal.z);
-    const float latitude = asin(clamp(texture_normal.y, -1.0f, 1.0f));
-    const float wrapped_u = wrap_unit(0.5f + longitude / kTau);
-    const float sphere_v = 0.5f - latitude / kPi;
-    float4 sampled = sample_bilinear_wrapped_x(
-        source, wrapped_u * float(width),
-        sphere_v * float(height - 1u), width, height);
-    return shade_surface(
-        sampled,
-        orient_normal(normal, float3(0.0f, 0.0f, -1.0f)),
-        lighting);
 }
 
 struct CylinderHit {
@@ -1083,27 +1113,6 @@ float2 cylinder_uv(float3 point, float3 normal) {
                         : 0.5f - 0.5f * point.z), 0.0f, 1.0f);
 }
 
-float4 sample_cylinder_hit(const device float4* source,
-                           uint width, uint height,
-                           CylinderHit hit,
-                           float phase, float fixed_x_rotation,
-                           float3 world_direction,
-                           float curvature, float lighting) {
-    const float2 uv = cylinder_uv(hit.point, hit.normal);
-    float4 sampled = fabs(hit.normal.y) < 0.5f
-        ? sample_bilinear_wrapped_x(
-              source, uv.x * float(width), uv.y * float(height - 1u),
-              width, height)
-        : sample_bilinear(
-              source, uv.x * float(width - 1u),
-              uv.y * float(height - 1u), width, height, 3u);
-    const float3 world_normal = rotate_x(
-        rotate_y(hit.normal, phase), fixed_x_rotation);
-    return shade_surface(
-        sampled, orient_normal(world_normal, world_direction),
-        lighting * curvature);
-}
-
 struct CubeHit {
     float distance;
     float3 point;
@@ -1183,23 +1192,6 @@ float2 cube_uv(float3 point, float3 normal) {
     return clamp(float2(u, v), 0.0f, 1.0f);
 }
 
-float4 sample_cube_hit(const device float4* source,
-                       uint width, uint height, CubeHit hit,
-                       float2 screen_uv, float curvature,
-                       float3 ray_direction, float y_rotation,
-                       float lighting) {
-    const float2 uv = cube_uv(hit.point, hit.normal);
-    const float mapped_u = mix(screen_uv.x, uv.x, curvature);
-    const float mapped_v = mix(screen_uv.y, uv.y, curvature);
-    float4 sampled = sample_bilinear(
-        source, mapped_u * float(width - 1u),
-        mapped_v * float(height - 1u), width, height, 3u);
-    const float3 lighting_normal = orient_normal(hit.normal, ray_direction);
-    const float3 world_normal = rotate_y(
-        rotate_x(lighting_normal, -0.35f), y_rotation);
-    return shade_surface(sampled, world_normal, lighting * curvature);
-}
-
 kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
                             constant GpuSurface& surface [[buffer(1)]],
                             const device float4* source [[buffer(2)]],
@@ -1210,108 +1202,173 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
     if (gid.x >= width || gid.y >= height) return;
     const float x = float(gid.x);
     const float y = float(gid.y);
-    const float phase = surface.values.x;
-    const float curvature = clamp_unit(surface.values.y);
-    const float lighting = surface.values.z;
+    const float width_span = float(max(1u, width - 1u));
+    const float height_span = float(max(1u, height - 1u));
     const float short_side = float(min(width, height));
-    const float center_x = 0.5f * float(width - 1u);
-    const float center_y = 0.5f * float(height - 1u);
-    const float screen_u = width > 1u ? x / float(width - 1u) : 0.5f;
-    const float screen_v = height > 1u ? y / float(height - 1u) : 0.5f;
+    const float curvature = clamp_unit(surface.rotation_curvature.w);
+    const float3 angles = surface.rotation_curvature.xyz;
+    const float3 object_scale = surface.scale_size.xyz;
+    const float size = surface.scale_size.w;
+    const float half_x = surface.kind.x == 0u
+                             ? width_span / height_span : 1.0f;
+    const float contain_scale = min(width_span / (2.0f * half_x),
+                                    height_span * 0.5f);
+    const float cover_scale = max(width_span / (2.0f * half_x),
+                                  height_span * 0.5f);
+    float screen_scale_x = contain_scale * size;
+    float screen_scale_y = contain_scale * size;
+    if (surface.kind.z == 1u) {
+        screen_scale_x = cover_scale * size;
+        screen_scale_y = cover_scale * size;
+    } else if (surface.kind.z == 2u) {
+        screen_scale_x = width_span / (2.0f * half_x) * size;
+        screen_scale_y = height_span * 0.5f * size;
+    } else if (surface.kind.z == 3u) {
+        screen_scale_x = 0.5f * short_side * size;
+        screen_scale_y = screen_scale_x;
+    }
+    const float center_x = 0.5f * width_span
+        + surface.position_camera.x * width_span / 100.0f;
+    const float center_y = 0.5f * height_span
+        - surface.position_camera.y * height_span / 100.0f;
+    const float screen_x = (x - center_x) / screen_scale_x;
+    const float screen_y = (center_y - y) / screen_scale_y;
+    float3 world_origin;
+    float3 world_direction;
+    if (surface.kind.y == 1u) {
+        world_origin = float3(0.0f, 0.0f, surface.position_camera.w);
+        world_direction = normalize(float3(
+            screen_x, screen_y, -surface.optical_lighting.x));
+    } else {
+        world_origin = float3(screen_x, screen_y,
+                              surface.position_camera.w);
+        world_direction = float3(0.0f, 0.0f, -1.0f);
+    }
+    const float3 origin = surface_object_ray(
+        world_origin - float3(0.0f, 0.0f, surface.position_camera.z),
+        object_scale, angles, surface.flags.y);
+    const float3 direction = surface_object_ray(
+        world_direction, object_scale, angles, surface.flags.y);
     const float4 planar = source[gid.y * width + gid.x];
-    float4 result = planar;
+    float4 mapped = float4(0.0f);
     bool visible = true;
 
+    const auto shade_hit = [&](float4 sampled, float3 object_normal) {
+        float3 world_normal = surface_world_normal(
+            object_normal, object_scale, angles, surface.flags.y);
+        world_normal = orient_normal(world_normal, world_direction);
+        return shade_surface_explicit(
+            sampled, world_normal, surface,
+            surface.optical_lighting.y * curvature);
+    };
+
     if (surface.kind.x == 0u) {
-        const float dx = x - center_x;
-        const float dy = y - center_y;
-        const float cosine = cos(-phase);
-        const float sine = sin(-phase);
-        result = sample_bilinear(
-            source, center_x + cosine * dx - sine * dy,
-            center_y + sine * dx + cosine * dy,
-            width, height, 3u);
+        if (fabs(direction.z) <= 1.0e-7f) {
+            visible = false;
+        } else {
+            const float distance = -origin.z / direction.z;
+            if (distance < 0.0f) {
+                visible = false;
+            } else {
+                const float3 point = origin + direction * distance;
+                const bool inside = fabs(point.x) <= half_x
+                                    && fabs(point.y) <= 1.0f;
+                if (!inside && surface.kind.w != 2u) {
+                    visible = false;
+                } else {
+                    const float u = 0.5f + 0.5f * point.x / half_x;
+                    const float v = 0.5f - 0.5f * point.y;
+                    mapped = shade_hit(sample_bilinear(
+                        source, u * width_span, v * height_span,
+                        width, height, 3u), float3(0.0f, 0.0f, 1.0f));
+                }
+            }
+        }
     } else if (surface.kind.x == 1u) {
-        const float scale = 0.52f * short_side;
-        const float screen_x = (x - center_x) / scale;
-        const float screen_y = (center_y - y) / scale;
-        const float3 world_origin = float3(0.0f, 0.0f, 3.4f);
-        const float3 world_direction = normalize(
-            float3(screen_x, screen_y, -2.5f));
-        const float fixed_x_rotation = -0.35f;
-        const float3 origin = rotate_y(
-            rotate_x(world_origin, -fixed_x_rotation), -phase);
-        const float3 direction = rotate_y(
-            rotate_x(world_direction, -fixed_x_rotation), -phase);
         CylinderIntersections intersections;
         if (!intersect_closed_cylinder(origin, direction, intersections)) {
             visible = false;
         } else {
-            float4 wrapped = sample_cylinder_hit(
-                source, width, height, intersections.front, phase,
-                fixed_x_rotation, world_direction, curvature, lighting);
-            if (intersections.has_back) {
-                const float4 rear = sample_cylinder_hit(
-                    source, width, height, intersections.back, phase,
-                    fixed_x_rotation, world_direction, curvature, lighting);
-                const float4 layered = composite_straight_over(wrapped, rear);
-                wrapped = mix(wrapped, layered, curvature);
+            const auto sample_hit = [&](CylinderHit hit) {
+                const float2 uv = cylinder_uv(hit.point, hit.normal);
+                float4 sampled = fabs(hit.normal.y) < 0.5f
+                    ? sample_bilinear_wrapped_x(
+                          source, uv.x * float(width), uv.y * height_span,
+                          width, height)
+                    : sample_bilinear(
+                          source, uv.x * width_span, uv.y * height_span,
+                          width, height, 3u);
+                return shade_hit(sampled, hit.normal);
+            };
+            mapped = sample_hit(intersections.front);
+            if (surface.flags.x != 0u && intersections.has_back) {
+                mapped = composite_straight_over(
+                    mapped, sample_hit(intersections.back));
             }
-            result = mix(planar, wrapped, curvature);
         }
     } else if (surface.kind.x == 2u) {
-        const float radius = 0.46f * short_side;
-        const float normalized_x = (x - center_x) / radius;
-        const float normalized_y = (center_y - y) / radius;
-        const float radius_squared = normalized_x * normalized_x
-                                     + normalized_y * normalized_y;
-        if (radius_squared > 1.0f) {
+        const float a = dot(direction, direction);
+        const float b = 2.0f * dot(origin, direction);
+        const float c = dot(origin, origin) - 1.0f;
+        const float discriminant = b * b - 4.0f * a * c;
+        if (a <= 1.0e-12f || discriminant < 0.0f) {
             visible = false;
         } else {
-            const float normalized_z = sqrt(max(0.0f, 1.0f - radius_squared));
-            float4 wrapped = sample_sphere_side(
-                source, width, height, normalized_x, normalized_y,
-                normalized_z, phase, lighting);
-            if (normalized_z > 1.0e-7f) {
-                const float4 rear = sample_sphere_side(
-                    source, width, height, normalized_x, normalized_y,
-                    -normalized_z, phase, lighting);
-                wrapped = composite_straight_over(wrapped, rear);
+            const float root = sqrt(max(0.0f, discriminant));
+            const float first = (-b - root) / (2.0f * a);
+            const float second = (-b + root) / (2.0f * a);
+            const float front_distance = first >= 0.0f ? first : second;
+            if (second < 0.0f) {
+                visible = false;
+            } else {
+                const auto sample_hit = [&](float distance) {
+                    const float3 point = origin + direction * distance;
+                    const float3 normal = normalize(point);
+                    const float longitude = atan2(normal.x, normal.z);
+                    const float latitude = asin(clamp(normal.y, -1.0f, 1.0f));
+                    const float u = wrap_unit(0.5f + longitude / kTau);
+                    const float v = 0.5f - latitude / kPi;
+                    return shade_hit(sample_bilinear_wrapped_x(
+                        source, u * float(width), v * height_span,
+                        width, height), normal);
+                };
+                mapped = sample_hit(front_distance);
+                if (surface.flags.x != 0u && first >= 0.0f
+                    && second - first > 1.0e-7f) {
+                    mapped = composite_straight_over(
+                        mapped, sample_hit(second));
+                }
             }
-            result = mix(planar, wrapped, curvature);
         }
     } else {
-        const float scale = 0.52f * short_side;
-        const float screen_x = (x - center_x) / scale;
-        const float screen_y = (center_y - y) / scale;
-        float3 origin = float3(0.0f, 0.0f, 3.4f);
-        float3 direction = normalize(float3(screen_x, screen_y, -2.5f));
-        const float fixed_x_rotation = -0.35f;
-        const float y_rotation = 0.55f + phase;
-        origin = rotate_x(rotate_y(origin, -y_rotation),
-                          -fixed_x_rotation);
-        direction = rotate_x(rotate_y(direction, -y_rotation),
-                             -fixed_x_rotation);
         CubeIntersections intersections;
         if (!intersect_cube(origin, direction, intersections)) {
             visible = false;
         } else {
-            const float2 screen_uv = float2(screen_u, screen_v);
-            const float4 front = sample_cube_hit(
-                source, width, height, intersections.front, screen_uv,
-                curvature, direction, y_rotation, lighting);
-            result = front;
-            if (intersections.has_back) {
-                const float4 back = sample_cube_hit(
-                    source, width, height, intersections.back, screen_uv,
-                    curvature, direction, y_rotation, lighting);
-                result = mix(front,
-                             composite_straight_over(front, back), curvature);
+            const auto sample_hit = [&](CubeHit hit) {
+                const float2 uv = cube_uv(hit.point, hit.normal);
+                return shade_hit(sample_bilinear(
+                    source, uv.x * width_span, uv.y * height_span,
+                    width, height, 3u), hit.normal);
+            };
+            mapped = sample_hit(intersections.front);
+            if (surface.flags.x != 0u && intersections.has_back) {
+                mapped = composite_straight_over(
+                    mapped, sample_hit(intersections.back));
             }
         }
     }
 
-    if (!visible) result = mix(planar, float4(0.0f), curvature);
+    float4 result;
+    if (visible) {
+        result = surface.kind.x == 0u ? mapped
+                                      : mix(planar, mapped, curvature);
+    } else if (surface.kind.w == 1u
+               || (surface.kind.w == 2u && surface.kind.x != 0u)) {
+        result = planar;
+    } else {
+        result = mix(planar, float4(0.0f), curvature);
+    }
     result.a = clamp_unit(result.a);
     output[gid.y * width + gid.x] = result;
 }

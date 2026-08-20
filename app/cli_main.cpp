@@ -1770,11 +1770,75 @@ void configure_surface(RenderConfig& config,
                    displacement.pixels_per_node, 1,
                    (std::numeric_limits<int>::max)());
     }
-    prompt_int("Surface rotations per loop", config.surface.rotations_per_loop, -1000, 1000);
-    prompt_real("Surface starting phase (degrees)", config.surface.phase_degrees,
-                -36000.0, 36000.0);
-    prompt_real("Surface curvature", config.surface.curvature, 0.0, 1.0);
-    prompt_real("Surface lighting", config.surface.lighting, 0.0, 10.0);
+    std::cout << "\n-- Explicit surface projection and transform --\n";
+    if (!prompt_enum("Projection", config.surface.projection,
+                     {{pvt::SurfaceProjection::Orthographic, "Orthographic"},
+                      {pvt::SurfaceProjection::Perspective, "Perspective"}})
+        || !prompt_enum("Visible-size policy", config.surface.sizing,
+                        {{pvt::SurfaceSizing::Contain, "Contain"},
+                         {pvt::SurfaceSizing::Cover, "Cover"},
+                         {pvt::SurfaceSizing::Stretch, "Stretch"},
+                         {pvt::SurfaceSizing::ShortSide,
+                          "Canvas short side"}})
+        || !prompt_enum("Outside-surface pixels", config.surface.outside,
+                        {{pvt::SurfaceOutside::Transparent, "Transparent"},
+                         {pvt::SurfaceOutside::Source, "Keep source"},
+                         {pvt::SurfaceOutside::Reflect, "Reflect source"}})
+        || !prompt_enum("Euler rotation order", config.surface.rotation_order,
+                        {{pvt::SurfaceRotationOrder::XYZ, "X then Y then Z"},
+                         {pvt::SurfaceRotationOrder::XZY, "X then Z then Y"},
+                         {pvt::SurfaceRotationOrder::YXZ, "Y then X then Z"},
+                         {pvt::SurfaceRotationOrder::YZX, "Y then Z then X"},
+                         {pvt::SurfaceRotationOrder::ZXY, "Z then X then Y"},
+                         {pvt::SurfaceRotationOrder::ZYX, "Z then Y then X"}})
+        || !prompt_int("X rotations per loop",
+                       config.surface.rotation_x_turns_per_loop, -1000, 1000)
+        || !prompt_int("Y rotations per loop",
+                       config.surface.rotation_y_turns_per_loop, -1000, 1000)
+        || !prompt_int("Z rotations per loop",
+                       config.surface.rotation_z_turns_per_loop, -1000, 1000)
+        || !prompt_real("Starting X rotation (degrees)",
+                        config.surface.rotation_x_degrees, -36000.0, 36000.0)
+        || !prompt_real("Starting Y rotation (degrees)",
+                        config.surface.rotation_y_degrees, -36000.0, 36000.0)
+        || !prompt_real("Starting Z rotation (degrees)",
+                        config.surface.rotation_z_degrees, -36000.0, 36000.0)
+        || !prompt_real("Visible size (percent)",
+                        config.surface.size_percent, 0.001, 100000.0)
+        || !prompt_real("Object scale X", config.surface.scale_x,
+                        0.001, 100000.0)
+        || !prompt_real("Object scale Y", config.surface.scale_y,
+                        0.001, 100000.0)
+        || !prompt_real("Object scale Z", config.surface.scale_z,
+                        0.001, 100000.0)
+        || !prompt_real("Canvas position X (percent)",
+                        config.surface.position_x_percent, -100000.0, 100000.0)
+        || !prompt_real("Canvas position Y (percent)",
+                        config.surface.position_y_percent, -100000.0, 100000.0)
+        || !prompt_real("Object position Z", config.surface.position_z,
+                        -100000.0, 100000.0)
+        || !prompt_real("Perspective camera distance",
+                        config.surface.camera_distance, 0.001, 100000.0)
+        || !prompt_real("Perspective focal length",
+                        config.surface.focal_length, 0.001, 100000.0)
+        || !prompt_real("Surface curvature", config.surface.curvature, 0.0, 1.0)
+        || !prompt_real("Surface lighting", config.surface.lighting, 0.0, 10.0)
+        || !prompt_real("Light direction X",
+                        config.surface.light_direction_x, -1000.0, 1000.0)
+        || !prompt_real("Light direction Y",
+                        config.surface.light_direction_y, -1000.0, 1000.0)
+        || !prompt_real("Light direction Z",
+                        config.surface.light_direction_z, -1000.0, 1000.0)
+        || !prompt_real("Ambient light", config.surface.light_ambient,
+                        0.0, 10.0)
+        || !prompt_real("Diffuse light", config.surface.light_diffuse,
+                        0.0, 10.0)
+        || !prompt_bool("Composite transparent back faces",
+                        config.surface.composite_backfaces)
+        || !prompt_bool("Normalize imported OBJ geometry",
+                        config.surface.normalize_obj)) {
+        return;
+    }
 
     std::cout << "\n-- Layer transform (before mapped-object effects; mirror before flips) --\n";
     if (!prompt_enum("Mirror mode", config.transform.mirror,

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **7.0.2**. The version is read from `VERSION` by every
+Current product version: **8.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,36 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 8.0.0 explicit surface composition
+
+Surface selection no longer invents a camera or composition. A newly enabled
+Plane is a pixel-aligned, unrotated, unlit 100% view; changing Plane to
+Cylinder, Sphere, Cube, or Custom OBJ preserves every authored view value.
+Formerly hard-coded perspective, three-quarter tilt, initial turn, visible
+scale, sphere radius, outside fill, light direction, ambient/diffuse split,
+rear-surface compositing, and OBJ normalization are now ordinary portable
+project settings.
+
+The surface editor and CLI expose orthographic/perspective projection, Contain,
+Cover, Stretch, and short-side sizing, visible size, independent XYZ scale and
+position, starting rotation and integer loop turns on all three axes, all six
+Euler rotation orders, camera distance, focal length, outside-surface behavior,
+curvature, lighting amount,
+light direction, ambient and diffuse levels, transparent rear-surface
+compositing, and OBJ normalization. Neutral front and Classic three-quarter
+buttons are explicit presets with Undo support; they do not run when a surface
+type is selected. The same representable controls are available to Live
+mappings. CPU, Metal, and Qt OpenGL analytic surfaces share these semantics;
+ordered Custom OBJ and displaced-Plane mesh rasterization keeps the same
+explicit model.
+
+Setup formats 1 through 15 and layer formats 1 through 13 migrate the old
+implicit presentation into explicit values, preserving their established view
+without carrying hidden behavior into new work. Portable persistence advances
+to setup format 16 and layer format 14. Because `SurfaceConfig` is a public
+by-value structure, version 8.0.0 advances the installed shared library to
+SONAME 8 and installed-library clients must rebuild.
 
 ## 7.0.2 Windows ARM64 package correction
 
@@ -1136,8 +1166,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-14 remain importable;
-current explicit legacy output is setup format 15. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-15 remain importable;
+current explicit legacy output is setup format 16. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1158,9 +1188,11 @@ pre-analysis audio filtering/EQ, named frequency-stream analyses and clock
 selection, Live sleep prevention, Edge Detect/Twirl, and procedural particle
 shape selection. Format 15 adds independent particle rendering profile, size
 variation, definition, twinkle, seed, orientation, and rotation. Project layer
-records use the corresponding current layer format 13.
-Older files receive neutral compatibility
-defaults. Import creates a new unsaved
+records use the corresponding current layer format 14. Format 16 makes surface
+projection, sizing, XYZ transforms/loop rotations, Euler order, camera, outside
+fill, lighting model, rear compositing, and OBJ normalization explicit. Older
+files receive visible compatibility values that reproduce their former
+presentation without carrying hidden behavior forward. Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
 The CLI exposes

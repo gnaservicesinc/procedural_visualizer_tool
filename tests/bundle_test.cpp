@@ -311,6 +311,32 @@ void test_layer_codec_backward_compatibility() {
     original.post_process.antialias_strength = 0.81;
     original.post_process.antialias_threshold = 0.11;
     original.post_process.antialias_passes = 2;
+    original.surface.projection = pvt::SurfaceProjection::Perspective;
+    original.surface.sizing = pvt::SurfaceSizing::Cover;
+    original.surface.outside = pvt::SurfaceOutside::Source;
+    original.surface.rotation_order = pvt::SurfaceRotationOrder::YZX;
+    original.surface.rotation_x_turns_per_loop = -2;
+    original.surface.rotation_y_turns_per_loop = 3;
+    original.surface.rotation_z_turns_per_loop = 4;
+    original.surface.rotation_x_degrees = -17.0;
+    original.surface.rotation_y_degrees = 29.0;
+    original.surface.rotation_z_degrees = 8.0;
+    original.surface.size_percent = 81.0;
+    original.surface.scale_x = 1.2;
+    original.surface.scale_y = 0.8;
+    original.surface.scale_z = 1.4;
+    original.surface.position_x_percent = 6.0;
+    original.surface.position_y_percent = -5.0;
+    original.surface.position_z = 0.2;
+    original.surface.camera_distance = 4.0;
+    original.surface.focal_length = 3.0;
+    original.surface.light_direction_x = 0.3;
+    original.surface.light_direction_y = -0.4;
+    original.surface.light_direction_z = 0.5;
+    original.surface.light_ambient = 0.2;
+    original.surface.light_diffuse = 1.1;
+    original.surface.composite_backfaces = false;
+    original.surface.normalize_obj = false;
     original.surface.plane_displacement.enabled = false;
     original.surface.plane_displacement.minimum = -0.31;
     original.surface.plane_displacement.maximum = 0.62;
@@ -330,7 +356,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t13\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t14\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -406,6 +432,34 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.post_process.antialias_strength == 0.81);
     CHECK(current_round_trip.post_process.antialias_threshold == 0.11);
     CHECK(current_round_trip.post_process.antialias_passes == 2);
+    CHECK(current_round_trip.surface.projection
+          == pvt::SurfaceProjection::Perspective);
+    CHECK(current_round_trip.surface.sizing == pvt::SurfaceSizing::Cover);
+    CHECK(current_round_trip.surface.outside == pvt::SurfaceOutside::Source);
+    CHECK(current_round_trip.surface.rotation_order
+          == pvt::SurfaceRotationOrder::YZX);
+    CHECK(current_round_trip.surface.rotation_x_turns_per_loop == -2);
+    CHECK(current_round_trip.surface.rotation_y_turns_per_loop == 3);
+    CHECK(current_round_trip.surface.rotation_z_turns_per_loop == 4);
+    CHECK(current_round_trip.surface.rotation_x_degrees == -17.0);
+    CHECK(current_round_trip.surface.rotation_y_degrees == 29.0);
+    CHECK(current_round_trip.surface.rotation_z_degrees == 8.0);
+    CHECK(current_round_trip.surface.size_percent == 81.0);
+    CHECK(current_round_trip.surface.scale_x == 1.2);
+    CHECK(current_round_trip.surface.scale_y == 0.8);
+    CHECK(current_round_trip.surface.scale_z == 1.4);
+    CHECK(current_round_trip.surface.position_x_percent == 6.0);
+    CHECK(current_round_trip.surface.position_y_percent == -5.0);
+    CHECK(current_round_trip.surface.position_z == 0.2);
+    CHECK(current_round_trip.surface.camera_distance == 4.0);
+    CHECK(current_round_trip.surface.focal_length == 3.0);
+    CHECK(current_round_trip.surface.light_direction_x == 0.3);
+    CHECK(current_round_trip.surface.light_direction_y == -0.4);
+    CHECK(current_round_trip.surface.light_direction_z == 0.5);
+    CHECK(current_round_trip.surface.light_ambient == 0.2);
+    CHECK(current_round_trip.surface.light_diffuse == 1.1);
+    CHECK(!current_round_trip.surface.composite_backfaces);
+    CHECK(!current_round_trip.surface.normalize_obj);
     CHECK(current_round_trip.surface.plane_displacement.minimum == -0.31);
     CHECK(current_round_trip.surface.plane_displacement.maximum == 0.62);
     CHECK(current_round_trip.surface.plane_displacement.midpoint == 0.43);
@@ -415,13 +469,13 @@ void test_layer_codec_backward_compatibility() {
 
     // Layer v12/setup v14 predates the independent particle controls. Their
     // compatibility defaults retain the old renderer exactly.
-    std::istringstream current_v13_input(current_layer);
+    std::istringstream current_v14_input(current_layer);
     std::ostringstream version_twelve_output;
     std::string line;
-    CHECK(static_cast<bool>(std::getline(current_v13_input, line)));
-    CHECK(line == "PVT_LAYER\t13");
+    CHECK(static_cast<bool>(std::getline(current_v14_input, line)));
+    CHECK(line == "PVT_LAYER\t14");
     version_twelve_output << "PVT_LAYER\t12\n";
-    while (std::getline(current_v13_input, line)) {
+    while (std::getline(current_v14_input, line)) {
         const std::size_t tab = line.find('\t');
         const std::string key = line.substr(0U, tab);
         const bool v13_only = has_suffix(key, ".particle_profile")
@@ -431,8 +485,21 @@ void test_layer_codec_backward_compatibility() {
             || has_suffix(key, ".particle_seed")
             || has_suffix(key, ".particle_orientation")
             || has_suffix(key, ".particle_rotation_degrees");
-        if (!v13_only) version_twelve_output << line << '\n';
+        const bool v14_only = key == "surface.projection"
+            || key == "surface.sizing" || key == "surface.outside"
+            || key.rfind("surface.rotation_", 0U) == 0U
+            || key == "surface.size_percent"
+            || key.rfind("surface.scale_", 0U) == 0U
+            || key.rfind("surface.position_", 0U) == 0U
+            || key == "surface.camera_distance"
+            || key == "surface.focal_length"
+            || key.rfind("surface.light_", 0U) == 0U
+            || key == "surface.composite_backfaces"
+            || key == "surface.normalize_obj";
+        if (!v13_only && !v14_only) version_twelve_output << line << '\n';
     }
+    version_twelve_output << "surface.rotations_per_loop\t0\n"
+                          << "surface.phase_degrees\t0\n";
     const std::string version_twelve = version_twelve_output.str();
     pvt::RenderData loaded_version_twelve;
     CHECK(pvt::detail::deserialize_layer_config(
@@ -1002,7 +1069,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t13");
+    CHECK(line == "PVT_LAYER\t14");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -1021,8 +1088,23 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
             || has_suffix(key, ".particle_seed")
             || has_suffix(key, ".particle_orientation")
             || has_suffix(key, ".particle_rotation_degrees");
-        if (!current_particle_field) legacy_layer << line << '\n';
+        const bool current_surface_field = key == "surface.projection"
+            || key == "surface.sizing" || key == "surface.outside"
+            || key.rfind("surface.rotation_", 0U) == 0U
+            || key == "surface.size_percent"
+            || key.rfind("surface.scale_", 0U) == 0U
+            || key.rfind("surface.position_", 0U) == 0U
+            || key == "surface.camera_distance"
+            || key == "surface.focal_length"
+            || key.rfind("surface.light_", 0U) == 0U
+            || key == "surface.composite_backfaces"
+            || key == "surface.normalize_obj";
+        if (!current_particle_field && !current_surface_field) {
+            legacy_layer << line << '\n';
+        }
     }
+    legacy_layer << "surface.rotations_per_loop\t0\n"
+                 << "surface.phase_degrees\t0\n";
     CHECK(write_bytes(legacy_layer_path, legacy_layer.str()));
 
     const fs::path version_metadata_path = bundle / "0" / "metadata.txt";

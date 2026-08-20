@@ -19,10 +19,6 @@ namespace {
 
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr double kTau = 2.0 * kPi;
-constexpr double kCameraZ = 3.4;
-constexpr double kFocalLength = 2.5;
-constexpr double kFixedXRotation = -0.35;
-constexpr double kInitialYRotation = 0.55;
 constexpr double kMinimumCameraDepth = 1.0e-6;
 constexpr double kOpaqueThreshold = 1.0 - 1.0e-7;
 constexpr double kDepthRelativeEpsilon = 1.0e-6;
@@ -132,6 +128,57 @@ ObjVec3 rotate_y(ObjVec3 value, double angle) {
             -sine * value.x + cosine * value.z};
 }
 
+ObjVec3 rotate_z(ObjVec3 value, double angle) {
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    return {cosine * value.x - sine * value.y,
+            sine * value.x + cosine * value.y, value.z};
+}
+
+struct SurfaceAngles {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+SurfaceAngles surface_angles(const SurfaceConfig& surface, double loop_phase) {
+    return {
+        surface.rotation_x_degrees * kPi / 180.0
+            + static_cast<double>(surface.rotation_x_turns_per_loop)
+                  * loop_phase,
+        surface.rotation_y_degrees * kPi / 180.0
+            + static_cast<double>(surface.rotation_y_turns_per_loop)
+                  * loop_phase,
+        surface.rotation_z_degrees * kPi / 180.0
+            + static_cast<double>(surface.rotation_z_turns_per_loop)
+                  * loop_phase};
+}
+
+ObjVec3 rotate_surface(ObjVec3 value, const SurfaceAngles& angles,
+                       SurfaceRotationOrder order) {
+    switch (order) {
+        case SurfaceRotationOrder::XYZ:
+            return rotate_z(rotate_y(rotate_x(value, angles.x), angles.y),
+                            angles.z);
+        case SurfaceRotationOrder::XZY:
+            return rotate_y(rotate_z(rotate_x(value, angles.x), angles.z),
+                            angles.y);
+        case SurfaceRotationOrder::YXZ:
+            return rotate_z(rotate_x(rotate_y(value, angles.y), angles.x),
+                            angles.z);
+        case SurfaceRotationOrder::YZX:
+            return rotate_x(rotate_z(rotate_y(value, angles.y), angles.z),
+                            angles.x);
+        case SurfaceRotationOrder::ZXY:
+            return rotate_y(rotate_x(rotate_z(value, angles.z), angles.x),
+                            angles.y);
+        case SurfaceRotationOrder::ZYX:
+            return rotate_x(rotate_y(rotate_z(value, angles.z), angles.y),
+                            angles.x);
+    }
+    return value;
+}
+
 Color load_color(const Image& image, std::size_t pixel) {
     const std::size_t offset = pixel * 4U;
     return {image.pixels[offset], image.pixels[offset + 1U],
@@ -171,10 +218,14 @@ Color composite_over(Color front, Color back) {
             output_alpha};
 }
 
-Color shade(Color color, ObjVec3 normal, double lighting) {
-    const ObjVec3 light = normalize({-0.45, -0.55, 0.75});
+Color shade(Color color, ObjVec3 normal, const SurfaceConfig& surface,
+            double lighting) {
+    const ObjVec3 light = normalize({surface.light_direction_x,
+                                     surface.light_direction_y,
+                                     surface.light_direction_z});
     const double diffuse = std::max(0.0, dot(normalize(normal), light));
-    const double lit = 0.28 + 0.72 * diffuse;
+    const double lit = surface.light_ambient
+                       + surface.light_diffuse * diffuse;
     const double multiplier = std::max(0.0, 1.0 + lighting * (lit - 1.0));
     color.r *= multiplier;
     color.g *= multiplier;
@@ -277,6 +328,7 @@ void rasterize_mesh(const ObjMesh& mesh,
                     const Image& source,
                     int width,
                     int height,
+                    const SurfaceConfig& surface,
                     double lighting,
                     const std::atomic_bool* cancel,
                     FragmentCallback&& fragment) {
@@ -392,7 +444,15 @@ void rasterize_mesh(const ObjMesh& mesh,
                 if (!std::isfinite(denominator) || denominator <= 0.0) {
                     continue;
                 }
-                const double depth = 1.0 / denominator;
+                double depth = 1.0 / denominator;
+                if (surface.projection == SurfaceProjection::Orthographic) {
+                    depth = 0.0;
+                    for (std::size_t corner = 0U;
+                         corner < vertices.size(); ++corner) {
+                        depth += barycentric[corner]
+                                 * vertices[corner].projected->camera_depth;
+                    }
+                }
                 const std::size_t pixel = static_cast<std::size_t>(y)
                                           * static_cast<std::size_t>(width)
                                           + static_cast<std::size_t>(x);
@@ -414,13 +474,16 @@ void rasterize_mesh(const ObjMesh& mesh,
                                 multiply(vertices[corner].projected->world, weight));
                 }
                 normal = normalize(normal);
-                const ObjVec3 toward_camera = {-world.x, -world.y,
-                                                kCameraZ - world.z};
+                const ObjVec3 toward_camera =
+                    surface.projection == SurfaceProjection::Perspective
+                        ? ObjVec3{-world.x, -world.y,
+                                  surface.camera_distance - world.z}
+                        : ObjVec3{0.0, 0.0, 1.0};
                 if (dot(normal, toward_camera) < 0.0) {
                     normal = multiply(normal, -1.0);
                 }
                 Color color = sample_source(source, uv, authored_uv);
-                color = shade(color, normal, lighting);
+                color = shade(color, normal, surface, lighting);
                 fragment.store(pixel, depth, color);
             }
         }
@@ -454,35 +517,89 @@ bool source_is_opaque(const Image& source, std::size_t pixel_count,
     return true;
 }
 
-std::vector<ProjectedVertex> project_positions(const ObjMesh& mesh,
-                                               int width,
-                                               int height,
-                                               double y_rotation,
-                                               const std::atomic_bool* cancel) {
+ObjVec3 surface_object_position(const ObjMesh& mesh, ObjVec3 position,
+                                const SurfaceConfig& surface) {
+    if (surface.mapping == SurfaceMapping::CustomObj
+        && !surface.normalize_obj) {
+        return position;
+    }
+    return multiply(subtract(position, mesh.normalization_center),
+                    mesh.normalization_scale);
+}
+
+std::vector<ProjectedVertex> project_positions(
+    const ObjMesh& mesh, int width, int height, const SurfaceConfig& surface,
+    const SurfaceAngles& angles, const std::atomic_bool* cancel) {
     std::vector<ProjectedVertex> result(mesh.positions.size());
-    const double short_side = static_cast<double>(std::min(width, height));
-    const double screen_scale = 0.52 * short_side;
-    const double center_x = 0.5 * static_cast<double>(width - 1);
-    const double center_y = 0.5 * static_cast<double>(height - 1);
+    double half_x = 0.0;
+    double half_y = 0.0;
+    for (const ObjVec3 position : mesh.positions) {
+        const ObjVec3 object = surface_object_position(mesh, position, surface);
+        half_x = std::max(half_x, std::fabs(object.x));
+        half_y = std::max(half_y, std::fabs(object.y));
+    }
+    half_x = std::max(half_x, 1.0e-9);
+    half_y = std::max(half_y, 1.0e-9);
+    const double width_span = static_cast<double>(std::max(1, width - 1));
+    const double height_span = static_cast<double>(std::max(1, height - 1));
+    const double size = surface.size_percent / 100.0;
+    const double contain = std::min(width_span / (2.0 * half_x),
+                                    height_span / (2.0 * half_y));
+    const double cover = std::max(width_span / (2.0 * half_x),
+                                  height_span / (2.0 * half_y));
+    double screen_scale_x = contain * size;
+    double screen_scale_y = contain * size;
+    switch (surface.sizing) {
+        case SurfaceSizing::Contain:
+            break;
+        case SurfaceSizing::Cover:
+            screen_scale_x = cover * size;
+            screen_scale_y = cover * size;
+            break;
+        case SurfaceSizing::Stretch:
+            screen_scale_x = width_span / (2.0 * half_x) * size;
+            screen_scale_y = height_span / (2.0 * half_y) * size;
+            break;
+        case SurfaceSizing::ShortSide:
+            screen_scale_x = 0.5 * static_cast<double>(
+                std::min(width, height)) * size;
+            screen_scale_y = screen_scale_x;
+            break;
+    }
+    const double center_x = 0.5 * width_span
+        + surface.position_x_percent * width_span / 100.0;
+    const double center_y = 0.5 * height_span
+        - surface.position_y_percent * height_span / 100.0;
     for (std::size_t index = 0U; index < mesh.positions.size(); ++index) {
         if ((index & 4095U) == 0U) throw_if_cancelled(cancel);
         ProjectedVertex& projected = result[index];
-        projected.object = multiply(subtract(mesh.positions[index],
-                                              mesh.normalization_center),
-                                    mesh.normalization_scale);
-        projected.world = rotate_y(rotate_x(projected.object, kFixedXRotation),
-                                   y_rotation);
-        projected.camera_depth = kCameraZ - projected.world.z;
+        projected.object = surface_object_position(
+            mesh, mesh.positions[index], surface);
+        const ObjVec3 scaled = {
+            projected.object.x * surface.scale_x,
+            projected.object.y * surface.scale_y,
+            projected.object.z * surface.scale_z};
+        projected.world = rotate_surface(scaled, angles,
+                                         surface.rotation_order);
+        projected.world.z += surface.position_z;
+        projected.camera_depth = surface.camera_distance - projected.world.z;
         if (!std::isfinite(projected.camera_depth)
             || projected.camera_depth <= kMinimumCameraDepth) {
             continue;
         }
-        projected.inverse_depth = 1.0 / projected.camera_depth;
-        projected.screen = {
-            center_x + projected.world.x * kFocalLength
-                           / projected.camera_depth * screen_scale,
-            center_y - projected.world.y * kFocalLength
-                           / projected.camera_depth * screen_scale};
+        if (surface.projection == SurfaceProjection::Perspective) {
+            projected.inverse_depth = 1.0 / projected.camera_depth;
+            projected.screen = {
+                center_x + projected.world.x * surface.focal_length
+                               / projected.camera_depth * screen_scale_x,
+                center_y - projected.world.y * surface.focal_length
+                               / projected.camera_depth * screen_scale_y};
+        } else {
+            projected.inverse_depth = 1.0;
+            projected.screen = {
+                center_x + projected.world.x * screen_scale_x,
+                center_y - projected.world.y * screen_scale_y};
+        }
         projected.valid = std::isfinite(projected.screen.x)
                           && std::isfinite(projected.screen.y);
     }
@@ -490,33 +607,46 @@ std::vector<ProjectedVertex> project_positions(const ObjMesh& mesh,
 }
 
 std::vector<ObjVec3> transform_normals(const ObjMesh& mesh,
-                                       double y_rotation,
+                                       const SurfaceConfig& surface,
+                                       const SurfaceAngles& angles,
                                        const std::atomic_bool* cancel) {
     std::vector<ObjVec3> result;
     result.reserve(mesh.normals.size());
     std::size_t index = 0U;
     for (const ObjVec3 normal : mesh.normals) {
         if ((index++ & 4095U) == 0U) throw_if_cancelled(cancel);
-        result.push_back(normalize(rotate_y(rotate_x(normal, kFixedXRotation),
-                                            y_rotation)));
+        const ObjVec3 inverse_scaled = {
+            normal.x / surface.scale_x,
+            normal.y / surface.scale_y,
+            normal.z / surface.scale_z};
+        result.push_back(normalize(rotate_surface(
+            inverse_scaled, angles, surface.rotation_order)));
     }
     return result;
 }
 
 void blend_with_planar(const Image& source, Image& mapped,
-                       std::size_t pixel_count, double curvature,
+                       const std::vector<unsigned char>& coverage,
+                       std::size_t pixel_count, const SurfaceConfig& surface,
+                       double curvature,
                        const std::atomic_bool* cancel) {
     for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
         if ((pixel & 4095U) == 0U) throw_if_cancelled(cancel);
-        store_color(mapped, pixel,
-                    mix_color(load_color(source, pixel), load_color(mapped, pixel),
-                              curvature));
+        const Color planar = load_color(source, pixel);
+        if (coverage[pixel] == 0U
+            && surface.outside != SurfaceOutside::Transparent) {
+            store_color(mapped, pixel, planar);
+        } else {
+            store_color(mapped, pixel,
+                        mix_color(planar, load_color(mapped, pixel), curvature));
+        }
     }
 }
 
 struct OpaqueFragments {
     std::vector<float>& depth;
     Image& mapped;
+    std::vector<unsigned char>& coverage;
 
     bool accepts(std::size_t pixel, double candidate_depth) const {
         return candidate_depth < depth[pixel];
@@ -525,6 +655,7 @@ struct OpaqueFragments {
     void store(std::size_t pixel, double candidate_depth, Color color) {
         depth[pixel] = static_cast<float>(candidate_depth);
         store_color(mapped, pixel, color);
+        coverage[pixel] = 1U;
     }
 };
 
@@ -532,6 +663,7 @@ struct LayerFragments {
     const std::vector<float>& previous_depth;
     std::vector<float>& next_depth;
     Image& layer;
+    std::vector<unsigned char>& coverage;
 
     bool accepts(std::size_t pixel, double candidate_depth) const {
         const double previous = previous_depth[pixel];
@@ -547,6 +679,7 @@ struct LayerFragments {
     void store(std::size_t pixel, double candidate_depth, Color color) {
         next_depth[pixel] = static_cast<float>(candidate_depth);
         store_color(layer, pixel, color);
+        coverage[pixel] = 1U;
     }
 };
 
@@ -555,10 +688,7 @@ struct LayerFragments {
 bool apply_mesh_surface_mapping(const Image& source,
                                 Image& destination,
                                 const ObjMesh& mesh,
-                                int rotations_per_loop,
-                                double phase_degrees,
-                                double curvature,
-                                double lighting,
+                                const SurfaceConfig& surface,
                                 double loop_phase,
                                 std::string* error,
                                 const std::atomic_bool* cancel) {
@@ -571,11 +701,14 @@ bool apply_mesh_surface_mapping(const Image& source,
     if (!validate_source(source, pixel_count, error)) {
         return false;
     }
-    if (!std::isfinite(phase_degrees) || !std::isfinite(curvature)
-        || !std::isfinite(lighting) || !std::isfinite(loop_phase)) {
+    if (!std::isfinite(surface.rotation_x_degrees)
+        || !std::isfinite(surface.rotation_y_degrees)
+        || !std::isfinite(surface.rotation_z_degrees)
+        || !std::isfinite(surface.curvature)
+        || !std::isfinite(surface.lighting) || !std::isfinite(loop_phase)) {
         return fail(error, "Mesh surface parameters must be finite.");
     }
-    curvature = clamp_value(curvature, 0.0, 1.0);
+    const double curvature = clamp_value(surface.curvature, 0.0, 1.0);
     if (curvature == 0.0) {
         try {
             Image unchanged = source;
@@ -592,30 +725,31 @@ bool apply_mesh_surface_mapping(const Image& source,
         if (wrapped_loop_phase < 0.0) {
             wrapped_loop_phase += kTau;
         }
-        const double phase = static_cast<double>(rotations_per_loop)
-                                 * wrapped_loop_phase
-                             + phase_degrees * kPi / 180.0;
-        const double y_rotation = kInitialYRotation + phase;
+        const SurfaceAngles angles = surface_angles(surface,
+                                                    wrapped_loop_phase);
         const std::vector<ProjectedVertex> projected =
-            project_positions(mesh, source.width, source.height, y_rotation,
-                              cancel);
+            project_positions(mesh, source.width, source.height, surface,
+                              angles, cancel);
         const std::vector<ObjVec3> world_normals =
-            transform_normals(mesh, y_rotation, cancel);
+            transform_normals(mesh, surface, angles, cancel);
 
         Image mapped;
         mapped.width = source.width;
         mapped.height = source.height;
         mapped.pixels.assign(pixel_count * 4U, 0.0F);
+        std::vector<unsigned char> coverage(pixel_count, 0U);
         const double mapped_lighting = clamp_value(
-            lighting, 0.0, maximum_render_parameter_magnitude()) * curvature;
+            surface.lighting, 0.0,
+            maximum_render_parameter_magnitude()) * curvature;
 
-        if (source_is_opaque(source, pixel_count, cancel)) {
+        if (source_is_opaque(source, pixel_count, cancel)
+            || !surface.composite_backfaces) {
             std::vector<float> depth(pixel_count,
                                      std::numeric_limits<float>::infinity());
-            OpaqueFragments fragments{depth, mapped};
+            OpaqueFragments fragments{depth, mapped, coverage};
             rasterize_mesh(mesh, projected, world_normals, source,
-                           source.width, source.height, mapped_lighting, cancel,
-                           fragments);
+                           source.width, source.height, surface,
+                           mapped_lighting, cancel, fragments);
         } else {
             std::vector<float> previous_depth(
                 pixel_count, -std::numeric_limits<float>::infinity());
@@ -629,10 +763,11 @@ bool apply_mesh_surface_mapping(const Image& source,
             bool first_layer = true;
             for (;;) {
                 throw_if_cancelled(cancel);
-                LayerFragments fragments{previous_depth, next_depth, layer};
+                LayerFragments fragments{previous_depth, next_depth, layer,
+                                         coverage};
                 rasterize_mesh(mesh, projected, world_normals, source,
-                               source.width, source.height, mapped_lighting, cancel,
-                               fragments);
+                               source.width, source.height, surface,
+                               mapped_lighting, cancel, fragments);
 
                 std::size_t hit_count = 0U;
                 std::size_t transparent_count = 0U;
@@ -662,7 +797,8 @@ bool apply_mesh_surface_mapping(const Image& source,
             }
         }
 
-        blend_with_planar(source, mapped, pixel_count, curvature, cancel);
+        blend_with_planar(source, mapped, coverage, pixel_count, surface,
+                          curvature, cancel);
         throw_if_cancelled(cancel);
         destination.width = mapped.width;
         destination.height = mapped.height;
@@ -682,10 +818,7 @@ bool apply_mesh_surface_mapping(const Image& source,
 bool apply_obj_surface_mapping(const Image& source,
                                Image& destination,
                                const std::string& utf8_obj_path,
-                               int rotations_per_loop,
-                               double phase_degrees,
-                               double curvature,
-                               double lighting,
+                               const SurfaceConfig& surface,
                                double loop_phase,
                                std::string* error,
                                const std::atomic_bool* cancel) {
@@ -698,11 +831,14 @@ bool apply_obj_surface_mapping(const Image& source,
     if (!validate_source(source, pixel_count, error)) {
         return false;
     }
-    if (!std::isfinite(phase_degrees) || !std::isfinite(curvature)
-        || !std::isfinite(lighting) || !std::isfinite(loop_phase)) {
+    if (!std::isfinite(surface.rotation_x_degrees)
+        || !std::isfinite(surface.rotation_y_degrees)
+        || !std::isfinite(surface.rotation_z_degrees)
+        || !std::isfinite(surface.curvature)
+        || !std::isfinite(surface.lighting) || !std::isfinite(loop_phase)) {
         return fail(error, "OBJ surface parameters must be finite.");
     }
-    if (clamp_value(curvature, 0.0, 1.0) == 0.0) {
+    if (clamp_value(surface.curvature, 0.0, 1.0) == 0.0) {
         try {
             Image unchanged = source;
             destination = std::move(unchanged);
@@ -717,8 +853,7 @@ bool apply_obj_surface_mapping(const Image& source,
             return false;
         }
         return apply_mesh_surface_mapping(
-            source, destination, *mesh, rotations_per_loop, phase_degrees,
-            curvature, lighting, loop_phase, error, cancel);
+            source, destination, *mesh, surface, loop_phase, error, cancel);
     } catch (const std::bad_alloc&) {
         return fail(error,
                     "Not enough memory to load the OBJ surface; destination was unchanged.");

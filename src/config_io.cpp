@@ -79,7 +79,8 @@ namespace {
 // Version 14 adds pre-analysis audio filters/EQ, named frequency streams,
 // per-clock stream selection, and Live device-sleep policy. Version 15 adds
 // independent particle profile, size variation, definition, twinkle, seed,
-// orientation, and rotation controls.
+// orientation, and rotation controls. Version 16 replaces implicit surface
+// camera/orientation constants with a completely authored surface view.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -91,8 +92,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 15U,
-              "config_io.cpp implements setup format version 15");
+static_assert(kSetupFormatVersion == 16U,
+              "config_io.cpp implements setup format version 16");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -258,6 +259,35 @@ bool setup_v15_record(std::string_view key) {
            || suffix(".particle_seed")
            || suffix(".particle_orientation")
            || suffix(".particle_rotation_degrees");
+}
+
+bool setup_v16_record(std::string_view key) {
+    return key == "surface.projection"
+           || key == "surface.sizing"
+           || key == "surface.outside"
+           || key == "surface.rotation_order"
+           || key == "surface.rotation_x_turns_per_loop"
+           || key == "surface.rotation_y_turns_per_loop"
+           || key == "surface.rotation_z_turns_per_loop"
+           || key == "surface.rotation_x_degrees"
+           || key == "surface.rotation_y_degrees"
+           || key == "surface.rotation_z_degrees"
+           || key == "surface.size_percent"
+           || key == "surface.scale_x"
+           || key == "surface.scale_y"
+           || key == "surface.scale_z"
+           || key == "surface.position_x_percent"
+           || key == "surface.position_y_percent"
+           || key == "surface.position_z"
+           || key == "surface.camera_distance"
+           || key == "surface.focal_length"
+           || key == "surface.light_direction_x"
+           || key == "surface.light_direction_y"
+           || key == "surface.light_direction_z"
+           || key == "surface.light_ambient"
+           || key == "surface.light_diffuse"
+           || key == "surface.composite_backfaces"
+           || key == "surface.normalize_obj";
 }
 
 void clear_error(std::string* error) {
@@ -944,6 +974,37 @@ constexpr std::array<std::pair<std::string_view, SurfaceMapping>, 5U> kSurfaceMa
     {"cube", SurfaceMapping::Cube},
     {"custom_obj", SurfaceMapping::CustomObj},
 }};
+
+constexpr std::array<std::pair<std::string_view, SurfaceProjection>, 2U>
+    kSurfaceProjections{{
+        {"orthographic", SurfaceProjection::Orthographic},
+        {"perspective", SurfaceProjection::Perspective},
+    }};
+
+constexpr std::array<std::pair<std::string_view, SurfaceSizing>, 4U>
+    kSurfaceSizings{{
+        {"contain", SurfaceSizing::Contain},
+        {"cover", SurfaceSizing::Cover},
+        {"stretch", SurfaceSizing::Stretch},
+        {"short_side", SurfaceSizing::ShortSide},
+    }};
+
+constexpr std::array<std::pair<std::string_view, SurfaceOutside>, 3U>
+    kSurfaceOutsides{{
+        {"transparent", SurfaceOutside::Transparent},
+        {"source", SurfaceOutside::Source},
+        {"reflect", SurfaceOutside::Reflect},
+    }};
+
+constexpr std::array<std::pair<std::string_view, SurfaceRotationOrder>, 6U>
+    kSurfaceRotationOrders{{
+        {"xyz", SurfaceRotationOrder::XYZ},
+        {"xzy", SurfaceRotationOrder::XZY},
+        {"yxz", SurfaceRotationOrder::YXZ},
+        {"yzx", SurfaceRotationOrder::YZX},
+        {"zxy", SurfaceRotationOrder::ZXY},
+        {"zyx", SurfaceRotationOrder::ZYX},
+    }};
 
 constexpr std::array<std::pair<std::string_view, StartingImageFit>, 4U>
     kStartingImageFits{{
@@ -2009,10 +2070,51 @@ bool serialize_setup(const RenderConfig& config,
 
     builder.add_bool("surface.enabled", config.surface.enabled);
     builder.add_enum("surface.mapping", config.surface.mapping, kSurfaceMappings);
-    builder.add_integer("surface.rotations_per_loop", config.surface.rotations_per_loop);
-    builder.add_double("surface.phase_degrees", config.surface.phase_degrees);
+    builder.add_enum("surface.projection", config.surface.projection,
+                     kSurfaceProjections);
+    builder.add_enum("surface.sizing", config.surface.sizing,
+                     kSurfaceSizings);
+    builder.add_enum("surface.outside", config.surface.outside,
+                     kSurfaceOutsides);
+    builder.add_enum("surface.rotation_order", config.surface.rotation_order,
+                     kSurfaceRotationOrders);
+    builder.add_integer("surface.rotation_x_turns_per_loop",
+                        config.surface.rotation_x_turns_per_loop);
+    builder.add_integer("surface.rotation_y_turns_per_loop",
+                        config.surface.rotation_y_turns_per_loop);
+    builder.add_integer("surface.rotation_z_turns_per_loop",
+                        config.surface.rotation_z_turns_per_loop);
+    builder.add_double("surface.rotation_x_degrees",
+                       config.surface.rotation_x_degrees);
+    builder.add_double("surface.rotation_y_degrees",
+                       config.surface.rotation_y_degrees);
+    builder.add_double("surface.rotation_z_degrees",
+                       config.surface.rotation_z_degrees);
+    builder.add_double("surface.size_percent", config.surface.size_percent);
+    builder.add_double("surface.scale_x", config.surface.scale_x);
+    builder.add_double("surface.scale_y", config.surface.scale_y);
+    builder.add_double("surface.scale_z", config.surface.scale_z);
+    builder.add_double("surface.position_x_percent",
+                       config.surface.position_x_percent);
+    builder.add_double("surface.position_y_percent",
+                       config.surface.position_y_percent);
+    builder.add_double("surface.position_z", config.surface.position_z);
+    builder.add_double("surface.camera_distance",
+                       config.surface.camera_distance);
+    builder.add_double("surface.focal_length", config.surface.focal_length);
     builder.add_double("surface.curvature", config.surface.curvature);
     builder.add_double("surface.lighting", config.surface.lighting);
+    builder.add_double("surface.light_direction_x",
+                       config.surface.light_direction_x);
+    builder.add_double("surface.light_direction_y",
+                       config.surface.light_direction_y);
+    builder.add_double("surface.light_direction_z",
+                       config.surface.light_direction_z);
+    builder.add_double("surface.light_ambient", config.surface.light_ambient);
+    builder.add_double("surface.light_diffuse", config.surface.light_diffuse);
+    builder.add_bool("surface.composite_backfaces",
+                     config.surface.composite_backfaces);
+    builder.add_bool("surface.normalize_obj", config.surface.normalize_obj);
     builder.add_string("surface.obj_path", config.surface.obj_path);
     builder.add_string("surface.obj_sha256", config.surface.obj_sha256);
     builder.add_string("surface.obj_basename", config.surface.obj_basename);
@@ -2748,6 +2850,8 @@ bool deserialize_setup(Records& records,
                        RenderConfig& candidate,
                        std::string* error,
                        bool enforce_particle_workload = true) {
+    int legacy_surface_turns = 0;
+    double legacy_surface_phase = 0.0;
     if (!consume_integer(records, "canvas.width", candidate.width, error)
         || !consume_integer(records, "canvas.height", candidate.height, error)
         || !consume_integer(records, "canvas.block_size", candidate.block_size, error)
@@ -3316,11 +3420,78 @@ bool deserialize_setup(Records& records,
         || !consume_double(records, "quantization.mix", candidate.quantization.mix, error)
         || !consume_enum(records, "quantization.mode", candidate.quantization.mode, kQuantizationModes, error)
         || !consume_bool(records, "surface.enabled", candidate.surface.enabled, error)
-        || !consume_enum(records, "surface.mapping", candidate.surface.mapping, kSurfaceMappings, error)
-        || !consume_integer(records, "surface.rotations_per_loop", candidate.surface.rotations_per_loop, error)
-        || !consume_double(records, "surface.phase_degrees", candidate.surface.phase_degrees, error)
-        || !consume_double(records, "surface.curvature", candidate.surface.curvature, error)
-        || !consume_double(records, "surface.lighting", candidate.surface.lighting, error)) {
+        || !consume_enum(records, "surface.mapping", candidate.surface.mapping, kSurfaceMappings, error)) {
+        return false;
+    }
+    SurfaceConfig& surface = candidate.surface;
+    if (setup_version >= 16U) {
+        if (!consume_enum(records, "surface.projection", surface.projection,
+                          kSurfaceProjections, error)
+            || !consume_enum(records, "surface.sizing", surface.sizing,
+                             kSurfaceSizings, error)
+            || !consume_enum(records, "surface.outside", surface.outside,
+                             kSurfaceOutsides, error)
+            || !consume_enum(records, "surface.rotation_order",
+                             surface.rotation_order,
+                             kSurfaceRotationOrders, error)
+            || !consume_integer(records, "surface.rotation_x_turns_per_loop",
+                                surface.rotation_x_turns_per_loop, error)
+            || !consume_integer(records, "surface.rotation_y_turns_per_loop",
+                                surface.rotation_y_turns_per_loop, error)
+            || !consume_integer(records, "surface.rotation_z_turns_per_loop",
+                                surface.rotation_z_turns_per_loop, error)
+            || !consume_double(records, "surface.rotation_x_degrees",
+                               surface.rotation_x_degrees, error)
+            || !consume_double(records, "surface.rotation_y_degrees",
+                               surface.rotation_y_degrees, error)
+            || !consume_double(records, "surface.rotation_z_degrees",
+                               surface.rotation_z_degrees, error)
+            || !consume_double(records, "surface.size_percent",
+                               surface.size_percent, error)
+            || !consume_double(records, "surface.scale_x", surface.scale_x,
+                               error)
+            || !consume_double(records, "surface.scale_y", surface.scale_y,
+                               error)
+            || !consume_double(records, "surface.scale_z", surface.scale_z,
+                               error)
+            || !consume_double(records, "surface.position_x_percent",
+                               surface.position_x_percent, error)
+            || !consume_double(records, "surface.position_y_percent",
+                               surface.position_y_percent, error)
+            || !consume_double(records, "surface.position_z",
+                               surface.position_z, error)
+            || !consume_double(records, "surface.camera_distance",
+                               surface.camera_distance, error)
+            || !consume_double(records, "surface.focal_length",
+                               surface.focal_length, error)
+            || !consume_double(records, "surface.curvature",
+                               surface.curvature, error)
+            || !consume_double(records, "surface.lighting", surface.lighting,
+                               error)
+            || !consume_double(records, "surface.light_direction_x",
+                               surface.light_direction_x, error)
+            || !consume_double(records, "surface.light_direction_y",
+                               surface.light_direction_y, error)
+            || !consume_double(records, "surface.light_direction_z",
+                               surface.light_direction_z, error)
+            || !consume_double(records, "surface.light_ambient",
+                               surface.light_ambient, error)
+            || !consume_double(records, "surface.light_diffuse",
+                               surface.light_diffuse, error)
+            || !consume_bool(records, "surface.composite_backfaces",
+                             surface.composite_backfaces, error)
+            || !consume_bool(records, "surface.normalize_obj",
+                             surface.normalize_obj, error)) {
+            return false;
+        }
+    } else if (!consume_integer(records, "surface.rotations_per_loop",
+                                legacy_surface_turns, error)
+               || !consume_double(records, "surface.phase_degrees",
+                                  legacy_surface_phase, error)
+               || !consume_double(records, "surface.curvature",
+                                  surface.curvature, error)
+               || !consume_double(records, "surface.lighting",
+                                  surface.lighting, error)) {
         return false;
     }
     if (setup_version >= 12U) {
@@ -3454,6 +3625,64 @@ bool deserialize_setup(Records& records,
                 record_error(
                     "Invalid plane-displacement attachment metadata at setup key",
                     "surface.plane_displacement.sha256"));
+        }
+    }
+
+    if (setup_version < 16U) {
+        constexpr double kLegacyTiltDegrees =
+            -0.35 * 180.0 / 3.141592653589793238462643383279502884;
+        constexpr double kLegacyTurnDegrees =
+            0.55 * 180.0 / 3.141592653589793238462643383279502884;
+        surface.composite_backfaces = true;
+        surface.normalize_obj = true;
+        surface.camera_distance = 3.4;
+        surface.focal_length = 2.5;
+        surface.light_direction_x = -0.45;
+        surface.light_direction_y = -0.55;
+        surface.light_direction_z = 0.75;
+        surface.light_ambient = 0.28;
+        surface.light_diffuse = 0.72;
+        surface.rotation_order = SurfaceRotationOrder::XYZ;
+        if (surface.mapping == SurfaceMapping::Plane
+            && !surface.plane_displacement.enabled) {
+            surface.projection = SurfaceProjection::Orthographic;
+            surface.sizing = SurfaceSizing::Stretch;
+            surface.outside = SurfaceOutside::Reflect;
+            // The legacy 2D sampler inverse-rotated output pixel offsets.
+            // The explicit 3D Plane rotates the surface itself, so the same
+            // established image orientation uses the opposite authored Z
+            // angle and loop direction.
+            surface.rotation_z_turns_per_loop =
+                legacy_surface_turns == (std::numeric_limits<int>::min)()
+                    ? (std::numeric_limits<int>::max)()
+                    : -legacy_surface_turns;
+            surface.rotation_z_degrees = -legacy_surface_phase;
+        } else if (surface.mapping == SurfaceMapping::Sphere) {
+            surface.projection = SurfaceProjection::Orthographic;
+            surface.sizing = SurfaceSizing::ShortSide;
+            surface.size_percent = 92.0;
+            surface.outside = SurfaceOutside::Transparent;
+            surface.rotation_y_turns_per_loop = legacy_surface_turns;
+            surface.rotation_y_degrees = legacy_surface_phase;
+        } else {
+            surface.projection = SurfaceProjection::Perspective;
+            surface.sizing = SurfaceSizing::ShortSide;
+            surface.size_percent = 104.0;
+            surface.outside = SurfaceOutside::Transparent;
+            surface.rotation_x_degrees = kLegacyTiltDegrees;
+            surface.rotation_y_turns_per_loop = legacy_surface_turns;
+            surface.rotation_y_degrees = legacy_surface_phase;
+            if (surface.mapping == SurfaceMapping::Cube
+                || surface.mapping == SurfaceMapping::CustomObj
+                || (surface.mapping == SurfaceMapping::Plane
+                    && surface.plane_displacement.enabled)) {
+                surface.rotation_y_degrees += kLegacyTurnDegrees;
+            }
+            if (surface.mapping == SurfaceMapping::Cylinder) {
+                // Legacy Cylinder spun around local Y before applying the
+                // fixed X tilt. Preserve that composition explicitly.
+                surface.rotation_order = SurfaceRotationOrder::YXZ;
+            }
         }
     }
 
@@ -3873,7 +4102,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 12U && setup_v12_record(key))
              || (setup_version < 13U && setup_v13_record(key))
              || (setup_version < 14U && setup_v14_record(key))
-             || (setup_version < 15U && setup_v15_record(key)));
+             || (setup_version < 15U && setup_v15_record(key))
+             || (setup_version < 16U && setup_v16_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -3889,6 +4119,10 @@ bool build_default_records(std::uint32_t setup_version,
         } else {
             ++iterator;
         }
+    }
+    if (setup_version < 16U) {
+        defaults.emplace("surface.rotations_per_loop", "0");
+        defaults.emplace("surface.phase_degrees", "0");
     }
     return true;
 }

@@ -305,6 +305,49 @@ bool valid_enum(SurfaceMapping value) {
     return false;
 }
 
+bool valid_enum(SurfaceProjection value) {
+    switch (value) {
+        case SurfaceProjection::Orthographic:
+        case SurfaceProjection::Perspective:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(SurfaceSizing value) {
+    switch (value) {
+        case SurfaceSizing::Contain:
+        case SurfaceSizing::Cover:
+        case SurfaceSizing::Stretch:
+        case SurfaceSizing::ShortSide:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(SurfaceOutside value) {
+    switch (value) {
+        case SurfaceOutside::Transparent:
+        case SurfaceOutside::Source:
+        case SurfaceOutside::Reflect:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(SurfaceRotationOrder value) {
+    switch (value) {
+        case SurfaceRotationOrder::XYZ:
+        case SurfaceRotationOrder::XZY:
+        case SurfaceRotationOrder::YXZ:
+        case SurfaceRotationOrder::YZX:
+        case SurfaceRotationOrder::ZXY:
+        case SurfaceRotationOrder::ZYX:
+            return true;
+    }
+    return false;
+}
+
 bool valid_enum(StartingImageFit value) {
     switch (value) {
         case StartingImageFit::Stretch:
@@ -1293,15 +1336,55 @@ bool surface_has_render_work(const SurfaceConfig& surface) {
     if (!surface.enabled) {
         return false;
     }
+    if (surface.mapping != SurfaceMapping::Plane) return surface.curvature > 0.0;
+    if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
+        return true;
+    }
+    const bool identity_rotation =
+        surface.rotation_x_turns_per_loop == 0
+        && surface.rotation_y_turns_per_loop == 0
+        && surface.rotation_z_turns_per_loop == 0
+        && std::fmod(surface.rotation_x_degrees, 360.0) == 0.0
+        && std::fmod(surface.rotation_y_degrees, 360.0) == 0.0
+        && std::fmod(surface.rotation_z_degrees, 360.0) == 0.0;
+    return !identity_rotation
+           || surface.projection != SurfaceProjection::Orthographic
+           || surface.sizing != SurfaceSizing::Contain
+           || std::fabs(surface.size_percent - 100.0) > 1.0e-12
+           || std::fabs(surface.scale_x - 1.0) > 1.0e-12
+           || std::fabs(surface.scale_y - 1.0) > 1.0e-12
+           || std::fabs(surface.scale_z - 1.0) > 1.0e-12
+           || std::fabs(surface.position_x_percent) > 1.0e-12
+           || std::fabs(surface.position_y_percent) > 1.0e-12
+           || std::fabs(surface.position_z) > 1.0e-12
+           || surface.lighting > 0.0;
+}
+
+bool surface_has_transparent_exterior(const SurfaceConfig& surface) {
+    if (!surface.enabled || surface.outside != SurfaceOutside::Transparent) {
+        return false;
+    }
     if (surface.mapping != SurfaceMapping::Plane) {
         return surface.curvature > 0.0;
     }
     if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
         return true;
     }
-    const bool identity_rotation = surface.rotations_per_loop == 0
-                                   && std::fmod(surface.phase_degrees, 360.0) == 0.0;
-    return !identity_rotation;
+    return surface.projection != SurfaceProjection::Orthographic
+           || surface.sizing != SurfaceSizing::Contain
+           || surface.rotation_x_turns_per_loop != 0
+           || surface.rotation_y_turns_per_loop != 0
+           || surface.rotation_z_turns_per_loop != 0
+           || std::fmod(surface.rotation_x_degrees, 360.0) != 0.0
+           || std::fmod(surface.rotation_y_degrees, 360.0) != 0.0
+           || std::fmod(surface.rotation_z_degrees, 360.0) != 0.0
+           || std::fabs(surface.size_percent - 100.0) > 1.0e-12
+           || std::fabs(surface.scale_x - 1.0) > 1.0e-12
+           || std::fabs(surface.scale_y - 1.0) > 1.0e-12
+           || std::fabs(surface.scale_z - 1.0) > 1.0e-12
+           || std::fabs(surface.position_x_percent) > 1.0e-12
+           || std::fabs(surface.position_y_percent) > 1.0e-12
+           || std::fabs(surface.position_z) > 1.0e-12;
 }
 
 bool motion_has_render_work(const LayerMotionConfig& motion) {
@@ -2032,6 +2115,45 @@ const char* surface_mapping_name(SurfaceMapping value) {
         case SurfaceMapping::Sphere: return "Sphere";
         case SurfaceMapping::Cube: return "Cube";
         case SurfaceMapping::CustomObj: return "Custom OBJ";
+    }
+    return "Unknown";
+}
+
+const char* surface_projection_name(SurfaceProjection value) {
+    switch (value) {
+        case SurfaceProjection::Orthographic: return "Orthographic";
+        case SurfaceProjection::Perspective: return "Perspective";
+    }
+    return "Unknown";
+}
+
+const char* surface_sizing_name(SurfaceSizing value) {
+    switch (value) {
+        case SurfaceSizing::Contain: return "Contain";
+        case SurfaceSizing::Cover: return "Cover";
+        case SurfaceSizing::Stretch: return "Stretch";
+        case SurfaceSizing::ShortSide: return "Canvas short side";
+    }
+    return "Unknown";
+}
+
+const char* surface_outside_name(SurfaceOutside value) {
+    switch (value) {
+        case SurfaceOutside::Transparent: return "Transparent";
+        case SurfaceOutside::Source: return "Keep source";
+        case SurfaceOutside::Reflect: return "Reflect plane";
+    }
+    return "Unknown";
+}
+
+const char* surface_rotation_order_name(SurfaceRotationOrder value) {
+    switch (value) {
+        case SurfaceRotationOrder::XYZ: return "X then Y then Z";
+        case SurfaceRotationOrder::XZY: return "X then Z then Y";
+        case SurfaceRotationOrder::YXZ: return "Y then X then Z";
+        case SurfaceRotationOrder::YZX: return "Y then Z then X";
+        case SurfaceRotationOrder::ZXY: return "Z then X then Y";
+        case SurfaceRotationOrder::ZYX: return "Z then Y then X";
     }
     return "Unknown";
 }
@@ -3189,10 +3311,38 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result(
             "Post-process inversion mixes, antialias strength/threshold, or pass count are out of range.");
     }
-    if (!valid_enum(config.surface.mapping)
-        || !finite_render_parameter(config.surface.phase_degrees)
+    const SurfaceConfig& surface = config.surface;
+    const double light_length_squared =
+        surface.light_direction_x * surface.light_direction_x
+        + surface.light_direction_y * surface.light_direction_y
+        + surface.light_direction_z * surface.light_direction_z;
+    if (!valid_enum(surface.mapping)
+        || !valid_enum(surface.projection)
+        || !valid_enum(surface.sizing)
+        || !valid_enum(surface.outside)
+        || !valid_enum(surface.rotation_order)
+        || !finite_render_parameter(surface.rotation_x_degrees)
+        || !finite_render_parameter(surface.rotation_y_degrees)
+        || !finite_render_parameter(surface.rotation_z_degrees)
+        || !positive_render_parameter(surface.size_percent)
+        || !positive_render_parameter(surface.scale_x)
+        || !positive_render_parameter(surface.scale_y)
+        || !positive_render_parameter(surface.scale_z)
+        || !finite_render_parameter(surface.position_x_percent)
+        || !finite_render_parameter(surface.position_y_percent)
+        || !finite_render_parameter(surface.position_z)
+        || !positive_render_parameter(surface.camera_distance)
+        || !positive_render_parameter(surface.focal_length)
         || !finite_in_range(config.surface.curvature, 0.0, 1.0)
-        || !nonnegative_render_parameter(config.surface.lighting)) {
+        || !nonnegative_render_parameter(surface.lighting)
+        || !finite_render_parameter(surface.light_direction_x)
+        || !finite_render_parameter(surface.light_direction_y)
+        || !finite_render_parameter(surface.light_direction_z)
+        || !nonnegative_render_parameter(surface.light_ambient)
+        || !nonnegative_render_parameter(surface.light_diffuse)
+        || (surface.lighting > 0.0
+            && (!std::isfinite(light_length_squared)
+                || light_length_squared <= 1.0e-24))) {
         return invalid_result("Surface mapping values are out of range.");
     }
     if ((!config.surface.obj_path.empty()
@@ -3254,9 +3404,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
     if (include_export) {
         const bool has_transparent_surface =
-            surface_has_render_work(config.surface)
-            && (config.surface.mapping != SurfaceMapping::Plane
-                || config.surface.plane_displacement.enabled);
+            surface_has_transparent_exterior(config.surface);
         const bool has_transparent_palette_source =
             config.alpha.use_source_alpha && config.palette.enabled
             && std::any_of(
@@ -5157,6 +5305,10 @@ Vec3 add(Vec3 first, Vec3 second) {
     return {first.x + second.x, first.y + second.y, first.z + second.z};
 }
 
+Vec3 subtract(Vec3 first, Vec3 second) {
+    return {first.x - second.x, first.y - second.y, first.z - second.z};
+}
+
 Vec3 multiply(Vec3 value, double amount) {
     return {value.x * amount, value.y * amount, value.z * amount};
 }
@@ -5188,10 +5340,106 @@ Vec3 rotate_y(Vec3 value, double angle) {
             -sine * value.x + cosine * value.z};
 }
 
-Color shade_surface(Color color, Vec3 normal, double lighting) {
-    const Vec3 light = normalize({-0.45, -0.55, 0.75});
+Vec3 rotate_z(Vec3 value, double angle) {
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    return {cosine * value.x - sine * value.y,
+            sine * value.x + cosine * value.y, value.z};
+}
+
+struct SurfaceAngles {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+SurfaceAngles surface_angles(const SurfaceConfig& surface, double loop_phase) {
+    return {
+        radians(surface.rotation_x_degrees)
+            + static_cast<double>(surface.rotation_x_turns_per_loop)
+                  * loop_phase,
+        radians(surface.rotation_y_degrees)
+            + static_cast<double>(surface.rotation_y_turns_per_loop)
+                  * loop_phase,
+        radians(surface.rotation_z_degrees)
+            + static_cast<double>(surface.rotation_z_turns_per_loop)
+                  * loop_phase};
+}
+
+Vec3 rotate_surface(Vec3 value, const SurfaceAngles& angles,
+                    SurfaceRotationOrder order) {
+    switch (order) {
+        case SurfaceRotationOrder::XYZ:
+            return rotate_z(rotate_y(rotate_x(value, angles.x), angles.y),
+                            angles.z);
+        case SurfaceRotationOrder::XZY:
+            return rotate_y(rotate_z(rotate_x(value, angles.x), angles.z),
+                            angles.y);
+        case SurfaceRotationOrder::YXZ:
+            return rotate_z(rotate_x(rotate_y(value, angles.y), angles.x),
+                            angles.z);
+        case SurfaceRotationOrder::YZX:
+            return rotate_x(rotate_z(rotate_y(value, angles.y), angles.z),
+                            angles.x);
+        case SurfaceRotationOrder::ZXY:
+            return rotate_y(rotate_x(rotate_z(value, angles.z), angles.x),
+                            angles.y);
+        case SurfaceRotationOrder::ZYX:
+            return rotate_x(rotate_y(rotate_z(value, angles.z), angles.y),
+                            angles.x);
+    }
+    return value;
+}
+
+Vec3 inverse_rotate_surface(Vec3 value, const SurfaceAngles& angles,
+                            SurfaceRotationOrder order) {
+    switch (order) {
+        case SurfaceRotationOrder::XYZ:
+            return rotate_x(rotate_y(rotate_z(value, -angles.z), -angles.y),
+                            -angles.x);
+        case SurfaceRotationOrder::XZY:
+            return rotate_x(rotate_z(rotate_y(value, -angles.y), -angles.z),
+                            -angles.x);
+        case SurfaceRotationOrder::YXZ:
+            return rotate_y(rotate_x(rotate_z(value, -angles.z), -angles.x),
+                            -angles.y);
+        case SurfaceRotationOrder::YZX:
+            return rotate_y(rotate_z(rotate_x(value, -angles.x), -angles.z),
+                            -angles.y);
+        case SurfaceRotationOrder::ZXY:
+            return rotate_z(rotate_x(rotate_y(value, -angles.y), -angles.x),
+                            -angles.z);
+        case SurfaceRotationOrder::ZYX:
+            return rotate_z(rotate_y(rotate_x(value, -angles.x), -angles.y),
+                            -angles.z);
+    }
+    return value;
+}
+
+Vec3 surface_object_ray(Vec3 value, const SurfaceConfig& surface,
+                        const SurfaceAngles& angles) {
+    value = inverse_rotate_surface(value, angles, surface.rotation_order);
+    return {value.x / surface.scale_x, value.y / surface.scale_y,
+            value.z / surface.scale_z};
+}
+
+Vec3 surface_world_normal(Vec3 normal, const SurfaceConfig& surface,
+                          const SurfaceAngles& angles) {
+    const Vec3 inverse_scaled = {
+        normal.x / surface.scale_x, normal.y / surface.scale_y,
+        normal.z / surface.scale_z};
+    return normalize(rotate_surface(inverse_scaled, angles,
+                                    surface.rotation_order));
+}
+
+Color shade_surface(Color color, Vec3 normal, const SurfaceConfig& surface,
+                    double lighting) {
+    const Vec3 light = normalize({surface.light_direction_x,
+                                  surface.light_direction_y,
+                                  surface.light_direction_z});
     const double diffuse = std::max(0.0, dot(normalize(normal), light));
-    const double lit = 0.28 + 0.72 * diffuse;
+    const double lit = surface.light_ambient
+                       + surface.light_diffuse * diffuse;
     const double multiplier = std::max(0.0, 1.0 + lighting * (lit - 1.0));
     color.r *= multiplier;
     color.g *= multiplier;
@@ -5396,62 +5644,145 @@ bool apply_surface_mapping(const Image& source, Image& destination,
     }
     if (surface.mapping == SurfaceMapping::CustomObj) {
         const bool rendered = detail::apply_obj_surface_mapping(
-            source, destination, surface.obj_path, surface.rotations_per_loop,
-            surface.phase_degrees, surface.curvature, surface.lighting,
-            loop_phase, error, cancel);
+            source, destination, surface.obj_path, surface, loop_phase, error,
+            cancel);
         throw_if_cancelled(cancel);
         return rendered;
     }
     ensure_image(destination, source.width, source.height);
     throw_if_cancelled(cancel);
-    const double phase = static_cast<double>(surface.rotations_per_loop) * loop_phase
-                         + radians(surface.phase_degrees);
     const double curvature = clamp_value(surface.curvature, 0.0, 1.0);
-    const double short_side = static_cast<double>(std::min(source.width, source.height));
-    const double center_x = 0.5 * static_cast<double>(source.width - 1);
-    const double center_y = 0.5 * static_cast<double>(source.height - 1);
+    const SurfaceAngles angles = surface_angles(surface, loop_phase);
+    const double width_span = static_cast<double>(std::max(1, source.width - 1));
+    const double height_span = static_cast<double>(std::max(1, source.height - 1));
+    const double plane_half_x = width_span / height_span;
+    const double half_x = surface.mapping == SurfaceMapping::Plane
+                              ? plane_half_x : 1.0;
+    const double half_y = 1.0;
+    const double size = surface.size_percent / 100.0;
+    const double contain_scale = std::min(
+        width_span / (2.0 * half_x), height_span / (2.0 * half_y));
+    const double cover_scale = std::max(
+        width_span / (2.0 * half_x), height_span / (2.0 * half_y));
+    double screen_scale_x = contain_scale * size;
+    double screen_scale_y = contain_scale * size;
+    switch (surface.sizing) {
+        case SurfaceSizing::Contain:
+            break;
+        case SurfaceSizing::Cover:
+            screen_scale_x = cover_scale * size;
+            screen_scale_y = cover_scale * size;
+            break;
+        case SurfaceSizing::Stretch:
+            screen_scale_x = width_span / (2.0 * half_x) * size;
+            screen_scale_y = height_span / (2.0 * half_y) * size;
+            break;
+        case SurfaceSizing::ShortSide:
+            screen_scale_x = 0.5 * static_cast<double>(
+                std::min(source.width, source.height)) * size;
+            screen_scale_y = screen_scale_x;
+            break;
+    }
+    const double center_x = 0.5 * width_span
+        + surface.position_x_percent * width_span / 100.0;
+    const double center_y = 0.5 * height_span
+        - surface.position_y_percent * height_span / 100.0;
+    const Vec3 position = {0.0, 0.0, surface.position_z};
+
+    struct SphereIntersections {
+        CubeHit front;
+        CubeHit back;
+        bool has_back = false;
+    };
+    const auto intersect_sphere = [](Vec3 origin, Vec3 direction,
+                                     SphereIntersections& hits) {
+        const double a = dot(direction, direction);
+        const double b = 2.0 * dot(origin, direction);
+        const double c = dot(origin, origin) - 1.0;
+        const double discriminant = b * b - 4.0 * a * c;
+        if (a <= 1.0e-24 || discriminant < 0.0) return false;
+        const double root = std::sqrt(std::max(0.0, discriminant));
+        double first = (-b - root) / (2.0 * a);
+        double second = (-b + root) / (2.0 * a);
+        if (first > second) std::swap(first, second);
+        if (second < 0.0) return false;
+        hits = {};
+        const double front_distance = first >= 0.0 ? first : second;
+        hits.front.distance = front_distance;
+        hits.front.point = add(origin, multiply(direction, front_distance));
+        hits.front.normal = normalize(hits.front.point);
+        if (first >= 0.0 && second - first > 1.0e-10) {
+            hits.back.distance = second;
+            hits.back.point = add(origin, multiply(direction, second));
+            hits.back.normal = normalize(hits.back.point);
+            hits.has_back = true;
+        }
+        return true;
+    };
 
     for (int y = 0; y < source.height; ++y) {
         throw_if_cancelled(cancel);
         for (int x = 0; x < source.width; ++x) {
-            const double screen_u = source.width > 1
-                                      ? static_cast<double>(x) / (source.width - 1)
-                                      : 0.5;
-            const double screen_v = source.height > 1
-                                      ? static_cast<double>(y) / (source.height - 1)
-                                      : 0.5;
-            Color output;
+            const Color planar = load_color(source, x, y);
+            const double screen_x = (static_cast<double>(x) - center_x)
+                                    / screen_scale_x;
+            const double screen_y = (center_y - static_cast<double>(y))
+                                    / screen_scale_y;
+            Vec3 world_origin;
+            Vec3 world_direction;
+            if (surface.projection == SurfaceProjection::Perspective) {
+                world_origin = {0.0, 0.0, surface.camera_distance};
+                world_direction = normalize(
+                    {screen_x, screen_y, -surface.focal_length});
+            } else {
+                world_origin = {screen_x, screen_y, surface.camera_distance};
+                world_direction = {0.0, 0.0, -1.0};
+            }
+            const Vec3 origin = surface_object_ray(
+                subtract(world_origin, position), surface, angles);
+            const Vec3 direction = surface_object_ray(
+                world_direction, surface, angles);
+            Color mapped;
             bool visible = true;
+
+            const auto shade_hit = [&](Color sampled, Vec3 object_normal) {
+                Vec3 world_normal = surface_world_normal(
+                    object_normal, surface, angles);
+                world_normal = face_forward(world_normal, world_direction);
+                return shade_surface(sampled, world_normal, surface,
+                                     surface.lighting * curvature);
+            };
 
             switch (surface.mapping) {
                 case SurfaceMapping::Plane: {
-                    const double dx = x - center_x;
-                    const double dy = y - center_y;
-                    const double cosine = std::cos(-phase);
-                    const double sine = std::sin(-phase);
-                    const double sample_x = center_x + cosine * dx - sine * dy;
-                    const double sample_y = center_y + sine * dx + cosine * dy;
-                    output = sample_bilinear(source, sample_x, sample_y,
-                                             EdgeMode::Reflect);
+                    if (std::fabs(direction.z) <= 1.0e-12) {
+                        visible = false;
+                        break;
+                    }
+                    const double distance = -origin.z / direction.z;
+                    if (distance < 0.0) {
+                        visible = false;
+                        break;
+                    }
+                    const Vec3 point = add(origin, multiply(direction, distance));
+                    const bool inside = std::fabs(point.x) <= plane_half_x
+                                        && std::fabs(point.y) <= 1.0;
+                    if (!inside && surface.outside != SurfaceOutside::Reflect) {
+                        visible = false;
+                        break;
+                    }
+                    const double u = 0.5 + 0.5 * point.x / plane_half_x;
+                    const double v = 0.5 - 0.5 * point.y;
+                    mapped = sample_bilinear(
+                        source, u * width_span, v * height_span,
+                        EdgeMode::Reflect);
+                    mapped = shade_hit(mapped, {0.0, 0.0, 1.0});
                     break;
                 }
                 case SurfaceMapping::Cylinder: {
-                    const double scale = 0.52 * short_side;
-                    const double screen_x = (x - center_x) / scale;
-                    const double screen_y = (center_y - y) / scale;
-                    const Vec3 world_origin = {0.0, 0.0, 3.4};
-                    const Vec3 world_direction = normalize(
-                        {screen_x, screen_y, -2.5});
-                    constexpr double fixed_x_rotation = -0.35;
-                    // Spin around the cylinder's own Y axis, then tilt the
-                    // complete closed primitive so its caps remain visible.
-                    const Vec3 origin = rotate_y(
-                        rotate_x(world_origin, -fixed_x_rotation), -phase);
-                    const Vec3 direction = rotate_y(
-                        rotate_x(world_direction, -fixed_x_rotation), -phase);
                     CylinderIntersections intersections;
-                    if (!intersect_closed_cylinder(
-                            origin, direction, intersections)) {
+                    if (!intersect_closed_cylinder(origin, direction,
+                                                   intersections)) {
                         visible = false;
                         break;
                     }
@@ -5460,79 +5791,46 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                         Color sampled = std::fabs(hit.normal.y) < 0.5
                             ? sample_bilinear_wrapped_x(
                                   source, uv.first * source.width,
-                                  uv.second * (source.height - 1))
+                                  uv.second * height_span)
                             : sample_bilinear(
-                                  source, uv.first * (source.width - 1),
-                                  uv.second * (source.height - 1),
-                                  EdgeMode::Reflect);
-                        const Vec3 world_normal = rotate_x(
-                            rotate_y(hit.normal, phase), fixed_x_rotation);
-                        return shade_surface(
-                            sampled,
-                            face_forward(world_normal, world_direction),
-                            surface.lighting * curvature);
+                                  source, uv.first * width_span,
+                                  uv.second * height_span, EdgeMode::Reflect);
+                        return shade_hit(sampled, hit.normal);
                     };
-                    Color wrapped = sample_hit(intersections.front);
-                    if (intersections.has_back) {
-                        const Color rear = sample_hit(intersections.back);
-                        const Color layered = composite_straight_alpha_over(
-                            wrapped, rear);
-                        wrapped = blend_straight_alpha(
-                            wrapped, layered, curvature);
+                    mapped = sample_hit(intersections.front);
+                    if (surface.composite_backfaces
+                        && intersections.has_back) {
+                        mapped = composite_straight_alpha_over(
+                            mapped, sample_hit(intersections.back));
                     }
-                    const Color planar = load_color(source, x, y);
-                    output = blend_straight_alpha(planar, wrapped, curvature);
                     break;
                 }
                 case SurfaceMapping::Sphere: {
-                    const double radius = 0.46 * short_side;
-                    const double normalized_x = (x - center_x) / radius;
-                    const double normalized_y = (center_y - y) / radius;
-                    const double radius_squared = normalized_x * normalized_x
-                                                  + normalized_y * normalized_y;
-                    if (radius_squared > 1.0) {
+                    SphereIntersections intersections;
+                    if (!intersect_sphere(origin, direction, intersections)) {
                         visible = false;
                         break;
                     }
-                    const double normalized_z = std::sqrt(std::max(0.0,
-                        1.0 - radius_squared));
-                    const auto sample_side = [&](double normal_z) {
-                        const Vec3 normal = {normalized_x, normalized_y, normal_z};
-                        const Vec3 texture_normal = rotate_y(normal, -phase);
-                        const double longitude = std::atan2(texture_normal.x,
-                                                            texture_normal.z);
-                        const double latitude = std::asin(
-                            clamp_value(texture_normal.y, -1.0, 1.0));
-                        const double wrapped_u = wrap_unit(0.5 + longitude / kTau);
-                        const double sphere_v = 0.5 - latitude / kPi;
-                        Color sampled = sample_bilinear_wrapped_x(
-                            source, wrapped_u * source.width,
-                            sphere_v * (source.height - 1));
-                        return shade_surface(sampled,
-                                             face_forward(normal, {0.0, 0.0, -1.0}),
-                                             surface.lighting);
+                    const auto sample_hit = [&](const CubeHit& hit) {
+                        const double longitude = std::atan2(
+                            hit.normal.x, hit.normal.z);
+                        const double latitude = std::asin(clamp_value(
+                            hit.normal.y, -1.0, 1.0));
+                        const double u = wrap_unit(0.5 + longitude / kTau);
+                        const double v = 0.5 - latitude / kPi;
+                        return shade_hit(sample_bilinear_wrapped_x(
+                            source, u * source.width, v * height_span),
+                            hit.normal);
                     };
-                    Color wrapped = sample_side(normalized_z);
-                    if (normalized_z > 1.0e-10) {
-                        const Color rear = sample_side(-normalized_z);
-                        wrapped = composite_straight_alpha_over(wrapped, rear);
+                    mapped = sample_hit(intersections.front);
+                    if (surface.composite_backfaces
+                        && intersections.has_back) {
+                        mapped = composite_straight_alpha_over(
+                            mapped, sample_hit(intersections.back));
                     }
-                    const Color planar = load_color(source, x, y);
-                    output = blend_straight_alpha(planar, wrapped, curvature);
                     break;
                 }
                 case SurfaceMapping::Cube: {
-                    const double scale = 0.52 * short_side;
-                    const double screen_x = (x - center_x) / scale;
-                    const double screen_y = (center_y - y) / scale;
-                    Vec3 origin = {0.0, 0.0, 3.4};
-                    Vec3 direction = normalize({screen_x, screen_y, -2.5});
-                    const double fixed_x_rotation = -0.35;
-                    const double y_rotation = 0.55 + phase;
-                    origin = rotate_x(rotate_y(origin, -y_rotation),
-                                      -fixed_x_rotation);
-                    direction = rotate_x(rotate_y(direction, -y_rotation),
-                                         -fixed_x_rotation);
                     CubeIntersections intersections;
                     if (!intersect_cube(origin, direction, intersections)) {
                         visible = false;
@@ -5540,26 +5838,16 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                     }
                     const auto sample_hit = [&](const CubeHit& hit) {
                         const auto uv = cube_uv(hit.point, hit.normal);
-                        const double mapped_u = mix_value(screen_u, uv.first, curvature);
-                        const double mapped_v = mix_value(screen_v, uv.second, curvature);
-                        Color sampled = sample_bilinear(
-                            source, mapped_u * (source.width - 1),
-                            mapped_v * (source.height - 1), EdgeMode::Reflect);
-                        const Vec3 lighting_normal = face_forward(hit.normal, direction);
-                        const Vec3 world_normal = rotate_y(
-                            rotate_x(lighting_normal, fixed_x_rotation), y_rotation);
-                        return shade_surface(sampled, world_normal,
-                                             surface.lighting * curvature);
+                        return shade_hit(sample_bilinear(
+                            source, uv.first * width_span,
+                            uv.second * height_span, EdgeMode::Reflect),
+                            hit.normal);
                     };
-                    const Color front = sample_hit(intersections.front);
-                    output = front;
-                    if (intersections.has_back) {
-                        const Color back = sample_hit(intersections.back);
-                        const Color layered = composite_straight_alpha_over(front, back);
-                        // Cube curvature already morphs UVs and lighting. Fade
-                        // rear-face coverage in separately so curvature zero
-                        // remains exactly planar instead of doubling alpha.
-                        output = blend_straight_alpha(front, layered, curvature);
+                    mapped = sample_hit(intersections.front);
+                    if (surface.composite_backfaces
+                        && intersections.has_back) {
+                        mapped = composite_straight_alpha_over(
+                            mapped, sample_hit(intersections.back));
                     }
                     break;
                 }
@@ -5568,13 +5856,17 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                     break;
             }
 
-            if (!visible) {
-                // Fade both color and coverage continuously from the planar
-                // source to the primitive's transparent exterior. At curvature
-                // one this retains the established fully transparent/black mask;
-                // an infinitesimal curvature now remains infinitesimally close
-                // to the planar image instead of abruptly cropping it.
-                output = blend_straight_alpha(load_color(source, x, y), {}, curvature);
+            Color output;
+            if (visible) {
+                output = surface.mapping == SurfaceMapping::Plane
+                    ? mapped
+                    : blend_straight_alpha(planar, mapped, curvature);
+            } else if (surface.outside == SurfaceOutside::Source
+                       || (surface.outside == SurfaceOutside::Reflect
+                           && surface.mapping != SurfaceMapping::Plane)) {
+                output = planar;
+            } else {
+                output = blend_straight_alpha(planar, {}, curvature);
             }
             store_color(destination, x, y, output);
         }

@@ -373,8 +373,8 @@ void test_plane_displacement_mesh(const fs::path& directory) {
 
     pvt::RenderConfig flat = config;
     flat.surface.plane_displacement.enabled = false;
-    flat.surface.rotations_per_loop = 0;
-    flat.surface.phase_degrees = 0.0;
+    flat.surface.rotation_y_turns_per_loop = 0;
+    flat.surface.rotation_y_degrees = 0.0;
     pvt::Image flat_image;
     CHECK(pvt::render_frame(flat, 0, flat_image, &error));
     CHECK(mean_absolute_difference(first, flat_image) > 0.01);
@@ -641,7 +641,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t15\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t16\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -2583,14 +2583,45 @@ void test_direction_alpha_and_surfaces(const fs::path& source_root) {
 
     config.surface.enabled = true;
     config.surface.mapping = pvt::SurfaceMapping::Plane;
-    config.surface.curvature = 0.0; // Plane intentionally ignores curvature.
-    config.surface.rotations_per_loop = 0;
-    config.surface.phase_degrees = 720.0;
+    config.surface = pvt::SurfaceConfig{};
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::Plane;
     CHECK(pvt::render_frame(config, 1, radial, &error));
     CHECK(radial.pixels == unmapped.pixels);
 
-    config.surface.rotations_per_loop = 1;
-    config.surface.phase_degrees = 0.0;
+    // A surface selection never invents a view. Each axis is independently
+    // authored and produces a distinct, observable Plane transform.
+    for (const int axis : {0, 1, 2}) {
+        pvt::RenderConfig rotated_axis = config;
+        if (axis == 0) rotated_axis.surface.rotation_x_degrees = 25.0;
+        if (axis == 1) rotated_axis.surface.rotation_y_degrees = 25.0;
+        if (axis == 2) rotated_axis.surface.rotation_z_degrees = 25.0;
+        CHECK(pvt::render_frame(rotated_axis, 1, radial, &error));
+        CHECK(mean_absolute_difference(radial, unmapped) > 0.001);
+    }
+
+    // Euler composition order is authored state, not a surface-type rule.
+    // Non-commuting rotations must make the selectable order observable.
+    pvt::RenderConfig ordered_rotation = config;
+    ordered_rotation.surface.rotation_x_degrees = 21.0;
+    ordered_rotation.surface.rotation_y_degrees = -34.0;
+    ordered_rotation.surface.rotation_z_degrees = 13.0;
+    ordered_rotation.surface.rotation_order = pvt::SurfaceRotationOrder::XYZ;
+    pvt::Image xyz_rotation;
+    CHECK(pvt::render_frame(ordered_rotation, 1, xyz_rotation, &error));
+    ordered_rotation.surface.rotation_order = pvt::SurfaceRotationOrder::ZYX;
+    pvt::Image zyx_rotation;
+    CHECK(pvt::render_frame(ordered_rotation, 1, zyx_rotation, &error));
+    CHECK(mean_absolute_difference(xyz_rotation, zyx_rotation) > 0.001);
+
+    config.surface.curvature = 0.0; // Plane intentionally ignores curvature.
+    config.surface.rotation_z_turns_per_loop = 0;
+    config.surface.rotation_z_degrees = 720.0;
+    CHECK(pvt::render_frame(config, 1, radial, &error));
+    CHECK(radial.pixels == unmapped.pixels);
+
+    config.surface.rotation_z_turns_per_loop = 1;
+    config.surface.rotation_z_degrees = 0.0;
     CHECK(pvt::render_frame(config, 1, radial, &error));
     CHECK(mean_absolute_difference(radial, unmapped) > 0.001);
 
@@ -2598,8 +2629,8 @@ void test_direction_alpha_and_surfaces(const fs::path& source_root) {
     // crop, shade, or otherwise change the planar source image.
     config.surface.curvature = 0.0;
     config.surface.lighting = 2.0;
-    config.surface.rotations_per_loop = 3;
-    config.surface.phase_degrees = 37.0;
+    config.surface.rotation_y_turns_per_loop = 3;
+    config.surface.rotation_y_degrees = 37.0;
     for (const auto mapping : {pvt::SurfaceMapping::Cylinder,
                                pvt::SurfaceMapping::Sphere,
                                pvt::SurfaceMapping::Cube}) {
@@ -3677,19 +3708,19 @@ void test_validation_limits() {
     CHECK(two_buffer_result.ok);
     config.surface.enabled = true;
     config.surface.mapping = pvt::SurfaceMapping::Plane;
-    config.surface.rotations_per_loop = 0;
-    config.surface.phase_degrees = -360.0;
+    config.surface.rotation_z_turns_per_loop = 0;
+    config.surface.rotation_z_degrees = -360.0;
     const auto neutral_plane_result = pvt::validate(config);
     CHECK(neutral_plane_result.ok);
     CHECK(neutral_plane_result.estimated_peak_bytes
           == two_buffer_result.estimated_peak_bytes);
-    config.surface.phase_degrees = 45.0;
+    config.surface.rotation_z_degrees = 45.0;
     const auto rotated_plane_result = pvt::validate(config);
     CHECK(rotated_plane_result.ok);
     CHECK(rotated_plane_result.estimated_peak_bytes
           > neutral_plane_result.estimated_peak_bytes);
     config.surface.enabled = false;
-    config.surface.phase_degrees = 0.0;
+    config.surface.rotation_z_degrees = 0.0;
     config.effects[1].enabled = true;
     config.effects[1].intensity = 0.0;
     const auto neutral_effect_result = pvt::validate(config);
@@ -3838,6 +3869,34 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.post_process.antialias_passes = 3;
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
+    original.surface.projection = pvt::SurfaceProjection::Perspective;
+    original.surface.sizing = pvt::SurfaceSizing::Cover;
+    original.surface.outside = pvt::SurfaceOutside::Source;
+    original.surface.rotation_order = pvt::SurfaceRotationOrder::ZXY;
+    original.surface.rotation_x_turns_per_loop = -2;
+    original.surface.rotation_y_turns_per_loop = 3;
+    original.surface.rotation_z_turns_per_loop = 4;
+    original.surface.rotation_x_degrees = -17.25;
+    original.surface.rotation_y_degrees = 28.5;
+    original.surface.rotation_z_degrees = 9.75;
+    original.surface.size_percent = 83.0;
+    original.surface.scale_x = 1.2;
+    original.surface.scale_y = 0.8;
+    original.surface.scale_z = 1.4;
+    original.surface.position_x_percent = 7.5;
+    original.surface.position_y_percent = -6.25;
+    original.surface.position_z = 0.15;
+    original.surface.camera_distance = 4.2;
+    original.surface.focal_length = 3.1;
+    original.surface.curvature = 0.77;
+    original.surface.lighting = 0.66;
+    original.surface.light_direction_x = 0.3;
+    original.surface.light_direction_y = -0.4;
+    original.surface.light_direction_z = 0.5;
+    original.surface.light_ambient = 0.19;
+    original.surface.light_diffuse = 1.21;
+    original.surface.composite_backfaces = false;
+    original.surface.normalize_obj = false;
     original.surface.obj_path = "mesh folder/test.obj";
     original.surface.plane_displacement.enabled = false;
     original.surface.plane_displacement.minimum = -0.42;
@@ -3987,6 +4046,34 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.output.png_compression_level == 3);
     CHECK(loaded.output.write_alpha);
     CHECK(loaded.surface.obj_path == original.surface.obj_path);
+    CHECK(loaded.surface.projection == original.surface.projection);
+    CHECK(loaded.surface.sizing == original.surface.sizing);
+    CHECK(loaded.surface.outside == original.surface.outside);
+    CHECK(loaded.surface.rotation_order == original.surface.rotation_order);
+    CHECK(loaded.surface.rotation_x_turns_per_loop == -2);
+    CHECK(loaded.surface.rotation_y_turns_per_loop == 3);
+    CHECK(loaded.surface.rotation_z_turns_per_loop == 4);
+    CHECK(loaded.surface.rotation_x_degrees == -17.25);
+    CHECK(loaded.surface.rotation_y_degrees == 28.5);
+    CHECK(loaded.surface.rotation_z_degrees == 9.75);
+    CHECK(loaded.surface.size_percent == 83.0);
+    CHECK(loaded.surface.scale_x == 1.2);
+    CHECK(loaded.surface.scale_y == 0.8);
+    CHECK(loaded.surface.scale_z == 1.4);
+    CHECK(loaded.surface.position_x_percent == 7.5);
+    CHECK(loaded.surface.position_y_percent == -6.25);
+    CHECK(loaded.surface.position_z == 0.15);
+    CHECK(loaded.surface.camera_distance == 4.2);
+    CHECK(loaded.surface.focal_length == 3.1);
+    CHECK(loaded.surface.curvature == 0.77);
+    CHECK(loaded.surface.lighting == 0.66);
+    CHECK(loaded.surface.light_direction_x == 0.3);
+    CHECK(loaded.surface.light_direction_y == -0.4);
+    CHECK(loaded.surface.light_direction_z == 0.5);
+    CHECK(loaded.surface.light_ambient == 0.19);
+    CHECK(loaded.surface.light_diffuse == 1.21);
+    CHECK(!loaded.surface.composite_backfaces);
+    CHECK(!loaded.surface.normalize_obj);
     CHECK(loaded.surface.plane_displacement.minimum == -0.42);
     CHECK(loaded.surface.plane_displacement.maximum == 0.73);
     CHECK(loaded.surface.plane_displacement.midpoint == 0.37);
@@ -4239,9 +4326,77 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t15\n", 0U) == 0U);
-    std::string version_fourteen(current_version_bytes.begin(),
-                                 current_version_bytes.end());
+              .rfind("PVT_SETUP\t16\n", 0U) == 0U);
+    std::string version_fifteen(current_version_bytes.begin(),
+                                current_version_bytes.end());
+    version_fifteen.replace(0U, std::string("PVT_SETUP\t16").size(),
+                            "PVT_SETUP\t15");
+    for (const char* key : {
+             "surface.projection", "surface.sizing", "surface.outside",
+             "surface.rotation_order",
+             "surface.rotation_x_turns_per_loop",
+             "surface.rotation_y_turns_per_loop",
+             "surface.rotation_z_turns_per_loop",
+             "surface.rotation_x_degrees", "surface.rotation_y_degrees",
+             "surface.rotation_z_degrees", "surface.size_percent",
+             "surface.scale_x", "surface.scale_y", "surface.scale_z",
+             "surface.position_x_percent", "surface.position_y_percent",
+             "surface.position_z", "surface.camera_distance",
+             "surface.focal_length", "surface.light_direction_x",
+             "surface.light_direction_y", "surface.light_direction_z",
+             "surface.light_ambient", "surface.light_diffuse",
+             "surface.composite_backfaces", "surface.normalize_obj"}) {
+        erase_record(version_fifteen, key);
+    }
+    version_fifteen += "surface.rotations_per_loop\t0\n";
+    version_fifteen += "surface.phase_degrees\t0\n";
+    pvt::RenderConfig loaded_version_fifteen;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_fifteen, loaded_version_fifteen, &error));
+    CHECK(loaded_version_fifteen.surface.projection
+          == pvt::SurfaceProjection::Perspective);
+    CHECK(loaded_version_fifteen.surface.sizing
+          == pvt::SurfaceSizing::ShortSide);
+    CHECK(loaded_version_fifteen.surface.outside
+          == pvt::SurfaceOutside::Transparent);
+    CHECK(loaded_version_fifteen.surface.rotation_order
+          == pvt::SurfaceRotationOrder::YXZ);
+    CHECK(std::fabs(loaded_version_fifteen.surface.rotation_x_degrees
+                    + 20.0535228296) < 1.0e-9);
+    CHECK(loaded_version_fifteen.surface.size_percent == 104.0);
+
+    // Legacy Plane phase inverse-rotated the sampled 2D pixels. The explicit
+    // surface rotates the Plane itself, so migration must reverse the authored
+    // Z direction while making the old reflected, full-canvas view visible.
+    std::string legacy_plane = version_fifteen;
+    const auto replace_once = [&legacy_plane](std::string_view from,
+                                               std::string_view to) {
+        const std::size_t position = legacy_plane.find(from);
+        CHECK(position != std::string::npos);
+        if (position != std::string::npos) {
+            legacy_plane.replace(position, from.size(), to);
+        }
+    };
+    replace_once("surface.mapping\tcylinder", "surface.mapping\tplane");
+    replace_once("surface.rotations_per_loop\t0",
+                 "surface.rotations_per_loop\t2");
+    replace_once("surface.phase_degrees\t0",
+                 "surface.phase_degrees\t33");
+    pvt::RenderConfig loaded_legacy_plane;
+    CHECK(pvt::detail::deserialize_setup_config(
+        legacy_plane, loaded_legacy_plane, &error));
+    CHECK(loaded_legacy_plane.surface.projection
+          == pvt::SurfaceProjection::Orthographic);
+    CHECK(loaded_legacy_plane.surface.sizing
+          == pvt::SurfaceSizing::Stretch);
+    CHECK(loaded_legacy_plane.surface.outside
+          == pvt::SurfaceOutside::Reflect);
+    CHECK(loaded_legacy_plane.surface.rotation_order
+          == pvt::SurfaceRotationOrder::XYZ);
+    CHECK(loaded_legacy_plane.surface.rotation_z_turns_per_loop == -2);
+    CHECK(loaded_legacy_plane.surface.rotation_z_degrees == -33.0);
+
+    std::string version_fourteen = version_fifteen;
     version_fourteen.replace(0U, std::string("PVT_SETUP\t15").size(),
                              "PVT_SETUP\t14");
     for (const char* field : {"particle_profile", "particle_size_variation",
@@ -5251,6 +5406,19 @@ void test_image_formats_and_dither(const fs::path& directory) {
     CHECK(channels.size() == 4U);
     CHECK(std::all_of(channels.begin(), channels.end(),
                       [](const auto& channel) { return channel.second == 2U; }));
+
+    // The authored exterior policy, rather than merely enabling a surface,
+    // determines whether an alpha-bearing export is required. Keeping the
+    // source behind a fully curved primitive produces a complete opaque
+    // frame and must remain available to RGB-only exports.
+    transparent_surface.surface.outside = pvt::SurfaceOutside::Source;
+    transparent_surface.alpha.enabled = false;
+    const fs::path source_backed_exr = directory / "source-backed-surface.exr";
+    CHECK(pvt::render_frame(transparent_surface, 2, transparent_image, &error));
+    CHECK(pvt::write_image(source_backed_exr.string(), transparent_image,
+                           transparent_surface, 14U, &error));
+    channels = exr_channels(source_backed_exr);
+    CHECK(channels.size() == 3U);
 }
 
 void test_sequence_preflight(const fs::path& directory) {

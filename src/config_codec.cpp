@@ -243,6 +243,22 @@ bool is_setup_v15_key(std::string_view key) {
                || has_suffix(key, ".particle_rotation_degrees"));
 }
 
+bool is_setup_v16_key(std::string_view key) {
+    if (!starts_with(key, "surface.")) return false;
+    return key == "surface.projection"
+           || key == "surface.sizing"
+           || key == "surface.outside"
+           || starts_with(key, "surface.rotation_")
+           || key == "surface.size_percent"
+           || starts_with(key, "surface.scale_")
+           || starts_with(key, "surface.position_")
+           || key == "surface.camera_distance"
+           || key == "surface.focal_length"
+           || starts_with(key, "surface.light_")
+           || key == "surface.composite_backfaces"
+           || key == "surface.normalize_obj";
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -261,7 +277,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 9U ? 11U
                     : layer_version == 10U ? 12U
                     : layer_version == 11U ? 13U
-                    : layer_version == 12U ? 14U : 15U;
+                    : layer_version == 12U ? 14U
+                    : layer_version == 13U ? 15U : 16U;
     return true;
 }
 
@@ -525,6 +542,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 15U && is_setup_v15_key(key)) {
+            continue;
+        }
+        if (setup_version < 16U && is_setup_v16_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

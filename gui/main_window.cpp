@@ -1057,10 +1057,33 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
         return true;
     }
     if (config.surface.enabled
-        && (config.surface.mapping != pvt::SurfaceMapping::Plane
-            || config.surface.plane_displacement.enabled)
-        && config.surface.curvature > 0.0) {
-        return true;
+        && config.surface.outside == pvt::SurfaceOutside::Transparent) {
+        const bool transformed_plane =
+            config.surface.mapping == pvt::SurfaceMapping::Plane
+            && (config.surface.projection
+                    != pvt::SurfaceProjection::Orthographic
+                || config.surface.sizing != pvt::SurfaceSizing::Contain
+                || config.surface.rotation_x_turns_per_loop != 0
+                || config.surface.rotation_y_turns_per_loop != 0
+                || config.surface.rotation_z_turns_per_loop != 0
+                || std::fmod(config.surface.rotation_x_degrees, 360.0) != 0.0
+                || std::fmod(config.surface.rotation_y_degrees, 360.0) != 0.0
+                || std::fmod(config.surface.rotation_z_degrees, 360.0) != 0.0
+                || config.surface.size_percent != 100.0
+                || config.surface.scale_x != 1.0
+                || config.surface.scale_y != 1.0
+                || config.surface.scale_z != 1.0
+                || config.surface.position_x_percent != 0.0
+                || config.surface.position_y_percent != 0.0
+                || config.surface.position_z != 0.0);
+        if ((config.surface.mapping != pvt::SurfaceMapping::Plane
+             && config.surface.curvature > 0.0)
+            || (config.surface.mapping == pvt::SurfaceMapping::Plane
+                && config.surface.plane_displacement.enabled
+                && config.surface.curvature > 0.0)
+            || transformed_plane) {
+            return true;
+        }
     }
     if (config.motion.enabled) {
         const bool built_in_path_has_work =
@@ -4348,20 +4371,176 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_obj_browse_ = new QPushButton(tr("Browse…"));
     obj_path_layout->addWidget(surface_obj_path_, 1);
     obj_path_layout->addWidget(surface_obj_browse_);
-    surface_rotations_ = integer_editor(kMinimumIntegerParameter,
-                                        kMaximumIntegerParameter);
-    surface_phase_ = real_editor(-kMaximumRenderParameter,
-                                 kMaximumRenderParameter, 3, 1.0);
+    surface_projection_ = new QComboBox;
+    surface_projection_->setObjectName(QStringLiteral("surfaceProjection"));
+    add_enum_item(surface_projection_, tr("Orthographic (no perspective)"),
+                  pvt::SurfaceProjection::Orthographic);
+    add_enum_item(surface_projection_, tr("Perspective"),
+                  pvt::SurfaceProjection::Perspective);
+    surface_sizing_ = new QComboBox;
+    surface_sizing_->setObjectName(QStringLiteral("surfaceSizing"));
+    add_enum_item(surface_sizing_, tr("Contain whole surface"),
+                  pvt::SurfaceSizing::Contain);
+    add_enum_item(surface_sizing_, tr("Cover canvas"),
+                  pvt::SurfaceSizing::Cover);
+    add_enum_item(surface_sizing_, tr("Stretch to canvas"),
+                  pvt::SurfaceSizing::Stretch);
+    add_enum_item(surface_sizing_, tr("Size from canvas short side"),
+                  pvt::SurfaceSizing::ShortSide);
+    surface_outside_ = new QComboBox;
+    surface_outside_->setObjectName(QStringLiteral("surfaceOutside"));
+    add_enum_item(surface_outside_, tr("Transparent"),
+                  pvt::SurfaceOutside::Transparent);
+    add_enum_item(surface_outside_, tr("Keep original source"),
+                  pvt::SurfaceOutside::Source);
+    add_enum_item(surface_outside_, tr("Reflect source at plane edges"),
+                  pvt::SurfaceOutside::Reflect);
+    surface_rotation_order_ = new QComboBox;
+    surface_rotation_order_->setObjectName(
+        QStringLiteral("surfaceRotationOrder"));
+    add_enum_item(surface_rotation_order_, tr("X then Y then Z"),
+                  pvt::SurfaceRotationOrder::XYZ);
+    add_enum_item(surface_rotation_order_, tr("X then Z then Y"),
+                  pvt::SurfaceRotationOrder::XZY);
+    add_enum_item(surface_rotation_order_, tr("Y then X then Z"),
+                  pvt::SurfaceRotationOrder::YXZ);
+    add_enum_item(surface_rotation_order_, tr("Y then Z then X"),
+                  pvt::SurfaceRotationOrder::YZX);
+    add_enum_item(surface_rotation_order_, tr("Z then X then Y"),
+                  pvt::SurfaceRotationOrder::ZXY);
+    add_enum_item(surface_rotation_order_, tr("Z then Y then X"),
+                  pvt::SurfaceRotationOrder::ZYX);
+    surface_rotation_order_->setToolTip(tr(
+        "Choose the exact order used to apply the authored axis rotations. "
+        "This is saved with the layer and is never inferred from the surface type."));
+    surface_rotation_x_turns_ = integer_editor(kMinimumIntegerParameter,
+                                               kMaximumIntegerParameter);
+    surface_rotation_y_turns_ = integer_editor(kMinimumIntegerParameter,
+                                               kMaximumIntegerParameter);
+    surface_rotation_z_turns_ = integer_editor(kMinimumIntegerParameter,
+                                               kMaximumIntegerParameter);
+    surface_rotation_x_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
+    surface_rotation_y_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
+    surface_rotation_z_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
+    surface_size_ = real_editor(0.001, kMaximumRenderParameter, 3, 1.0);
+    surface_size_->setSuffix(tr("%"));
+    surface_scale_x_ = real_editor(0.001, kMaximumRenderParameter, 4, 0.05);
+    surface_scale_y_ = real_editor(0.001, kMaximumRenderParameter, 4, 0.05);
+    surface_scale_z_ = real_editor(0.001, kMaximumRenderParameter, 4, 0.05);
+    surface_position_x_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
+    surface_position_y_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
+    surface_position_x_->setSuffix(tr("%"));
+    surface_position_y_->setSuffix(tr("%"));
+    surface_position_z_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 4, 0.05);
+    surface_camera_distance_ = real_editor(
+        0.001, kMaximumRenderParameter, 4, 0.05);
+    surface_focal_length_ = real_editor(
+        0.001, kMaximumRenderParameter, 4, 0.05);
     surface_curvature_ = real_editor(0.0, 1.0);
     surface_lighting_ = real_editor(0.0, kMaximumRenderParameter);
+    surface_light_x_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter, 4, 0.05);
+    surface_light_y_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter, 4, 0.05);
+    surface_light_z_ = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter, 4, 0.05);
+    surface_light_ambient_ = real_editor(0.0, kMaximumRenderParameter,
+                                         4, 0.05);
+    surface_light_diffuse_ = real_editor(0.0, kMaximumRenderParameter,
+                                         4, 0.05);
+    surface_composite_backfaces_ = new QCheckBox(
+        tr("Composite transparent rear surfaces"));
+    surface_normalize_obj_ = new QCheckBox(
+        tr("Center and normalize imported OBJ geometry"));
+    surface_neutral_preset_ = new QPushButton(tr("Neutral front view"));
+    surface_classic_preset_ = new QPushButton(tr("Classic three-quarter view"));
+    surface_neutral_preset_->setObjectName(
+        QStringLiteral("surfaceNeutralPreset"));
+    surface_classic_preset_->setObjectName(
+        QStringLiteral("surfaceClassicPreset"));
     surface->addRow(surface_enabled_);
     surface->addRow(tr("Surface"), surface_mapping_);
     surface->addRow(tr("OBJ file"), surface_obj_row_);
     surface_obj_label_ = surface->labelForField(surface_obj_row_);
-    surface->addRow(tr("Rotations per loop"), surface_rotations_);
-    surface->addRow(tr("Starting phase (degrees)"), surface_phase_);
-    surface->addRow(tr("Curvature"), surface_curvature_);
-    surface->addRow(tr("Lighting"), surface_lighting_);
+
+    auto* surface_preset_row = new QWidget;
+    auto* surface_preset_layout = new QHBoxLayout(surface_preset_row);
+    surface_preset_layout->setContentsMargins(0, 0, 0, 0);
+    surface_preset_layout->addWidget(surface_neutral_preset_);
+    surface_preset_layout->addWidget(surface_classic_preset_);
+    surface_preset_layout->addStretch();
+    surface->addRow(tr("View presets"), surface_preset_row);
+
+    auto* surface_transform_group = new QGroupBox(
+        tr("Transform and loop animation"));
+    auto* surface_transform = new QGridLayout(surface_transform_group);
+    surface_transform->addWidget(new QLabel(tr("Axis")), 0, 0);
+    surface_transform->addWidget(new QLabel(tr("X")), 0, 1);
+    surface_transform->addWidget(new QLabel(tr("Y")), 0, 2);
+    surface_transform->addWidget(new QLabel(tr("Z")), 0, 3);
+    surface_transform->addWidget(new QLabel(tr("Starting rotation (degrees)")),
+                                 1, 0);
+    surface_transform->addWidget(surface_rotation_x_, 1, 1);
+    surface_transform->addWidget(surface_rotation_y_, 1, 2);
+    surface_transform->addWidget(surface_rotation_z_, 1, 3);
+    surface_transform->addWidget(new QLabel(tr("Rotations per loop")), 2, 0);
+    surface_transform->addWidget(surface_rotation_x_turns_, 2, 1);
+    surface_transform->addWidget(surface_rotation_y_turns_, 2, 2);
+    surface_transform->addWidget(surface_rotation_z_turns_, 2, 3);
+    surface_transform->addWidget(new QLabel(tr("Rotation order")), 3, 0);
+    surface_transform->addWidget(surface_rotation_order_, 3, 1, 1, 3);
+    surface_transform->addWidget(new QLabel(tr("Object scale")), 4, 0);
+    surface_transform->addWidget(surface_scale_x_, 4, 1);
+    surface_transform->addWidget(surface_scale_y_, 4, 2);
+    surface_transform->addWidget(surface_scale_z_, 4, 3);
+    surface_transform->addWidget(new QLabel(tr("Canvas/object position")), 5, 0);
+    surface_transform->addWidget(surface_position_x_, 5, 1);
+    surface_transform->addWidget(surface_position_y_, 5, 2);
+    surface_transform->addWidget(surface_position_z_, 5, 3);
+    surface->addRow(surface_transform_group);
+
+    auto* surface_camera_group = new QGroupBox(tr("Projection and framing"));
+    auto* surface_camera = new QFormLayout(surface_camera_group);
+    surface_camera->addRow(tr("Projection"), surface_projection_);
+    surface_camera->addRow(tr("Fit policy"), surface_sizing_);
+    surface_camera->addRow(tr("Visible size"), surface_size_);
+    surface_camera->addRow(tr("Camera distance"), surface_camera_distance_);
+    surface_camera->addRow(tr("Focal length"), surface_focal_length_);
+    surface_camera->addRow(tr("Pixels outside surface"), surface_outside_);
+    surface_camera->addRow(surface_composite_backfaces_);
+    surface_camera->addRow(surface_normalize_obj_);
+    surface->addRow(surface_camera_group);
+
+    auto* surface_appearance_group = new QGroupBox(tr("Shape and lighting"));
+    auto* surface_appearance = new QGridLayout(surface_appearance_group);
+    surface_appearance->addWidget(new QLabel(tr("Curvature / mapping mix")), 0, 0);
+    surface_appearance->addWidget(surface_curvature_, 0, 1, 1, 3);
+    surface_appearance->addWidget(new QLabel(tr("Lighting amount")), 1, 0);
+    surface_appearance->addWidget(surface_lighting_, 1, 1, 1, 3);
+    surface_appearance->addWidget(new QLabel(tr("Light direction")), 2, 0);
+    surface_appearance->addWidget(surface_light_x_, 2, 1);
+    surface_appearance->addWidget(surface_light_y_, 2, 2);
+    surface_appearance->addWidget(surface_light_z_, 2, 3);
+    surface_appearance->addWidget(new QLabel(tr("Ambient")), 3, 0);
+    surface_appearance->addWidget(surface_light_ambient_, 3, 1);
+    surface_appearance->addWidget(new QLabel(tr("Diffuse")), 3, 2);
+    surface_appearance->addWidget(surface_light_diffuse_, 3, 3);
+    surface->addRow(surface_appearance_group);
+
+    auto* surface_help = new QLabel(tr(
+        "No camera angle, rotation, scale, fit, or light is inferred from the "
+        "selected surface. New Plane mappings start as a pixel-aligned neutral "
+        "view; the classic preset is an explicit recreation of the older "
+        "three-quarter presentation. Transform order is scale, the selected "
+        "Euler axis order, then position and projection."));
+    surface_help->setWordWrap(true);
+    surface->addRow(surface_help);
 
     surface_plane_displacement_group_ = new QGroupBox(
         tr("Plane displacement mesh"));
@@ -4538,6 +4717,66 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_layout->addStretch();
     motion_layout->addStretch();
     finish_layout->addStretch();
+
+    const auto apply_surface_view_preset = [this](bool classic) {
+        if (populating_) return;
+        auto before = captureActiveState();
+        auto& value = config_.surface;
+        value.projection = classic ? pvt::SurfaceProjection::Perspective
+                                   : pvt::SurfaceProjection::Orthographic;
+        value.sizing = classic ? pvt::SurfaceSizing::ShortSide
+                               : pvt::SurfaceSizing::Contain;
+        value.outside = pvt::SurfaceOutside::Transparent;
+        value.rotation_order = classic
+                && value.mapping == pvt::SurfaceMapping::Cylinder
+            ? pvt::SurfaceRotationOrder::YXZ
+            : pvt::SurfaceRotationOrder::XYZ;
+        value.rotation_x_turns_per_loop = 0;
+        value.rotation_y_turns_per_loop = 0;
+        value.rotation_z_turns_per_loop = 0;
+        value.rotation_x_degrees = classic ? -20.0535228296 : 0.0;
+        value.rotation_y_degrees = classic ? 31.5126787322 : 0.0;
+        value.rotation_z_degrees = 0.0;
+        value.size_percent = classic ? 104.0 : 100.0;
+        value.scale_x = 1.0;
+        value.scale_y = 1.0;
+        value.scale_z = 1.0;
+        value.position_x_percent = 0.0;
+        value.position_y_percent = 0.0;
+        value.position_z = 0.0;
+        value.camera_distance = 3.4;
+        // Matching focal length to camera distance keeps an unrotated Z=0
+        // Plane at 100% even if the artist later switches Neutral to
+        // Perspective. Classic deliberately restores the older lens.
+        value.focal_length = classic ? 2.5 : 3.4;
+        value.lighting = classic ? 0.35 : 0.0;
+        value.light_direction_x = -0.45;
+        value.light_direction_y = -0.55;
+        value.light_direction_z = 0.75;
+        value.light_ambient = 0.28;
+        value.light_diffuse = 0.72;
+        value.composite_backfaces = true;
+        syncActiveRender();
+        loadGlobalEditors();
+        preview_->setConfiguration(config_);
+        schedulePreview();
+        recordActiveStateChange(
+            classic ? tr("Use classic surface view")
+                    : tr("Use neutral surface view"),
+            std::move(before));
+        status_->setText(
+            classic
+                ? tr("Applied an explicit classic three-quarter surface view.")
+                : tr("Removed surface camera, rotation, scale, position, and lighting transforms."));
+    };
+    connect(surface_neutral_preset_, &QPushButton::clicked, this,
+            [apply_surface_view_preset] {
+                apply_surface_view_preset(false);
+            });
+    connect(surface_classic_preset_, &QPushButton::clicked, this,
+            [apply_surface_view_preset] {
+                apply_surface_view_preset(true);
+            });
 
     connect(surface_obj_browse_, &QPushButton::clicked, this, [this] {
         std::vector<const pvt::LayerConfig*> reusable;
@@ -7132,7 +7371,10 @@ void MainWindow::connectEditors() {
     for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
                          kaleidoscope_segments_, domain_warp_octaves_,
                          domain_warp_cycles_,
-                         surface_rotations_, surface_plane_displacement_ratio_,
+                         surface_rotation_x_turns_,
+                         surface_rotation_y_turns_,
+                         surface_rotation_z_turns_,
+                         surface_plane_displacement_ratio_,
                          post_antialias_passes_,
                          quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
@@ -7147,11 +7389,19 @@ void MainWindow::connectEditors() {
                          surface_lighting_, surface_plane_displacement_minimum_,
                          surface_plane_displacement_maximum_,
                          surface_plane_displacement_midpoint_,
+                         surface_rotation_x_, surface_rotation_y_,
+                         surface_rotation_z_, surface_size_,
+                         surface_scale_x_, surface_scale_y_, surface_scale_z_,
+                         surface_position_x_, surface_position_y_,
+                         surface_position_z_, surface_camera_distance_,
+                         surface_focal_length_, surface_light_x_,
+                         surface_light_y_, surface_light_z_,
+                         surface_light_ambient_, surface_light_diffuse_,
                          post_invert_rgb_mix_,
                          post_invert_alpha_mix_, post_antialias_strength_,
                          post_antialias_threshold_, quantization_mix_, alpha_minimum_,
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
-                         surface_phase_, alpha_phase_, motion_center_x_, motion_center_y_,
+                         alpha_phase_, motion_center_x_, motion_center_y_,
                          motion_travel_x_, motion_travel_y_, motion_phase_,
                          motion_rotation_offset_, motion_scale_pulse_,
                          starting_red_minimum_,
@@ -7169,6 +7419,7 @@ void MainWindow::connectEditors() {
                          quantization_enabled_,
                          alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
                          transform_flip_horizontal_, transform_flip_vertical_,
+                         surface_composite_backfaces_, surface_normalize_obj_,
                          palette_enabled_, starting_image_palette_dither_,
                          starting_color_include_alpha_, alpha_use_source_}) {
         connect(editor, &QCheckBox::toggled, this,
@@ -7191,7 +7442,10 @@ void MainWindow::connectEditors() {
             &MainWindow::showMotionPathEditor);
     connect(starting_image_enabled_, &QCheckBox::toggled, this,
             [this] { applyGlobalEditor(starting_image_enabled_); });
-    for (auto* editor : {surface_mapping_, quantization_mode_, bit_depth_, dither_method_,
+    for (auto* editor : {surface_mapping_, surface_projection_,
+                         surface_sizing_, surface_outside_,
+                         surface_rotation_order_,
+                         quantization_mode_, bit_depth_, dither_method_,
                          transform_mirror_, motion_path_, starting_image_fit_,
                          starting_image_palette_dither_method_, starting_color_mode_}) {
         connect(editor, &QComboBox::currentIndexChanged, this,
@@ -10565,10 +10819,38 @@ void MainWindow::loadGlobalEditors() {
     surface_enabled_->setChecked(config_.surface.enabled);
     select_enum(surface_mapping_, config_.surface.mapping);
     surface_obj_path_->setText(QString::fromStdString(config_.surface.obj_path));
-    surface_rotations_->setValue(config_.surface.rotations_per_loop);
-    surface_phase_->setValue(config_.surface.phase_degrees);
+    select_enum(surface_projection_, config_.surface.projection);
+    select_enum(surface_sizing_, config_.surface.sizing);
+    select_enum(surface_outside_, config_.surface.outside);
+    select_enum(surface_rotation_order_, config_.surface.rotation_order);
+    surface_rotation_x_turns_->setValue(
+        config_.surface.rotation_x_turns_per_loop);
+    surface_rotation_y_turns_->setValue(
+        config_.surface.rotation_y_turns_per_loop);
+    surface_rotation_z_turns_->setValue(
+        config_.surface.rotation_z_turns_per_loop);
+    surface_rotation_x_->setValue(config_.surface.rotation_x_degrees);
+    surface_rotation_y_->setValue(config_.surface.rotation_y_degrees);
+    surface_rotation_z_->setValue(config_.surface.rotation_z_degrees);
+    surface_size_->setValue(config_.surface.size_percent);
+    surface_scale_x_->setValue(config_.surface.scale_x);
+    surface_scale_y_->setValue(config_.surface.scale_y);
+    surface_scale_z_->setValue(config_.surface.scale_z);
+    surface_position_x_->setValue(config_.surface.position_x_percent);
+    surface_position_y_->setValue(config_.surface.position_y_percent);
+    surface_position_z_->setValue(config_.surface.position_z);
+    surface_camera_distance_->setValue(config_.surface.camera_distance);
+    surface_focal_length_->setValue(config_.surface.focal_length);
     surface_curvature_->setValue(config_.surface.curvature);
     surface_lighting_->setValue(config_.surface.lighting);
+    surface_light_x_->setValue(config_.surface.light_direction_x);
+    surface_light_y_->setValue(config_.surface.light_direction_y);
+    surface_light_z_->setValue(config_.surface.light_direction_z);
+    surface_light_ambient_->setValue(config_.surface.light_ambient);
+    surface_light_diffuse_->setValue(config_.surface.light_diffuse);
+    surface_composite_backfaces_->setChecked(
+        config_.surface.composite_backfaces);
+    surface_normalize_obj_->setChecked(config_.surface.normalize_obj);
     const auto& plane_displacement =
         config_.surface.plane_displacement;
     surface_plane_displacement_enabled_->setChecked(
@@ -10709,7 +10991,8 @@ void MainWindow::updateWaveOutputState() {
 }
 
 void MainWindow::updateSurfaceEditorState() {
-    if (surface_mapping_ == nullptr || surface_obj_row_ == nullptr
+    if (surface_mapping_ == nullptr || surface_rotation_order_ == nullptr
+        || surface_obj_row_ == nullptr
         || surface_plane_displacement_group_ == nullptr) {
         return;
     }
@@ -10717,11 +11000,21 @@ void MainWindow::updateSurfaceEditorState() {
         surface_mapping_->currentData().toInt());
     const bool custom_obj = mapping == pvt::SurfaceMapping::CustomObj;
     const bool plane = mapping == pvt::SurfaceMapping::Plane;
+    const bool perspective = static_cast<pvt::SurfaceProjection>(
+        surface_projection_->currentData().toInt())
+        == pvt::SurfaceProjection::Perspective;
     surface_obj_row_->setVisible(custom_obj);
     if (surface_obj_label_ != nullptr) {
         surface_obj_label_->setVisible(custom_obj);
     }
     surface_plane_displacement_group_->setVisible(plane);
+    surface_camera_distance_->setEnabled(perspective);
+    surface_focal_length_->setEnabled(perspective);
+    surface_normalize_obj_->setEnabled(custom_obj);
+    surface_outside_->setToolTip(
+        plane
+            ? tr("Transparent crops the transformed Plane; Keep Source retains the original canvas outside it; Reflect tiles the source across Plane edges.")
+            : tr("Transparent removes pixels outside the surface. Keep Source and Reflect both retain the original canvas outside closed 3D surfaces."));
     const bool has_height_map =
         !config_.surface.plane_displacement.path.empty()
         || !config_.surface.plane_displacement.sha256.empty();
@@ -10736,7 +11029,9 @@ void MainWindow::updateSurfaceEditorState() {
     surface_curvature_->setToolTip(
         plane && has_height_map
             ? tr("Crossfade from the original flat image at 0 to the fully projected displacement mesh at 1.")
-            : tr("Crossfade from the original flat image at 0 to the fully mapped 3D surface at 1."));
+            : (plane
+                   ? tr("A flat Plane uses its authored projection and transform directly; curvature is reserved for a Plane displacement mesh.")
+                   : tr("Crossfade from the original flat image at 0 to the fully mapped 3D surface at 1.")));
 }
 
 void MainWindow::updatePostProcessEditorState() {
@@ -12802,6 +13097,19 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
                 surface_plane_displacement_enabled_);
             surface_plane_displacement_enabled_->setChecked(false);
         }
+    } else if (changed_editor == surface_projection_) {
+        config_.surface.projection = static_cast<pvt::SurfaceProjection>(
+            surface_projection_->currentData().toInt());
+    } else if (changed_editor == surface_sizing_) {
+        config_.surface.sizing = static_cast<pvt::SurfaceSizing>(
+            surface_sizing_->currentData().toInt());
+    } else if (changed_editor == surface_outside_) {
+        config_.surface.outside = static_cast<pvt::SurfaceOutside>(
+            surface_outside_->currentData().toInt());
+    } else if (changed_editor == surface_rotation_order_) {
+        config_.surface.rotation_order =
+            static_cast<pvt::SurfaceRotationOrder>(
+                surface_rotation_order_->currentData().toInt());
     } else if (changed_editor == surface_plane_displacement_enabled_) {
         if (surface_plane_displacement_enabled_->isChecked()
             && config_.surface.plane_displacement.path.empty()) {
@@ -12852,14 +13160,58 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_plane_displacement_ratio_) {
         config_.surface.plane_displacement.pixels_per_node =
             surface_plane_displacement_ratio_->value();
-    } else if (changed_editor == surface_rotations_) {
-        config_.surface.rotations_per_loop = surface_rotations_->value();
-    } else if (changed_editor == surface_phase_) {
-        config_.surface.phase_degrees = surface_phase_->value();
+    } else if (changed_editor == surface_rotation_x_turns_) {
+        config_.surface.rotation_x_turns_per_loop =
+            surface_rotation_x_turns_->value();
+    } else if (changed_editor == surface_rotation_y_turns_) {
+        config_.surface.rotation_y_turns_per_loop =
+            surface_rotation_y_turns_->value();
+    } else if (changed_editor == surface_rotation_z_turns_) {
+        config_.surface.rotation_z_turns_per_loop =
+            surface_rotation_z_turns_->value();
+    } else if (changed_editor == surface_rotation_x_) {
+        config_.surface.rotation_x_degrees = surface_rotation_x_->value();
+    } else if (changed_editor == surface_rotation_y_) {
+        config_.surface.rotation_y_degrees = surface_rotation_y_->value();
+    } else if (changed_editor == surface_rotation_z_) {
+        config_.surface.rotation_z_degrees = surface_rotation_z_->value();
+    } else if (changed_editor == surface_size_) {
+        config_.surface.size_percent = surface_size_->value();
+    } else if (changed_editor == surface_scale_x_) {
+        config_.surface.scale_x = surface_scale_x_->value();
+    } else if (changed_editor == surface_scale_y_) {
+        config_.surface.scale_y = surface_scale_y_->value();
+    } else if (changed_editor == surface_scale_z_) {
+        config_.surface.scale_z = surface_scale_z_->value();
+    } else if (changed_editor == surface_position_x_) {
+        config_.surface.position_x_percent = surface_position_x_->value();
+    } else if (changed_editor == surface_position_y_) {
+        config_.surface.position_y_percent = surface_position_y_->value();
+    } else if (changed_editor == surface_position_z_) {
+        config_.surface.position_z = surface_position_z_->value();
+    } else if (changed_editor == surface_camera_distance_) {
+        config_.surface.camera_distance = surface_camera_distance_->value();
+    } else if (changed_editor == surface_focal_length_) {
+        config_.surface.focal_length = surface_focal_length_->value();
     } else if (changed_editor == surface_curvature_) {
         config_.surface.curvature = surface_curvature_->value();
     } else if (changed_editor == surface_lighting_) {
         config_.surface.lighting = surface_lighting_->value();
+    } else if (changed_editor == surface_light_x_) {
+        config_.surface.light_direction_x = surface_light_x_->value();
+    } else if (changed_editor == surface_light_y_) {
+        config_.surface.light_direction_y = surface_light_y_->value();
+    } else if (changed_editor == surface_light_z_) {
+        config_.surface.light_direction_z = surface_light_z_->value();
+    } else if (changed_editor == surface_light_ambient_) {
+        config_.surface.light_ambient = surface_light_ambient_->value();
+    } else if (changed_editor == surface_light_diffuse_) {
+        config_.surface.light_diffuse = surface_light_diffuse_->value();
+    } else if (changed_editor == surface_composite_backfaces_) {
+        config_.surface.composite_backfaces =
+            surface_composite_backfaces_->isChecked();
+    } else if (changed_editor == surface_normalize_obj_) {
+        config_.surface.normalize_obj = surface_normalize_obj_->isChecked();
     } else if (changed_editor == post_invert_rgb_enabled_) {
         config_.post_process.invert_rgb_enabled =
             post_invert_rgb_enabled_->isChecked();
@@ -15311,7 +15663,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
-    if (surface_mapping_ == nullptr || surface_obj_row_ == nullptr
+    if (surface_mapping_ == nullptr || surface_rotation_order_ == nullptr
+        || surface_obj_row_ == nullptr
         || surface_plane_displacement_group_ == nullptr
         || surface_plane_displacement_enabled_ == nullptr
         || surface_plane_displacement_path_ == nullptr
@@ -15375,9 +15728,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const auto maximum = target(QStringLiteral("plane_displacement.maximum"));
         const auto midpoint = target(QStringLiteral("plane_displacement.midpoint"));
         const auto mapping = target(QStringLiteral("mapping"));
+        const auto rotation_x = target(QStringLiteral("rotation_x"));
+        const auto rotation_y = target(QStringLiteral("rotation_y"));
+        const auto rotation_z = target(QStringLiteral("rotation_z"));
+        const auto rotation_order = target(QStringLiteral("rotation_order"));
+        const auto projection = target(QStringLiteral("projection"));
+        const auto sizing = target(QStringLiteral("sizing"));
         if (enabled == targets.end() || minimum == targets.end()
             || maximum == targets.end() || midpoint == targets.end()
-            || mapping == targets.end()
+            || mapping == targets.end() || rotation_x == targets.end()
+            || rotation_y == targets.end() || rotation_z == targets.end()
+            || rotation_order == targets.end()
+            || projection == targets.end() || sizing == targets.end()
             || !minimum->apply(live_probe, -0.75)
             || live_probe.layers.front().render.surface.plane_displacement.minimum
                    != -0.75
@@ -15388,7 +15750,31 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || !live_probe.layers.front().render.surface.enabled
             || live_probe.layers.front().render.surface.mapping
                    != pvt::SurfaceMapping::Plane
-            || !live_probe.layers.front().render.surface.plane_displacement.enabled) {
+            || !live_probe.layers.front().render.surface.plane_displacement.enabled
+            || !rotation_x->apply(live_probe, -12.0)
+            || !rotation_y->apply(live_probe, 23.0)
+            || !rotation_z->apply(live_probe, 34.0)
+            || !rotation_order->apply(
+                live_probe,
+                static_cast<double>(pvt::SurfaceRotationOrder::ZXY))
+            || !projection->apply(
+                live_probe,
+                static_cast<double>(pvt::SurfaceProjection::Perspective))
+            || !sizing->apply(
+                live_probe,
+                static_cast<double>(pvt::SurfaceSizing::Cover))
+            || live_probe.layers.front().render.surface.rotation_x_degrees
+                   != -12.0
+            || live_probe.layers.front().render.surface.rotation_y_degrees
+                   != 23.0
+            || live_probe.layers.front().render.surface.rotation_z_degrees
+                   != 34.0
+            || live_probe.layers.front().render.surface.rotation_order
+                   != pvt::SurfaceRotationOrder::ZXY
+            || live_probe.layers.front().render.surface.projection
+                   != pvt::SurfaceProjection::Perspective
+            || live_probe.layers.front().render.surface.sizing
+                   != pvt::SurfaceSizing::Cover) {
             if (error != nullptr) {
                 *error = tr("Live Plane displacement targets are incomplete or can create an invalid surface combination.");
             }
@@ -15531,7 +15917,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
     alpha_probe = pvt::default_config();
     alpha_probe.surface.enabled = true;
     alpha_probe.surface.mapping = pvt::SurfaceMapping::Plane;
-    alpha_probe.surface.rotations_per_loop = 1;
+    alpha_probe.surface.rotation_z_turns_per_loop = 1;
+    alpha_probe.surface.outside = pvt::SurfaceOutside::Reflect;
     if (configuration_requires_alpha(alpha_probe)) {
         if (error != nullptr) {
             *error = tr("Reflected plane rotation unnecessarily forced alpha output.");
@@ -15689,8 +16076,33 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     const auto original = config_;
     auto expected = original;
-    expected.surface.rotations_per_loop = 900;
+    expected.surface.projection = pvt::SurfaceProjection::Perspective;
+    expected.surface.sizing = pvt::SurfaceSizing::Cover;
+    expected.surface.outside = pvt::SurfaceOutside::Source;
+    expected.surface.rotation_order = pvt::SurfaceRotationOrder::ZXY;
+    expected.surface.rotation_x_turns_per_loop = -3;
+    expected.surface.rotation_y_turns_per_loop = 900;
+    expected.surface.rotation_z_turns_per_loop = 4;
+    expected.surface.rotation_x_degrees = -21.5;
+    expected.surface.rotation_y_degrees = 32.25;
+    expected.surface.rotation_z_degrees = 8.75;
+    expected.surface.size_percent = 87.0;
+    expected.surface.scale_x = 1.2;
+    expected.surface.scale_y = 0.8;
+    expected.surface.scale_z = 1.4;
+    expected.surface.position_x_percent = 6.0;
+    expected.surface.position_y_percent = -4.0;
+    expected.surface.position_z = 0.2;
+    expected.surface.camera_distance = 4.2;
+    expected.surface.focal_length = 3.1;
     expected.surface.lighting = 9.0;
+    expected.surface.light_direction_x = 0.2;
+    expected.surface.light_direction_y = -0.3;
+    expected.surface.light_direction_z = 0.8;
+    expected.surface.light_ambient = 0.25;
+    expected.surface.light_diffuse = 0.9;
+    expected.surface.composite_backfaces = false;
+    expected.surface.normalize_obj = false;
     expected.surface.obj_path = "meshes/smoke test.obj";
     expected.ghost_lag_degrees = 5.729612345678;
     expected.output.png_compression_level = 9;
@@ -16807,8 +17219,47 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    if (surface_rotations_->value() != expected.surface.rotations_per_loop
+    if (static_cast<pvt::SurfaceProjection>(
+            surface_projection_->currentData().toInt())
+            != expected.surface.projection
+        || static_cast<pvt::SurfaceSizing>(
+               surface_sizing_->currentData().toInt())
+               != expected.surface.sizing
+        || static_cast<pvt::SurfaceOutside>(
+               surface_outside_->currentData().toInt())
+               != expected.surface.outside
+        || static_cast<pvt::SurfaceRotationOrder>(
+               surface_rotation_order_->currentData().toInt())
+               != expected.surface.rotation_order
+        || surface_rotation_x_turns_->value()
+               != expected.surface.rotation_x_turns_per_loop
+        || surface_rotation_y_turns_->value()
+               != expected.surface.rotation_y_turns_per_loop
+        || surface_rotation_z_turns_->value()
+               != expected.surface.rotation_z_turns_per_loop
+        || surface_rotation_x_->value() != expected.surface.rotation_x_degrees
+        || surface_rotation_y_->value() != expected.surface.rotation_y_degrees
+        || surface_rotation_z_->value() != expected.surface.rotation_z_degrees
+        || surface_size_->value() != expected.surface.size_percent
+        || surface_scale_x_->value() != expected.surface.scale_x
+        || surface_scale_y_->value() != expected.surface.scale_y
+        || surface_scale_z_->value() != expected.surface.scale_z
+        || surface_position_x_->value() != expected.surface.position_x_percent
+        || surface_position_y_->value() != expected.surface.position_y_percent
+        || surface_position_z_->value() != expected.surface.position_z
+        || surface_camera_distance_->value()
+               != expected.surface.camera_distance
+        || surface_focal_length_->value() != expected.surface.focal_length
         || surface_lighting_->value() != expected.surface.lighting
+        || surface_light_x_->value() != expected.surface.light_direction_x
+        || surface_light_y_->value() != expected.surface.light_direction_y
+        || surface_light_z_->value() != expected.surface.light_direction_z
+        || surface_light_ambient_->value() != expected.surface.light_ambient
+        || surface_light_diffuse_->value() != expected.surface.light_diffuse
+        || surface_composite_backfaces_->isChecked()
+        || surface_normalize_obj_->isChecked()
+        || surface_neutral_preset_ == nullptr
+        || surface_classic_preset_ == nullptr
         || surface_obj_path_->text().toStdString() != expected.surface.obj_path
         || png_compression_->value() != expected.output.png_compression_level
         || !palette_enabled_->isChecked()
@@ -16849,6 +17300,79 @@ bool MainWindow::runSmokeChecks(QString* error) {
                        != expected.effects.front().space))) {
         if (error != nullptr) {
             *error = tr("GUI editors clamped values accepted by central validation.");
+        }
+        return false;
+    }
+
+    const auto preset_surface_mapping = config_.surface.mapping;
+    const int surface_preset_undo_index = undo_stack_->index();
+    surface_neutral_preset_->click();
+    if (config_.surface.mapping != preset_surface_mapping
+        || config_.surface.projection
+               != pvt::SurfaceProjection::Orthographic
+        || config_.surface.sizing != pvt::SurfaceSizing::Contain
+        || config_.surface.rotation_order != pvt::SurfaceRotationOrder::XYZ
+        || config_.surface.rotation_x_turns_per_loop != 0
+        || config_.surface.rotation_y_turns_per_loop != 0
+        || config_.surface.rotation_z_turns_per_loop != 0
+        || config_.surface.rotation_x_degrees != 0.0
+        || config_.surface.rotation_y_degrees != 0.0
+        || config_.surface.rotation_z_degrees != 0.0
+        || config_.surface.size_percent != 100.0
+        || config_.surface.scale_x != 1.0
+        || config_.surface.scale_y != 1.0
+        || config_.surface.scale_z != 1.0
+        || config_.surface.position_x_percent != 0.0
+        || config_.surface.position_y_percent != 0.0
+        || config_.surface.position_z != 0.0
+        || config_.surface.camera_distance != 3.4
+        || config_.surface.focal_length != 3.4
+        || config_.surface.lighting != 0.0
+        || undo_stack_->index() != surface_preset_undo_index + 1) {
+        if (error != nullptr) {
+            *error = tr("The Neutral surface preset changed the surface type, retained a hidden view transform, or bypassed Undo.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.surface.projection != expected.surface.projection
+        || config_.surface.rotation_order != expected.surface.rotation_order
+        || config_.surface.rotation_x_degrees
+               != expected.surface.rotation_x_degrees
+        || config_.surface.focal_length != expected.surface.focal_length) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore the authored surface view after the Neutral preset.");
+        }
+        return false;
+    }
+    surface_classic_preset_->click();
+    if (config_.surface.mapping != preset_surface_mapping
+        || config_.surface.projection != pvt::SurfaceProjection::Perspective
+        || config_.surface.sizing != pvt::SurfaceSizing::ShortSide
+        || config_.surface.rotation_order
+               != (preset_surface_mapping == pvt::SurfaceMapping::Cylinder
+                       ? pvt::SurfaceRotationOrder::YXZ
+                       : pvt::SurfaceRotationOrder::XYZ)
+        || config_.surface.rotation_x_degrees != -20.0535228296
+        || config_.surface.rotation_y_degrees != 31.5126787322
+        || config_.surface.size_percent != 104.0
+        || config_.surface.camera_distance != 3.4
+        || config_.surface.focal_length != 2.5
+        || config_.surface.lighting != 0.35
+        || undo_stack_->index() != surface_preset_undo_index + 1) {
+        if (error != nullptr) {
+            *error = tr("The Classic surface preset changed the surface type, omitted its visible view values, or bypassed Undo.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.surface.projection != expected.surface.projection
+        || config_.surface.rotation_order != expected.surface.rotation_order
+        || config_.surface.rotation_y_degrees
+               != expected.surface.rotation_y_degrees
+        || config_.surface.lighting != expected.surface.lighting) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore the authored surface view after the Classic preset.");
         }
         return false;
     }
@@ -16924,7 +17448,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
-    if (config_.surface.rotations_per_loop != expected.surface.rotations_per_loop
+    if (config_.surface.rotation_y_turns_per_loop
+            != expected.surface.rotation_y_turns_per_loop
         || config_.surface.lighting != expected.surface.lighting
         || config_.ghost_lag_degrees != expected.ghost_lag_degrees) {
         if (error != nullptr) {

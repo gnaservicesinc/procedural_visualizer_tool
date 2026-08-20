@@ -6,6 +6,43 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 8.0.0 explicit surface composition
+
+The surface pipeline has no type-triggered presentation changes for new work.
+`SurfaceConfig` now authors projection, fit policy, outside-fill policy, three
+loop-closing rotation axes plus three starting angles, visible size, XYZ object
+scale, XYZ placement, perspective camera/focal values, light vector,
+ambient/diffuse balance, transparent back-face composition, and Custom OBJ
+normalization. The editor groups these controls by transform, camera/framing,
+and appearance, includes Undo-aware Neutral and Classic presets, and leaves all
+view values unchanged when the surface type changes. CLI and Live targets cover
+the same finite, representable values.
+
+The CPU analytic mapper, Metal kernel, Qt OpenGL shader, Custom OBJ rasterizer,
+and displaced-Plane mesh path use the same explicit transform order: scale,
+the authored Euler axis order (all six orders are available), position, then
+projection. Short-side sizing deliberately uses
+the full canvas dimension so a migrated 104% classic mesh and 92% sphere retain
+the historical 0.52/0.46 framing exactly. OpenGL shader syntax is validated
+independently on macOS even though that platform uses Metal at runtime.
+
+Existing setup <=15 and layer <=13 records migrate the old Plane reflection,
+axis choice, camera, tilt, initial Cube/mesh turn, framing, and light constants
+into visible values. Current persistence is setup format 16 and layer format
+14. The public by-value `SurfaceConfig` growth is an ABI change, so product and
+SONAME advance together to 8.0.0/8.
+
+Local 8.0.0 release validation passes all 24 native Release tests, all 23 C++20
+tests, all 23 AddressSanitizer plus UndefinedBehaviorSanitizer tests, and all 24
+shared-library tests. A fresh external CMake consumer configured, linked, and
+ran against `libProceduralVisualizerTool.8.0.0.dylib`. The distribution verifier
+checked 26 Mach-O files; deep strict signing, embedded CLI version/self-test,
+packaged Cocoa smoke, arm64, plist version, deployment target, `/usr/lib` RPATH,
+archive-root, and SHA-256 checks pass. The Qt OpenGL source compiles in an
+independent syntax pass and both embedded GLSL 3.3 shaders pass
+`glslangValidator`; Windows and Linux runtime packages remain the tag-triggered
+remote matrix's responsibility.
+
 ## 7.0.2 Windows ARM64 deployment correction
 
 The Windows ARM64 Qt archive supplies host-runnable `qtpaths*.bat` wrappers,

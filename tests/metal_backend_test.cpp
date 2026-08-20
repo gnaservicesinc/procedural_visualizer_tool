@@ -611,8 +611,11 @@ void test_backend_contract() {
     config.surface.enabled = true;
     config.surface.curvature = 0.78;
     config.surface.lighting = 0.65;
-    config.surface.phase_degrees = 23.0;
-    config.surface.rotations_per_loop = 2;
+    config.surface.rotation_x_degrees = -13.0;
+    config.surface.rotation_y_degrees = 23.0;
+    config.surface.rotation_y_turns_per_loop = 2;
+    config.surface.rotation_z_degrees = 7.0;
+    config.surface.rotation_order = pvt::SurfaceRotationOrder::YZX;
     config.output.write_alpha = true;
     const std::vector<std::pair<pvt::SurfaceMapping, const char*>> surfaces = {
         {pvt::SurfaceMapping::Plane, "plane surface"},

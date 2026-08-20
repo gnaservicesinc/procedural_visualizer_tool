@@ -42,9 +42,22 @@ constexpr const char* kFragmentShader = R"PVT_GLSL(#version 330 core
 uniform sampler2D sourceImage;
 uniform ivec2 imageSize;
 uniform int mapping;
-uniform float phase;
+uniform int projection;
+uniform int sizing;
+uniform int outsideMode;
+uniform int compositeBackfaces;
+uniform int rotationOrder;
+uniform vec3 rotation;
+uniform vec3 objectScale;
+uniform vec3 position;
+uniform float sizeMultiplier;
+uniform float cameraDistance;
+uniform float focalLength;
 uniform float curvature;
 uniform float lighting;
+uniform vec3 lightDirection;
+uniform float lightAmbient;
+uniform float lightDiffuse;
 out vec4 outputColor;
 
 const float PI = 3.14159265358979323846;
@@ -129,14 +142,47 @@ vec3 rotateY(vec3 value, float angle) {
                 -sine * value.x + cosine * value.z);
 }
 
+vec3 rotateZ(vec3 value, float angle) {
+    float cosine = cos(angle);
+    float sine = sin(angle);
+    return vec3(cosine * value.x - sine * value.y,
+                sine * value.x + cosine * value.y, value.z);
+}
+
+vec3 rotateSurface(vec3 value) {
+    if (rotationOrder == 0) return rotateZ(rotateY(rotateX(value, rotation.x), rotation.y), rotation.z);
+    if (rotationOrder == 1) return rotateY(rotateZ(rotateX(value, rotation.x), rotation.z), rotation.y);
+    if (rotationOrder == 2) return rotateZ(rotateX(rotateY(value, rotation.y), rotation.x), rotation.z);
+    if (rotationOrder == 3) return rotateX(rotateZ(rotateY(value, rotation.y), rotation.z), rotation.x);
+    if (rotationOrder == 4) return rotateY(rotateX(rotateZ(value, rotation.z), rotation.x), rotation.y);
+    return rotateX(rotateY(rotateZ(value, rotation.z), rotation.y), rotation.x);
+}
+
+vec3 inverseRotateSurface(vec3 value) {
+    if (rotationOrder == 0) return rotateX(rotateY(rotateZ(value, -rotation.z), -rotation.y), -rotation.x);
+    if (rotationOrder == 1) return rotateX(rotateZ(rotateY(value, -rotation.y), -rotation.z), -rotation.x);
+    if (rotationOrder == 2) return rotateY(rotateX(rotateZ(value, -rotation.z), -rotation.x), -rotation.y);
+    if (rotationOrder == 3) return rotateY(rotateZ(rotateX(value, -rotation.x), -rotation.z), -rotation.y);
+    if (rotationOrder == 4) return rotateZ(rotateX(rotateY(value, -rotation.y), -rotation.x), -rotation.z);
+    return rotateZ(rotateY(rotateX(value, -rotation.x), -rotation.y), -rotation.z);
+}
+
+vec3 objectRay(vec3 value) {
+    return inverseRotateSurface(value) / objectScale;
+}
+
+vec3 worldNormal(vec3 normal) {
+    return normalize(rotateSurface(normal / objectScale));
+}
+
 vec3 faceForwardToRay(vec3 normal, vec3 rayDirection) {
     return dot(normal, rayDirection) > 0.0 ? -normal : normal;
 }
 
 vec4 shadeSurface(vec4 color, vec3 normal, float amount) {
-    vec3 light = normalize(vec3(-0.45, -0.55, 0.75));
+    vec3 light = normalize(lightDirection);
     float diffuse = max(0.0, dot(normalize(normal), light));
-    float lit = 0.28 + 0.72 * diffuse;
+    float lit = lightAmbient + lightDiffuse * diffuse;
     float multiplier = max(0.0, 1.0 + amount * (lit - 1.0));
     color.rgb *= multiplier;
     return color;
@@ -301,6 +347,12 @@ vec2 cylinderUv(vec3 point, vec3 normal) {
     return clamp(vec2(u, v), vec2(0.0), vec2(1.0));
 }
 
+vec4 shadeHit(vec4 sampled, vec3 normal, vec3 worldDirection) {
+    return shadeSurface(sampled,
+                        faceForwardToRay(worldNormal(normal), worldDirection),
+                        lighting * curvature);
+}
+
 vec4 sampleCylinderHit(Hit hit, vec3 worldDirection) {
     vec2 uv = cylinderUv(hit.point, hit.normal);
     vec4 sampled = abs(hit.normal.y) < 0.5
@@ -308,127 +360,161 @@ vec4 sampleCylinderHit(Hit hit, vec3 worldDirection) {
                               uv.y * float(imageSize.y - 1)))
         : sampleReflect(vec2(uv.x * float(imageSize.x - 1),
                              uv.y * float(imageSize.y - 1)));
-    vec3 worldNormal = rotateX(rotateY(hit.normal, phase), -0.35);
-    return shadeSurface(sampled,
-                        faceForwardToRay(worldNormal, worldDirection),
-                        lighting * curvature);
+    return shadeHit(sampled, hit.normal, worldDirection);
 }
 
-vec4 sampleSphereSide(float normalizedX, float normalizedY, float normalZ) {
-    vec3 normal = vec3(normalizedX, normalizedY, normalZ);
-    vec3 textureNormal = rotateY(normal, -phase);
-    float longitude = atan(textureNormal.x, textureNormal.z);
-    float latitude = asin(clamp(textureNormal.y, -1.0, 1.0));
+bool intersectSphere(vec3 origin, vec3 direction,
+                     out Hit front, out Hit back, out bool hasBack) {
+    float a = dot(direction, direction);
+    float b = 2.0 * dot(origin, direction);
+    float c = dot(origin, origin) - 1.0;
+    float discriminant = b * b - 4.0 * a * c;
+    if (a <= 1.0e-12 || discriminant < 0.0) return false;
+    float root = sqrt(max(0.0, discriminant));
+    float first = (-b - root) / (2.0 * a);
+    float second = (-b + root) / (2.0 * a);
+    if (first > second) {
+        float temporary = first;
+        first = second;
+        second = temporary;
+    }
+    if (second < 0.0) return false;
+    front.distance = first >= 0.0 ? first : second;
+    front.point = origin + direction * front.distance;
+    front.normal = normalize(front.point);
+    hasBack = first >= 0.0 && second - first > 1.0e-10;
+    if (hasBack) {
+        back.distance = second;
+        back.point = origin + direction * second;
+        back.normal = normalize(back.point);
+    }
+    return true;
+}
+
+vec4 sampleSphereHit(Hit hit, vec3 worldDirection) {
+    float longitude = atan(hit.normal.x, hit.normal.z);
+    float latitude = asin(clamp(hit.normal.y, -1.0, 1.0));
     float u = wrapUnit(0.5 + longitude / TAU);
     float v = 0.5 - latitude / PI;
     vec4 sampled = sampleWrappedX(
         vec2(u * float(imageSize.x), v * float(imageSize.y - 1)));
-    return shadeSurface(sampled,
-                        faceForwardToRay(normal, vec3(0.0, 0.0, -1.0)),
-                        lighting);
+    return shadeHit(sampled, hit.normal, worldDirection);
 }
 
-vec4 sampleCubeHit(Hit hit, vec3 direction, float screenU, float screenV,
-                   float yRotation) {
+vec4 sampleCubeHit(Hit hit, vec3 worldDirection) {
     vec2 uv = cubeUv(hit.point, hit.normal);
-    vec2 mapped = mix(vec2(screenU, screenV), uv, curvature);
     vec4 sampled = sampleReflect(
-        mapped * vec2(float(imageSize.x - 1), float(imageSize.y - 1)));
-    vec3 normal = faceForwardToRay(hit.normal, direction);
-    vec3 worldNormal = rotateY(rotateX(normal, -0.35), yRotation);
-    return shadeSurface(sampled, worldNormal, lighting * curvature);
+        uv * vec2(float(imageSize.x - 1), float(imageSize.y - 1)));
+    return shadeHit(sampled, hit.normal, worldDirection);
 }
 
 void main() {
     int x = int(gl_FragCoord.x);
     int y = imageSize.y - 1 - int(gl_FragCoord.y);
     vec4 planar = loadPixel(x, y);
-    float centerX = 0.5 * float(imageSize.x - 1);
-    float centerY = 0.5 * float(imageSize.y - 1);
+    float widthSpan = float(max(1, imageSize.x - 1));
+    float heightSpan = float(max(1, imageSize.y - 1));
     float shortSide = float(min(imageSize.x, imageSize.y));
-    float screenU = imageSize.x > 1
-        ? float(x) / float(imageSize.x - 1) : 0.5;
-    float screenV = imageSize.y > 1
-        ? float(y) / float(imageSize.y - 1) : 0.5;
-
-    if (mapping == 0) {
-        float cosine = cos(-phase);
-        float sine = sin(-phase);
-        float dx = float(x) - centerX;
-        float dy = float(y) - centerY;
-        outputColor = sampleReflect(vec2(
-            centerX + cosine * dx - sine * dy,
-            centerY + sine * dx + cosine * dy));
-        return;
+    float halfX = mapping == 0 ? widthSpan / heightSpan : 1.0;
+    float containScale = min(widthSpan / (2.0 * halfX),
+                             heightSpan * 0.5);
+    float coverScale = max(widthSpan / (2.0 * halfX),
+                           heightSpan * 0.5);
+    float screenScaleX = containScale * sizeMultiplier;
+    float screenScaleY = containScale * sizeMultiplier;
+    if (sizing == 1) {
+        screenScaleX = coverScale * sizeMultiplier;
+        screenScaleY = coverScale * sizeMultiplier;
+    } else if (sizing == 2) {
+        screenScaleX = widthSpan / (2.0 * halfX) * sizeMultiplier;
+        screenScaleY = heightSpan * 0.5 * sizeMultiplier;
+    } else if (sizing == 3) {
+        screenScaleX = 0.5 * shortSide * sizeMultiplier;
+        screenScaleY = screenScaleX;
     }
-
-    if (mapping == 1) {
-        float scale = 0.52 * shortSide;
-        vec3 worldOrigin = vec3(0.0, 0.0, 3.4);
-        vec3 worldDirection = normalize(vec3(
-            (float(x) - centerX) / scale,
-            (centerY - float(y)) / scale, -2.5));
-        vec3 origin = rotateY(rotateX(worldOrigin, 0.35), -phase);
-        vec3 direction = rotateY(rotateX(worldDirection, 0.35), -phase);
-        Hit front;
-        Hit back;
-        bool hasBack = false;
-        if (!intersectCylinder(origin, direction, front, back, hasBack)) {
-            outputColor = blendStraight(planar, vec4(0.0), curvature);
-            return;
-        }
-        vec4 wrapped = sampleCylinderHit(front, worldDirection);
-        if (hasBack) {
-            vec4 rear = sampleCylinderHit(back, worldDirection);
-            vec4 layered = compositeStraightOver(wrapped, rear);
-            wrapped = blendStraight(wrapped, layered, curvature);
-        }
-        outputColor = blendStraight(planar, wrapped, curvature);
-        return;
+    float centerX = 0.5 * widthSpan + position.x * widthSpan / 100.0;
+    float centerY = 0.5 * heightSpan - position.y * heightSpan / 100.0;
+    float screenX = (float(x) - centerX) / screenScaleX;
+    float screenY = (centerY - float(y)) / screenScaleY;
+    vec3 worldOrigin;
+    vec3 worldDirection;
+    if (projection == 1) {
+        worldOrigin = vec3(0.0, 0.0, cameraDistance);
+        worldDirection = normalize(vec3(screenX, screenY, -focalLength));
+    } else {
+        worldOrigin = vec3(screenX, screenY, cameraDistance);
+        worldDirection = vec3(0.0, 0.0, -1.0);
     }
-
-    if (mapping == 2) {
-        float radius = 0.46 * shortSide;
-        float normalizedX = (float(x) - centerX) / radius;
-        float normalizedY = (centerY - float(y)) / radius;
-        float radiusSquared = normalizedX * normalizedX
-                              + normalizedY * normalizedY;
-        if (radiusSquared > 1.0) {
-            outputColor = blendStraight(planar, vec4(0.0), curvature);
-            return;
-        }
-        float normalizedZ = sqrt(max(0.0, 1.0 - radiusSquared));
-        vec4 wrapped = sampleSphereSide(normalizedX, normalizedY, normalizedZ);
-        if (normalizedZ > 1.0e-10) {
-            vec4 rear = sampleSphereSide(normalizedX, normalizedY, -normalizedZ);
-            wrapped = compositeStraightOver(wrapped, rear);
-        }
-        outputColor = blendStraight(planar, wrapped, curvature);
-        return;
-    }
-
-    float scale = 0.52 * shortSide;
-    vec3 origin = vec3(0.0, 0.0, 3.4);
-    vec3 direction = normalize(vec3(
-        (float(x) - centerX) / scale,
-        (centerY - float(y)) / scale, -2.5));
-    float yRotation = 0.55 + phase;
-    origin = rotateX(rotateY(origin, -yRotation), 0.35);
-    direction = rotateX(rotateY(direction, -yRotation), 0.35);
+    vec3 origin = objectRay(worldOrigin - vec3(0.0, 0.0, position.z));
+    vec3 direction = objectRay(worldDirection);
+    vec4 mapped = vec4(0.0);
+    bool visible = true;
     Hit front;
     Hit back;
     bool hasBack = false;
-    if (!intersectCube(origin, direction, front, back, hasBack)) {
+
+    if (mapping == 0) {
+        if (abs(direction.z) <= 1.0e-12) {
+            visible = false;
+        } else {
+            float distance = -origin.z / direction.z;
+            if (distance < 0.0) {
+                visible = false;
+            } else {
+                vec3 point = origin + direction * distance;
+                bool inside = abs(point.x) <= halfX && abs(point.y) <= 1.0;
+                if (!inside && outsideMode != 2) {
+                    visible = false;
+                } else {
+                    float u = 0.5 + 0.5 * point.x / halfX;
+                    float v = 0.5 - 0.5 * point.y;
+                    mapped = shadeHit(sampleReflect(
+                        vec2(u * widthSpan, v * heightSpan)),
+                        vec3(0.0, 0.0, 1.0), worldDirection);
+                }
+            }
+        }
+    } else if (mapping == 1) {
+        if (!intersectCylinder(origin, direction, front, back, hasBack)) {
+            visible = false;
+        } else {
+            mapped = sampleCylinderHit(front, worldDirection);
+            if (compositeBackfaces != 0 && hasBack) {
+                mapped = compositeStraightOver(
+                    mapped, sampleCylinderHit(back, worldDirection));
+            }
+        }
+    } else if (mapping == 2) {
+        if (!intersectSphere(origin, direction, front, back, hasBack)) {
+            visible = false;
+        } else {
+            mapped = sampleSphereHit(front, worldDirection);
+            if (compositeBackfaces != 0 && hasBack) {
+                mapped = compositeStraightOver(
+                    mapped, sampleSphereHit(back, worldDirection));
+            }
+        }
+    } else {
+        if (!intersectCube(origin, direction, front, back, hasBack)) {
+            visible = false;
+        } else {
+            mapped = sampleCubeHit(front, worldDirection);
+            if (compositeBackfaces != 0 && hasBack) {
+                mapped = compositeStraightOver(
+                    mapped, sampleCubeHit(back, worldDirection));
+            }
+        }
+    }
+
+    if (visible) {
+        outputColor = mapping == 0 ? mapped
+                                   : blendStraight(planar, mapped, curvature);
+    } else if (outsideMode == 1 || (outsideMode == 2 && mapping != 0)) {
+        outputColor = planar;
+    } else {
         outputColor = blendStraight(planar, vec4(0.0), curvature);
-        return;
     }
-    vec4 result = sampleCubeHit(front, direction, screenU, screenV, yRotation);
-    if (hasBack) {
-        vec4 rear = sampleCubeHit(back, direction, screenU, screenV, yRotation);
-        vec4 layered = compositeStraightOver(result, rear);
-        result = blendStraight(result, layered, curvature);
-    }
-    outputColor = result;
+    outputColor.a = clamp01(outputColor.a);
 }
 )PVT_GLSL";
 
@@ -832,17 +918,56 @@ private:
                         source.width, source.height);
         gl->glUniform1i(gl->glGetUniformLocation(program_, "mapping"),
                         static_cast<int>(surface.mapping));
+        gl->glUniform1i(gl->glGetUniformLocation(program_, "projection"),
+                        static_cast<int>(surface.projection));
+        gl->glUniform1i(gl->glGetUniformLocation(program_, "sizing"),
+                        static_cast<int>(surface.sizing));
+        gl->glUniform1i(gl->glGetUniformLocation(program_, "outsideMode"),
+                        static_cast<int>(surface.outside));
+        gl->glUniform1i(
+            gl->glGetUniformLocation(program_, "compositeBackfaces"),
+            surface.composite_backfaces ? 1 : 0);
+        gl->glUniform1i(gl->glGetUniformLocation(program_, "rotationOrder"),
+                        static_cast<int>(surface.rotation_order));
         constexpr double pi = 3.141592653589793238462643383279502884;
-        const double phase = static_cast<double>(surface.rotations_per_loop)
-                                 * loop_phase
-                             + surface.phase_degrees * pi / 180.0;
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "phase"),
-                        static_cast<float>(phase));
+        gl->glUniform3f(
+            gl->glGetUniformLocation(program_, "rotation"),
+            static_cast<float>(surface.rotation_x_degrees * pi / 180.0
+                + static_cast<double>(surface.rotation_x_turns_per_loop)
+                      * loop_phase),
+            static_cast<float>(surface.rotation_y_degrees * pi / 180.0
+                + static_cast<double>(surface.rotation_y_turns_per_loop)
+                      * loop_phase),
+            static_cast<float>(surface.rotation_z_degrees * pi / 180.0
+                + static_cast<double>(surface.rotation_z_turns_per_loop)
+                      * loop_phase));
+        gl->glUniform3f(gl->glGetUniformLocation(program_, "objectScale"),
+                        static_cast<float>(surface.scale_x),
+                        static_cast<float>(surface.scale_y),
+                        static_cast<float>(surface.scale_z));
+        gl->glUniform3f(gl->glGetUniformLocation(program_, "position"),
+                        static_cast<float>(surface.position_x_percent),
+                        static_cast<float>(surface.position_y_percent),
+                        static_cast<float>(surface.position_z));
+        gl->glUniform1f(gl->glGetUniformLocation(program_, "sizeMultiplier"),
+                        static_cast<float>(surface.size_percent / 100.0));
+        gl->glUniform1f(gl->glGetUniformLocation(program_, "cameraDistance"),
+                        static_cast<float>(surface.camera_distance));
+        gl->glUniform1f(gl->glGetUniformLocation(program_, "focalLength"),
+                        static_cast<float>(surface.focal_length));
         gl->glUniform1f(gl->glGetUniformLocation(program_, "curvature"),
                         static_cast<float>((std::max)(
                             0.0, (std::min)(1.0, surface.curvature))));
         gl->glUniform1f(gl->glGetUniformLocation(program_, "lighting"),
                         static_cast<float>(surface.lighting));
+        gl->glUniform3f(gl->glGetUniformLocation(program_, "lightDirection"),
+                        static_cast<float>(surface.light_direction_x),
+                        static_cast<float>(surface.light_direction_y),
+                        static_cast<float>(surface.light_direction_z));
+        gl->glUniform1f(gl->glGetUniformLocation(program_, "lightAmbient"),
+                        static_cast<float>(surface.light_ambient));
+        gl->glUniform1f(gl->glGetUniformLocation(program_, "lightDiffuse"),
+                        static_cast<float>(surface.light_diffuse));
         gl->glBindVertexArray(vertex_array_);
         gl->glDrawArrays(GL_TRIANGLES, 0, 3);
 
@@ -915,12 +1040,20 @@ bool surface_has_supported_work(const SurfaceConfig& surface) {
         return false;
     }
     if (surface.mapping == SurfaceMapping::Plane) {
-#if defined(_WIN32)
-        return surface.rotations_per_loop != 0
-               || std::fmod(surface.phase_degrees, 360.0) != 0.0;
-#else
-        return false;
-#endif
+        return surface.projection != SurfaceProjection::Orthographic
+               || surface.sizing != SurfaceSizing::Contain
+               || surface.rotation_x_turns_per_loop != 0
+               || surface.rotation_y_turns_per_loop != 0
+               || surface.rotation_z_turns_per_loop != 0
+               || std::fmod(surface.rotation_x_degrees, 360.0) != 0.0
+               || std::fmod(surface.rotation_y_degrees, 360.0) != 0.0
+               || std::fmod(surface.rotation_z_degrees, 360.0) != 0.0
+               || surface.size_percent != 100.0
+               || surface.scale_x != 1.0 || surface.scale_y != 1.0
+               || surface.scale_z != 1.0
+               || surface.position_x_percent != 0.0
+               || surface.position_y_percent != 0.0
+               || surface.position_z != 0.0 || surface.lighting != 0.0;
     }
     return surface.curvature > 0.0;
 }
@@ -955,15 +1088,9 @@ bool opengl_surface_backend_supports(const RenderConfig& config,
             *reason = "Strict OpenGL GPU rendering does not accelerate "
                       "displacement-Plane mesh rasterization.";
         } else if (config.surface.mapping == SurfaceMapping::Plane) {
-#if defined(_WIN32)
             *reason = "Strict OpenGL GPU rendering requires an active flat "
-                      "Plane rotation on Windows; displacement-Plane meshes "
-                      "remain ordered CPU stages.";
-#else
-            *reason = "Strict OpenGL GPU rendering does not accelerate flat "
-                      "Plane rotation on Linux; that inexpensive 2D transform "
-                      "and displacement-Plane meshes remain ordered CPU stages.";
-#endif
+                      "Plane transform; displacement-Plane meshes remain "
+                      "ordered CPU stages.";
         } else {
             *reason = "Strict OpenGL GPU rendering requires an active analytic "
                       "Cylinder, Sphere, or Cube surface mapping.";

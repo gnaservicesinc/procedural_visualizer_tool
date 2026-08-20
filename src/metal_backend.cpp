@@ -94,7 +94,12 @@ struct alignas(16) GpuEffect {
 
 struct alignas(16) GpuSurface {
     UInt4 kind;
-    Float4 values;
+    UInt4 flags;
+    Float4 rotation_curvature;
+    Float4 scale_size;
+    Float4 position_camera;
+    Float4 optical_lighting;
+    Float4 light;
 };
 
 struct alignas(16) GpuSourceImage {
@@ -123,7 +128,7 @@ static_assert(sizeof(GpuFrameConstants) == 320U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 96U);
-static_assert(sizeof(GpuSurface) == 32U);
+static_assert(sizeof(GpuSurface) == 112U);
 static_assert(sizeof(GpuSourceImage) == 32U);
 static_assert(sizeof(GpuMotion) == 32U);
 static_assert(sizeof(GpuParticlePoint) == 32U);
@@ -1044,15 +1049,48 @@ GpuSurface make_surface(const RenderConfig& config,
                         const PreparedFrame& prepared) {
     constexpr double kPi = 3.141592653589793238462643383279502884;
     GpuSurface result;
-    result.kind = {static_cast<std::uint32_t>(config.surface.mapping),
-                   0U, 0U, 0U};
-    result.values = {
-        static_cast<float>(
-            static_cast<double>(config.surface.rotations_per_loop)
-                * prepared.loop_phase
-            + config.surface.phase_degrees * kPi / 180.0),
-        static_cast<float>(config.surface.curvature),
-        static_cast<float>(config.surface.lighting), 0.0F};
+    const SurfaceConfig& surface = config.surface;
+    result.kind = {
+        static_cast<std::uint32_t>(surface.mapping),
+        static_cast<std::uint32_t>(surface.projection),
+        static_cast<std::uint32_t>(surface.sizing),
+        static_cast<std::uint32_t>(surface.outside)};
+    result.flags = {
+        surface.composite_backfaces ? 1U : 0U,
+        static_cast<std::uint32_t>(surface.rotation_order), 0U, 0U};
+    result.rotation_curvature = {
+        static_cast<float>(surface.rotation_x_degrees * kPi / 180.0
+                           + static_cast<double>(
+                                 surface.rotation_x_turns_per_loop)
+                                 * prepared.loop_phase),
+        static_cast<float>(surface.rotation_y_degrees * kPi / 180.0
+                           + static_cast<double>(
+                                 surface.rotation_y_turns_per_loop)
+                                 * prepared.loop_phase),
+        static_cast<float>(surface.rotation_z_degrees * kPi / 180.0
+                           + static_cast<double>(
+                                 surface.rotation_z_turns_per_loop)
+                                 * prepared.loop_phase),
+        static_cast<float>(surface.curvature)};
+    result.scale_size = {
+        static_cast<float>(surface.scale_x),
+        static_cast<float>(surface.scale_y),
+        static_cast<float>(surface.scale_z),
+        static_cast<float>(surface.size_percent / 100.0)};
+    result.position_camera = {
+        static_cast<float>(surface.position_x_percent),
+        static_cast<float>(surface.position_y_percent),
+        static_cast<float>(surface.position_z),
+        static_cast<float>(surface.camera_distance)};
+    result.optical_lighting = {
+        static_cast<float>(surface.focal_length),
+        static_cast<float>(surface.lighting),
+        static_cast<float>(surface.light_ambient),
+        static_cast<float>(surface.light_diffuse)};
+    result.light = {
+        static_cast<float>(surface.light_direction_x),
+        static_cast<float>(surface.light_direction_y),
+        static_cast<float>(surface.light_direction_z), 0.0F};
     return result;
 }
 
@@ -1140,8 +1178,20 @@ bool surface_has_work(const SurfaceConfig& surface) {
         return surface.curvature > 0.0;
     }
     return (surface.plane_displacement.enabled && surface.curvature > 0.0)
-           || surface.rotations_per_loop != 0
-           || std::fmod(surface.phase_degrees, 360.0) != 0.0;
+           || surface.projection != SurfaceProjection::Orthographic
+           || surface.sizing != SurfaceSizing::Contain
+           || surface.rotation_x_turns_per_loop != 0
+           || surface.rotation_y_turns_per_loop != 0
+           || surface.rotation_z_turns_per_loop != 0
+           || std::fmod(surface.rotation_x_degrees, 360.0) != 0.0
+           || std::fmod(surface.rotation_y_degrees, 360.0) != 0.0
+           || std::fmod(surface.rotation_z_degrees, 360.0) != 0.0
+           || surface.size_percent != 100.0
+           || surface.scale_x != 1.0 || surface.scale_y != 1.0
+           || surface.scale_z != 1.0
+           || surface.position_x_percent != 0.0
+           || surface.position_y_percent != 0.0
+           || surface.position_z != 0.0 || surface.lighting != 0.0;
 }
 
 bool transform_has_work(const LayerTransformConfig& transform) {
@@ -1577,9 +1627,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         const bool mapped_ok = config.surface.mapping == SurfaceMapping::CustomObj
             ? apply_obj_surface_mapping(
                   source, mapped, config.surface.obj_path,
-                  config.surface.rotations_per_loop,
-                  config.surface.phase_degrees, config.surface.curvature,
-                  config.surface.lighting, prepared.loop_phase, error, cancel)
+                  config.surface, prepared.loop_phase, error, cancel)
             : apply_displacement_plane_mapping(
                   source, mapped, config.surface, prepared.loop_phase,
                   error, cancel);

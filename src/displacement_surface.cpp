@@ -403,9 +403,7 @@ bool apply_displacement_plane_mapping(
         return false;
     }
     return apply_mesh_surface_mapping(
-        source, destination, *mesh, surface.rotations_per_loop,
-        surface.phase_degrees, surface.curvature, surface.lighting,
-        loop_phase, error, cancel);
+        source, destination, *mesh, surface, loop_phase, error, cancel);
 }
 
 void clear_displacement_mesh_cache() noexcept {
