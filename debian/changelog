@@ -1,3 +1,10 @@
+procedural-visualizer-tool (8.0.3) stonking; urgency=medium
+
+  * Accelerate ordinary generated layers through OpenGL on Windows/Linux.
+  * Restore strict GPU diagnostics and fix GUI-thread OpenGL CLI dispatch.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 20 Aug 2026 13:45:30 -0400
+
 procedural-visualizer-tool (8.0.2) stonking; urgency=medium
 
   * Present the Windows/Linux hybrid renderer as GPU acceleration.

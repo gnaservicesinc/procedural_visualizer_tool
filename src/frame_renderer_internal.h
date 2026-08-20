@@ -251,11 +251,20 @@ bool render_prepared_frame_metal(const RenderConfig& config,
 bool opengl_surface_backend_compiled();
 bool opengl_surface_backend_available(std::string* device_name,
                                       std::string* status);
-bool opengl_surface_backend_supports(const RenderConfig& config,
-                                     std::string* reason);
+bool opengl_backend_supports(const RenderConfig& config,
+                             std::string* reason);
+bool opengl_generated_base_supported(const RenderConfig& config);
 bool opengl_surface_backend_supports(const SurfaceConfig& surface);
 bool opengl_surface_acceleration_active();
 bool set_opengl_surface_acceleration_active(bool active);
+const PreparedFrame* opengl_prepared_frame();
+const PreparedFrame* set_opengl_prepared_frame(
+    const PreparedFrame* prepared);
+bool render_generated_base_opengl(const RenderConfig& config,
+                                  const PreparedFrame& prepared,
+                                  Image& destination,
+                                  const std::atomic_bool* cancel,
+                                  std::string* error);
 bool apply_surface_mapping_opengl(const Image& source, Image& destination,
                                   const SurfaceConfig& surface,
                                   double loop_phase,

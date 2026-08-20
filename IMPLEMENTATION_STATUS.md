@@ -6,18 +6,36 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
-## 8.0.2 Windows GPU selection correction
+## 8.0.3 portable generated-layer acceleration
 
-The Windows/Linux desktop editor now presents the portable hybrid renderer as
-**GPU acceleration (CPU + GPU, Recommended)** and no longer exposes its
-surface-only strict diagnostic backend as if it were a general-purpose GPU
-renderer. A strict selection persisted by an earlier release is migrated to
-CPU + GPU before the first preview, so ordinary 2D layers render successfully
-while eligible analytic and displaced surfaces still execute through OpenGL.
-The CLI and public library retain strict GPU unchanged for backend diagnostics;
-macOS keeps its strict choice because Metal accelerates the broad pixel
-pipeline. Deterministic GUI smoke coverage emulates an OpenGL-only host and
-proves that an imported strict preference is repaired and cannot be reselected.
+The portable OpenGL 3.3 service now owns the generated-source stage for an
+ordinary Continuous hue layer, including prepared wave/path inputs, spatial
+swings, displacement, slope lighting, spiral/wall signals, generated RGB
+ranges, audio hue response, block replication, and procedural alpha. The
+reference CPU renderer retains the ordered remainder of the frame and invokes
+the same OpenGL surface stages afterward. Admission occurs before either GPU
+stage and an admitted runtime failure is returned directly without a CPU retry.
+
+Strict GPU is restored as a first-class debugging choice in the Windows/Linux
+editor and saved selections are preserved. The runtime regression renders a
+no-surface default layer with CPU, CPU + GPU, and strict GPU, compares float
+output, and proves the strict path can succeed only through the new shader; an
+unsupported generated mode remains a direct strict error. The Qt GUI smoke test
+requires all three choices and verifies that strict can be selected.
+
+Drivers without threaded OpenGL retain their context on Qt's GUI thread. The
+CLI now runs the sequence coordinator separately while pumping that GUI event
+loop, fixing the prior deadlock instead of merely detecting the GPU. A local
+Apple test-only build exercised the portable shader on an Apple M2 Max: the
+strict parity regression passed and 12 default 1280x720 PNG frames took 2.26s
+on strict OpenGL versus 6.07s on the CPU reference, including file output.
+
+## 8.0.2 Windows GPU selection correction (superseded)
+
+8.0.2 incorrectly treated the ordinary-layer failure as a strict-preference UI
+problem. It hid strict GPU in the Windows/Linux editor and migrated saved
+preferences while leaving generated layers on CPU. 8.0.3 reverses that UI
+change and fixes the missing accelerated stage itself.
 
 ## 8.0.1 Linux OpenGL surface correction
 

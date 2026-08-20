@@ -343,15 +343,34 @@ int main(int argc, char** argv) {
     pvt::RenderConfig neutral = pvt::default_config();
     neutral.width = 32;
     neutral.height = 24;
-    CHECK(!pvt::render_frame(neutral, 0, gpu, rejected, nullptr, &error));
-    CHECK(error.find("analytic") != std::string::npos);
+    neutral.surface.enabled = false;
+    pvt::Image neutral_reference;
+    pvt::Image neutral_hybrid;
+    pvt::Image neutral_strict;
+    CHECK(pvt::render_frame(neutral, 0, cpu, neutral_reference, nullptr,
+                            &error));
+    CHECK(pvt::render_frame(neutral, 0, hybrid, neutral_hybrid, nullptr,
+                            &error));
+    // With no surface stage, strict success can only come from the generated
+    // source shader. The strict renderer never retries an admitted failure on
+    // CPU, so this is also a regression against disguised fallback.
+    CHECK(pvt::render_frame(neutral, 0, gpu, neutral_strict, nullptr, &error));
+    CHECK(maximum_difference(neutral_reference, neutral_hybrid) <= 0.0035);
+    CHECK(maximum_difference(neutral_reference, neutral_strict) <= 0.0035);
+
+    pvt::RenderConfig unsupported_source = neutral;
+    unsupported_source.starting_colors.mode =
+        pvt::StartingColorMode::ChannelLoops;
+    CHECK(!pvt::render_frame(unsupported_source, 0, gpu, rejected, nullptr,
+                             &error));
+    CHECK(error.find("Continuous hue") != std::string::npos);
 
     if (failures != 0) {
         std::cerr << failures << " OpenGL surface backend test(s) failed.\n";
         return EXIT_FAILURE;
     }
-    std::cout << "OpenGL analytic surface acceleration and strict "
-                 "unsupported-stage policy passed on "
+    std::cout << "OpenGL generated-source/surface acceleration and strict "
+                 "no-fallback policy passed on "
               << capabilities.opengl_surface_device_name << ".\n";
     return EXIT_SUCCESS;
 }

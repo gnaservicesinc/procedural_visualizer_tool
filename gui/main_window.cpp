@@ -9206,20 +9206,10 @@ void MainWindow::restoreUserSettings() {
     const int saved_backend = settings.value(
         QStringLiteral("preferences/renderBackend"),
         static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
-    const pvt::RenderBackend requested_backend =
-        saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
-                && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
-            ? static_cast<pvt::RenderBackend>(saved_backend)
-            : pvt::RenderBackend::CpuAndGpu;
-    render_backend_ = ApplicationSettingsDialog::normalizeRenderBackendForUi(
-        requested_backend, ApplicationSettingsDialog::strictGpuOffered());
-    if (render_backend_ != requested_backend) {
-        // Windows/Linux GPU acceleration is the hybrid OpenGL path. Repair a
-        // persisted strict selection from earlier versions before the first
-        // preview so an ordinary layer cannot enter an unsupported-mode loop.
-        settings.setValue(QStringLiteral("preferences/renderBackend"),
-                          static_cast<int>(render_backend_));
-    }
+    render_backend_ = saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
+                              && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
+                          ? static_cast<pvt::RenderBackend>(saved_backend)
+                          : pvt::RenderBackend::CpuAndGpu;
     const QString saved_directory = settings.value(QStringLiteral("paths/lastDialogDirectory"))
                                         .toString();
     if (!existing_writable_directory(saved_directory, true).isEmpty()) {
@@ -15598,15 +15588,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
         QStringLiteral("--smoke-test"));
     pvt::RenderBackend expected_backend = pvt::RenderBackend::Cpu;
     if (!automated_smoke) {
-        const pvt::RenderBackend requested_backend =
+        expected_backend =
             saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
                     && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
                 ? static_cast<pvt::RenderBackend>(saved_backend)
                 : pvt::RenderBackend::CpuAndGpu;
-        expected_backend =
-            ApplicationSettingsDialog::normalizeRenderBackendForUi(
-                requested_backend,
-                ApplicationSettingsDialog::strictGpuOffered());
     }
     if (undo_stack_ == nullptr || undo_stack_->undoLimit() != expected_undo_limit
         || render_backend_ != expected_backend
@@ -15673,8 +15659,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         settings_dialog.hide();
         if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
             || recent_limit == nullptr
-            || backend == nullptr || backend->count() != 2
-            || backend->findData(static_cast<int>(pvt::RenderBackend::Gpu)) >= 0
+            || backend == nullptr || backend->count() != 3
+            || backend->findData(static_cast<int>(pvt::RenderBackend::Gpu)) < 0
             || save_defaults == nullptr || restore_defaults == nullptr
             || settings_scroll == nullptr || !settings_scroll->widgetResizable()
             || capability_status == nullptr
@@ -15685,8 +15671,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || !settings_fit_screen
             || settings_dialog.undoLimit() != expected_undo_limit
             || settings_dialog.recentProjectLimit() != recent_project_limit_
-            || settings_dialog.renderBackend()
-                   != pvt::RenderBackend::CpuAndGpu) {
+            || settings_dialog.renderBackend() != pvt::RenderBackend::Gpu) {
             if (error != nullptr) {
                 *error = tr("The extensible Application Settings dialog is incomplete or malformed.");
             }

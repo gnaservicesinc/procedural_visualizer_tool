@@ -7,9 +7,9 @@ it compiles in a software-rendered virtual machine.
 ## Selected direction
 
 PVT 5.0.0 begins the OpenGL renderer for Linux and Windows using the context,
-surface, and function-loading APIs already supplied by Qt. Keep Metal on macOS.
-The shipped first stage accelerates analytic 3D surface mapping without
-replacing the UI or changing the public CPU/CPU+GPU/GPU policy names.
+surface, and function-loading APIs already supplied by Qt. PVT 8.0.3 adds the
+first generated-source pass for ordinary Continuous hue layers. Keep Metal on
+macOS. These shipped stages preserve the public CPU/CPU+GPU/GPU policy names.
 
 GLFW is not required for this editor path. It remains available for evaluation
 only if a later standalone `pvt-live` presentation executable needs a minimal
@@ -25,13 +25,13 @@ Use Qt's public OpenGL integration in the existing GUI and
    than using platform-name checks.
 2. Extract the current Metal kernel inputs into backend-neutral packed
    parameters and explicit passes. The CPU renderer remains the reference.
-3. **First stage implemented:** an OpenGL float-texture/framebuffer pass covers
-   analytic closed Cylinder, Sphere, and Cube mapping on Windows/Linux, plus
-   flat Plane rotation on Windows. Linux flat Plane, displacement Plane,
-   procedural sources,
-   effects, quantization, mesh surfaces, and final layer compositing remain on
-   CPU for the portable path. CPU + GPU accelerates an eligible stage; strict
-   GPU gives an actionable error when no supported analytic stage exists.
+3. **Surface and first source stages implemented:** OpenGL float
+   texture/framebuffer passes cover ordinary Continuous hue generated layers,
+   analytic closed Cylinder/Sphere/Cube/flat Plane mapping, and displaced Plane
+   mesh rasterization on Windows/Linux. Other generated modes, starting images,
+   palettes, effects, quantization, Custom OBJ, and final layer compositing
+   remain on CPU for the portable path. CPU + GPU accelerates eligible stages;
+   strict GPU gives an actionable error when no supported stage exists.
 4. Reuse the current bounded admission, cancellation, straight-alpha, linear
    light, half-open loop, and ordered-compositing contracts. Do not read a GPU
    result into the CPU between every effect.
@@ -88,7 +88,7 @@ platform throughout this work.
 
 1. ~~OpenGL proof for analytic one-layer surface mapping.~~ Shipped in 5.0.0.
 2. Linux and Windows installed-package physical hardware probes and diagnostics.
-3. Complete supported source/effect coverage and GPU-resident compositing.
+3. Complete remaining source/effect coverage and GPU-resident compositing.
 4. Windows Media Foundation movie export.
 5. Linux GStreamer movie export.
 6. Real-GPU and real-codec validation, followed by enabling `cpu+gpu` as a safe

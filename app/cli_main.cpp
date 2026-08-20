@@ -5,7 +5,9 @@
 
 #ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
 #  include <QByteArray>
+#  include <QEventLoop>
 #  include <QGuiApplication>
+#  include <QMetaObject>
 #endif
 
 #include <algorithm>
@@ -19,6 +21,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -63,6 +66,24 @@ std::unique_ptr<QGuiApplication> make_graphics_application(int& argc,
     // back to that non-pumping main thread.
     (void)pvt::renderer_capabilities();
     return application;
+}
+
+template <typename Render>
+bool render_while_servicing_graphics(Render&& render) {
+    // Drivers that report no threaded-OpenGL support must keep the context on
+    // Qt's GUI thread.  Run the sequence coordinator separately and pump that
+    // thread here so its blocking GPU dispatch can complete.  Threaded drivers
+    // use their dedicated context thread but remain compatible with this path.
+    QEventLoop graphics_events;
+    bool succeeded = false;
+    std::thread render_thread([&] {
+        succeeded = render();
+        (void)QMetaObject::invokeMethod(
+            &graphics_events, &QEventLoop::quit, Qt::QueuedConnection);
+    });
+    graphics_events.exec();
+    render_thread.join();
+    return succeeded;
 }
 #endif
 
@@ -3702,13 +3723,22 @@ int main(int argc, char** argv) {
 #ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
     graphics_application = make_graphics_application(argc, argv);
 #endif
-    if (!pvt::render_project_sequence(
+    const auto render_sequence = [&] {
+        return pvt::render_project_sequence(
             state.document.project, render_options,
             [](int completed, int total) {
-                std::cout << '\r' << "Rendered " << completed << '/' << total << std::flush;
+                std::cout << '\r' << "Rendered " << completed << '/' << total
+                          << std::flush;
                 return true;
             },
-            nullptr, &error)) {
+            nullptr, &error);
+    };
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+    const bool rendered = render_while_servicing_graphics(render_sequence);
+#else
+    const bool rendered = render_sequence();
+#endif
+    if (!rendered) {
         std::cerr << "\nRender failed: " << error << '\n';
         return EXIT_FAILURE;
     }

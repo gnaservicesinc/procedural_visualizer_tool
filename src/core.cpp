@@ -6532,6 +6532,14 @@ bool render_frame_at_timeline_sample_cancellable(
             // fitted image chooses where colors live, then the optional starting
             // palette constrains those source colors before any effects.
             apply_starting_image_controls(render, loop_phase, current, cancel);
+        } else if (const detail::PreparedFrame* prepared =
+                       detail::opengl_prepared_frame();
+                   prepared != nullptr
+                   && detail::opengl_generated_base_supported(render)) {
+            if (!detail::render_generated_base_opengl(
+                    render, *prepared, current, cancel, error)) {
+                return false;
+            }
         } else {
             generate_base_image(render, loop_phase, independent_loop_phase,
                                 motion_clock,

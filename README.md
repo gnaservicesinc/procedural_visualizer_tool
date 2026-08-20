@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **8.0.2**. The version is read from `VERSION` by every
+Current product version: **8.0.3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -10,18 +10,30 @@ independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
 
-## 8.0.2 Windows GPU selection correction
+## 8.0.3 portable generated-layer acceleration
 
-Windows and Linux now present the normal accelerated renderer as **GPU
-acceleration (CPU + GPU, Recommended)**. Earlier versions exposed the
-surface-only strict OpenGL diagnostic mode simply as GPU, so a persisted choice
-could reject an ordinary 2D layer with "requires an active analytic surface
-mapping." The editor migrates that preference before its first preview and no
-longer offers strict OpenGL as a general renderer. Eligible surface stages still
-run on OpenGL, independent layers still use the bounded CPU lanes, and admitted
-OpenGL failures remain visible rather than being silently retried. Strict GPU
-remains available through the CLI/library for diagnostics and in the macOS GUI
-where the broad Metal pipeline supports it.
+Windows and Linux now execute ordinary Continuous hue generated layers in a
+real offscreen OpenGL 3.3 fragment pass. Wave evaluation, spatial swings,
+displacement, slope lighting, spiral/wall signals, generated RGB ranges, audio
+hue response, and procedural alpha are covered; supported surface mapping can
+run in the same accelerated frame. CPU + GPU keeps unsupported ordered stages
+on bounded CPU lanes, but never disguises a failure after an OpenGL stage has
+been admitted.
+
+**GPU (Strict diagnostics)** remains a first-class editor, CLI, and library
+choice on every platform. A no-surface default layer now succeeds through the
+generated-source shader, while unsupported sources and runtime context/shader
+failures remain actionable strict errors with no CPU retry. Preferences are
+preserved instead of migrated. The CLI also pumps Qt graphics events while its
+sequence coordinator runs, so drivers that require the OpenGL context to stay
+on the GUI thread accelerate instead of deadlocking.
+
+## 8.0.2 Windows GPU selection correction (superseded)
+
+8.0.2 renamed the hybrid choice but incorrectly treated strict GPU as a UI
+selection problem, hiding it in the Windows/Linux editor and migrating saved
+preferences. 8.0.3 restores that core diagnostic feature and fixes the actual
+missing generated-layer GPU stage.
 
 ## 8.0.1 Linux OpenGL surface correction
 
@@ -437,13 +449,13 @@ phase, should be reviewed once after opening in 2.0.
   targets are omitted from a core-library-only build.
 - Qt 6.5 or newer with Gui, Widgets, Concurrent, and Network components for the
   optional GUI, its bounded OSC listener, and the Windows/Linux offscreen
-  OpenGL surface accelerator.
+  OpenGL generated-source/surface accelerator.
 - On Apple platforms, the optional Metal backend uses Apple's header-only
   [metal-cpp](https://developer.apple.com/metal/cpp/) from
   `../3rd_party/metal-cpp` plus the system Foundation and Metal frameworks. Set
   `PVT_ENABLE_METAL=OFF` for an explicitly CPU-only Apple build, or point
   `PVT_METAL_CPP_DIR` at another metal-cpp checkout. Windows and Linux Qt product
-  builds enable analytic-surface OpenGL by default; pass
+  builds enable generated-source/surface OpenGL by default; pass
   `PVT_ENABLE_OPENGL_SURFACE=OFF` to build those products without it. Core-only
   library builds remain Qt-free and CPU-only.
 - On macOS, GUI video export uses the system AVFoundation, VideoToolbox,
@@ -722,18 +734,17 @@ sudo apt install procedural-visualizer-tool
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
 - CPU, CPU + GPU, and strict GPU frame backends. The application presents CPU +
-  GPU as **GPU acceleration (Recommended)**. On macOS it runs adjacent project
+  GPU as **CPU + GPU (Recommended)** and preserves **GPU (Strict diagnostics)**
+  as a first-class debugging choice. On macOS it runs adjacent project
   layers through bounded CPU and
   Metal lanes, with Metal covering the broad parallel pixel pipeline and CPU
   handling ordered dependencies such as mesh rasterization. On Windows and
-  Linux it keeps the reference frame pipeline on CPU and dispatches supported
+  Linux it dispatches ordinary Continuous hue generated layers and supported
   analytic Cylinder/Sphere/Cube and flat/displaced Plane mapping through a
-  serialized offscreen OpenGL 3.3 shader stage. An admitted
-  GPU-stage failure is reported instead of
-  silently repeating that stage on CPU. The editor offers strict GPU only when
-  its broad Metal backend is built. Windows/Linux users selecting GPU in older
-  releases are migrated to the accelerated CPU + GPU path; strict OpenGL
-  surface diagnostics remain available through the CLI and library API.
+  serialized offscreen OpenGL 3.3 shader service. An admitted GPU-stage failure
+  is reported instead of silently repeating that stage on CPU. Strict OpenGL
+  succeeds only when the frame contains supported accelerated work and never
+  falls back after admission.
 
 The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
@@ -933,9 +944,10 @@ peeling, and displacement-Plane rasterization are ordered CPU stages inside
 the accelerated pipeline rather than whole-layer fallbacks. An unexpected
 Metal error is surfaced immediately instead of being hidden behind an
 unacceptably slow CPU retry. On Windows and Linux, the Qt-hosted OpenGL service
-accelerates the analytic 3D surface stage for Cylinder, Sphere, and Cube, and
-Windows additionally accelerates flat Plane rotation; strict **GPU** rejects
-frames without a platform-supported active stage.
+accelerates ordinary Continuous hue generated layers plus analytic and mesh
+surface stages for flat/displaced Plane, Cylinder, Sphere, and Cube. Strict
+**GPU** reports unsupported source/stage combinations and never retries an
+admitted OpenGL failure on CPU.
 Final linear-light project compositing remains on the CPU on every platform. The
 installed library's
 legacy overloads retain CPU as their compatibility default; callers opt into
@@ -1422,8 +1434,8 @@ The public header is `include/procedural_visualizer_tool.h`. It exposes:
 - float RGBA layer/project rendering by frame index or normalized phase;
 - bounded linear-light blend compositing, individual PNG/EXR writing, and
   composite sequence export;
-- backend-neutral CPU/CPU+GPU/GPU frame options plus Metal and OpenGL surface
-  capability reporting;
+- backend-neutral CPU/CPU+GPU/GPU frame options plus Metal and OpenGL
+  generated-source/surface capability reporting;
 - a bounded `SequenceRenderOptions` worker policy, ordered atomic output, and
   serialized progress/cancellation callbacks; and
 - backward-compatible transactional `.pvt` setup save/load.
@@ -1593,8 +1605,9 @@ see `LIVE_PERFORMANCE_STATUS.md` for the exact handoff checklist.
   custom asset-backed particle sprites, plus optional depth-map and normal-map
   inputs for selected layer regions.
 - **Platform parity:** Metal remains the broader macOS accelerated backend. The
-  first portable stage now uses Qt-hosted OpenGL for analytic 3D surface mapping
-  in Windows and Linux product builds. Full effect/source coverage and physical
+  portable Qt-hosted OpenGL path now covers ordinary Continuous hue generated
+  layers and supported surface mapping in Windows and Linux product builds.
+  Full effect/source coverage and physical
   Intel/AMD/NVIDIA driver qualification remain follow-up work described in
   [`PORTABILITY_ROADMAP.md`](PORTABILITY_ROADMAP.md). Media Foundation remains
   the preferred future Windows movie path and optional GStreamer the Linux
@@ -1602,10 +1615,10 @@ see `LIVE_PERFORMANCE_STATUS.md` for the exact handoff checklist.
 
 ## Current boundary
 
-Flat Plane, closed cylinder, sphere, and cube mappings have analytic CPU,
-Metal, and Windows/Linux OpenGL paths. Custom OBJ and generated displacement
-Plane mapping use the checked, cached CPU mesh rasterizer as an ordered stage
-inside CPU/Metal policies and CPU + GPU portable rendering. OBJ materials and
+Continuous hue generated sources and flat Plane, displaced Plane, closed
+cylinder, sphere, and cube mappings have Windows/Linux OpenGL paths alongside
+their reference CPU implementations. Custom OBJ mapping remains an ordered CPU
+stage inside CPU/Metal policies and CPU + GPU portable rendering. OBJ materials and
 textures are intentionally not loaded because the procedural frame supplies the
 surface image. Cooperative cancellation is checked within CPU rendering, GPU
 admission, effects, surface mapping,

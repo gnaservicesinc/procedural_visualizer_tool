@@ -46,7 +46,10 @@ option(PVT_BUILD_CLI "Build the command-line renderer" ON)
 option(PVT_BUILD_EXAMPLES "Build the C++ library API example" OFF)
 option(PVT_ENABLE_METAL "Build the optional Apple Metal rendering backend" ON)
 option(PVT_ENABLE_OPENGL_SURFACE
-    "Build the Qt-hosted OpenGL analytic-surface backend on Windows/Linux" ON)
+    "Build the Qt-hosted OpenGL generated-source/surface backend on Windows/Linux" ON)
+option(PVT_TEST_OPENGL_SURFACE_ON_APPLE
+    "Build the portable OpenGL backend on Apple hosts for local parity tests" OFF)
+mark_as_advanced(PVT_TEST_OPENGL_SURFACE_ON_APPLE)
 set(PVT_DISTRIBUTION_CODE_SIGN_IDENTITY "-" CACHE STRING
     "macOS signing identity for distribution; '-' performs ad-hoc signing")
 if(PVT_ENABLE_DISTRIBUTION AND NOT PVT_BUILD_QT_GUI)
@@ -214,7 +217,8 @@ endif()
 
 set(PVT_OPENGL_SURFACE_BACKEND_ENABLED OFF)
 if(PVT_ENABLE_OPENGL_SURFACE AND PVT_BUILD_QT_GUI
-   AND (WIN32 OR (UNIX AND NOT APPLE)))
+   AND (WIN32 OR (UNIX AND NOT APPLE)
+        OR (APPLE AND PVT_TEST_OPENGL_SURFACE_ON_APPLE)))
     set(PVT_OPENGL_SURFACE_BACKEND_ENABLED ON)
     target_sources(ProceduralVisualizerTool PRIVATE
         src/opengl_surface_backend.cpp)
@@ -609,10 +613,6 @@ if(PVT_BUILD_QT_GUI)
     endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
         PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
-    if(PVT_METAL_BACKEND_ENABLED)
-        target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
-            PVT_GUI_HAS_METAL_BACKEND=1)
-    endif()
     pvt_enable_warnings(ProceduralVisualizerToolGui)
 
     if(PVT_ENABLE_DISTRIBUTION)

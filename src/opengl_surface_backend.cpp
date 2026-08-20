@@ -29,6 +29,7 @@ namespace pvt::detail {
 namespace {
 
 thread_local bool g_surface_acceleration_active = false;
+thread_local const PreparedFrame* g_prepared_frame = nullptr;
 
 constexpr const char* kVertexShader = R"PVT_GLSL(#version 330 core
 out vec2 unusedUv;
@@ -530,6 +531,255 @@ void main() {
 }
 )PVT_GLSL";
 
+constexpr const char* kGeneratedBaseFragmentShader = R"PVT_GLSL(#version 330 core
+uniform ivec2 imageSize;
+uniform int blockSize;
+uniform int waveCount;
+uniform int swingCount;
+uniform sampler2D waveData;
+uniform sampler2D swingData;
+uniform float loopPhase;
+uniform float independentLoopPhase;
+uniform float globalMotionPhase;
+uniform float breath;
+uniform vec2 patternCenter;
+uniform float ghostLag;
+uniform float ghostMix;
+uniform int displacementEnabled;
+uniform int lightingEnabled;
+uniform int spiralEnabled;
+uniform int wallEnabled;
+uniform float displacementAmount;
+uniform float waveDepth;
+uniform float spiralFrequency;
+uniform float wallFrequency;
+uniform float wallMix;
+uniform int spiralArms;
+uniform int hueCycles;
+uniform float saturation;
+uniform float audioHueShift;
+uniform vec3 startingMinimum;
+uniform vec3 startingMaximum;
+uniform int alphaEnabled;
+uniform int alphaCycles;
+uniform vec4 alphaValues;
+out vec4 outputColor;
+
+const float PI = 3.14159265358979323846;
+const float TAU = 6.28318530717958647692;
+
+float clampUnit(float value) {
+    return clamp(value, 0.0, 1.0);
+}
+
+float smoothUnit(float value) {
+    value = clampUnit(value);
+    return value * value * (3.0 - 2.0 * value);
+}
+
+float srgbToLinear(float value) {
+    value = clampUnit(value);
+    return value <= 0.04045
+               ? value / 12.92
+               : pow((value + 0.055) / 1.055, 2.4);
+}
+
+float linearToSrgb(float value) {
+    value = clampUnit(value);
+    return value <= 0.0031308
+               ? 12.92 * value
+               : 1.055 * pow(value, 1.0 / 2.4) - 0.055;
+}
+
+vec4 hslToLinear(float hueDegrees, float colorSaturation,
+                 float lightness) {
+    float hue = mod(hueDegrees, 360.0);
+    if (hue < 0.0) hue += 360.0;
+    colorSaturation = clampUnit(colorSaturation);
+    lightness = clampUnit(lightness);
+    float chroma = (1.0 - abs(2.0 * lightness - 1.0)) * colorSaturation;
+    float sector = hue / 60.0;
+    float intermediate = chroma * (1.0 - abs(mod(sector, 2.0) - 1.0));
+    float match = lightness - 0.5 * chroma;
+    vec3 rgb = vec3(0.0);
+    if (sector < 1.0) rgb = vec3(chroma, intermediate, 0.0);
+    else if (sector < 2.0) rgb = vec3(intermediate, chroma, 0.0);
+    else if (sector < 3.0) rgb = vec3(0.0, chroma, intermediate);
+    else if (sector < 4.0) rgb = vec3(0.0, intermediate, chroma);
+    else if (sector < 5.0) rgb = vec3(intermediate, 0.0, chroma);
+    else rgb = vec3(chroma, 0.0, intermediate);
+    rgb += match;
+    return vec4(srgbToLinear(rgb.r), srgbToLinear(rgb.g),
+                srgbToLinear(rgb.b), 1.0);
+}
+
+vec4 applyGeneratedRange(vec4 color) {
+    vec3 unit = vec3(linearToSrgb(color.r), linearToSrgb(color.g),
+                     linearToSrgb(color.b));
+    vec3 ranged = mix(startingMinimum, startingMaximum, unit);
+    return vec4(srgbToLinear(ranged.r), srgbToLinear(ranged.g),
+                srgbToLinear(ranged.b), color.a);
+}
+
+vec4 rotateLinearHue(vec4 color, float degrees) {
+    if (abs(degrees) <= 1.0e-7) return color;
+    vec3 rgb = vec3(linearToSrgb(color.r), linearToSrgb(color.g),
+                    linearToSrgb(color.b));
+    float maximum = max(rgb.r, max(rgb.g, rgb.b));
+    float minimum = min(rgb.r, min(rgb.g, rgb.b));
+    float delta = maximum - minimum;
+    if (delta <= 1.0e-7) return color;
+    float hue = 0.0;
+    if (maximum == rgb.r) hue = mod((rgb.g - rgb.b) / delta, 6.0);
+    else if (maximum == rgb.g) hue = (rgb.b - rgb.r) / delta + 2.0;
+    else hue = (rgb.r - rgb.g) / delta + 4.0;
+    hue = mod(hue / 6.0 + degrees / 360.0, 1.0);
+    if (hue < 0.0) hue += 1.0;
+    float colorSaturation = maximum > 1.0e-7 ? delta / maximum : 0.0;
+    float chroma = maximum * colorSaturation;
+    float sector = hue * 6.0;
+    float intermediate = chroma * (1.0 - abs(mod(sector, 2.0) - 1.0));
+    float match = maximum - chroma;
+    vec3 rotated = vec3(0.0);
+    if (sector < 1.0) rotated = vec3(chroma, intermediate, 0.0);
+    else if (sector < 2.0) rotated = vec3(intermediate, chroma, 0.0);
+    else if (sector < 3.0) rotated = vec3(0.0, chroma, intermediate);
+    else if (sector < 4.0) rotated = vec3(0.0, intermediate, chroma);
+    else if (sector < 5.0) rotated = vec3(intermediate, 0.0, chroma);
+    else rotated = vec3(chroma, 0.0, intermediate);
+    rotated += match;
+    color.rgb = vec3(srgbToLinear(rotated.r), srgbToLinear(rotated.g),
+                     srgbToLinear(rotated.b));
+    return color;
+}
+
+float circularInfluence(vec4 swing, float x, float y) {
+    if (swing.z <= 1.0e-7) return 1.0;
+    float shortSide = float(min(imageSize.x, imageSize.y));
+    float dx = x - swing.x * float(imageSize.x - 1);
+    float dy = y - swing.y * float(imageSize.y - 1);
+    float distance = length(vec2(dx, dy)) / shortSide;
+    float featherStart = swing.z * 0.8;
+    if (distance <= featherStart) return 1.0;
+    if (distance >= swing.z) return 0.0;
+    return 1.0 - smoothUnit(
+        (distance - featherStart) / max(1.0e-7, swing.z - featherStart));
+}
+
+float motionPhaseAt(float x, float y) {
+    float result = globalMotionPhase;
+    for (int index = 0; index < swingCount; ++index) {
+        vec4 swing = texelFetch(swingData, ivec2(index, 0), 0);
+        result += swing.w * circularInfluence(swing, x, y);
+    }
+    return result;
+}
+
+float waveHeight(float x, float y, float motionPhase) {
+    float result = 0.0;
+    float shortSide = float(min(imageSize.x, imageSize.y));
+    for (int index = 0; index < waveCount; ++index) {
+        vec4 geometry = texelFetch(waveData, ivec2(index * 3, 0), 0);
+        vec4 phaseValues = texelFetch(waveData, ivec2(index * 3 + 1, 0), 0);
+        vec4 behavior = texelFetch(waveData, ivec2(index * 3 + 2, 0), 0);
+        float dx = (x - geometry.x) / shortSide;
+        float dy = (y - geometry.y) / shortSide;
+        float radial = length(vec2(dx, dy));
+        float direction = phaseValues.y;
+        float coordinate = behavior.z > 0.5
+            ? cos(phaseValues.z) * dx + sin(phaseValues.z) * dy
+            : (direction < 0.5
+                   ? mix(radial, dx, 1.0 - 2.0 * direction)
+                   : mix(radial, dy, 2.0 * direction - 1.0));
+        float clock = behavior.y > 0.5 ? motionPhase : independentLoopPhase;
+        float phase = behavior.x * clock;
+        result += geometry.z
+                  * sin(TAU * geometry.w * coordinate
+                        - phase + phaseValues.x);
+    }
+    return result;
+}
+
+float proceduralAlpha(int x, int y) {
+    if (alphaEnabled == 0) return 1.0;
+    float widthScale = imageSize.x > 1
+        ? float(x) / float(imageSize.x - 1) : 0.0;
+    float heightScale = imageSize.y > 1
+        ? float(y) / float(imageSize.y - 1) : 0.0;
+    float spatial = (widthScale + heightScale) * 0.7071067811865476;
+    float phase = TAU * alphaValues.w * spatial
+                  - float(alphaCycles) * loopPhase + alphaValues.z;
+    float amount = 0.5 + 0.5 * sin(phase);
+    return mix(alphaValues.x, alphaValues.y, amount);
+}
+
+void main() {
+    int x = int(gl_FragCoord.x);
+    int y = imageSize.y - 1 - int(gl_FragCoord.y);
+    int blockX = (x / blockSize) * blockSize;
+    int blockY = (y / blockSize) * blockSize;
+    float sourceX = float(blockX);
+    float sourceY = float(blockY);
+    float motion = motionPhaseAt(sourceX, sourceY);
+    float motionRight = swingCount == 0
+        ? motion : motionPhaseAt(sourceX + float(blockSize), sourceY);
+    float motionDown = swingCount == 0
+        ? motion : motionPhaseAt(sourceX, sourceY + float(blockSize));
+    float heightHere = waveHeight(sourceX, sourceY, motion);
+    float heightRight = waveHeight(
+        sourceX + float(blockSize), sourceY, motionRight);
+    float heightDown = waveHeight(
+        sourceX, sourceY + float(blockSize), motionDown);
+    float slopeX = heightRight - heightHere;
+    float slopeY = heightDown - heightHere;
+    float displacement = displacementEnabled != 0
+        ? displacementAmount * breath : 0.0;
+    float patternX = sourceX + slopeX * displacement;
+    float patternY = sourceY + slopeY * displacement;
+    float dx = patternX - patternCenter.x;
+    float dy = patternY - patternCenter.y;
+    float shortSide = float(min(imageSize.x, imageSize.y));
+    float normalizedDistance = length(vec2(dx, dy)) / shortSide;
+    float angle = atan(dy, dx);
+    float wallDistance = min(
+        min(sourceX, float(imageSize.x - 1 - blockX)),
+        min(sourceY, float(imageSize.y - 1 - blockY)));
+    float normalizedWallDistance = wallDistance / shortSide;
+    float ghostPhase = motion - ghostLag;
+    float mainSpiral = spiralEnabled != 0
+        ? sin(TAU * spiralFrequency * normalizedDistance
+              + angle * float(spiralArms) - motion)
+        : 0.0;
+    float ghostSpiral = spiralEnabled != 0
+        ? sin(TAU * spiralFrequency * normalizedDistance
+              + angle * float(spiralArms) - ghostPhase)
+        : 0.0;
+    float mainWall = wallEnabled != 0
+        ? sin(TAU * wallFrequency * normalizedWallDistance + 2.0 * motion)
+        : 0.0;
+    float ghostWall = wallEnabled != 0
+        ? sin(TAU * wallFrequency * normalizedWallDistance + 2.0 * ghostPhase)
+        : 0.0;
+    float mainSignal = mainSpiral + wallMix * mainWall;
+    float ghostSignal = ghostSpiral + wallMix * ghostWall;
+    float combined = mix(mainSignal, ghostSignal, ghostMix);
+    float hue = (combined + 1.45) * 260.0
+                + 360.0 * float(hueCycles) * (loopPhase / TAU);
+    float lightness = 0.40;
+    if (lightingEnabled != 0) {
+        float reflection = (slopeX + slopeY) * -0.7071067811865476;
+        float normalizedLight = reflection * waveDepth * breath;
+        lightness += normalizedLight < 0.0
+            ? 0.36 * normalizedLight : 0.28 * normalizedLight;
+    }
+    lightness = clamp(lightness, 0.04, 0.68);
+    vec4 base = applyGeneratedRange(
+        hslToLinear(hue, saturation, lightness));
+    base = rotateLinearHue(base, audioHueShift);
+    outputColor = vec4(base.rgb, clampUnit(proceduralAlpha(x, y)));
+}
+)PVT_GLSL";
+
 constexpr const char* kMeshVertexShader = R"PVT_GLSL(#version 330 core
 layout(location = 0) in vec3 sourcePosition;
 layout(location = 1) in vec2 sourceUv;
@@ -762,6 +1012,18 @@ std::string gl_text(const GLubyte* text) {
     return text == nullptr ? std::string{} : reinterpret_cast<const char*>(text);
 }
 
+bool generated_base_supported_config(const RenderConfig& config) {
+    const StartingColorConfig& starting = config.starting_colors;
+    const bool shaped =
+        (starting.domain_warp.enabled
+         && starting.domain_warp.strength > 1.0e-12)
+        || (starting.kaleidoscope.enabled
+            && starting.kaleidoscope.mix > 1.0e-12);
+    return !config.starting_image.enabled && !config.palette.enabled
+        && starting.mode == StartingColorMode::ContinuousHue
+        && !starting.include_alpha && !shaped;
+}
+
 class OpenGLSurfaceService final {
 public:
     bool available(std::string* device_name, std::string* status) {
@@ -818,6 +1080,49 @@ public:
         return true;
     }
 
+    bool render_generated_base(const RenderConfig& config,
+                               const PreparedFrame& prepared,
+                               Image& destination,
+                               const std::atomic_bool* cancel,
+                               std::string* error) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "OpenGL generated-source rendering was cancelled; "
+                        "destination was unchanged.");
+        }
+        if (!generated_base_supported_config(config)) {
+            return fail(error,
+                        "OpenGL generated-source rendering received an "
+                        "unsupported source configuration.");
+        }
+        std::lock_guard<std::mutex> guard(mutex_);
+        ensure_initialized_locked();
+        if (!ready_) return fail(error, status_);
+
+        bool rendered = false;
+        std::string render_error;
+        const auto work = [&] {
+            rendered = render_generated_base_on_gpu_thread(
+                config, prepared, destination, &render_error);
+        };
+        if (QThread::currentThread() == render_thread_) {
+            work();
+        } else if (!QMetaObject::invokeMethod(
+                       worker_, work, Qt::BlockingQueuedConnection)) {
+            return fail(error,
+                        "OpenGL could not dispatch generated-source work to "
+                        "its bounded render thread.");
+        }
+        if (!rendered) return fail(error, std::move(render_error));
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "OpenGL generated-source rendering was cancelled; "
+                        "destination was unchanged.");
+        }
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
     void shutdown() {
         std::lock_guard<std::mutex> guard(mutex_);
         ready_ = false;
@@ -838,6 +1143,14 @@ public:
                         if (program_ != 0U) {
                             gl->glDeleteProgram(program_);
                             program_ = 0U;
+                        }
+                        if (base_vertex_array_ != 0U) {
+                            gl->glDeleteVertexArrays(1, &base_vertex_array_);
+                            base_vertex_array_ = 0U;
+                        }
+                        if (base_program_ != 0U) {
+                            gl->glDeleteProgram(base_program_);
+                            base_program_ = 0U;
                         }
                         if (mesh_vertex_buffer_ != 0U) {
                             gl->glDeleteBuffers(1, &mesh_vertex_buffer_);
@@ -1029,7 +1342,7 @@ private:
             render_thread_ = QThread::currentThread();
         }
         ready_ = true;
-        status_ = "OpenGL analytic-surface acceleration is ready on "
+        status_ = "OpenGL generated-source and surface acceleration is ready on "
                   + device_name_;
         if (!version.empty()) status_ += " (" + version + ")";
         if (selected_attempt != "core profile") {
@@ -1099,6 +1412,53 @@ private:
         gl->glGenVertexArrays(1, &vertex_array_);
         return vertex_array_ != 0U
                    || fail(error, "OpenGL could not create a vertex array.");
+    }
+
+    bool ensure_base_program(QOpenGLExtraFunctions* gl, std::string* error) {
+        if (base_program_ != 0U) return true;
+        GLuint vertex = 0U;
+        GLuint fragment = 0U;
+        if (!compile_shader(gl, GL_VERTEX_SHADER, kVertexShader, vertex, error)
+            || !compile_shader(gl, GL_FRAGMENT_SHADER,
+                               kGeneratedBaseFragmentShader, fragment, error)) {
+            if (vertex != 0U) gl->glDeleteShader(vertex);
+            if (fragment != 0U) gl->glDeleteShader(fragment);
+            return false;
+        }
+        base_program_ = gl->glCreateProgram();
+        if (base_program_ == 0U) {
+            gl->glDeleteShader(vertex);
+            gl->glDeleteShader(fragment);
+            return fail(error,
+                        "OpenGL could not create the generated-source shader "
+                        "program.");
+        }
+        gl->glAttachShader(base_program_, vertex);
+        gl->glAttachShader(base_program_, fragment);
+        gl->glLinkProgram(base_program_);
+        gl->glDeleteShader(vertex);
+        gl->glDeleteShader(fragment);
+        GLint linked = GL_FALSE;
+        gl->glGetProgramiv(base_program_, GL_LINK_STATUS, &linked);
+        if (linked != GL_TRUE) {
+            GLint length = 0;
+            gl->glGetProgramiv(base_program_, GL_INFO_LOG_LENGTH, &length);
+            std::vector<char> log(
+                static_cast<std::size_t>((std::max)(1, length)));
+            gl->glGetProgramInfoLog(base_program_, length, nullptr,
+                                    log.data());
+            const std::string message =
+                std::string("OpenGL generated-source shader linking failed: ")
+                + log.data();
+            gl->glDeleteProgram(base_program_);
+            base_program_ = 0U;
+            return fail(error, message);
+        }
+        gl->glGenVertexArrays(1, &base_vertex_array_);
+        return base_vertex_array_ != 0U
+                   || fail(error,
+                           "OpenGL could not create the generated-source "
+                           "vertex array.");
     }
 
     bool ensure_mesh_program(QOpenGLExtraFunctions* gl, std::string* error) {
@@ -1568,6 +1928,265 @@ private:
         return true;
     }
 
+    bool render_generated_base_on_gpu_thread(
+        const RenderConfig& config, const PreparedFrame& prepared,
+        Image& destination, std::string* error) {
+        std::size_t pixel_count = 0U;
+        const bool dimensions_fit = config.width > 0 && config.height > 0
+            && static_cast<std::size_t>(config.width)
+                   <= (std::numeric_limits<std::size_t>::max)()
+                          / static_cast<std::size_t>(config.height)
+            && (pixel_count = static_cast<std::size_t>(config.width)
+                                  * static_cast<std::size_t>(config.height))
+                   <= (std::numeric_limits<std::size_t>::max)() / 4U;
+        if (!dimensions_fit) {
+            return fail(error,
+                        "OpenGL received invalid generated-source dimensions.");
+        }
+        if (prepared.waves.size()
+            > (std::numeric_limits<std::size_t>::max)() / 3U) {
+            return fail(error,
+                        "OpenGL generated-source wave data overflowed.");
+        }
+        const std::size_t wave_texels = std::max<std::size_t>(
+            1U, prepared.waves.size() * 3U);
+        const std::size_t swing_texels = std::max<std::size_t>(
+            1U, prepared.spatial_swings.size());
+
+        if (!context_->makeCurrent(surface_)) {
+            return fail(error,
+                        "OpenGL could not make its render context current.");
+        }
+        QOpenGLExtraFunctions* gl = context_->extraFunctions();
+        gl->initializeOpenGLFunctions();
+        while (gl->glGetError() != GL_NO_ERROR) {
+            // Discard initialization diagnostics before this transactional pass.
+        }
+        GLint maximum_texture_size = 0;
+        gl->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum_texture_size);
+        if (maximum_texture_size <= 0
+            || wave_texels
+                   > static_cast<std::size_t>(maximum_texture_size)
+            || swing_texels
+                   > static_cast<std::size_t>(maximum_texture_size)) {
+            context_->doneCurrent();
+            return fail(error,
+                        "OpenGL generated-source controls exceed this GPU's "
+                        "texture-backed input limit.");
+        }
+        if (!ensure_base_program(gl, error)) {
+            context_->doneCurrent();
+            return false;
+        }
+
+        std::vector<float> waves(wave_texels * 4U, 0.0F);
+        for (std::size_t index = 0U; index < prepared.waves.size(); ++index) {
+            const PreparedWave& wave = prepared.waves[index];
+            const std::size_t offset = index * 12U;
+            waves[offset] = static_cast<float>(wave.source_x);
+            waves[offset + 1U] = static_cast<float>(wave.source_y);
+            waves[offset + 2U] = static_cast<float>(wave.amplitude);
+            waves[offset + 3U] = static_cast<float>(wave.spatial_frequency);
+            waves[offset + 4U] = static_cast<float>(wave.phase_radians);
+            waves[offset + 5U] = static_cast<float>(wave.direction);
+            waves[offset + 6U] = static_cast<float>(wave.tangent_radians);
+            waves[offset + 8U] = static_cast<float>(wave.cycles_per_loop);
+            waves[offset + 9U] = wave.synchronized ? 1.0F : 0.0F;
+            waves[offset + 10U] = wave.follow_tangent ? 1.0F : 0.0F;
+        }
+        std::vector<float> swings(swing_texels * 4U, 0.0F);
+        for (std::size_t index = 0U;
+             index < prepared.spatial_swings.size(); ++index) {
+            const PreparedSpatialSwing& swing = prepared.spatial_swings[index];
+            const std::size_t offset = index * 4U;
+            swings[offset] = static_cast<float>(swing.center_x);
+            swings[offset + 1U] = static_cast<float>(swing.center_y);
+            swings[offset + 2U] = static_cast<float>(swing.radius);
+            swings[offset + 3U] = static_cast<float>(swing.contribution);
+        }
+
+        GLuint wave_texture = 0U;
+        GLuint swing_texture = 0U;
+        GLuint destination_texture = 0U;
+        GLuint framebuffer = 0U;
+        const auto cleanup = [&] {
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+            if (framebuffer != 0U) gl->glDeleteFramebuffers(1, &framebuffer);
+            if (destination_texture != 0U) {
+                gl->glDeleteTextures(1, &destination_texture);
+            }
+            if (swing_texture != 0U) gl->glDeleteTextures(1, &swing_texture);
+            if (wave_texture != 0U) gl->glDeleteTextures(1, &wave_texture);
+        };
+        const auto upload_controls = [gl](GLuint& texture, GLsizei width,
+                                          const float* values) {
+            gl->glGenTextures(1, &texture);
+            gl->glBindTexture(GL_TEXTURE_2D, texture);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                                GL_CLAMP_TO_EDGE);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                GL_CLAMP_TO_EDGE);
+            gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, 1, 0,
+                             GL_RGBA, GL_FLOAT, values);
+        };
+        upload_controls(wave_texture, static_cast<GLsizei>(wave_texels),
+                        waves.data());
+        upload_controls(swing_texture, static_cast<GLsizei>(swing_texels),
+                        swings.data());
+
+        gl->glGenTextures(1, &destination_texture);
+        gl->glBindTexture(GL_TEXTURE_2D, destination_texture);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, config.width,
+                         config.height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        gl->glGenFramebuffers(1, &framebuffer);
+        gl->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, destination_texture, 0);
+        if (gl->glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            != GL_FRAMEBUFFER_COMPLETE) {
+            cleanup();
+            context_->doneCurrent();
+            return fail(error,
+                        "OpenGL could not create a complete float-RGBA "
+                        "generated-source framebuffer.");
+        }
+
+        gl->glViewport(0, 0, config.width, config.height);
+        gl->glDisable(GL_BLEND);
+        gl->glDisable(GL_DEPTH_TEST);
+        gl->glUseProgram(base_program_);
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glBindTexture(GL_TEXTURE_2D, wave_texture);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(base_program_, "waveData"), 0);
+        gl->glActiveTexture(GL_TEXTURE1);
+        gl->glBindTexture(GL_TEXTURE_2D, swing_texture);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(base_program_, "swingData"), 1);
+        gl->glUniform2i(gl->glGetUniformLocation(base_program_, "imageSize"),
+                        config.width, config.height);
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "blockSize"),
+                        config.block_size);
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "waveCount"),
+                        static_cast<GLint>(prepared.waves.size()));
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "swingCount"),
+                        static_cast<GLint>(prepared.spatial_swings.size()));
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "loopPhase"),
+                        static_cast<float>(prepared.loop_phase));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(base_program_, "independentLoopPhase"),
+            static_cast<float>(prepared.independent_loop_phase));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(base_program_, "globalMotionPhase"),
+            static_cast<float>(prepared.global_motion_phase));
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "breath"),
+                        static_cast<float>(
+                            0.85 + 0.35 * std::sin(prepared.loop_phase)));
+        double center_x = 0.5 * static_cast<double>(config.width);
+        double center_y = 0.5 * static_cast<double>(config.height);
+        if (!prepared.waves.empty()) {
+            center_x = prepared.waves.front().source_x;
+            center_y = prepared.waves.front().source_y;
+        }
+        gl->glUniform2f(
+            gl->glGetUniformLocation(base_program_, "patternCenter"),
+            static_cast<float>(center_x), static_cast<float>(center_y));
+        constexpr double pi = 3.141592653589793238462643383279502884;
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "ghostLag"),
+                        static_cast<float>(
+                            config.ghost_lag_degrees * pi / 180.0));
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "ghostMix"),
+                        static_cast<float>(config.ghost_mix));
+        gl->glUniform1i(
+            gl->glGetUniformLocation(base_program_, "displacementEnabled"),
+            config.displacement_enabled ? 1 : 0);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(base_program_, "lightingEnabled"),
+            config.lighting_enabled ? 1 : 0);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(base_program_, "spiralEnabled"),
+            config.spiral_enabled ? 1 : 0);
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "wallEnabled"),
+                        config.wall_reflection_enabled ? 1 : 0);
+        gl->glUniform1f(
+            gl->glGetUniformLocation(base_program_, "displacementAmount"),
+            static_cast<float>(config.displacement));
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "waveDepth"),
+                        static_cast<float>(config.wave_depth));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(base_program_, "spiralFrequency"),
+            static_cast<float>(config.spiral_frequency));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(base_program_, "wallFrequency"),
+            static_cast<float>(config.wall_frequency));
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "wallMix"),
+                        static_cast<float>(config.wall_mix));
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "spiralArms"),
+                        config.spiral_arms);
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "hueCycles"),
+                        config.hue_cycles);
+        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "saturation"),
+                        static_cast<float>(config.saturation));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(base_program_, "audioHueShift"),
+            static_cast<float>(prepared.audio_hue_shift_degrees));
+        const StartingColorConfig& starting = config.starting_colors;
+        gl->glUniform3f(
+            gl->glGetUniformLocation(base_program_, "startingMinimum"),
+            static_cast<float>(starting.red_minimum),
+            static_cast<float>(starting.green_minimum),
+            static_cast<float>(starting.blue_minimum));
+        gl->glUniform3f(
+            gl->glGetUniformLocation(base_program_, "startingMaximum"),
+            static_cast<float>(starting.red_maximum),
+            static_cast<float>(starting.green_maximum),
+            static_cast<float>(starting.blue_maximum));
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "alphaEnabled"),
+                        config.alpha.enabled ? 1 : 0);
+        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "alphaCycles"),
+                        config.alpha.cycles_per_loop);
+        gl->glUniform4f(gl->glGetUniformLocation(base_program_, "alphaValues"),
+                        static_cast<float>(config.alpha.minimum),
+                        static_cast<float>(config.alpha.maximum),
+                        static_cast<float>(
+                            config.alpha.phase_degrees * pi / 180.0),
+                        static_cast<float>(config.alpha.spatial_frequency));
+        gl->glBindVertexArray(base_vertex_array_);
+        gl->glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        destination.width = config.width;
+        destination.height = config.height;
+        destination.pixels.resize(pixel_count * 4U);
+        gl->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        gl->glReadPixels(0, 0, config.width, config.height, GL_RGBA,
+                         GL_FLOAT, destination.pixels.data());
+        const GLenum render_status = gl->glGetError();
+        cleanup();
+        context_->doneCurrent();
+        if (render_status != GL_NO_ERROR) {
+            return fail(error,
+                        "OpenGL generated-source rendering failed with error "
+                            + std::to_string(render_status) + ".");
+        }
+
+        const std::size_t row_values =
+            static_cast<std::size_t>(config.width) * 4U;
+        for (int top = 0, bottom = config.height - 1; top < bottom;
+             ++top, --bottom) {
+            float* first = destination.pixels.data()
+                           + static_cast<std::size_t>(top) * row_values;
+            float* second = destination.pixels.data()
+                            + static_cast<std::size_t>(bottom) * row_values;
+            std::swap_ranges(first, first + row_values, second);
+        }
+        return true;
+    }
+
     bool render_on_gpu_thread(const Image& source, Image& destination,
                               const SurfaceConfig& surface, double loop_phase,
                               const std::shared_ptr<const ObjMesh>& displacement_mesh,
@@ -1748,6 +2367,8 @@ private:
     QObject* worker_ = nullptr;
     GLuint program_ = 0U;
     GLuint vertex_array_ = 0U;
+    GLuint base_program_ = 0U;
+    GLuint base_vertex_array_ = 0U;
     GLuint mesh_program_ = 0U;
     GLuint mesh_vertex_array_ = 0U;
     GLuint mesh_vertex_buffer_ = 0U;
@@ -1812,19 +2433,37 @@ bool opengl_surface_backend_available(std::string* device_name,
     return service().available(device_name, status);
 }
 
-bool opengl_surface_backend_supports(const RenderConfig& config,
-                                     std::string* reason) {
-    if (surface_has_supported_work(config.surface)) {
+bool opengl_backend_supports(const RenderConfig& config,
+                             std::string* reason) {
+    if (generated_base_supported_config(config)
+        || surface_has_supported_work(config.surface)) {
         if (reason != nullptr) reason->clear();
         return true;
     }
     if (reason != nullptr) {
-        if (!config.surface.enabled) {
-            *reason = "Strict OpenGL GPU rendering requires an active analytic "
-                      "surface mapping.";
+        if (config.starting_image.enabled) {
+            *reason = "Strict OpenGL GPU rendering does not yet accelerate "
+                      "starting-image source generation and this layer has no "
+                      "supported active surface stage.";
+        } else if (config.palette.enabled
+                   || config.starting_colors.mode
+                          != StartingColorMode::ContinuousHue
+                   || config.starting_colors.include_alpha
+                   || (config.starting_colors.domain_warp.enabled
+                       && config.starting_colors.domain_warp.strength > 1.0e-12)
+                   || (config.starting_colors.kaleidoscope.enabled
+                       && config.starting_colors.kaleidoscope.mix > 1.0e-12)) {
+            *reason = "Strict OpenGL GPU rendering currently accelerates "
+                      "Continuous hue generated sources without generated "
+                      "source alpha or coordinate shaping; this layer also "
+                      "has no supported active surface stage.";
+        } else if (!config.surface.enabled) {
+            *reason = "Strict OpenGL GPU rendering could not find an admitted "
+                      "generated-source or analytic surface stage.";
         } else if (config.surface.mapping == SurfaceMapping::CustomObj) {
             *reason = "Strict OpenGL GPU rendering does not accelerate imported "
-                      "OBJ mesh rasterization.";
+                      "OBJ mesh rasterization and this layer's source is not "
+                      "supported by the generated-source shader.";
         } else if (config.surface.mapping == SurfaceMapping::Plane
                    && config.surface.plane_displacement.enabled
                    && config.surface.curvature > 0.0) {
@@ -1842,6 +2481,10 @@ bool opengl_surface_backend_supports(const RenderConfig& config,
     return false;
 }
 
+bool opengl_generated_base_supported(const RenderConfig& config) {
+    return generated_base_supported_config(config);
+}
+
 bool opengl_surface_backend_supports(const SurfaceConfig& surface) {
     return surface_has_supported_work(surface);
 }
@@ -1854,6 +2497,26 @@ bool set_opengl_surface_acceleration_active(bool active) {
     const bool previous = g_surface_acceleration_active;
     g_surface_acceleration_active = active;
     return previous;
+}
+
+const PreparedFrame* opengl_prepared_frame() {
+    return g_prepared_frame;
+}
+
+const PreparedFrame* set_opengl_prepared_frame(
+    const PreparedFrame* prepared) {
+    const PreparedFrame* previous = g_prepared_frame;
+    g_prepared_frame = prepared;
+    return previous;
+}
+
+bool render_generated_base_opengl(const RenderConfig& config,
+                                  const PreparedFrame& prepared,
+                                  Image& destination,
+                                  const std::atomic_bool* cancel,
+                                  std::string* error) {
+    return service().render_generated_base(config, prepared, destination,
+                                           cancel, error);
 }
 
 bool apply_surface_mapping_opengl(const Image& source, Image& destination,

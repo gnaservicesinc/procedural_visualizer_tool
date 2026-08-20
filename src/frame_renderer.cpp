@@ -21,20 +21,24 @@ bool fail(std::string* error, std::string message) {
     return false;
 }
 
-class OpenGLSurfaceScope final {
+class OpenGLAccelerationScope final {
 public:
-    explicit OpenGLSurfaceScope(bool active)
-        : previous_(detail::set_opengl_surface_acceleration_active(active)) {}
+    explicit OpenGLAccelerationScope(const detail::PreparedFrame* prepared)
+        : previous_active_(
+              detail::set_opengl_surface_acceleration_active(true)),
+          previous_prepared_(detail::set_opengl_prepared_frame(prepared)) {}
 
-    ~OpenGLSurfaceScope() {
-        detail::set_opengl_surface_acceleration_active(previous_);
+    ~OpenGLAccelerationScope() {
+        detail::set_opengl_prepared_frame(previous_prepared_);
+        detail::set_opengl_surface_acceleration_active(previous_active_);
     }
 
-    OpenGLSurfaceScope(const OpenGLSurfaceScope&) = delete;
-    OpenGLSurfaceScope& operator=(const OpenGLSurfaceScope&) = delete;
+    OpenGLAccelerationScope(const OpenGLAccelerationScope&) = delete;
+    OpenGLAccelerationScope& operator=(const OpenGLAccelerationScope&) = delete;
 
 private:
-    bool previous_ = false;
+    bool previous_active_ = false;
+    const detail::PreparedFrame* previous_prepared_ = nullptr;
 };
 
 bool validate_frame_options(const FrameRenderOptions& options,
@@ -109,12 +113,20 @@ bool render_with_backend(const RenderConfig& config,
     const bool opengl_available = detail::opengl_surface_backend_available(
         &opengl_device, &opengl_status);
     const bool opengl_supported = opengl_available
-        && detail::opengl_surface_backend_supports(config, &unsupported_reason);
+        && detail::opengl_backend_supports(config, &unsupported_reason);
     if (opengl_supported) {
-        // The reference renderer owns ordered stages and invokes OpenGL only
-        // at the analytic 3D surface boundary. A runtime OpenGL failure is
-        // returned directly; CPU + GPU never repeats that surface on CPU.
-        OpenGLSurfaceScope scope(true);
+        detail::PreparedFrame prepared;
+        std::string prepare_error;
+        if (!prepare(prepared, &prepare_error)) {
+            return fail(error,
+                        prepare_error.empty()
+                            ? "OpenGL frame preparation failed."
+                            : prepare_error);
+        }
+        // The reference renderer retains ordered CPU stages, while OpenGL
+        // owns every admitted generated-source and surface stage. Runtime
+        // failures are returned directly and never retried on CPU.
+        OpenGLAccelerationScope scope(&prepared);
         return cpu_render();
     }
     if (options.backend == RenderBackend::Gpu) {
