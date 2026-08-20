@@ -1831,9 +1831,40 @@ float float_u32(std::uint32_t value) {
     return result;
 }
 
+float half_u16(std::uint16_t half) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(half & 0x8000U)
+                               << 16U;
+    std::uint32_t exponent = (half >> 10U) & 0x1fU;
+    std::uint32_t mantissa = half & 0x03ffU;
+    std::uint32_t bits = 0U;
+    if (exponent == 0U) {
+        if (mantissa == 0U) {
+            bits = sign;
+        } else {
+            int shift = 0;
+            while ((mantissa & 0x0400U) == 0U) {
+                mantissa <<= 1U;
+                ++shift;
+            }
+            mantissa &= 0x03ffU;
+            const std::uint32_t float_exponent = static_cast<std::uint32_t>(
+                127 - 15 + 1 - shift);
+            bits = sign | (float_exponent << 23U) | (mantissa << 13U);
+        }
+    } else if (exponent == 0x1fU) {
+        bits = sign | 0x7f800000U | (mantissa << 13U);
+    } else {
+        exponent += 127U - 15U;
+        bits = sign | (exponent << 23U) | (mantissa << 13U);
+    }
+    return float_u32(bits);
+}
+
 struct ExrChannelInfo {
     std::string name;
     int rgba_index = -1;
+    std::uint32_t pixel_type = 2U;
+    std::size_t bytes_per_sample = sizeof(float);
 };
 
 struct ExrHeaderInfo {
@@ -1883,8 +1914,9 @@ bool parse_exr_channels(const std::vector<unsigned char>& bytes,
             return fail(error, "OpenEXR channel record is truncated.");
         }
         position = field;
-        if (pixel_type != 2U) {
-            return fail(error, "OpenEXR palette channels must all be 32-bit FLOAT.");
+        if (pixel_type != 1U && pixel_type != 2U) {
+            return fail(error,
+                        "OpenEXR palette channels must be 16-bit HALF or 32-bit FLOAT.");
         }
         if (x_sampling != 1U || y_sampling != 1U) {
             return fail(error, "Subsampled OpenEXR palette channels are not supported.");
@@ -1893,6 +1925,8 @@ bool parse_exr_channels(const std::vector<unsigned char>& bytes,
         if (!names.insert(folded).second) return fail(error, "OpenEXR has duplicate channels.");
         ExrChannelInfo channel;
         channel.name = name;
+        channel.pixel_type = pixel_type;
+        channel.bytes_per_sample = pixel_type == 1U ? 2U : 4U;
         if (folded == "r") channel.rgba_index = 0;
         else if (folded == "g") channel.rgba_index = 1;
         else if (folded == "b") channel.rgba_index = 2;
@@ -1977,15 +2011,17 @@ bool parse_exr_header(const std::vector<unsigned char>& bytes,
         }
     }
     if (!rgb[0U] || !rgb[1U] || !rgb[2U]) {
-        return fail(error, "OpenEXR palette image must contain R, G, and B FLOAT channels.");
+        return fail(error,
+                    "OpenEXR palette image must contain R, G, and B HALF/FLOAT channels.");
     }
     if (header.line_order != 0U) {
         return fail(error, "Only increasing-Y OpenEXR scanline order is supported.");
     }
-    if (header.compression != 0U && header.compression != 2U
+    if (header.compression != 0U && header.compression != 1U
+        && header.compression != 2U
         && header.compression != 3U) {
         return fail(error,
-                    "OpenEXR palette compression is unsupported; use NO_COMPRESSION, ZIPS, or ZIP.");
+                    "OpenEXR palette compression is unsupported; use NONE, RLE, ZIPS, or ZIP.");
     }
     return true;
 }
@@ -2016,6 +2052,56 @@ bool decode_exr_zip(const unsigned char* source, std::size_t source_size,
     return true;
 }
 
+bool decode_exr_rle(const unsigned char* source, std::size_t source_size,
+                    std::vector<unsigned char>& decoded, std::string* error) {
+    if (source_size == decoded.size()) {
+        std::copy_n(source, source_size, decoded.begin());
+        return true;
+    }
+    std::vector<unsigned char> unpacked(decoded.size());
+    std::size_t input = 0U;
+    std::size_t output = 0U;
+    while (input < source_size && output < unpacked.size()) {
+        const int count = source[input] > 127U
+            ? static_cast<int>(source[input++]) - 256
+            : static_cast<int>(source[input++]);
+        if (count < 0) {
+            const std::size_t literal = static_cast<std::size_t>(-count);
+            if (literal > source_size - input
+                || literal > unpacked.size() - output) {
+                return fail(error, "OpenEXR RLE literal exceeds its block.");
+            }
+            std::copy_n(source + input, literal, unpacked.data() + output);
+            input += literal;
+            output += literal;
+        } else {
+            const std::size_t run = static_cast<std::size_t>(count) + 1U;
+            if (input >= source_size || run > unpacked.size() - output) {
+                return fail(error, "OpenEXR RLE run exceeds its block.");
+            }
+            std::fill_n(unpacked.data() + output, run, source[input++]);
+            output += run;
+        }
+    }
+    if (input != source_size || output != unpacked.size()) {
+        return fail(error, "OpenEXR RLE block has an invalid decoded size.");
+    }
+    for (std::size_t index = 1U; index < unpacked.size(); ++index) {
+        unpacked[index] = static_cast<unsigned char>(
+            static_cast<int>(unpacked[index - 1U])
+            + static_cast<int>(unpacked[index]) - 128);
+    }
+    std::vector<unsigned char> interleaved(unpacked.size());
+    const unsigned char* even = unpacked.data();
+    const unsigned char* odd =
+        unpacked.data() + (unpacked.size() + 1U) / 2U;
+    for (std::size_t index = 0U; index < interleaved.size(); ++index) {
+        interleaved[index] = (index & 1U) == 0U ? *even++ : *odd++;
+    }
+    decoded.swap(interleaved);
+    return true;
+}
+
 bool import_exr(const std::string& path, PaletteDocument& document,
                 PaletteIoSummary& summary, std::string* error) {
     std::string raw;
@@ -2038,10 +2124,16 @@ bool import_exr(const std::string& path, PaletteDocument& document,
         || pixel_count > kMaximumPaletteEntries) {
         return fail(error, "OpenEXR palette exceeds the one-million-pixel limit.");
     }
-    std::size_t decoded_samples = 0U;
+    std::size_t bytes_per_pixel = 0U;
     std::size_t total_decoded_bytes = 0U;
-    if (!checked_multiply(pixel_count, header.channels.size(), decoded_samples)
-        || !checked_multiply(decoded_samples, sizeof(float), total_decoded_bytes)
+    for (const ExrChannelInfo& channel : header.channels) {
+        if (channel.bytes_per_sample
+            > (std::numeric_limits<std::size_t>::max)() - bytes_per_pixel) {
+            return fail(error, "OpenEXR palette channel size overflows.");
+        }
+        bytes_per_pixel += channel.bytes_per_sample;
+    }
+    if (!checked_multiply(pixel_count, bytes_per_pixel, total_decoded_bytes)
         || total_decoded_bytes > kMaximumPaletteDecodedBytes) {
         return fail(error, "OpenEXR palette exceeds the 64 MiB decoded-channel limit.");
     }
@@ -2069,11 +2161,10 @@ bool import_exr(const std::string& path, PaletteDocument& document,
         }
         const std::size_t first_row = static_cast<std::size_t>(y - header.minimum_y);
         const std::size_t row_count = (std::min)(lines_per_block, height - first_row);
-        std::size_t samples = 0U;
         std::size_t decoded_bytes = 0U;
-        if (!checked_multiply(row_count, header.channels.size(), samples)
-            || !checked_multiply(samples, width, samples)
-            || !checked_multiply(samples, sizeof(float), decoded_bytes)) {
+        std::size_t row_bytes = 0U;
+        if (!checked_multiply(width, bytes_per_pixel, row_bytes)
+            || !checked_multiply(row_count, row_bytes, decoded_bytes)) {
             return fail(error, "OpenEXR scanline decoded size overflows.");
         }
         std::vector<unsigned char> decoded(decoded_bytes);
@@ -2082,7 +2173,11 @@ bool import_exr(const std::string& path, PaletteDocument& document,
                 return fail(error, "Uncompressed OpenEXR scanline size is invalid.");
             }
             std::copy_n(bytes.data() + chunk, decoded_bytes, decoded.begin());
-        } else if (!decode_exr_zip(bytes.data() + chunk, encoded_size, decoded, error)) {
+        } else if (header.compression == 1U
+                       ? !decode_exr_rle(bytes.data() + chunk, encoded_size,
+                                         decoded, error)
+                       : !decode_exr_zip(bytes.data() + chunk, encoded_size,
+                                         decoded, error)) {
             return false;
         }
         std::size_t decoded_position = 0U;
@@ -2094,16 +2189,34 @@ bool import_exr(const std::string& path, PaletteDocument& document,
             rows_seen[destination_row] = true;
             for (const ExrChannelInfo& channel : header.channels) {
                 for (std::size_t x = 0U; x < width; ++x) {
-                    std::uint32_t bits = 0U;
-                    bits = static_cast<std::uint32_t>(decoded[decoded_position])
-                           | (static_cast<std::uint32_t>(decoded[decoded_position + 1U]) << 8U)
-                           | (static_cast<std::uint32_t>(decoded[decoded_position + 2U]) << 16U)
-                           | (static_cast<std::uint32_t>(decoded[decoded_position + 3U]) << 24U);
-                    decoded_position += 4U;
+                    float sample = 0.0F;
+                    if (channel.pixel_type == 1U) {
+                        const std::uint16_t bits =
+                            static_cast<std::uint16_t>(decoded[decoded_position])
+                            | static_cast<std::uint16_t>(
+                                  static_cast<std::uint16_t>(
+                                      decoded[decoded_position + 1U])
+                                  << 8U);
+                        sample = half_u16(bits);
+                    } else {
+                        const std::uint32_t bits =
+                            static_cast<std::uint32_t>(decoded[decoded_position])
+                            | (static_cast<std::uint32_t>(
+                                   decoded[decoded_position + 1U])
+                               << 8U)
+                            | (static_cast<std::uint32_t>(
+                                   decoded[decoded_position + 2U])
+                               << 16U)
+                            | (static_cast<std::uint32_t>(
+                                   decoded[decoded_position + 3U])
+                               << 24U);
+                        sample = float_u32(bits);
+                    }
+                    decoded_position += channel.bytes_per_sample;
                     if (channel.rgba_index >= 0) {
                         pixels[destination_row * width + x]
                               [static_cast<std::size_t>(channel.rgba_index)] =
-                                  static_cast<double>(float_u32(bits));
+                                  static_cast<double>(sample);
                     }
                 }
             }
@@ -2621,7 +2734,7 @@ const char* format_name(PaletteFormat format) {
         case PaletteFormat::JavaMap: return "Java map";
         case PaletteFormat::TextHex: return "Hex text";
         case PaletteFormat::PngImage: return "PNG palette image";
-        case PaletteFormat::FloatExrImage: return "FLOAT OpenEXR palette image";
+        case PaletteFormat::FloatExrImage: return "HALF/FLOAT OpenEXR palette image";
     }
     return "Unknown";
 }

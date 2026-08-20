@@ -7,10 +7,12 @@
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
+#include <QScreen>
 #include <QSurfaceFormat>
 #include <QThread>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -494,7 +496,9 @@ public:
         ready_ = false;
 
         if (render_thread_ != nullptr) {
-            QThread* const gui_thread = QThread::currentThread();
+            QThread* const gui_thread = QCoreApplication::instance() != nullptr
+                ? QCoreApplication::instance()->thread()
+                : QThread::currentThread();
             const auto release_gpu_objects = [this, gui_thread] {
                 if (context_ != nullptr) {
                     if (context_->makeCurrent(surface_)) {
@@ -519,6 +523,8 @@ public:
             } else {
                 (void)QMetaObject::invokeMethod(
                     worker_, release_gpu_objects, Qt::BlockingQueuedConnection);
+            }
+            if (owns_render_thread_) {
                 render_thread_->quit();
                 render_thread_->wait();
             }
@@ -528,8 +534,9 @@ public:
         context_ = nullptr;
         delete worker_;
         worker_ = nullptr;
-        delete render_thread_;
+        if (owns_render_thread_) delete render_thread_;
         render_thread_ = nullptr;
+        owns_render_thread_ = false;
         delete surface_;
         surface_ = nullptr;
     }
@@ -556,58 +563,137 @@ private:
     }
 
     void initialize_on_gui_thread() {
-        QSurfaceFormat format;
-        format.setRenderableType(QSurfaceFormat::OpenGL);
-        format.setVersion(3, 3);
-        format.setProfile(QSurfaceFormat::CoreProfile);
-        format.setDepthBufferSize(0);
-        format.setStencilBufferSize(0);
-        format.setSwapBehavior(QSurfaceFormat::SingleBuffer);
+        struct ContextAttempt {
+            QSurfaceFormat::OpenGLContextProfile profile;
+            const char* name;
+        };
+        constexpr std::array<ContextAttempt, 3U> attempts {{
+            {QSurfaceFormat::CoreProfile, "core profile"},
+            {QSurfaceFormat::CompatibilityProfile, "compatibility profile"},
+            {QSurfaceFormat::NoProfile, "default profile"},
+        }};
 
-        surface_ = new QOffscreenSurface;
-        surface_->setFormat(format);
-        surface_->create();
-        if (!surface_->isValid()) {
-            status_ = "Qt could not create an offscreen OpenGL surface.";
+        std::string attempt_status;
+        std::string selected_attempt;
+        std::string vendor;
+        std::string renderer;
+        std::string version;
+        const auto discard_candidate = [this] {
+            delete surface_;
+            surface_ = nullptr;
+            delete context_;
+            context_ = nullptr;
+        };
+        const auto record_failure = [&attempt_status](
+                                        const char* name,
+                                        const char* reason) {
+            if (!attempt_status.empty()) attempt_status += "; ";
+            attempt_status += name;
+            attempt_status += ": ";
+            attempt_status += reason;
+        };
+
+        for (const ContextAttempt& attempt : attempts) {
+            QSurfaceFormat requested;
+            requested.setRenderableType(QSurfaceFormat::OpenGL);
+            requested.setVersion(3, 3);
+            requested.setProfile(attempt.profile);
+            requested.setDepthBufferSize(0);
+            requested.setStencilBufferSize(0);
+            requested.setSamples(0);
+
+            context_ = new QOpenGLContext;
+            if (QGuiApplication::primaryScreen() != nullptr) {
+                context_->setScreen(QGuiApplication::primaryScreen());
+            }
+            context_->setFormat(requested);
+            if (!context_->create()) {
+                record_failure(attempt.name, "context creation failed");
+                discard_candidate();
+                continue;
+            }
+
+            const QSurfaceFormat actual = context_->format();
+            if (actual.renderableType() != QSurfaceFormat::OpenGL
+                || actual.majorVersion() < 3
+                || (actual.majorVersion() == 3
+                    && actual.minorVersion() < 3)) {
+                record_failure(attempt.name,
+                               "the driver returned less than OpenGL 3.3");
+                discard_candidate();
+                continue;
+            }
+
+            // QOffscreenSurface must use the context's negotiated format, not
+            // the requested approximation. Windows WGL drivers commonly
+            // adjust the format, and pairing the original request with that
+            // context can make an otherwise valid GPU appear unavailable.
+            surface_ = new QOffscreenSurface;
+            if (context_->screen() != nullptr) {
+                surface_->setScreen(context_->screen());
+            }
+            surface_->setFormat(actual);
+            surface_->create();
+            if (!surface_->isValid()) {
+                record_failure(attempt.name,
+                               "matching offscreen surface creation failed");
+                discard_candidate();
+                continue;
+            }
+            if (!context_->makeCurrent(surface_)) {
+                record_failure(attempt.name,
+                               "the matching context could not be made current");
+                discard_candidate();
+                continue;
+            }
+
+            QOpenGLExtraFunctions* functions = context_->extraFunctions();
+            functions->initializeOpenGLFunctions();
+            vendor = gl_text(functions->glGetString(GL_VENDOR));
+            renderer = gl_text(functions->glGetString(GL_RENDERER));
+            version = gl_text(functions->glGetString(GL_VERSION));
+            context_->doneCurrent();
+            selected_attempt = attempt.name;
+            break;
+        }
+
+        if (context_ == nullptr || surface_ == nullptr) {
+            status_ = "Qt could not create a usable desktop OpenGL 3.3 "
+                      "context";
+            if (!attempt_status.empty()) status_ += " (" + attempt_status + ")";
+            status_ += ".";
             return;
         }
 
-        context_ = new QOpenGLContext;
-        context_->setFormat(format);
-        if (!context_->create()) {
-            status_ = "Qt could not create an OpenGL 3.3 context.";
-            return;
-        }
-        const QSurfaceFormat actual = context_->format();
-        if (actual.renderableType() != QSurfaceFormat::OpenGL
-            || actual.majorVersion() < 3
-            || (actual.majorVersion() == 3 && actual.minorVersion() < 3)) {
-            status_ = "The graphics driver does not provide the required "
-                      "desktop OpenGL 3.3 context.";
-            return;
-        }
-        if (!context_->makeCurrent(surface_)) {
-            status_ = "OpenGL could not make its offscreen context current.";
-            return;
-        }
-        QOpenGLExtraFunctions* functions = context_->extraFunctions();
-        functions->initializeOpenGLFunctions();
-        const std::string vendor = gl_text(functions->glGetString(GL_VENDOR));
-        const std::string renderer = gl_text(functions->glGetString(GL_RENDERER));
-        const std::string version = gl_text(functions->glGetString(GL_VERSION));
-        context_->doneCurrent();
         device_name_ = renderer.empty() ? vendor : renderer;
         if (device_name_.empty()) device_name_ = "unnamed OpenGL device";
 
-        render_thread_ = new QThread;
         worker_ = new QObject;
-        context_->moveToThread(render_thread_);
-        worker_->moveToThread(render_thread_);
-        render_thread_->start();
+        const bool threaded = QOpenGLContext::supportsThreadedOpenGL();
+        if (threaded) {
+            render_thread_ = new QThread;
+            owns_render_thread_ = true;
+            context_->moveToThread(render_thread_);
+            worker_->moveToThread(render_thread_);
+            render_thread_->start();
+        } else {
+            // Some Windows ICDs expose valid hardware OpenGL but explicitly do
+            // not support a context on a secondary thread. Keeping the context
+            // on Qt's GUI thread is slower than the dedicated path but still
+            // preserves acceleration instead of disabling it outright.
+            render_thread_ = QThread::currentThread();
+        }
         ready_ = true;
         status_ = "OpenGL analytic-surface acceleration is ready on "
                   + device_name_;
         if (!version.empty()) status_ += " (" + version + ")";
+        if (selected_attempt != "core profile") {
+            status_ += " using the " + selected_attempt + " fallback";
+        }
+        if (!threaded) {
+            status_ += " on Qt's GUI thread because this driver does not "
+                       "support threaded OpenGL";
+        }
         status_ += ".";
     }
 
@@ -799,6 +885,7 @@ private:
     QOffscreenSurface* surface_ = nullptr;
     QOpenGLContext* context_ = nullptr;
     QThread* render_thread_ = nullptr;
+    bool owns_render_thread_ = false;
     QObject* worker_ = nullptr;
     GLuint program_ = 0U;
     GLuint vertex_array_ = 0U;

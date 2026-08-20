@@ -442,6 +442,10 @@ jobs:
           cat > release-notes.md <<EOF
           Procedural Visualizer Tool $product_version $release_summary
 
+          Version 7.0.1 adds full-precision PNG and OpenEXR input for displacement height maps and layer starting images. Raw 8/16-bit PNG samples and 16-bit HALF/32-bit FLOAT EXR scanlines remain linear data without an 8-bit intermediate; single-channel EXR height maps work directly, and palette-image import now accepts HALF or FLOAT EXR. Supported scanline compression includes NONE, RLE, ZIPS, and ZIP.
+
+          Windows/Linux Qt OpenGL surface acceleration now negotiates core, compatibility, and unprofiled contexts against the actual context format, and can remain hardware-accelerated on the GUI thread when a driver does not support threaded OpenGL. Independent layers use two bounded CPU lanes for ineligible stages. Numeric zero fields remain ordinary editable numbers, and unfocused wheel/touchpad gestures scroll their container instead of changing values or focus. Randomized mixes retry unsafe particle workloads, and the missing GCC standard-library include that broke the Noble ARM64 Snap build is restored. The public API, SONAME 7 ABI, setup format 15, layer format 13, and bundle formats are unchanged.
+
           Version 7.0.0 adds GUI-only Mic (Live) clock authoring for the project and active layer. Detected input devices bind to portable logical Audio roles through machine-local identities, with visible gain, sensitivity, filtering, EQ, frequency-range, metering, latency, and tap-calibration controls. Continuous beat routing now preserves detected or tapped tempo, advances through short callback gaps, and keeps offline and command-line rendering deterministic.
 
           Live Preview Output presents the editor preview or Preview Solo on a selected display at Auto, Full, 75%, 50%, or 25% quality without starting performance Live inputs, mappings, scenes, routes, or sleep prevention. Presentation, performance Live, export, project I/O, and music analysis use explicit lifecycle guards, revision-gated coalesced rendering, watchdog adaptation, and display-aware output state.

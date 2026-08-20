@@ -17,6 +17,8 @@
 
 #include <QAbstractButton>
 #include <QAbstractItemView>
+#include <QAbstractScrollArea>
+#include <QAbstractSpinBox>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -92,6 +94,7 @@
 #include <QUuid>
 #include <QValidator>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QtConcurrent>
 
 #include <algorithm>
@@ -433,7 +436,7 @@ QString palette_file_filter() {
         "All supported palettes (*.gpl *.kpl *.css *.py *.php *.java *.txt *.hex *.png *.exr);;"
         "GIMP palette (*.gpl);;Krita palette (*.kpl);;CSS stylesheet (*.css);;"
         "Python dictionary (*.py);;PHP dictionary (*.php);;Java map (*.java);;"
-        "Hex text (*.txt *.hex);;PNG palette image (*.png);;FLOAT OpenEXR palette image (*.exr)");
+        "Hex text (*.txt *.hex);;PNG palette image (*.png);;HALF/FLOAT OpenEXR palette image (*.exr)");
 }
 
 class Utf8TextValidator final : public QValidator {
@@ -2722,6 +2725,46 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
         return true;
     }
     if (event != nullptr) {
+        if (event->type() == QEvent::Wheel) {
+            QWidget* editor = qobject_cast<QWidget*>(watched);
+            while (editor != nullptr
+                   && qobject_cast<QAbstractSpinBox*>(editor) == nullptr
+                   && qobject_cast<QComboBox*>(editor) == nullptr) {
+                editor = editor->parentWidget();
+            }
+            QWidget* const focus = QApplication::focusWidget();
+            const bool editor_has_focus = editor != nullptr
+                && (focus == editor || editor->isAncestorOf(focus));
+            if (editor != nullptr && !editor_has_focus) {
+                // Precision touchpads report two-finger scrolling as wheel
+                // input. Qt's numeric and combo editors otherwise consume it,
+                // take focus, and change the value while the user is merely
+                // moving through a long settings page. Preserve intentional
+                // wheel editing for the focused control; unfocused editors
+                // pass the gesture to their containing scroll viewport.
+                QAbstractScrollArea* scroll_area = nullptr;
+                for (QWidget* parent = editor->parentWidget();
+                     parent != nullptr && scroll_area == nullptr;
+                     parent = parent->parentWidget()) {
+                    scroll_area = qobject_cast<QAbstractScrollArea*>(parent);
+                }
+                if (scroll_area != nullptr && scroll_area->viewport() != nullptr) {
+                    auto* wheel = static_cast<QWheelEvent*>(event);
+                    QWidget* const viewport = scroll_area->viewport();
+                    const QPointF global_position = wheel->globalPosition();
+                    const QPointF local_position = viewport->mapFromGlobal(
+                        global_position.toPoint());
+                    QWheelEvent forwarded(
+                        local_position, global_position,
+                        wheel->pixelDelta(), wheel->angleDelta(),
+                        wheel->buttons(), wheel->modifiers(), wheel->phase(),
+                        wheel->inverted(), wheel->source(),
+                        wheel->pointingDevice());
+                    QCoreApplication::sendEvent(viewport, &forwarded);
+                }
+                return true;
+            }
+        }
         if (auto* label = qobject_cast<QLabel*>(watched)) {
             if (event->type() == QEvent::Resize
                 || event->type() == QEvent::FontChange
@@ -3514,7 +3557,6 @@ QWidget* MainWindow::createSwingBlock() {
     swing_center_y_ = real_editor(-kMaximumRenderParameter,
                                   kMaximumRenderParameter, 4, 0.01);
     swing_radius_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
-    swing_radius_->setSpecialValueText(tr("Whole layer (0)"));
     swing_amount_->setToolTip(
         tr("Strength of this timing modulation. Negative values invert the swing."));
     swing_shape_->setToolTip(
@@ -3531,7 +3573,7 @@ QWidget* MainWindow::createSwingBlock() {
     form->addRow(tr("Waveform shape"), swing_shape_);
     form->addRow(tr("Center X (0–1)"), swing_center_x_);
     form->addRow(tr("Center Y (0–1)"), swing_center_y_);
-    form->addRow(tr("Local radius"), swing_radius_);
+    form->addRow(tr("Local radius (0 = whole layer)"), swing_radius_);
     layout->addWidget(properties);
 
     connect(add, &QPushButton::clicked, this, [this] {
@@ -3678,7 +3720,6 @@ QWidget* MainWindow::createEffectPage() {
     effect_threshold_ = real_editor(0.0, kMaximumRenderParameter);
     effect_knee_ = real_editor(0.0, 1.0);
     effect_area_radius_ = real_editor(0.0, kMaximumRenderParameter, 4, 0.01);
-    effect_area_radius_->setSpecialValueText(tr("Whole layer (0)"));
     effect_particle_shape_ = new QComboBox;
     for (const auto shape : {pvt::ParticleShape::Spark,
                              pvt::ParticleShape::SoftOrb,
@@ -3747,7 +3788,8 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Glow radius (pixels)"), effect_radius_);
     effect_form_->addRow(tr("Glow threshold"), effect_threshold_);
     effect_form_->addRow(tr("Glow soft knee"), effect_knee_);
-    effect_form_->addRow(tr("Local area radius"), effect_area_radius_);
+    effect_form_->addRow(tr("Local area radius (0 = whole layer)"),
+                         effect_area_radius_);
     effect_form_->addRow(tr("Particle shape"), effect_particle_shape_);
     effect_form_->addRow(tr("Particle look"), effect_particle_profile_);
     effect_form_->addRow(tr("Particle size scale"),
@@ -3937,7 +3979,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
 
     starting_image_group_ = new QGroupBox(tr("Starting image source"));
     auto* source_form = new QFormLayout(starting_image_group_);
-    starting_image_enabled_ = new QCheckBox(tr("Use embedded PNG as layer source"));
+    starting_image_enabled_ = new QCheckBox(tr("Use embedded image as layer source"));
     starting_image_enabled_->setObjectName(
         QStringLiteral("startingImageEnabled"));
     source_form->addRow(starting_image_enabled_);
@@ -3946,7 +3988,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     source_row_layout->setContentsMargins(0, 0, 0, 0);
     starting_image_path_ = new QLineEdit;
     starting_image_path_->setReadOnly(true);
-    starting_image_path_->setPlaceholderText(tr("No embedded PNG selected"));
+    starting_image_path_->setPlaceholderText(tr("No embedded image selected"));
     starting_image_browse_ = new QPushButton(tr("Choose…"));
     starting_image_clear_ = new QPushButton(tr("Clear"));
     source_row_layout->addWidget(starting_image_path_, 1);
@@ -3960,7 +4002,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         add_enum_item(starting_image_fit_,
                       QString::fromUtf8(pvt::starting_image_fit_name(fit)), fit);
     }
-    source_form->addRow(tr("Embedded PNG (8/16-bit)"), source_row);
+    source_form->addRow(tr("Embedded image (PNG / OpenEXR)"), source_row);
     source_form->addRow(tr("Fit"), starting_image_fit_);
     starting_image_palette_dither_ = new QCheckBox(
         tr("Dither when quantizing this image to the starting palette"));
@@ -3975,8 +4017,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
     source_form->addRow(tr("Source quantization dither"),
                         starting_image_palette_dither_method_);
     starting_image_group_->setToolTip(tr(
-        "The fitted PNG is decoded directly to float32; 16-bit channel values "
-        "are not reduced through an 8-bit intermediate. It controls where source colors appear. When a "
+        "PNG samples and HALF/FLOAT OpenEXR channels are decoded directly to "
+        "float32 without an 8-bit intermediate. The image controls where source colors appear. When a "
         "starting palette is enabled, the image is quantized to that palette "
         "before effects; the two options are intentionally composable."));
     source_layout->addWidget(starting_image_group_);
@@ -4000,7 +4042,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     starting_color_include_alpha_->setToolTip(
         tr("When no starting image or palette is active, generated RGBA tuples "
            "differ by alpha as well as RGB. This setting applies directly; the "
-           "separate palette/PNG source-alpha switch does not disable it."));
+           "separate palette/image source-alpha switch does not disable it."));
     starting_colors_form->addRow(tr("Pattern"), starting_color_mode_);
     starting_colors_form->addRow(starting_color_include_alpha_);
     starting_colors_layout->addLayout(starting_colors_form);
@@ -4336,7 +4378,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         QStringLiteral("planeDisplacementPath"));
     surface_plane_displacement_path_->setReadOnly(true);
     surface_plane_displacement_path_->setPlaceholderText(
-        tr("Choose an 8/16-bit grayscale PNG"));
+        tr("Choose a high-precision PNG or OpenEXR height map"));
     surface_plane_displacement_browse_ = new QPushButton(tr("Choose…"));
     surface_plane_displacement_clear_ = new QPushButton(tr("Clear"));
     height_layout->addWidget(surface_plane_displacement_path_, 1);
@@ -4359,8 +4401,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "Generate the same mesh used at the authored output resolution and "
         "save it as a Wavefront OBJ with UVs and smooth normals."));
     auto* displacement_help = new QLabel(tr(
-        "PNG luminance is treated as linear height data. The midpoint is the "
-        "neutral (zero-height) sample; values below/above it interpolate to "
+        "PNG sample codes and OpenEXR samples are treated as linear height data. "
+        "Single-channel EXR files are supported. The midpoint is the neutral "
+        "(zero-height) sample; values below/above it interpolate to "
         "the signed minimum/maximum. A changed map or setting rebuilds the "
         "cached plane automatically."));
     displacement_help->setWordWrap(true);
@@ -4467,10 +4510,10 @@ QWidget* MainWindow::createLayerSettingsPage() {
     alpha_phase_ = real_editor(-kMaximumRenderParameter,
                                kMaximumRenderParameter, 3, 1.0);
     alpha_use_source_ = new QCheckBox(
-        tr("Use alpha stored in starting palettes and PNG pixels"));
+        tr("Use alpha stored in starting palettes and image pixels"));
     alpha_use_source_->setToolTip(tr(
         "This does not change generated alpha or layer opacity. Turning it off "
-        "ignores palette and PNG alpha non-destructively; those authored values "
+        "ignores palette and image alpha non-destructively; those authored values "
         "remain available when re-enabled."));
     alpha->addRow(alpha_use_source_);
     alpha->addRow(alpha_enabled_);
@@ -4578,7 +4621,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         const QString selected = QFileDialog::getOpenFileName(
             this, tr("Choose plane displacement height map"),
             usableDialogDirectory(preferred),
-            tr("PNG height maps (*.png);;All files (*)"));
+            tr("PNG / OpenEXR height maps (*.png *.exr);;All files (*)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
             if (!displacement.sha256.empty()
@@ -4612,7 +4655,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                                           layer.render.starting_image.basename)));
         }
         if (!reusable.empty()) {
-            labels.push_back(tr("Load a different 8/16-bit PNG from disk…"));
+            labels.push_back(tr("Load a different PNG or OpenEXR from disk…"));
             bool accepted = false;
             const QString selection = QInputDialog::getItem(
                 this, tr("Choose starting image asset"),
@@ -4630,7 +4673,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                 if (!alias_project_attachment(
                         *document_, pvt::starting_image_attachment_id(source.uuid),
                         target_reference, &alias_error)) {
-                    QMessageBox::critical(this, tr("Could not reuse PNG"), alias_error);
+                    QMessageBox::critical(this, tr("Could not reuse image"), alias_error);
                     return;
                 }
                 config_.starting_image.enabled = true;
@@ -4653,13 +4696,13 @@ QWidget* MainWindow::createLayerSettingsPage() {
         }
         const QString selected = QFileDialog::getOpenFileName(
             this, tr("Choose starting image"), usableDialogDirectory(),
-            tr("8/16-bit PNG image (*.png)"));
+            tr("High-precision image (*.png *.exr)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
             if (!config_.starting_image.sha256.empty()
                 && QMessageBox::question(
                        this, tr("Replace embedded starting image?"),
-                       tr("Replace the active layer's current internal PNG binding with %1?")
+                       tr("Replace the active layer's current internal image binding with %1?")
                            .arg(QFileInfo(selected).fileName()),
                        QMessageBox::Yes | QMessageBox::No,
                        QMessageBox::Yes) != QMessageBox::Yes) {
@@ -4760,7 +4803,6 @@ QWidget* MainWindow::createOutputPage() {
     bit_depth_->addItem(tr("16-bit PNG"), 16);
     bit_depth_->addItem(tr("32-bit float EXR"), 32);
     png_compression_ = integer_editor(0, 9);
-    png_compression_->setSpecialValueText(tr("Off (0)"));
     png_compression_->setToolTip(
         tr("PNG compression from 0 (fastest) to 9 (smallest files). Ignored for EXR."));
     dither_enabled_ = new QCheckBox(tr("Dither integer output"));
@@ -8213,12 +8255,14 @@ bool MainWindow::setSurfaceObjSource(const QString& source_path) {
 
 bool MainWindow::setPlaneDisplacementSource(const QString& source_path) {
     if (populating_ || activeLayer() == nullptr) return false;
+    const QString suffix = QFileInfo(source_path).suffix();
     if (!source_path.isEmpty()
-        && QFileInfo(source_path).suffix().compare(
-               QStringLiteral("png"), Qt::CaseInsensitive) != 0) {
+        && suffix.compare(QStringLiteral("png"), Qt::CaseInsensitive) != 0
+        && suffix.compare(QStringLiteral("exr"), Qt::CaseInsensitive) != 0) {
         QMessageBox::warning(
             this, tr("Unsupported height map"),
-            tr("Plane displacement accepts 8/16-bit PNG height maps."));
+            tr("Plane displacement accepts full-precision PNG and HALF/FLOAT "
+               "scanline OpenEXR height maps."));
         return false;
     }
     if (document_ == nullptr) {
@@ -8250,7 +8294,7 @@ bool MainWindow::setPlaneDisplacementSource(const QString& source_path) {
             : QDir::cleanPath(
                   QDir(startup_working_directory_).absoluteFilePath(
                       source_path));
-        if (!pvt::detail::validate_starting_image_source(
+        if (!pvt::detail::validate_data_image_source(
                 resolved.toStdString(), &attachment_error)) {
             QMessageBox::critical(
                 this, tr("Could not decode height map"),
@@ -8315,8 +8359,9 @@ void MainWindow::exportPlaneDisplacementObj() {
         return;
     }
     QString suggested = QString::fromStdString(displacement.basename);
-    if (suggested.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) {
-        suggested.chop(4);
+    const QFileInfo suggested_info(suggested);
+    if (!suggested_info.completeBaseName().isEmpty()) {
+        suggested = suggested_info.completeBaseName();
     }
     suggested += QStringLiteral("-displaced-%1x%2.obj")
                      .arg(config_.width)
@@ -8420,14 +8465,14 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
             pvt::default_project_document());
         document_->project = project_;
     }
+    const QString suffix = QFileInfo(source_path).suffix();
     if (!source_path.isEmpty()
-        && QFileInfo(source_path).suffix().compare(
-               QStringLiteral("png"), Qt::CaseInsensitive) != 0) {
+        && suffix.compare(QStringLiteral("png"), Qt::CaseInsensitive) != 0
+        && suffix.compare(QStringLiteral("exr"), Qt::CaseInsensitive) != 0) {
         QMessageBox::warning(this, tr("Unsupported starting image"),
-                             tr("PVT accepts 8/16-bit PNG starting images. "
-                                "They are decoded directly to float32. "
-                                "32-bit float image input is not currently supported; "
-                                "32-bit OpenEXR is available as an output format."));
+                             tr("PVT accepts full-precision PNG and HALF/FLOAT "
+                                "scanline OpenEXR starting images. Samples are "
+                                "decoded directly to float32."));
         return false;
     }
 
@@ -12596,7 +12641,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             && config_.starting_image.path.empty()) {
             const QSignalBlocker blocker(starting_image_enabled_);
             starting_image_enabled_->setChecked(false);
-            status_->setText(tr("Choose a PNG before enabling the starting image."));
+            status_->setText(tr("Choose a PNG or OpenEXR image before enabling the starting image."));
             return;
         }
         config_.starting_image.enabled = starting_image_enabled_->isChecked();
@@ -12757,7 +12802,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
                 surface_plane_displacement_enabled_);
             surface_plane_displacement_enabled_->setChecked(false);
             status_->setText(
-                tr("Choose a height-map PNG before enabling plane displacement."));
+                tr("Choose a PNG or OpenEXR height map before enabling plane displacement."));
             return;
         }
         config_.surface.plane_displacement.enabled =
@@ -13069,14 +13114,27 @@ void MainWindow::randomizeExistingStackSettings() {
     }
     auto before = captureActiveState();
     auto& random = *QRandomGenerator::global();
-    for (auto& wave : config_.waves) {
-        randomize_wave_settings(wave, random);
+    const pvt::RenderConfig stable = config_;
+    bool randomized = false;
+    for (int attempt = 0; attempt < 32 && !randomized; ++attempt) {
+        config_ = stable;
+        for (auto& wave : config_.waves) {
+            randomize_wave_settings(wave, random);
+        }
+        for (auto& swing : config_.swings) {
+            randomize_swing_settings(swing, random);
+        }
+        for (auto& effect : config_.effects) {
+            randomize_effect_settings(effect, random);
+        }
+        randomized = pvt::validate(config_).ok;
     }
-    for (auto& swing : config_.swings) {
-        randomize_swing_settings(swing, random);
-    }
-    for (auto& effect : config_.effects) {
-        randomize_effect_settings(effect, random);
+    if (!randomized) {
+        config_ = stable;
+        status_->setText(tr(
+            "Could not find a safe randomized value set for this canvas; "
+            "the layer was left unchanged."));
+        return;
     }
     ensureAlphaForTransparency();
     syncActiveRender();
@@ -13102,63 +13160,89 @@ void MainWindow::randomizeStackComposition() {
     }
     auto before = captureActiveState();
     auto& random = *QRandomGenerator::global();
-    config_.waves.clear();
-    config_.swings.clear();
-    config_.effects.clear();
+    const pvt::RenderConfig stable = config_;
+    bool randomized = false;
+    for (int attempt = 0; attempt < 32 && !randomized; ++attempt) {
+        config_.waves.clear();
+        config_.swings.clear();
+        config_.effects.clear();
 
-    const int wave_count = random_integer(random, 2, 6);
-    bool has_enabled_wave = false;
-    for (int index = 0; index < wave_count; ++index) {
-        auto wave = pvt::default_wave(static_cast<std::size_t>(index));
-        wave.id = pvt::allocate_id(config_);
-        wave.enabled = random_chance(random, 0.82);
-        has_enabled_wave = has_enabled_wave || wave.enabled;
-        randomize_wave_settings(wave, random);
-        config_.waves.push_back(std::move(wave));
-    }
-    if (!has_enabled_wave) {
-        config_.waves.front().enabled = true;
-    }
+        const int wave_count = random_integer(random, 2, 6);
+        bool has_enabled_wave = false;
+        for (int index = 0; index < wave_count; ++index) {
+            auto wave = pvt::default_wave(static_cast<std::size_t>(index));
+            wave.id = pvt::allocate_id(config_);
+            wave.enabled = random_chance(random, 0.82);
+            has_enabled_wave = has_enabled_wave || wave.enabled;
+            randomize_wave_settings(wave, random);
+            config_.waves.push_back(std::move(wave));
+        }
+        if (!has_enabled_wave) {
+            config_.waves.front().enabled = true;
+        }
 
-    const int swing_count = random_integer(random, 0, 3);
-    bool has_enabled_swing = false;
-    for (int index = 0; index < swing_count; ++index) {
-        auto swing = pvt::default_swing(static_cast<std::size_t>(index));
-        swing.id = pvt::allocate_id(config_);
-        swing.enabled = random_chance(random, 0.75);
-        swing.waveform = static_cast<pvt::Waveform>(random_integer(random, 0, 3));
-        has_enabled_swing = has_enabled_swing || swing.enabled;
-        randomize_swing_settings(swing, random);
-        config_.swings.push_back(std::move(swing));
-    }
-    if (!has_enabled_swing && !config_.swings.empty()) {
-        config_.swings.front().enabled = true;
-    }
+        const int swing_count = random_integer(random, 0, 3);
+        bool has_enabled_swing = false;
+        for (int index = 0; index < swing_count; ++index) {
+            auto swing = pvt::default_swing(static_cast<std::size_t>(index));
+            swing.id = pvt::allocate_id(config_);
+            swing.enabled = random_chance(random, 0.75);
+            swing.waveform = static_cast<pvt::Waveform>(
+                random_integer(random, 0, 3));
+            has_enabled_swing = has_enabled_swing || swing.enabled;
+            randomize_swing_settings(swing, random);
+            config_.swings.push_back(std::move(swing));
+        }
+        if (!has_enabled_swing && !config_.swings.empty()) {
+            config_.swings.front().enabled = true;
+        }
 
-    std::array<pvt::EffectType, 13> effect_types = {
-        pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
-        pvt::EffectType::Shake, pvt::EffectType::FlagWave, pvt::EffectType::Glow,
-        pvt::EffectType::BlockScale, pvt::EffectType::ParticleField,
-        pvt::EffectType::Blur, pvt::EffectType::Glitch,
-        pvt::EffectType::Starburst, pvt::EffectType::LensDistortion,
-        pvt::EffectType::EdgeDetect, pvt::EffectType::Twirl};
-    constexpr int kMaximumRandomEffects = 6;
-    const int effect_count = random_integer(random, 1, kMaximumRandomEffects);
-    bool has_enabled_effect = false;
-    for (int index = 0; index < effect_count; ++index) {
-        const int selected = random_integer(
-            random, index, static_cast<int>(effect_types.size()) - 1);
-        std::swap(effect_types[static_cast<std::size_t>(index)],
-                  effect_types[static_cast<std::size_t>(selected)]);
-        auto effect = pvt::default_effect(effect_types[static_cast<std::size_t>(index)]);
+        std::array<pvt::EffectType, 13> effect_types = {
+            pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
+            pvt::EffectType::Shake, pvt::EffectType::FlagWave,
+            pvt::EffectType::Glow, pvt::EffectType::BlockScale,
+            pvt::EffectType::ParticleField, pvt::EffectType::Blur,
+            pvt::EffectType::Glitch, pvt::EffectType::Starburst,
+            pvt::EffectType::LensDistortion, pvt::EffectType::EdgeDetect,
+            pvt::EffectType::Twirl};
+        constexpr int kMaximumRandomEffects = 6;
+        const int effect_count = random_integer(
+            random, 1, kMaximumRandomEffects);
+        bool has_enabled_effect = false;
+        for (int index = 0; index < effect_count; ++index) {
+            const int selected = random_integer(
+                random, index, static_cast<int>(effect_types.size()) - 1);
+            std::swap(effect_types[static_cast<std::size_t>(index)],
+                      effect_types[static_cast<std::size_t>(selected)]);
+            auto effect = pvt::default_effect(
+                effect_types[static_cast<std::size_t>(index)]);
+            effect.id = pvt::allocate_id(config_);
+            effect.enabled = random_chance(random, 0.65);
+            has_enabled_effect = has_enabled_effect || effect.enabled;
+            randomize_effect_settings(effect, random);
+            config_.effects.push_back(std::move(effect));
+        }
+        if (!has_enabled_effect) {
+            config_.effects.front().enabled = true;
+        }
+        randomized = pvt::validate(config_).ok;
+    }
+    const bool used_safe_fallback = !randomized;
+    if (used_safe_fallback) {
+        config_ = stable;
+        config_.waves.clear();
+        config_.swings.clear();
+        config_.effects.clear();
+        for (std::size_t index = 0U; index < 2U; ++index) {
+            auto wave = pvt::default_wave(index);
+            wave.id = pvt::allocate_id(config_);
+            wave.enabled = true;
+            config_.waves.push_back(std::move(wave));
+        }
+        auto effect = pvt::default_effect(pvt::EffectType::Glow);
         effect.id = pvt::allocate_id(config_);
-        effect.enabled = random_chance(random, 0.65);
-        has_enabled_effect = has_enabled_effect || effect.enabled;
-        randomize_effect_settings(effect, random);
+        effect.enabled = true;
         config_.effects.push_back(std::move(effect));
-    }
-    if (!has_enabled_effect) {
-        config_.effects.front().enabled = true;
     }
 
     ensureAlphaForTransparency();
@@ -13166,11 +13250,13 @@ void MainWindow::randomizeStackComposition() {
     syncProjectGlobals();
     refreshAll();
     schedulePreview();
-    status_->setText(
-        tr("Created a new mix with %1 waves, %2 swings, and %3 effects.")
-            .arg(config_.waves.size())
-            .arg(config_.swings.size())
-            .arg(config_.effects.size()));
+    status_->setText(used_safe_fallback
+        ? tr("Random choices exceeded this canvas's safe rendering workload; "
+             "a fresh default layer mix was created instead.")
+        : tr("Created a new mix with %1 waves, %2 swings, and %3 effects.")
+              .arg(config_.waves.size())
+              .arg(config_.swings.size())
+              .arg(config_.effects.size()));
     recordActiveStateChange(tr("Randomize layer mix"), std::move(before));
 }
 
@@ -15102,9 +15188,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
             recent_project_limit_,
             hasCustomNewProjectDefaults(), this);
         configure_readable_layouts(&settings_dialog);
-        const auto* tabs = settings_dialog.findChild<QTabWidget*>(
+        auto* tabs = settings_dialog.findChild<QTabWidget*>(
             QStringLiteral("applicationSettingsTabs"));
-        const auto* undo_limit = settings_dialog.findChild<QSpinBox*>(
+        auto* undo_limit = settings_dialog.findChild<QSpinBox*>(
             QStringLiteral("undoLimitPreference"));
         const auto* backend = settings_dialog.findChild<QComboBox*>(
             QStringLiteral("renderBackendPreference"));
@@ -15120,6 +15206,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("rendererCapabilityStatus"));
         settings_dialog.show();
         QApplication::processEvents();
+        bool wheel_edit_safe = false;
+        if (undo_limit != nullptr && tabs != nullptr) {
+            const int before_wheel = undo_limit->value();
+            tabs->setFocus(Qt::OtherFocusReason);
+            const QPoint local = undo_limit->rect().center();
+            const QPoint global = undo_limit->mapToGlobal(local);
+            QWheelEvent wheel(
+                QPointF(local), QPointF(global), QPoint(0, -24), QPoint(),
+                Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false,
+                Qt::MouseEventSynthesizedBySystem);
+            QApplication::sendEvent(undo_limit, &wheel);
+            QWidget* const focus_after_wheel = QApplication::focusWidget();
+            wheel_edit_safe = undo_limit->value() == before_wheel
+                && focus_after_wheel != undo_limit
+                && !undo_limit->isAncestorOf(focus_after_wheel);
+        }
         QScreen* settings_screen = settings_dialog.screen();
         const bool settings_fit_screen = settings_screen == nullptr
             || (settings_dialog.width()
@@ -15134,6 +15236,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || settings_scroll == nullptr || !settings_scroll->widgetResizable()
             || capability_status == nullptr
             || capability_status->text().isEmpty()
+            || !undo_limit->specialValueText().isEmpty()
+            || !recent_limit->specialValueText().isEmpty()
+            || !wheel_edit_safe
             || !settings_fit_screen
             || settings_dialog.undoLimit() != expected_undo_limit
             || settings_dialog.recentProjectLimit() != recent_project_limit_
@@ -15143,6 +15248,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
             }
             return false;
         }
+    }
+    const auto* live_last_good_timeout = live_workspace_->findChild<QSpinBox*>(
+        QStringLiteral("liveLastGoodTimeout"));
+    if (swing_radius_ == nullptr || effect_area_radius_ == nullptr
+        || png_compression_ == nullptr || live_last_good_timeout == nullptr
+        || !swing_radius_->specialValueText().isEmpty()
+        || !effect_area_radius_->specialValueText().isEmpty()
+        || !png_compression_->specialValueText().isEmpty()
+        || !live_last_good_timeout->specialValueText().isEmpty()) {
+        if (error != nullptr) {
+            *error = tr("A numeric editor still replaces zero with words.");
+        }
+        return false;
     }
     // Preference restoration is verified above. Keep the remainder of this
     // deterministic smoke suite independent of whether the current machine
@@ -15300,7 +15418,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     alpha_probe.starting_colors.alpha_maximum = 0.5;
     if (!configuration_requires_alpha(alpha_probe)) {
         if (error != nullptr) {
-            *error = tr("Generated alpha was incorrectly disabled by the palette/PNG source-alpha switch.");
+            *error = tr("Generated alpha was incorrectly disabled by the palette/image source-alpha switch.");
         }
         return false;
     }
@@ -17098,13 +17216,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const bool enabled_effect = std::any_of(
         config_.effects.begin(), config_.effects.end(),
         [](const auto& effect) { return effect.enabled; });
+    const pvt::ValidationResult randomized_validation = pvt::validate(config_);
     if (config_.waves.size() < 2U || config_.waves.size() > 6U
         || config_.swings.size() > 3U
         || config_.effects.empty() || config_.effects.size() > 6U
         || !enabled_wave || !enabled_effect || !unique_randomized_items
-        || !pvt::validate(config_).ok) {
+        || !randomized_validation.ok) {
         if (error != nullptr) {
-            *error = tr("Randomize mix produced an invalid stack composition.");
+            *error = randomized_validation.ok
+                ? tr("Randomize mix produced an invalid stack composition.")
+                : tr("Randomize mix produced invalid values: %1")
+                      .arg(QString::fromStdString(
+                          randomized_validation.message));
         }
         return false;
     }

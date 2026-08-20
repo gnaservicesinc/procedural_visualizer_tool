@@ -323,10 +323,10 @@ bool load_displacement_plane_mesh(
     std::string* error) {
     clear_error(error);
     if (displacement.path.empty()) {
-        return fail(error, "A displacement height-map PNG has not been selected.");
+        return fail(error, "A displacement height-map image has not been selected.");
     }
     std::shared_ptr<const Image> height_image;
-    if (!load_starting_image_source(
+    if (!load_data_image_source(
             displacement.path, height_image, cancel, error)) {
         if (error != nullptr && !error->empty()) {
             *error = "Could not load displacement height map: " + *error;

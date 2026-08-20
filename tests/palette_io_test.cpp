@@ -1,6 +1,7 @@
 #include "palette_io.h"
 
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -34,6 +35,88 @@ void write_text(const fs::path& path, const std::string& text) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output << text;
     CHECK(static_cast<bool>(output));
+}
+
+void append_exr_u32(std::vector<unsigned char>& bytes, std::uint32_t value) {
+    bytes.push_back(static_cast<unsigned char>(value & 0xffU));
+    bytes.push_back(static_cast<unsigned char>((value >> 8U) & 0xffU));
+    bytes.push_back(static_cast<unsigned char>((value >> 16U) & 0xffU));
+    bytes.push_back(static_cast<unsigned char>((value >> 24U) & 0xffU));
+}
+
+void append_exr_u64(std::vector<unsigned char>& bytes, std::uint64_t value) {
+    for (unsigned int shift = 0U; shift < 64U; shift += 8U) {
+        bytes.push_back(static_cast<unsigned char>((value >> shift) & 0xffU));
+    }
+}
+
+void append_exr_string(std::vector<unsigned char>& bytes, const char* text) {
+    while (*text != '\0') {
+        bytes.push_back(static_cast<unsigned char>(*text++));
+    }
+    bytes.push_back(0U);
+}
+
+void append_exr_attribute(std::vector<unsigned char>& header,
+                          const char* name, const char* type,
+                          const std::vector<unsigned char>& value) {
+    append_exr_string(header, name);
+    append_exr_string(header, type);
+    append_exr_u32(header, static_cast<std::uint32_t>(value.size()));
+    header.insert(header.end(), value.begin(), value.end());
+}
+
+bool write_half_rgba_exr(const fs::path& path) {
+    struct Channel {
+        const char* name;
+        std::uint16_t first;
+        std::uint16_t second;
+    };
+    const std::vector<Channel> channels = {
+        {"A", 0x3c00U, 0x3800U}, {"B", 0x3400U, 0x3000U},
+        {"G", 0x3800U, 0x3400U}, {"R", 0x3c00U, 0x3800U}};
+    std::vector<unsigned char> header;
+    append_exr_u32(header, 20000630U);
+    append_exr_u32(header, 2U);
+    std::vector<unsigned char> value;
+    for (const Channel& channel : channels) {
+        append_exr_string(value, channel.name);
+        append_exr_u32(value, 1U);
+        value.insert(value.end(), 4U, 0U);
+        append_exr_u32(value, 1U);
+        append_exr_u32(value, 1U);
+    }
+    value.push_back(0U);
+    append_exr_attribute(header, "channels", "chlist", value);
+    value.assign(1U, 0U);
+    append_exr_attribute(header, "compression", "compression", value);
+    value.clear();
+    append_exr_u32(value, 0U);
+    append_exr_u32(value, 0U);
+    append_exr_u32(value, 1U);
+    append_exr_u32(value, 0U);
+    append_exr_attribute(header, "dataWindow", "box2i", value);
+    append_exr_attribute(header, "displayWindow", "box2i", value);
+    value.assign(1U, 0U);
+    append_exr_attribute(header, "lineOrder", "lineOrder", value);
+    header.push_back(0U);
+
+    constexpr std::uint32_t row_bytes = 16U;
+    const std::uint64_t first_chunk = header.size() + 8U;
+    std::vector<unsigned char> encoded = header;
+    append_exr_u64(encoded, first_chunk);
+    append_exr_u32(encoded, 0U);
+    append_exr_u32(encoded, row_bytes);
+    for (const Channel& channel : channels) {
+        for (const std::uint16_t sample : {channel.first, channel.second}) {
+            encoded.push_back(static_cast<unsigned char>(sample & 0xffU));
+            encoded.push_back(static_cast<unsigned char>(sample >> 8U));
+        }
+    }
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(encoded.data()),
+                 static_cast<std::streamsize>(encoded.size()));
+    return output.good();
 }
 
 palette::PaletteDocument sample_document() {
@@ -292,6 +375,22 @@ void test_exr_image_semantics(const fs::path& directory) {
         CHECK(imported.entries[0U].blue == 0.125);
         CHECK(imported.entries[0U].alpha == 0.75);
         CHECK(imported.entries[1U].source_order == 3U);
+    }
+
+    const fs::path half_path = directory / "palette-half.exr";
+    CHECK(write_half_rgba_exr(half_path));
+    imported = {};
+    summary = {};
+    CHECK(palette::import_palette(half_path.string(),
+                                  palette::PaletteFormat::Auto,
+                                  imported, summary, &error));
+    CHECK(imported.entries.size() == 2U);
+    if (imported.entries.size() == 2U) {
+        CHECK(imported.entries[0U].red == 1.0);
+        CHECK(imported.entries[0U].green == 0.5);
+        CHECK(imported.entries[0U].blue == 0.25);
+        CHECK(imported.entries[1U].red == 0.5);
+        CHECK(imported.entries[1U].alpha == 0.5);
     }
 }
 

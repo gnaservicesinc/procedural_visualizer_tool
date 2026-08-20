@@ -1725,13 +1725,13 @@ void configure_surface(RenderConfig& config,
         auto& displacement = config.surface.plane_displacement;
         const std::string previous_path = displacement.path;
         const bool changed_before_path_prompt = g_prompt_changed;
-        if (!prompt_text("Height-map PNG path", displacement.path,
+        if (!prompt_text("Height-map PNG/OpenEXR path", displacement.path,
                          kMaximumPathBytes)) {
             return;
         }
         if (displacement.path != previous_path) {
             std::string source_error;
-            if (!pvt::detail::validate_starting_image_source(
+            if (!pvt::detail::validate_data_image_source(
                     displacement.path, &source_error)) {
                 std::cout << "Could not decode that height map; the previous map remains: "
                           << source_error << '\n';
@@ -1760,7 +1760,7 @@ void configure_surface(RenderConfig& config,
         prompt_bool("Displace Plane with height map", displacement.enabled);
         if (displacement.enabled && displacement.path.empty()
             && displacement.sha256.empty()) {
-            std::cout << "Choose a height-map PNG before enabling plane displacement.\n";
+            std::cout << "Choose a PNG or OpenEXR height map before enabling plane displacement.\n";
             displacement.enabled = false;
         }
         prompt_real("Minimum displacement", displacement.minimum, -2.0, 0.0);
@@ -2687,10 +2687,10 @@ void print_help(const char* program) {
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
         << "  (0 uses the bounded default of 2)\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping)\n"
-        << "  --height-map PNG  (enable a subdivided displacement Plane)\n"
+        << "  --height-map PNG|EXR  (enable a subdivided displacement Plane)\n"
         << "  --height-min N --height-max N --height-midpoint 0..1\n"
         << "  --height-pixels-per-node N --no-height-map\n"
-        << "  --starting-image PNG --image-fit stretch|contain|cover|tile\n"
+        << "  --starting-image PNG|EXR --image-fit stretch|contain|cover|tile\n"
         << "  --no-starting-image\n"
         << "  --dither blue|bayer|floyd --no-dither\n"
         << "  --output-dir PATH --prefix TEXT --start-frame N --digits N\n"
@@ -3397,7 +3397,7 @@ int main(int argc, char** argv) {
             });
         } else if (option == "--height-map" && valid_output_directory(value)) {
             std::string source_error;
-            if (!pvt::detail::validate_starting_image_source(
+            if (!pvt::detail::validate_data_image_source(
                     value, &source_error)) {
                 std::cerr << "Could not decode the displacement height map: "
                           << source_error << '\n';

@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -156,6 +157,147 @@ bool write_test_png16(const fs::path& path, png_uint_32 width,
     return pixels.size() == PNG_IMAGE_SIZE(image) / sizeof(png_uint_16)
            && png_image_write_to_file(&image, path.string().c_str(), 0,
                                       pixels.data(), 0, nullptr) != 0;
+}
+
+bool write_test_png16_data(const fs::path& path, png_uint_32 width,
+                           png_uint_32 height,
+                           const std::vector<png_uint_16>& pixels,
+                           bool interlaced = false) {
+    if (pixels.size() != static_cast<std::size_t>(width)
+                             * static_cast<std::size_t>(height) * 4U) {
+        return false;
+    }
+    std::vector<unsigned char> raw(pixels.size() * 2U);
+    for (std::size_t index = 0U; index < pixels.size(); ++index) {
+        raw[index * 2U] = static_cast<unsigned char>(pixels[index] >> 8U);
+        raw[index * 2U + 1U] =
+            static_cast<unsigned char>(pixels[index] & 0xffU);
+    }
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * 8U;
+    std::vector<png_bytep> rows(static_cast<std::size_t>(height));
+    for (png_uint_32 row = 0U; row < height; ++row) {
+        rows[static_cast<std::size_t>(row)] =
+            raw.data() + static_cast<std::size_t>(row) * row_bytes;
+    }
+    std::FILE* file = std::fopen(path.string().c_str(), "wb");
+    if (file == nullptr) return false;
+    png_structp png = png_create_write_struct(
+        PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (png == nullptr) {
+        std::fclose(file);
+        return false;
+    }
+    png_infop info = png_create_info_struct(png);
+    if (info == nullptr) {
+        png_destroy_write_struct(&png, nullptr);
+        std::fclose(file);
+        return false;
+    }
+    if (setjmp(png_jmpbuf(png)) != 0) {
+        png_destroy_write_struct(&png, &info);
+        std::fclose(file);
+        return false;
+    }
+    png_init_io(png, file);
+    png_set_IHDR(png, info, width, height, 16, PNG_COLOR_TYPE_RGBA,
+                 interlaced ? PNG_INTERLACE_ADAM7 : PNG_INTERLACE_NONE,
+                 PNG_COMPRESSION_TYPE_BASE,
+                 PNG_FILTER_TYPE_BASE);
+    png_write_info(png, info);
+    png_write_image(png, rows.data());
+    png_write_end(png, info);
+    png_destroy_write_struct(&png, &info);
+    return std::fclose(file) == 0;
+}
+
+void append_test_exr_u32(std::vector<unsigned char>& bytes,
+                         std::uint32_t value) {
+    bytes.push_back(static_cast<unsigned char>(value & 0xffU));
+    bytes.push_back(static_cast<unsigned char>((value >> 8U) & 0xffU));
+    bytes.push_back(static_cast<unsigned char>((value >> 16U) & 0xffU));
+    bytes.push_back(static_cast<unsigned char>((value >> 24U) & 0xffU));
+}
+
+void append_test_exr_u64(std::vector<unsigned char>& bytes,
+                         std::uint64_t value) {
+    for (unsigned int shift = 0U; shift < 64U; shift += 8U) {
+        bytes.push_back(static_cast<unsigned char>((value >> shift) & 0xffU));
+    }
+}
+
+void append_test_exr_string(std::vector<unsigned char>& bytes,
+                            const char* value) {
+    while (*value != '\0') {
+        bytes.push_back(static_cast<unsigned char>(*value++));
+    }
+    bytes.push_back(0U);
+}
+
+void append_test_exr_attribute(std::vector<unsigned char>& header,
+                               const char* name, const char* type,
+                               const std::vector<unsigned char>& value) {
+    append_test_exr_string(header, name);
+    append_test_exr_string(header, type);
+    append_test_exr_u32(header, static_cast<std::uint32_t>(value.size()));
+    header.insert(header.end(), value.begin(), value.end());
+}
+
+bool write_test_half_y_exr(const fs::path& path, std::uint32_t width,
+                           std::uint32_t height,
+                           const std::vector<std::uint16_t>& samples) {
+    if (width == 0U || height == 0U
+        || samples.size()
+               != static_cast<std::size_t>(width)
+                      * static_cast<std::size_t>(height)) {
+        return false;
+    }
+    std::vector<unsigned char> header;
+    append_test_exr_u32(header, 20000630U);
+    append_test_exr_u32(header, 2U);
+    std::vector<unsigned char> value;
+    append_test_exr_string(value, "Y");
+    append_test_exr_u32(value, 1U);
+    value.insert(value.end(), 4U, 0U);
+    append_test_exr_u32(value, 1U);
+    append_test_exr_u32(value, 1U);
+    value.push_back(0U);
+    append_test_exr_attribute(header, "channels", "chlist", value);
+    value.assign(1U, 0U);
+    append_test_exr_attribute(header, "compression", "compression", value);
+    value.clear();
+    append_test_exr_u32(value, 0U);
+    append_test_exr_u32(value, 0U);
+    append_test_exr_u32(value, width - 1U);
+    append_test_exr_u32(value, height - 1U);
+    append_test_exr_attribute(header, "dataWindow", "box2i", value);
+    append_test_exr_attribute(header, "displayWindow", "box2i", value);
+    value.assign(1U, 0U);
+    append_test_exr_attribute(header, "lineOrder", "lineOrder", value);
+    header.push_back(0U);
+
+    const std::uint64_t row_bytes = static_cast<std::uint64_t>(width) * 2U;
+    const std::uint64_t first_chunk = static_cast<std::uint64_t>(header.size())
+                                      + static_cast<std::uint64_t>(height) * 8U;
+    const std::uint64_t chunk_bytes = 8U + row_bytes;
+    std::vector<unsigned char> encoded = header;
+    for (std::uint32_t y = 0U; y < height; ++y) {
+        append_test_exr_u64(
+            encoded, first_chunk + static_cast<std::uint64_t>(y) * chunk_bytes);
+    }
+    for (std::uint32_t y = 0U; y < height; ++y) {
+        append_test_exr_u32(encoded, y);
+        append_test_exr_u32(encoded, static_cast<std::uint32_t>(row_bytes));
+        for (std::uint32_t x = 0U; x < width; ++x) {
+            const std::uint16_t half = samples[
+                static_cast<std::size_t>(y) * width + x];
+            encoded.push_back(static_cast<unsigned char>(half & 0xffU));
+            encoded.push_back(static_cast<unsigned char>(half >> 8U));
+        }
+    }
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(encoded.data()),
+                 static_cast<std::streamsize>(encoded.size()));
+    return output.good();
 }
 
 void test_plane_displacement_mesh(const fs::path& directory) {
@@ -593,6 +735,97 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
                   == source_16_values[index]);
         }
     }
+    const fs::path data_16 = directory / "height-data-16.png";
+    CHECK(write_test_png16_data(data_16, 2U, 1U, source_16_values));
+    std::shared_ptr<const pvt::Image> decoded_data_16;
+    CHECK(pvt::detail::load_data_image_source(
+        data_16.string(), decoded_data_16, nullptr, &precision_error));
+    CHECK(decoded_data_16 != nullptr && decoded_data_16->pixels.size() == 8U);
+    if (decoded_data_16 != nullptr && decoded_data_16->pixels.size() == 8U) {
+        for (std::size_t index = 0U; index < source_16_values.size(); ++index) {
+            CHECK(std::llround(decoded_data_16->pixels[index] * 65535.0F)
+                  == source_16_values[index]);
+        }
+    }
+    const fs::path data_16_interlaced =
+        directory / "height-data-16-interlaced.png";
+    CHECK(write_test_png16_data(data_16_interlaced, 2U, 1U,
+                                source_16_values, true));
+    std::shared_ptr<const pvt::Image> decoded_data_16_interlaced;
+    CHECK(pvt::detail::load_data_image_source(
+        data_16_interlaced.string(), decoded_data_16_interlaced, nullptr,
+        &precision_error));
+    CHECK(decoded_data_16_interlaced != nullptr
+          && decoded_data_16_interlaced->pixels.size() == 8U);
+    if (decoded_data_16_interlaced != nullptr
+        && decoded_data_16_interlaced->pixels.size() == 8U) {
+        for (std::size_t index = 0U; index < source_16_values.size(); ++index) {
+            CHECK(std::llround(
+                      decoded_data_16_interlaced->pixels[index] * 65535.0F)
+                  == source_16_values[index]);
+        }
+    }
+
+    // Common grayscale height maps use one HALF channel rather than RGB.
+    // Import must preserve all representable half values and replicate Y to
+    // RGB without requiring an 8-bit or display-color intermediate.
+    const fs::path half_exr = directory / "single-channel-half-height.exr";
+    const std::vector<std::uint16_t> half_values = {
+        0x0000U, 0x3400U, 0x3800U, 0x3c00U}; // 0, .25, .5, 1
+    CHECK(write_test_half_y_exr(half_exr, 2U, 2U, half_values));
+    std::shared_ptr<const pvt::Image> decoded_half;
+    CHECK(pvt::detail::load_data_image_source(
+        half_exr.string(), decoded_half, nullptr, &precision_error));
+    CHECK(decoded_half != nullptr && decoded_half->width == 2
+          && decoded_half->height == 2 && decoded_half->pixels.size() == 16U);
+    if (decoded_half != nullptr && decoded_half->pixels.size() == 16U) {
+        const std::array<float, 4U> expected{{0.0F, 0.25F, 0.5F, 1.0F}};
+        for (std::size_t pixel = 0U; pixel < expected.size(); ++pixel) {
+            CHECK(decoded_half->pixels[pixel * 4U] == expected[pixel]);
+            CHECK(decoded_half->pixels[pixel * 4U + 1U] == expected[pixel]);
+            CHECK(decoded_half->pixels[pixel * 4U + 2U] == expected[pixel]);
+            CHECK(decoded_half->pixels[pixel * 4U + 3U] == 1.0F);
+        }
+    }
+
+    // The application's own full-float EXR output must round-trip as an input
+    // with no additional quantization, including HDR and negative RGB data.
+    const fs::path float_exr = directory / "starting-image-float.exr";
+    pvt::Image float_source;
+    float_source.width = 16;
+    float_source.height = 16;
+    float_source.pixels.assign(16U * 16U * 4U, 0.0F);
+    for (std::size_t pixel = 0U; pixel < 16U * 16U; ++pixel) {
+        float_source.pixels[pixel * 4U + 3U] = 1.0F;
+    }
+    const std::array<float, 16U> precision_samples{{
+        -0.125F, 0.1234567F, 2.25F, 1.0F,
+        0.33333334F, 0.75F, 1.5F, 0.5F,
+        4.0F, -1.25F, 0.0625F, 0.25F,
+        0.875F, 1.125F, -0.5F, 0.75F}};
+    std::copy(precision_samples.begin(), precision_samples.end(),
+              float_source.pixels.begin());
+    pvt::RenderConfig float_output = pvt::default_config();
+    float_output.width = float_source.width;
+    float_output.height = float_source.height;
+    float_output.output.bit_depth = 32;
+    float_output.output.write_alpha = true;
+    float_output.output.overwrite_existing = true;
+    const bool wrote_float_source = pvt::write_image(
+        float_exr.string(), float_source, float_output, 0U, &precision_error);
+    if (!wrote_float_source) {
+        std::cerr << "high-precision EXR fixture: " << precision_error << '\n';
+    }
+    CHECK(wrote_float_source);
+    std::shared_ptr<const pvt::Image> decoded_float;
+    const bool loaded_float_source = pvt::detail::load_starting_image_source(
+        float_exr.string(), decoded_float, nullptr, &precision_error);
+    if (!loaded_float_source) {
+        std::cerr << "high-precision EXR import: " << precision_error << '\n';
+    }
+    CHECK(loaded_float_source);
+    CHECK(decoded_float != nullptr
+          && decoded_float->pixels == float_source.pixels);
 
     pvt::RenderConfig image_config = pvt::default_config();
     image_config.width = 16;

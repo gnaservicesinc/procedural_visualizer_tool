@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **7.0.0**. The version is read from `VERSION` by every
+Current product version: **7.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,33 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 7.0.1 high-precision image input and cross-platform reliability
+
+Height maps and layer starting images now accept both PNG and OpenEXR. PNG data
+maps preserve their native 8- or 16-bit sample codes without applying a display
+transfer function; OpenEXR scanline images retain 16-bit HALF or 32-bit FLOAT
+channels in the renderer's float32 linear pipeline. Single-channel EXR height
+maps are supported directly, while RGB/RGBA inputs remain available for both
+data maps and artwork. Palette-image import also accepts HALF or FLOAT EXR.
+Supported EXR compression is NONE, RLE, ZIPS, and ZIP.
+
+Windows and Linux surface acceleration now negotiate several public Qt OpenGL
+3.3 profiles against the actual context format before creating the offscreen
+surface. Drivers that provide hardware OpenGL without threaded-context support
+can render on the GUI thread instead of losing acceleration. Independent project
+layers use two bounded CPU lanes for CPU-only stages and fallback scenes, which
+keeps preview and export responsive when only part of a composition is portable
+to OpenGL.
+
+Numeric editors no longer replace zero with phrases such as `Whole layer (0)`;
+the meaning stays in the adjacent label so zero remains ordinary editable text.
+Unfocused spin boxes and selectors forward precision-touchpad wheel gestures to
+their containing scroll area, preventing two-finger navigation from moving
+focus or changing values. The Ubuntu ARM64 Snap build also gains the missing
+standard-library include required by GCC 13. Randomized layer values and mixes
+are now retried against the real canvas/workload validator, eliminating a rare
+unsafe particle combination.
 
 ## 7.0.0 Mic clocks and Live Preview Output
 
@@ -167,7 +194,8 @@ share the same ray intersection, UV, phase, and tilt semantics; selecting
 Cylinder no longer produces a rectangular box mask.
 
 The built-in **Plane** can now generate real height-field geometry from an
-embedded 8/16-bit PNG. Linear PNG luminance below and above an artist-selected
+embedded 8/16-bit PNG or 16-bit HALF/32-bit FLOAT OpenEXR image. Raw linear
+sample luminance below and above an artist-selected
 neutral midpoint maps independently to signed minimum and maximum displacement.
 **Pixel-to-node ratio** controls mesh density: `1` creates one vertex per render
 pixel, while larger values reduce geometry and always retain both outer edges.
@@ -219,7 +247,7 @@ image/palette alpha non-destructively.
 The CPU renderer, Metal renderer, project transparency analysis, export safety,
 Live target labels, CLI wording, and GUI defaults now share that contract.
 Regression coverage includes the reported saved-state combination—generated
-alpha enabled while palette/PNG alpha is disabled—and verifies real layer
+alpha enabled while palette/image alpha is disabled—and verifies real layer
 compositing as well as CPU/Metal parity. This patch does not change public
 structure layout, SONAME 4, setup format 12, or project-bundle formats.
 
@@ -270,7 +298,7 @@ unchanged: the layer clock replaces the project clock. Enabling the advanced
 switch exposes Replace, Add, Difference, Soft XOR, and exact 24-bit XOR.
 
 Starting palettes now import and export GIMP GPL, Krita KPL, GIMP-style CSS,
-Python, PHP, Java and hex text, plus PNG and FLOAT OpenEXR palette images. Image
+Python, PHP, Java and hex text, plus PNG and HALF/FLOAT OpenEXR palette images. Image
 pixels are traversed top-to-bottom and left-to-right; fully transparent pixels
 are ignored, exact decoded duplicates keep only their first occurrence, and a
 review summary is shown before Replace or Append. Entry names, grid columns,
@@ -552,7 +580,7 @@ sudo apt install procedural-visualizer-tool
   may create other colors afterward. Presets never silently change
   whether the starting palette is enabled.
   The UI also imports/exports GIMP GPL, Krita KPL, CSS, Python, PHP, Java, hex
-  text, PNG, and FLOAT EXR. Code-looking formats are parsed only as bounded data
+  text, PNG, and HALF/FLOAT EXR. Code-looking formats are parsed only as bounded data
   and are never executed. PNG/EXR image palettes import each non-fully-
   transparent pixel in row-major order and remove exact decoded duplicates.
   Import and export summaries make skipped colors and format losses explicit.
@@ -579,7 +607,7 @@ sudo apt install procedural-visualizer-tool
   blend amount; deterministic multi-octave Domain Warp adds strength, scale,
   integer loop cycles, and a full 64-bit seed. Both preserve the loop seam and
   bypass authored starting-image pixels.
-- An optional embedded 8/16-bit PNG starting image per layer, with Stretch,
+- An optional embedded 8/16-bit PNG or HALF/FLOAT OpenEXR starting image per layer, with Stretch,
   Contain, Cover, and Tile fitting. The decoder converts directly to the
   float32 linear working image without an 8-bit intermediate. It replaces
   procedural generation; an enabled starting palette may then quantize those
@@ -1174,13 +1202,13 @@ project's managed attachment cache immediately.
 To generate and map a displaced Plane from a height map:
 
 ```sh
-./build/pvt-render --render --height-map maps/terrain.png \
+./build/pvt-render --render --height-map maps/terrain.exr \
   --height-min -0.3 --height-max 0.55 --height-midpoint 0.5 \
   --height-pixels-per-node 4 --frames 120 \
   --output-dir preview --prefix terrain_
 ```
 
-`--height-map` selects Plane mapping, embeds the PNG, enables final RGBA, and
+`--height-map` selects Plane mapping, embeds the PNG or OpenEXR image, enables final RGBA, and
 builds geometry at the effective render resolution. The four numeric controls
 may be applied before or after the map because options are processed left to
 right. `--no-height-map` bypasses displacement without discarding the embedded
@@ -1224,13 +1252,15 @@ relative paths in the user's home folder, and never treats `.` as filesystem roo
 
 ## Displacement Plane surfaces
 
-Plane displacement samples the selected PNG across a regular output-space
+Plane displacement samples the selected PNG or OpenEXR image across a regular output-space
 grid. `pixels_per_node = 1` produces `(width x height)` vertices. For larger
 ratios, each dimension uses `1 + ceil((dimension - 1) / ratio)` vertices so the
 right and bottom edges remain exact even when the ratio does not divide the
 resolution. Triangles share per-vertex smooth normals computed from the actual
-height field. PNG alpha is ignored; linear RGB is reduced to Rec. 709 luminance
-and clamped to the normalized height-data range.
+height field. Image alpha is ignored; raw PNG samples and HALF/FLOAT OpenEXR
+samples are treated as linear data. RGB is reduced to Rec. 709 luminance and
+clamped to the normalized height-data range; a single EXR data channel is
+replicated directly.
 
 The minimum displacement is constrained to `[-2, 0]`, maximum to `[0, 2]`, and
 midpoint to `[0, 1]`. A sample equal to midpoint has zero height; the two sides
@@ -1409,7 +1439,8 @@ features, global/active-layer clock interpolation, duration mapping and response
 routing, native PNG/ProRes/HEVC movies, synchronized multi-source audio mixing,
 Data-only exclusion, hardware-required encoder
 selection, video cancellation/collision safety,
-8/16-bit RGB/RGBA PNG data, compression levels 0 and 9, FLOAT RGB/RGBA EXR channels,
+8/16-bit RGB/RGBA PNG data, raw 16-bit PNG height samples, compression levels 0
+and 9, and HALF/FLOAT single-channel or RGB/RGBA EXR input plus FLOAT EXR output,
 deterministic dithering, byte-identical one/four-worker sequence output,
 callback/cancel behavior, sequence collision preflight, Unicode paths,
 CPU/Metal base/effect/analytic-surface image and straight-alpha parity,

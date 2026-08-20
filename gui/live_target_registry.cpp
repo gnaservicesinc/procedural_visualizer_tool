@@ -456,7 +456,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Alpha"), LiveTargetKind::Real,
                    -kMaximumRenderParameter, kMaximumRenderParameter,
                    render.alpha.phase_degrees, [](pvt::RenderData& r, double v) { r.alpha.phase_degrees = v; });
-        add_nested(QStringLiteral("alpha.use_source"), QObject::tr("Use palette/PNG alpha"),
+        add_nested(QStringLiteral("alpha.use_source"), QObject::tr("Use palette/image alpha"),
                    QObject::tr("Alpha"), LiveTargetKind::Boolean, 0, 1,
                    render.alpha.use_source_alpha, [](pvt::RenderData& r, double v) { r.alpha.use_source_alpha = v >= 0.5; });
         add_nested(QStringLiteral("quantization.enabled"), QObject::tr("Quantization"),

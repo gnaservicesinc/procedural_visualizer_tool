@@ -811,7 +811,7 @@ enum class PaletteColorEncoding : std::uint8_t {
 };
 
 // Palette component values retain their source encoding. Ordinary authored
-// colors use display/sRGB; imported FLOAT EXR and linear Krita values remain
+// colors use display/sRGB; imported HALF/FLOAT EXR and linear Krita values remain
 // linear and may carry finite HDR or negative RGB. When enabled, the palette
 // selects the procedural layer's starting colors in linear light.
 // Procedural slope lighting, Texture effects, surface lighting, mapped-object
@@ -878,7 +878,7 @@ struct AlphaConfig {
     double spatial_frequency = 2.0;
     int cycles_per_loop = 1;
     double phase_degrees = 0.0;
-    // Ignores alpha carried by starting-palette colors and embedded PNG pixels
+    // Ignores alpha carried by starting-palette colors and embedded image pixels
     // when false. Explicitly generated alpha remains controlled by
     // StartingColorConfig::include_alpha. This does not change
     // LayerConfig::opacity, and ignored authored alpha remains available when
@@ -955,8 +955,9 @@ struct PostProcessConfig {
 };
 
 // Optional height-field geometry for the built-in Plane surface. The height
-// PNG is interpreted as linear grayscale data: `midpoint` is the neutral
-// sample, while samples below/above it interpolate to minimum/maximum. A
+// PNG sample codes and HALF/FLOAT OpenEXR channels are interpreted as linear
+// grayscale data: `midpoint` is the neutral sample, while samples below/above
+// it interpolate to minimum/maximum. A
 // pixels_per_node value of 1 creates one mesh vertex for every render pixel;
 // larger values provide a deliberate performance/geometry tradeoff.
 struct PlaneDisplacementConfig {

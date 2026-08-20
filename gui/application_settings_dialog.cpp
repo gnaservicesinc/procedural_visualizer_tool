@@ -70,10 +70,9 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     undo_limit_->setRange(kMinimumUndoLimit, kMaximumUndoLimit);
     undo_limit_->setSingleStep(10);
     undo_limit_->setSuffix(tr(" steps"));
-    undo_limit_->setSpecialValueText(tr("Unlimited"));
     undo_limit_->setValue(std::clamp(undoLimit, kMinimumUndoLimit,
                                      kMaximumUndoLimit));
-    history_form->addRow(tr("Maximum undo steps"), undo_limit_);
+    history_form->addRow(tr("Maximum undo steps (0 = unlimited)"), undo_limit_);
     history_form->addRow(
         explanatory_label(
             tr("Changing this limit clears the current session's undo and redo "
@@ -87,10 +86,10 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     recent_project_limit_ = new QSpinBox(recent_group);
     recent_project_limit_->setObjectName(QStringLiteral("recentProjectLimitPreference"));
     recent_project_limit_->setRange(0, kMaximumRecentProjectLimit);
-    recent_project_limit_->setSpecialValueText(tr("Disabled"));
     recent_project_limit_->setValue(std::clamp(
         recentProjectLimit, 0, kMaximumRecentProjectLimit));
-    recent_form->addRow(tr("Projects shown"), recent_project_limit_);
+    recent_form->addRow(tr("Projects shown (0 = disabled)"),
+                        recent_project_limit_);
     recent_form->addRow(explanatory_label(
         tr("The File menu shows each project's name and full path. This is a local "
            "application preference and is not stored inside projects; its only "
@@ -155,9 +154,10 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 1);
     render_backend_->setToolTip(
         tr("CPU is the deterministic reference renderer. CPU + GPU uses Metal "
-           "on macOS and accelerates supported analytic 3D surfaces with OpenGL "
-           "on Windows and Linux. GPU is strict and reports unsupported work or "
-           "runtime acceleration failures instead of silently retrying on CPU."));
+           "on macOS, accelerates supported analytic 3D surfaces with OpenGL "
+           "on Windows and Linux, and renders independent layers on two CPU "
+           "lanes. GPU is strict and reports unsupported work or runtime "
+           "acceleration failures instead of silently retrying on CPU."));
     backend_form->addRow(tr("Backend"), render_backend_);
     const pvt::RendererCapabilities capabilities = pvt::renderer_capabilities();
     QString accelerator_status;
@@ -182,10 +182,11 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
         explanatory_label(
             tr("This backend is used for both live preview and export. CPU + GPU "
                "is recommended for maximum throughput. On Windows and Linux, "
-               "OpenGL accelerates built-in Cylinder, Sphere, and Cube surface "
-               "mapping on Windows and Linux; Windows also accelerates flat "
-               "Plane rotation. Displacement planes and imported OBJ meshes "
-               "remain ordered CPU stages."),
+               "Qt OpenGL accelerates built-in Cylinder, Sphere, and Cube "
+               "surface mapping; Windows also accelerates flat Plane rotation. "
+               "Independent layers use two bounded CPU lanes even if the GPU "
+               "does not support a frame. Displacement planes and imported OBJ "
+               "meshes remain ordered CPU stages."),
             backend_group));
     rendering_layout->addWidget(backend_group);
     rendering_layout->addStretch(1);

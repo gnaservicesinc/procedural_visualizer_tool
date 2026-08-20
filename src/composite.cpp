@@ -13,6 +13,7 @@
 #include <limits>
 #include <locale>
 #include <new>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -828,12 +829,6 @@ bool render_project_with_backend_validated(
     Image& destination,
     const std::atomic_bool* cancel,
     std::string* error) {
-    if (options.backend == RenderBackend::Cpu) {
-        return render_project_at_phase_validated(
-            project, normalized_phase, synchronized_frame,
-            destination, cancel, error);
-    }
-
     std::size_t pixel_count = 0U;
     std::size_t component_count = 0U;
     if (!checked_multiply(static_cast<std::size_t>(project.canvas.width),
@@ -925,21 +920,76 @@ bool render_project_with_backend_validated(
     // memory with the layer count.
     std::string metal_device;
     std::string metal_status;
-    const bool metal_available = detail::metal_backend_available(
-        &metal_device, &metal_status);
+    const bool metal_available = options.backend == RenderBackend::CpuAndGpu
+        && detail::metal_backend_available(&metal_device, &metal_status);
 
     // The portable OpenGL backend accelerates the analytic surface stage
     // inside each reference render rather than occupying an independent
     // whole-layer lane. Preserve the requested CPU + GPU policy so every
     // eligible Windows/Linux layer reaches that stage.
     if (!metal_available) {
-        for (const std::size_t index : contributing) {
-            Image image;
-            std::string layer_error;
-            if (!render_one(index, options, image, layer_error)) {
-                return contextual_failure(index, layer_error);
+        // Independent layers can use two bounded CPU lanes even when the
+        // selected platform GPU is unavailable or the user explicitly chose
+        // the reference CPU backend. Rendering remains deterministic because
+        // completed images are composited only afterward in authored order.
+        for (std::size_t position = 0U; position < contributing.size();) {
+            const std::size_t first_index = contributing[position];
+            if (position + 1U >= contributing.size()) {
+                Image image;
+                std::string layer_error;
+                if (!render_one(first_index, options, image, layer_error)) {
+                    return contextual_failure(first_index, layer_error);
+                }
+                if (!composite_one(first_index, image)) return false;
+                ++position;
+                continue;
             }
-            if (!composite_one(index, image)) return false;
+
+            const std::size_t second_index = contributing[position + 1U];
+            const ValidationResult first_validation = validate(
+                materialize(first_index));
+            const ValidationResult second_validation = validate(
+                materialize(second_index));
+            std::size_t concurrent_peak = 0U;
+            const bool bounded_pair = first_validation.ok
+                && second_validation.ok
+                && checked_add(first_validation.estimated_peak_bytes,
+                               second_validation.estimated_peak_bytes,
+                               concurrent_peak);
+            if (!bounded_pair) {
+                for (const std::size_t index : {first_index, second_index}) {
+                    Image image;
+                    std::string layer_error;
+                    if (!render_one(index, options, image, layer_error)) {
+                        return contextual_failure(index, layer_error);
+                    }
+                    if (!composite_one(index, image)) return false;
+                }
+                position += 2U;
+                continue;
+            }
+
+            Image first_image;
+            Image second_image;
+            std::string first_error;
+            std::string second_error;
+            bool first_ok = false;
+            std::thread first_worker([&] {
+                first_ok = render_one(first_index, options, first_image,
+                                      first_error);
+            });
+            const bool second_ok = render_one(second_index, options,
+                                              second_image, second_error);
+            first_worker.join();
+            if (!first_ok) return contextual_failure(first_index, first_error);
+            if (!second_ok) {
+                return contextual_failure(second_index, second_error);
+            }
+            if (!composite_one(first_index, first_image)
+                || !composite_one(second_index, second_image)) {
+                return false;
+            }
+            position += 2U;
         }
         destination = std::move(accumulator);
         return true;

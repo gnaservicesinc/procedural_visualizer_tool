@@ -1043,11 +1043,12 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     audio_grace->setRange(0, kMaximumUiInteger);
     audio_grace->setSuffix(q->tr(" ms"));
     last_good_timeout = new QSpinBox;
+    last_good_timeout->setObjectName(QStringLiteral("liveLastGoodTimeout"));
     last_good_timeout->setRange(0, kMaximumUiInteger);
     last_good_timeout->setSuffix(q->tr(" ms"));
-    last_good_timeout->setSpecialValueText(q->tr("Hold indefinitely"));
     output_form->addRow(q->tr("Audio dropout grace"), audio_grace);
-    output_form->addRow(q->tr("Last-good then black"), last_good_timeout);
+    output_form->addRow(q->tr("Last-good then black (0 = hold)"),
+                        last_good_timeout);
     prevent_sleep = new QCheckBox(q->tr(
         "Prevent device sleep while Live is running (supported platforms)"));
     output_form->addRow(q->tr("Show continuity"), prevent_sleep);
@@ -2992,7 +2993,6 @@ void LiveWorkspace::Impl::editMapping(int index) {
     auto* endpoint_combo = new QComboBox;
     auto* channel = new QSpinBox;
     channel->setRange(0, 16);
-    channel->setSpecialValueText(q->tr("Omni"));
     channel->setValue(initial.midi_channel);
     auto* number = new QSpinBox;
     number->setRange(0, 127);
@@ -3009,7 +3009,7 @@ void LiveWorkspace::Impl::editMapping(int index) {
     form->addRow({}, enabled);
     form->addRow(q->tr("Input"), input);
     form->addRow(q->tr("Logical role"), endpoint_combo);
-    form->addRow(q->tr("MIDI channel"), channel);
+    form->addRow(q->tr("MIDI channel (0 = omni)"), channel);
     form->addRow(q->tr("Control / note"), number);
     form->addRow(q->tr("OSC address"), address);
     form->addRow(q->tr("Behavior"), mode);

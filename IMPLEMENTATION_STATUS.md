@@ -6,6 +6,41 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 7.0.1 high-precision imports and Windows reliability
+
+Height-map and starting-image attachment flows now detect PNG or OpenEXR by
+signature. Data-map PNG decode preserves native 8/16-bit sample codes without a
+display transfer, and EXR scanline decode preserves HALF/FLOAT linear channels,
+including direct single-channel height maps. NONE, RLE, ZIPS, and ZIP blocks are
+bounded and supported. Starting images retain their existing color-source
+semantics, and palette image import now accepts HALF as well as FLOAT EXR. The
+public data model, setup format 15, layer format 13, and SONAME 7 are unchanged.
+
+The Qt OpenGL surface backend now tries core, compatibility, and unprofiled 3.3
+contexts; creates its offscreen surface from the negotiated context format; and
+retains hardware acceleration on the GUI thread when a Windows driver does not
+support threaded OpenGL. Non-Metal projects also render independent layers in
+two bounded CPU lanes before ordered compositing, reducing the penalty of
+OpenGL-ineligible stages without weakening strict-GPU errors.
+
+Zero-valued numeric editors display ordinary numeric text and put meanings such
+as whole-layer, unlimited, disabled, hold, and omni in their labels. Unfocused
+spin boxes and combo boxes forward wheel/touchpad navigation to their scrolling
+container, avoiding accidental focus and value changes. GCC's required
+`<optional>` include restores the Noble ARM64 Snap build. Layer randomization
+now retries against the real canvas/workload validator and uses a valid default
+mix if no random candidate is safe.
+
+Local 7.0.1 release validation passes all 24 native Release tests, all 23 C++20
+tests, all 23 AddressSanitizer plus UndefinedBehaviorSanitizer tests, and all 24
+shared-library tests. An external CMake consumer configured, linked, and ran
+against a clean install of `libProceduralVisualizerTool.7.0.1.dylib`. The
+distribution verifier checked 26 Mach-O files; deep strict signing, embedded
+CLI version/self-test, packaged Cocoa smoke, arm64, plist version, deployment
+target, and `/usr/lib` RPATH checks pass. FFmpeg-generated HALF and FLOAT height
+maps passed end-to-end with NONE, RLE, ZIPS, and ZIP compression. Windows,
+Linux, and Snap packages remain the tag-triggered remote matrix's responsibility.
+
 ## 7.0.0 Mic clocks and realtime preview output
 
 Both standard clock selectors expose a GUI-only **Mic (Live)...** choice. It
@@ -248,7 +283,7 @@ regression rejects a rectangular alpha bounding box, while the existing
 neutral-curvature, shell-alpha, distinct-rear-color, loop, and CPU/Metal parity
 contracts remain active.
 
-Plane mapping now owns optional `PlaneDisplacementConfig` state: embedded PNG
+Plane mapping now owns optional `PlaneDisplacementConfig` state: embedded image
 path/content identity, signed minimum and maximum height, normalized zero-height
 midpoint, and positive pixels-per-node ratio. A checked grid generator samples
 linear PNG luminance, preserves both output edges, emits indexed triangles,
@@ -452,7 +487,7 @@ and project layer format 9 persist these values and recover neutral behavior
 when older records are absent.
 
 Palette interchange is implemented as a non-executing, bounded parser/exporter
-for GIMP GPL, Krita KPL, GIMP-style CSS/Python/PHP/Java/text, PNG, and FLOAT EXR.
+for GIMP GPL, Krita KPL, GIMP-style CSS/Python/PHP/Java/text, PNG, and HALF/FLOAT EXR.
 Image palettes traverse row-major, ignore alpha-zero pixels, and keep the first
 exact decoded duplicate. The UI presents a structured summary before Replace or
 Append and reports precision/name/alpha/encoding loss after export. Palette
@@ -534,10 +569,10 @@ full-resolution coordinates in reduced previews. Authored palettes and images
 are intentionally outside that generated-range stage. With all procedural
 controls disabled the ordered generated source is time-invariant, block size
 is honored, and current-frame/sequence exports sample the same source placement
-as preview. Direct 16-bit PNG decode coverage
-proves that source values never pass through an 8-bit intermediate; 32-bit
-FLOAT remains available for EXR output, while starting-image input is explicitly
-8/16-bit PNG.
+as preview. Direct 16-bit PNG decode coverage proves that source values never
+pass through an 8-bit intermediate. PNG data images retain raw sample codes,
+and starting images, height maps, and palette images accept bounded HALF/FLOAT
+OpenEXR while 32-bit FLOAT remains the EXR output representation.
 
 Metal now renders generated orderings, generated/source alpha, fitted-image
 palette selection and parallel dithers, reusable path bindings, and particle
@@ -693,7 +728,7 @@ refuses a save rather than silently dropping malformed internal preservation
 data.
 
 This pass also closes former remaining-work items 2 through 6. Layers can use a
-bounded embedded PNG source with Stretch, Contain, Cover, or Tile fitting and a
+bounded embedded PNG or HALF/FLOAT OpenEXR source with Stretch, Contain, Cover, or Tile fitting and a
 shared bounded decoded-image cache. Reusable project-level closed cubic paths
 have stable path/node IDs, explicit handles and handle policies, a four-node
 ellipse tool, bounded arc-length sampling, and independently clocked bindings
@@ -972,7 +1007,7 @@ consumers do not inherit minizip requirements.
 | 30 | Per-layer starting palettes | Complete | One or more embedded sRGB source colors through signed-int UI/API indexing, six presets, custom GUI/CLI editing, reliable independent enablement, and once-per-procedural-block linear-light selection. Lighting and effects may create other colors afterward; post-effects quantization remains separate. |
 | 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization on both CPU and Metal. |
 | 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, output-scaled generated sources, fitted-image palette/dither and alpha handling, path resolution, particles, starting images, motion, analytic surfaces/effects, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Project frames pair independent CPU and Metal layer lanes with ordered compositing. Floyd-Steinberg source quantization and custom OBJ depth peeling are dependency-ordered CPU stages inside the accelerated frame; neither causes whole-layer fallback. Available-Metal failures are surfaced rather than silently retried on CPU. |
-| 33 | Layer starting image | Complete | Embedded PNG layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, CPU and Metal Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, cancellation, and seam/render/parity coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
+| 33 | Layer starting image | Complete | Embedded 8/16-bit PNG and HALF/FLOAT OpenEXR layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, CPU and Metal Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, cancellation, and seam/render/parity coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
 | 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, Metal preparation, checked arc-length sampling, and seam/round-trip tests cover the feature. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, an authoritative per-layer Swing block, project audio defaults, and a visible layer override live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and a dense multiband/onset/spectral/chroma track through signed-int container/API capacity drive the base clock and independently routable wave/effect/color response. First project import enables the shared profile without creating layer overrides, Energy supplies a visibly dynamic default hue route, and later user choices remain intact. No fixed whole-song BPM clock is used. |

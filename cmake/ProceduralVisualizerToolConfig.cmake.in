@@ -2,6 +2,7 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(PNG)
+find_dependency(ZLIB)
 find_dependency(Threads)
 @PVT_CONFIG_QT_DEPENDENCY@
 

@@ -3232,7 +3232,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         && (config.surface.mapping != SurfaceMapping::Plane
             || (plane.path.empty() && plane.sha256.empty()))) {
         return invalid_result(
-            "An enabled plane displacement requires the Plane surface and a valid height-map PNG path or embedded attachment identity.");
+            "An enabled plane displacement requires the Plane surface and a valid height-map image path or embedded attachment identity.");
     }
     if (!valid_enum(config.starting_image.fit)
         || !valid_enum(config.starting_image.palette_dither_method)
@@ -3250,7 +3250,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             && config.starting_image.path.empty()
             && config.starting_image.sha256.empty())) {
         return invalid_result(
-            "An enabled starting image requires a valid PNG runtime path or embedded attachment identity.");
+            "An enabled starting image requires a valid image runtime path or embedded attachment identity.");
     }
     if (include_export) {
         const bool has_transparent_surface =
@@ -4127,7 +4127,7 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                     Color output = base;
                     // Generating an alpha dimension is an explicit source
                     // choice, so it must not depend on the independent switch
-                    // that suppresses authored palette/PNG alpha. This also
+                    // that suppresses authored palette/image alpha. This also
                     // repairs older GUI projects whose first layer inherited
                     // a false source-alpha default.
                     const double source_alpha = use_base_alpha ? base.a : 1.0;
@@ -6208,7 +6208,7 @@ bool render_frame_at_timeline_sample_cancellable(
                 return false;
             }
             // Image placement and source-color generation are composable: the
-            // fitted PNG chooses where colors live, then the optional starting
+            // fitted image chooses where colors live, then the optional starting
             // palette constrains those source colors before any effects.
             apply_starting_image_controls(render, loop_phase, current, cancel);
         } else {

@@ -122,6 +122,7 @@ if(APPLE AND PVT_ENABLE_DISTRIBUTION)
 else()
     find_package(PNG REQUIRED)
 endif()
+find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
 # Product builds already require Qt for the editor. Discover it before the
@@ -237,7 +238,8 @@ target_include_directories(ProceduralVisualizerTool
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(ProceduralVisualizerTool PRIVATE PNG::PNG Threads::Threads)
+target_link_libraries(ProceduralVisualizerTool
+    PRIVATE PNG::PNG ZLIB::ZLIB Threads::Threads)
 set_target_properties(ProceduralVisualizerTool PROPERTIES
     CXX_EXTENSIONS NO
     CXX_VISIBILITY_PRESET hidden

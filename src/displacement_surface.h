@@ -22,7 +22,7 @@ PVT_API bool displacement_mesh_requirements(int render_width,
                                             std::size_t& estimated_bytes,
                                             std::string* error = nullptr);
 
-// The cache key includes the decoded PNG identity, render dimensions, ratio,
+// The cache key includes the decoded PNG/OpenEXR identity, render dimensions, ratio,
 // and displacement range. The source-image cache replaces its shared image
 // when the file size or modification time changes, which automatically
 // invalidates the generated mesh as well.
