@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **8.0.1**. The version is read from `VERSION` by every
+Current product version: **8.0.2**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,19 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 8.0.2 Windows GPU selection correction
+
+Windows and Linux now present the normal accelerated renderer as **GPU
+acceleration (CPU + GPU, Recommended)**. Earlier versions exposed the
+surface-only strict OpenGL diagnostic mode simply as GPU, so a persisted choice
+could reject an ordinary 2D layer with "requires an active analytic surface
+mapping." The editor migrates that preference before its first preview and no
+longer offers strict OpenGL as a general renderer. Eligible surface stages still
+run on OpenGL, independent layers still use the bounded CPU lanes, and admitted
+OpenGL failures remain visible rather than being silently retried. Strict GPU
+remains available through the CLI/library for diagnostics and in the macOS GUI
+where the broad Metal pipeline supports it.
 
 ## 8.0.1 Linux OpenGL surface correction
 
@@ -286,12 +299,16 @@ displacement disabled by default.
 
 Windows and Linux product builds now include the first portable GPU stage: a
 public-Qt, offscreen OpenGL 3.3 renderer for the built-in analytic Cylinder,
-Sphere, and Cube mappings, plus flat Plane rotation on Windows. CPU + GPU
+Sphere, and Cube mappings, plus flat and displaced Plane mappings. CPU + GPU
 activates it when a suitable
-runtime context exists; strict GPU requires a supported active analytic surface
-and reports context, shader, displacement-mesh, or imported-OBJ limitations
-directly. The rest of the frame and final project compositing remain on the
-reference CPU path, while macOS continues to prefer its broader Metal pipeline.
+runtime context exists. The desktop editor names this mode GPU acceleration and
+does not offer its surface-only strict diagnostic mode as a general Windows or
+Linux renderer; an old persisted strict selection is migrated automatically.
+The CLI and library retain strict GPU for diagnostics, where it requires a
+supported active surface and reports context, shader, or imported-OBJ
+limitations directly. The rest of the frame and final project compositing
+remain on the reference CPU path, while macOS continues to prefer its broader
+Metal pipeline.
 `RendererCapabilities` reports compiled/runtime status and the actual OpenGL
 renderer instead of guessing from the operating-system name. This is genuine 3D
 surface acceleration, not yet a claim of full portable pixel-pipeline coverage
@@ -704,18 +721,19 @@ sudo apt install procedural-visualizer-tool
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
-- CPU, CPU + GPU, and strict GPU frame backends. CPU + GPU is the application
-  default. On macOS it runs adjacent project layers through bounded CPU and
+- CPU, CPU + GPU, and strict GPU frame backends. The application presents CPU +
+  GPU as **GPU acceleration (Recommended)**. On macOS it runs adjacent project
+  layers through bounded CPU and
   Metal lanes, with Metal covering the broad parallel pixel pipeline and CPU
   handling ordered dependencies such as mesh rasterization. On Windows and
   Linux it keeps the reference frame pipeline on CPU and dispatches supported
-  analytic Cylinder/Sphere/Cube mapping through a serialized offscreen OpenGL
-  3.3 shader stage; Windows also admits flat Plane rotation. An admitted
+  analytic Cylinder/Sphere/Cube and flat/displaced Plane mapping through a
+  serialized offscreen OpenGL 3.3 shader stage. An admitted
   GPU-stage failure is reported instead of
-  silently repeating that stage on CPU. Strict GPU requires Metal on macOS or an
-  active supported analytic surface on Windows/Linux; Linux flat Plane,
-  displacement Plane, and imported-OBJ stages are not accepted by the strict
-  OpenGL path.
+  silently repeating that stage on CPU. The editor offers strict GPU only when
+  its broad Metal backend is built. Windows/Linux users selecting GPU in older
+  releases are migrated to the accelerated CPU + GPU path; strict OpenGL
+  surface diagnostics remain available through the CLI and library API.
 
 The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a

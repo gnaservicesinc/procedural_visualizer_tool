@@ -6,6 +6,19 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 8.0.2 Windows GPU selection correction
+
+The Windows/Linux desktop editor now presents the portable hybrid renderer as
+**GPU acceleration (CPU + GPU, Recommended)** and no longer exposes its
+surface-only strict diagnostic backend as if it were a general-purpose GPU
+renderer. A strict selection persisted by an earlier release is migrated to
+CPU + GPU before the first preview, so ordinary 2D layers render successfully
+while eligible analytic and displaced surfaces still execute through OpenGL.
+The CLI and public library retain strict GPU unchanged for backend diagnostics;
+macOS keeps its strict choice because Metal accelerates the broad pixel
+pipeline. Deterministic GUI smoke coverage emulates an OpenGL-only host and
+proves that an imported strict preference is repaired and cannot be reselected.
+
 ## 8.0.1 Linux OpenGL surface correction
 
 OpenGL now routes a displaced Plane through a dedicated indexed mesh shader

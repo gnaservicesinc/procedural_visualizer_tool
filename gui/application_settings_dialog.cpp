@@ -144,25 +144,38 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     auto* backend_form = new QFormLayout(backend_group);
     backend_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     backend_form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    render_backend_ = new QComboBox(backend_group);
-    render_backend_->setObjectName(QStringLiteral("renderBackendPreference"));
-    render_backend_->addItem(tr("CPU"), static_cast<int>(pvt::RenderBackend::Cpu));
-    render_backend_->addItem(tr("CPU + GPU (Recommended)"),
-                             static_cast<int>(pvt::RenderBackend::CpuAndGpu));
-    render_backend_->addItem(tr("GPU"),
-                             static_cast<int>(pvt::RenderBackend::Gpu));
-    const int backend_index = render_backend_->findData(static_cast<int>(renderBackend));
-    render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 1);
-    render_backend_->setToolTip(
-        tr("CPU is the deterministic reference renderer. CPU + GPU uses Metal "
-           "on macOS, accelerates supported analytic 3D surfaces with OpenGL "
-           "on Windows and Linux, and renders independent layers on two CPU "
-           "lanes. GPU is strict and reports unsupported work or runtime "
-           "acceleration failures instead of silently retrying on CPU."));
-    backend_form->addRow(tr("Backend"), render_backend_);
     const pvt::RendererCapabilities capabilities =
         capabilitiesOverride == nullptr ? pvt::renderer_capabilities()
                                         : *capabilitiesOverride;
+    const bool offer_strict_gpu = capabilitiesOverride == nullptr
+        ? strictGpuOffered() : capabilities.metal_compiled;
+    renderBackend = normalizeRenderBackendForUi(renderBackend, offer_strict_gpu);
+    render_backend_ = new QComboBox(backend_group);
+    render_backend_->setObjectName(QStringLiteral("renderBackendPreference"));
+    render_backend_->addItem(tr("CPU"), static_cast<int>(pvt::RenderBackend::Cpu));
+    render_backend_->addItem(tr("GPU acceleration (CPU + GPU, Recommended)"),
+                             static_cast<int>(pvt::RenderBackend::CpuAndGpu));
+    if (offer_strict_gpu) {
+        render_backend_->addItem(tr("GPU (Strict)"),
+                                 static_cast<int>(pvt::RenderBackend::Gpu));
+    }
+    const int backend_index = render_backend_->findData(static_cast<int>(renderBackend));
+    render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 1);
+    if (offer_strict_gpu) {
+        render_backend_->setToolTip(
+            tr("CPU is the deterministic reference renderer. GPU acceleration "
+               "uses CPU and Metal together for maximum throughput. GPU "
+               "(Strict) reports unsupported work or runtime acceleration "
+               "failures instead of silently retrying on CPU."));
+    } else {
+        render_backend_->setToolTip(
+            tr("CPU is the deterministic reference renderer. GPU acceleration "
+               "uses the portable CPU + GPU path: supported surface mapping "
+               "runs through OpenGL and independent layers use two bounded "
+               "CPU lanes. The surface-only strict diagnostic backend remains "
+               "available through the command line and library API."));
+    }
+    backend_form->addRow(tr("Backend"), render_backend_);
     QString accelerator_status;
     if (capabilities.metal_available) {
         accelerator_status = tr("Metal ready: %1")
@@ -183,13 +196,14 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     backend_form->addRow(tr("Acceleration"), capability_label);
     backend_form->addRow(
         explanatory_label(
-            tr("This backend is used for both live preview and export. CPU + GPU "
-               "is recommended for maximum throughput. On Windows and Linux, "
+            tr("This backend is used for both live preview and export. GPU "
+               "acceleration is recommended for maximum throughput. On Windows "
+               "and Linux, "
                "Qt OpenGL accelerates built-in Cylinder, Sphere, and Cube "
-               "surface mapping; Windows also accelerates flat Plane rotation. "
+               "surface mapping plus flat and displaced Plane mapping. "
                "Independent layers use two bounded CPU lanes even if the GPU "
-               "does not support a frame. Displacement planes and imported OBJ "
-               "meshes remain ordered CPU stages."),
+               "does not support a frame. Imported OBJ meshes remain ordered "
+               "CPU stages."),
             backend_group));
     rendering_layout->addWidget(backend_group);
     rendering_layout->addStretch(1);
@@ -203,6 +217,26 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     root->addWidget(buttons);
+}
+
+bool ApplicationSettingsDialog::strictGpuOffered() {
+#if defined(PVT_GUI_HAS_METAL_BACKEND)
+    return true;
+#else
+    return false;
+#endif
+}
+
+pvt::RenderBackend ApplicationSettingsDialog::normalizeRenderBackendForUi(
+    pvt::RenderBackend backend, bool strictGpuOffered) {
+    if (backend < pvt::RenderBackend::Cpu
+        || backend > pvt::RenderBackend::Gpu) {
+        return pvt::RenderBackend::CpuAndGpu;
+    }
+    if (backend == pvt::RenderBackend::Gpu && !strictGpuOffered) {
+        return pvt::RenderBackend::CpuAndGpu;
+    }
+    return backend;
 }
 
 void ApplicationSettingsDialog::showEvent(QShowEvent* event) {

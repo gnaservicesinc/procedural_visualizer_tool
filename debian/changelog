@@ -1,3 +1,11 @@
+procedural-visualizer-tool (8.0.2) stonking; urgency=medium
+
+  * Present the Windows/Linux hybrid renderer as GPU acceleration.
+  * Migrate obsolete strict-GPU GUI preferences before the first preview.
+  * Keep strict OpenGL diagnostics available through the CLI and library API.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 20 Aug 2026 13:11:38 -0400
+
 procedural-visualizer-tool (8.0.1) stonking; urgency=medium
 
   * Accelerate displaced Plane height-map meshes with OpenGL.

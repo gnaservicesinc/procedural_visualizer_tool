@@ -30,6 +30,10 @@ public:
     int recentProjectLimit() const;
     NewProjectDefaultsAction newProjectDefaultsAction() const;
 
+    static bool strictGpuOffered();
+    static pvt::RenderBackend normalizeRenderBackendForUi(
+        pvt::RenderBackend backend, bool strictGpuOffered);
+
 private:
     QSpinBox* undo_limit_ = nullptr;
     QComboBox* render_backend_ = nullptr;

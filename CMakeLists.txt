@@ -609,6 +609,10 @@ if(PVT_BUILD_QT_GUI)
     endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
         PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
+    if(PVT_METAL_BACKEND_ENABLED)
+        target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
+            PVT_GUI_HAS_METAL_BACKEND=1)
+    endif()
     pvt_enable_warnings(ProceduralVisualizerToolGui)
 
     if(PVT_ENABLE_DISTRIBUTION)
