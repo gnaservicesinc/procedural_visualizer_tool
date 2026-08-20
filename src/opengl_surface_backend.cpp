@@ -390,6 +390,9 @@ bool intersectSphere(vec3 origin, vec3 direction,
     if (second < 0.0) return false;
     front.distance = first >= 0.0 ? first : second;
     front.point = origin + direction * front.distance;
+    if (stableDiscriminant == 0.0) {
+        front.point -= direction * (dot(front.point, direction) / a);
+    }
     front.normal = normalize(front.point);
     hasBack = first >= 0.0 && second - first > 1.0e-10;
     if (hasBack) {

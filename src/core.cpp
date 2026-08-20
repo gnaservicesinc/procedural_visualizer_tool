@@ -5732,6 +5732,13 @@ bool apply_surface_mapping(const Image& source, Image& destination,
         const double front_distance = first >= 0.0 ? first : second;
         hits.front.distance = front_distance;
         hits.front.point = add(origin, multiply(direction, front_distance));
+        if (stable_discriminant == 0.0) {
+            const double tangent_residual =
+                dot(hits.front.point, direction) / a;
+            hits.front.point = subtract(
+                hits.front.point,
+                multiply(direction, tangent_residual));
+        }
         hits.front.normal = normalize(hits.front.point);
         if (first >= 0.0 && second - first > 1.0e-10) {
             hits.back.distance = second;
