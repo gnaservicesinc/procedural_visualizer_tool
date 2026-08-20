@@ -155,7 +155,8 @@ std::optional<double> live_beat_route_phase(
     std::uint64_t detected_beat_count,
     double beat_position,
     double reference_beats_per_loop,
-    double signed_latency_beats) noexcept {
+    double signed_latency_beats,
+    ClockInterpolation interpolation) noexcept {
     if (detected_beat_count == 0U || !std::isfinite(beat_position)
         || !std::isfinite(reference_beats_per_loop)
         || reference_beats_per_loop <= 0.0
@@ -165,8 +166,23 @@ std::optional<double> live_beat_route_phase(
     // Positive input latency means the physical beat happened before its
     // sample reached the analyzer, so compensate by advancing the musical
     // position. Negative values deliberately delay an early source.
-    const double loops = (beat_position + signed_latency_beats)
-        / reference_beats_per_loop;
+    double routed_position = beat_position + signed_latency_beats;
+    const double whole_beats = std::floor(routed_position);
+    const double fraction = routed_position - whole_beats;
+    switch (interpolation) {
+        case ClockInterpolation::Hold:
+            routed_position = whole_beats;
+            break;
+        case ClockInterpolation::Linear:
+            break;
+        case ClockInterpolation::Smoothstep:
+            routed_position = whole_beats
+                + fraction * fraction * (3.0 - 2.0 * fraction);
+            break;
+        default:
+            return std::nullopt;
+    }
+    const double loops = routed_position / reference_beats_per_loop;
     if (!std::isfinite(loops)) return std::nullopt;
     return positive_fraction(loops);
 }

@@ -1,3 +1,12 @@
+procedural-visualizer-tool (8.0.1) stonking; urgency=medium
+
+  * Accelerate displaced Plane height-map meshes with OpenGL.
+  * Correct the Linux OpenGL surface package regression test.
+  * Apply Between pulses clock edits immediately during Live output.
+  * Reconfigure incremental CMake builds when VERSION changes.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 20 Aug 2026 11:36:23 -0400
+
 procedural-visualizer-tool (7.0.0) stonking; urgency=medium
 
   * New upstream release.

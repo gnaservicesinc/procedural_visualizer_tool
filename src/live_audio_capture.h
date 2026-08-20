@@ -57,7 +57,8 @@ std::optional<double> live_beat_route_phase(
     double reference_beats_per_loop,
     // Positive latency advances the route because captured audio arrived
     // after the physical beat; negative latency delays an early source.
-    double signed_latency_beats = 0.0) noexcept;
+    double signed_latency_beats = 0.0,
+    ClockInterpolation interpolation = ClockInterpolation::Linear) noexcept;
 
 // A backend can report elapsed callback frames with no captured samples during
 // a device dropout. Those frames must not advance the analyzer's sample clock:

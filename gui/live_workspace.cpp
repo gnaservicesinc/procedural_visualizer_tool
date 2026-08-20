@@ -3709,7 +3709,8 @@ std::optional<double> LiveWorkspace::Impl::routedPhase(
         const auto phase = pvt::audio::live_beat_route_phase(
             1U, static_cast<double>(snapshot.ticks) / 24.0,
             reference_beats_per_loop,
-            portable_latency_seconds * live_bpm / 60.0);
+            portable_latency_seconds * live_bpm / 60.0,
+            reference_clock->interpolation);
         return phase.has_value()
             ? std::optional<double>(transform(*phase)) : std::nullopt;
     }
@@ -3797,7 +3798,7 @@ std::optional<double> LiveWorkspace::Impl::routedPhase(
         * live_bpm / 60.0;
     const auto phase = pvt::audio::live_beat_route_phase(
         beat_count, beat_position, reference_beats_per_loop,
-        signed_latency_beats);
+        signed_latency_beats, reference_clock->interpolation);
     return phase.has_value()
         ? std::optional<double>(transform(*phase)) : std::nullopt;
 }

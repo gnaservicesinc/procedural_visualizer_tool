@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **8.0.0**. The version is read from `VERSION` by every
+Current product version: **8.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,30 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 8.0.1 Linux OpenGL surface correction
+
+Displaced Plane surfaces now use a dedicated cached-mesh OpenGL raster path on
+Linux and Windows instead of entering the analytic shader and silently omitting
+their height map. CPU + GPU and strict GPU modes both preserve the authored
+mesh, projection, XYZ transform, lighting, outside-fill, and straight-alpha
+composition without collapsing performance to CPU rasterization. Flat Plane
+transforms remain accelerated as well.
+
+Linux OpenGL parity tests now compare straight-alpha images by their composited
+color and alpha, so unobservable RGB stored under fully transparent pixels does
+not fail a package. A separate opaque fixture retains strict raw-float parity
+coverage for every accelerated analytic surface.
+
+Live audio and MIDI clocks now apply the authored **Between pulses** choice on
+every realtime frame. Hold, Linear, and Smoothstep therefore change the active
+Live beat motion immediately instead of taking effect only after Live stops;
+Mic routes also keep the control reachable when their deterministic offline
+fallback is Default or an inactive layer clock.
+
+Incremental CMake builds now watch the canonical `VERSION` file and reconfigure
+before relinking, preventing a version bump from leaving stale application or
+shared-library metadata in an otherwise current build tree.
 
 ## 8.0.0 explicit surface composition
 

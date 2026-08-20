@@ -82,6 +82,27 @@ void test_reference_meter_divisor_does_not_cancel_detected_tempo() {
         1U, 0.0, 4.0, 0.2);
     CHECK(capture_delay.has_value());
     CHECK(near(*capture_delay, 0.05));
+
+    // Between-pulse authoring remains effective for Live routes. Latency is
+    // included in the physical source position before the selected curve
+    // shapes the interval to the next accepted beat.
+    const auto held = pvt::audio::live_beat_route_phase(
+        2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::Hold);
+    const auto linear = pvt::audio::live_beat_route_phase(
+        2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::Linear);
+    const auto smooth = pvt::audio::live_beat_route_phase(
+        2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::Smoothstep);
+    CHECK(held.has_value());
+    CHECK(linear.has_value());
+    CHECK(smooth.has_value());
+    CHECK(near(*held, 0.25));
+    CHECK(near(*linear, 0.3125));
+    CHECK(near(*smooth, 0.2890625));
+
+    const auto invalid_interpolation = pvt::audio::live_beat_route_phase(
+        1U, 0.25, 4.0, 0.0,
+        static_cast<pvt::ClockInterpolation>(255));
+    CHECK(!invalid_interpolation.has_value());
 }
 
 void test_invalid_beat_routes_stay_unlocked() {

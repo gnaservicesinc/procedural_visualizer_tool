@@ -1,5 +1,7 @@
 #include "frame_renderer_internal.h"
 
+#include "displacement_surface.h"
+
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QMetaObject>
@@ -518,6 +520,225 @@ void main() {
 }
 )PVT_GLSL";
 
+constexpr const char* kMeshVertexShader = R"PVT_GLSL(#version 330 core
+layout(location = 0) in vec3 sourcePosition;
+layout(location = 1) in vec2 sourceUv;
+layout(location = 2) in vec3 sourceNormal;
+
+uniform ivec2 imageSize;
+uniform int projection;
+uniform int sizing;
+uniform int rotationOrder;
+uniform vec3 rotation;
+uniform vec3 objectScale;
+uniform vec3 screenPosition;
+uniform float sizeMultiplier;
+uniform float cameraDistance;
+uniform float focalLength;
+uniform vec3 normalizationCenter;
+uniform float normalizationScale;
+uniform vec2 meshHalfExtent;
+
+out vec2 vertexMeshUv;
+out vec3 vertexWorldNormal;
+out vec3 vertexWorldPosition;
+noperspective out float vertexCameraDepthLinear;
+noperspective out float vertexInverseDepthLinear;
+out float vertexValid;
+
+vec3 rotateX(vec3 value, float angle) {
+    float cosine = cos(angle);
+    float sine = sin(angle);
+    return vec3(value.x, cosine * value.y - sine * value.z,
+                sine * value.y + cosine * value.z);
+}
+
+vec3 rotateY(vec3 value, float angle) {
+    float cosine = cos(angle);
+    float sine = sin(angle);
+    return vec3(cosine * value.x + sine * value.z, value.y,
+                -sine * value.x + cosine * value.z);
+}
+
+vec3 rotateZ(vec3 value, float angle) {
+    float cosine = cos(angle);
+    float sine = sin(angle);
+    return vec3(cosine * value.x - sine * value.y,
+                sine * value.x + cosine * value.y, value.z);
+}
+
+vec3 rotateSurface(vec3 value) {
+    if (rotationOrder == 0) return rotateZ(rotateY(rotateX(value, rotation.x), rotation.y), rotation.z);
+    if (rotationOrder == 1) return rotateY(rotateZ(rotateX(value, rotation.x), rotation.z), rotation.y);
+    if (rotationOrder == 2) return rotateZ(rotateX(rotateY(value, rotation.y), rotation.x), rotation.z);
+    if (rotationOrder == 3) return rotateX(rotateZ(rotateY(value, rotation.y), rotation.z), rotation.x);
+    if (rotationOrder == 4) return rotateY(rotateX(rotateZ(value, rotation.z), rotation.x), rotation.y);
+    return rotateX(rotateY(rotateZ(value, rotation.z), rotation.y), rotation.x);
+}
+
+void main() {
+    vec3 object = (sourcePosition - normalizationCenter) * normalizationScale;
+    vec3 scaled = object * objectScale;
+    vertexWorldPosition = rotateSurface(scaled);
+    vertexWorldPosition.z += screenPosition.z;
+    vertexWorldNormal = normalize(rotateSurface(sourceNormal / objectScale));
+    vertexMeshUv = sourceUv;
+
+    float cameraDepth = cameraDistance - vertexWorldPosition.z;
+    vertexCameraDepthLinear = cameraDepth;
+    vertexInverseDepthLinear = cameraDepth > 1.0e-6 ? 1.0 / cameraDepth : 0.0;
+    vertexValid = cameraDepth > 1.0e-6 ? 1.0 : 0.0;
+
+    float widthSpan = float(max(1, imageSize.x - 1));
+    float heightSpan = float(max(1, imageSize.y - 1));
+    float containScale = min(widthSpan / (2.0 * meshHalfExtent.x),
+                             heightSpan / (2.0 * meshHalfExtent.y));
+    float coverScale = max(widthSpan / (2.0 * meshHalfExtent.x),
+                           heightSpan / (2.0 * meshHalfExtent.y));
+    float screenScaleX = containScale * sizeMultiplier;
+    float screenScaleY = containScale * sizeMultiplier;
+    if (sizing == 1) {
+        screenScaleX = coverScale * sizeMultiplier;
+        screenScaleY = coverScale * sizeMultiplier;
+    } else if (sizing == 2) {
+        screenScaleX = widthSpan / (2.0 * meshHalfExtent.x) * sizeMultiplier;
+        screenScaleY = heightSpan / (2.0 * meshHalfExtent.y) * sizeMultiplier;
+    } else if (sizing == 3) {
+        screenScaleX = 0.5 * float(min(imageSize.x, imageSize.y)) * sizeMultiplier;
+        screenScaleY = screenScaleX;
+    }
+    float centerX = 0.5 * widthSpan + screenPosition.x * widthSpan / 100.0;
+    float centerY = 0.5 * heightSpan - screenPosition.y * heightSpan / 100.0;
+    float screenX = centerX + vertexWorldPosition.x * screenScaleX;
+    float screenY = centerY - vertexWorldPosition.y * screenScaleY;
+    if (projection == 1 && vertexValid > 0.5) {
+        screenX = centerX + vertexWorldPosition.x * focalLength / cameraDepth * screenScaleX;
+        screenY = centerY - vertexWorldPosition.y * focalLength / cameraDepth * screenScaleY;
+    }
+    float clipW = projection == 1 ? max(cameraDepth, 1.0e-6) : 1.0;
+    vec2 ndc = vec2(2.0 * screenX / float(imageSize.x) - 1.0,
+                    1.0 - 2.0 * screenY / float(imageSize.y));
+    gl_Position = vec4(ndc * clipW, 0.0, clipW);
+}
+)PVT_GLSL";
+
+constexpr const char* kMeshGeometryShader = R"PVT_GLSL(#version 330 core
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+
+in vec2 vertexMeshUv[];
+in vec3 vertexWorldNormal[];
+in vec3 vertexWorldPosition[];
+noperspective in float vertexCameraDepthLinear[];
+noperspective in float vertexInverseDepthLinear[];
+in float vertexValid[];
+
+out vec2 meshUv;
+out vec3 worldNormal;
+out vec3 worldPosition;
+noperspective out float cameraDepthLinear;
+noperspective out float inverseDepthLinear;
+out float primitiveValid;
+
+void main() {
+    // The CPU reference rejects a triangle when any vertex crosses the camera
+    // plane instead of inventing a clipped polygon. Preserve that explicit
+    // behavior rather than letting OpenGL's homogeneous clipper create a
+    // platform-dependent sliver from an otherwise invalid mesh triangle.
+    if (vertexValid[0] < 0.5 || vertexValid[1] < 0.5
+        || vertexValid[2] < 0.5) {
+        return;
+    }
+    for (int vertex = 0; vertex < 3; ++vertex) {
+        gl_Position = gl_in[vertex].gl_Position;
+        meshUv = vertexMeshUv[vertex];
+        worldNormal = vertexWorldNormal[vertex];
+        worldPosition = vertexWorldPosition[vertex];
+        cameraDepthLinear = vertexCameraDepthLinear[vertex];
+        inverseDepthLinear = vertexInverseDepthLinear[vertex];
+        primitiveValid = vertexValid[vertex];
+        EmitVertex();
+    }
+    EndPrimitive();
+}
+)PVT_GLSL";
+
+constexpr const char* kMeshFragmentShader = R"PVT_GLSL(#version 330 core
+uniform sampler2D sourceImage;
+uniform sampler2D previousDepth;
+uniform ivec2 imageSize;
+uniform int projection;
+uniform int hasPreviousDepth;
+uniform float lighting;
+uniform vec3 lightDirection;
+uniform float lightAmbient;
+uniform float lightDiffuse;
+
+in vec2 meshUv;
+in vec3 worldNormal;
+in vec3 worldPosition;
+noperspective in float cameraDepthLinear;
+noperspective in float inverseDepthLinear;
+in float primitiveValid;
+out vec4 outputColor;
+
+vec4 loadPixel(int x, int y) {
+    return texelFetch(sourceImage, ivec2(x, y), 0);
+}
+
+vec4 sampleSource(vec2 uv) {
+    vec2 coordinate = vec2(
+        clamp(uv.x, 0.0, 1.0) * float(imageSize.x - 1),
+        clamp(1.0 - uv.y, 0.0, 1.0) * float(imageSize.y - 1));
+    ivec2 first = ivec2(floor(coordinate));
+    ivec2 second = min(first + ivec2(1), imageSize - ivec2(1));
+    vec2 amount = coordinate - vec2(first);
+    vec4 top = mix(loadPixel(first.x, first.y),
+                   loadPixel(second.x, first.y), amount.x);
+    vec4 bottom = mix(loadPixel(first.x, second.y),
+                      loadPixel(second.x, second.y), amount.x);
+    vec4 result = mix(top, bottom, amount.y);
+    result.a = clamp(result.a, 0.0, 1.0);
+    return result;
+}
+
+void main() {
+    if (primitiveValid < 0.999) discard;
+    float cameraDepth = projection == 1
+        ? 1.0 / max(inverseDepthLinear, 1.0e-30)
+        : cameraDepthLinear;
+    if (isnan(cameraDepth) || isinf(cameraDepth) || cameraDepth <= 1.0e-6) discard;
+    if (hasPreviousDepth != 0) {
+        float encodedPrevious = texelFetch(
+            previousDepth, ivec2(gl_FragCoord.xy), 0).r;
+        if (encodedPrevious >= 1.0) discard;
+        float priorDepth = encodedPrevious / max(1.0 - encodedPrevious, 1.0e-30);
+        float epsilon = max(1.0e-6, abs(priorDepth) * 1.0e-6);
+        if (cameraDepth <= priorDepth + epsilon) discard;
+    }
+    gl_FragDepth = cameraDepth / (cameraDepth + 1.0);
+
+    vec3 normal = normalize(worldNormal);
+    vec3 towardCamera = projection == 1
+        ? vec3(-worldPosition.x, -worldPosition.y,
+               cameraDepth)
+        : vec3(0.0, 0.0, 1.0);
+    if (dot(normal, towardCamera) < 0.0) normal = -normal;
+    vec3 light = normalize(lightDirection);
+    float diffuse = max(0.0, dot(normal, light));
+    float lit = lightAmbient + lightDiffuse * diffuse;
+    float multiplier = max(0.0, 1.0 + lighting * (lit - 1.0));
+    outputColor = sampleSource(meshUv);
+    outputColor.rgb *= multiplier;
+}
+)PVT_GLSL";
+
+struct GpuMeshVertex {
+    std::array<float, 3U> position{};
+    std::array<float, 2U> uv{};
+    std::array<float, 3U> normal{};
+};
+
 bool cancelled(const std::atomic_bool* cancel) {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
@@ -549,6 +770,15 @@ public:
                         "OpenGL surface rendering was cancelled; destination "
                         "was unchanged.");
         }
+        std::shared_ptr<const ObjMesh> displacement_mesh;
+        if (surface.mapping == SurfaceMapping::Plane
+            && surface.plane_displacement.enabled
+            && surface.curvature > 0.0
+            && !load_displacement_plane_mesh(
+                surface.plane_displacement, source.width, source.height,
+                displacement_mesh, cancel, error)) {
+            return false;
+        }
         std::lock_guard<std::mutex> guard(mutex_);
         ensure_initialized_locked();
         if (!ready_) return fail(error, status_);
@@ -557,7 +787,8 @@ public:
         std::string render_error;
         const auto work = [&] {
             rendered = render_on_gpu_thread(source, destination, surface,
-                                            loop_phase, &render_error);
+                                            loop_phase, displacement_mesh,
+                                            &render_error);
         };
         if (QThread::currentThread() == render_thread_) {
             work();
@@ -598,6 +829,24 @@ public:
                             gl->glDeleteProgram(program_);
                             program_ = 0U;
                         }
+                        if (mesh_vertex_buffer_ != 0U) {
+                            gl->glDeleteBuffers(1, &mesh_vertex_buffer_);
+                            mesh_vertex_buffer_ = 0U;
+                        }
+                        if (mesh_index_buffer_ != 0U) {
+                            gl->glDeleteBuffers(1, &mesh_index_buffer_);
+                            mesh_index_buffer_ = 0U;
+                        }
+                        if (mesh_vertex_array_ != 0U) {
+                            gl->glDeleteVertexArrays(1, &mesh_vertex_array_);
+                            mesh_vertex_array_ = 0U;
+                        }
+                        if (mesh_program_ != 0U) {
+                            gl->glDeleteProgram(mesh_program_);
+                            mesh_program_ = 0U;
+                        }
+                        cached_mesh_.reset();
+                        mesh_index_count_ = 0;
                         context_->doneCurrent();
                     }
                     context_->moveToThread(gui_thread);
@@ -842,8 +1091,476 @@ private:
                    || fail(error, "OpenGL could not create a vertex array.");
     }
 
+    bool ensure_mesh_program(QOpenGLExtraFunctions* gl, std::string* error) {
+        if (mesh_program_ != 0U) return true;
+        GLuint vertex = 0U;
+        GLuint geometry = 0U;
+        GLuint fragment = 0U;
+        if (!compile_shader(gl, GL_VERTEX_SHADER, kMeshVertexShader, vertex,
+                            error)
+            || !compile_shader(gl, GL_GEOMETRY_SHADER, kMeshGeometryShader,
+                               geometry, error)
+            || !compile_shader(gl, GL_FRAGMENT_SHADER, kMeshFragmentShader,
+                               fragment, error)) {
+            if (vertex != 0U) gl->glDeleteShader(vertex);
+            if (geometry != 0U) gl->glDeleteShader(geometry);
+            if (fragment != 0U) gl->glDeleteShader(fragment);
+            return false;
+        }
+        mesh_program_ = gl->glCreateProgram();
+        if (mesh_program_ == 0U) {
+            gl->glDeleteShader(vertex);
+            gl->glDeleteShader(geometry);
+            gl->glDeleteShader(fragment);
+            return fail(error,
+                        "OpenGL could not create the displacement-mesh shader program.");
+        }
+        gl->glAttachShader(mesh_program_, vertex);
+        gl->glAttachShader(mesh_program_, geometry);
+        gl->glAttachShader(mesh_program_, fragment);
+        gl->glLinkProgram(mesh_program_);
+        gl->glDeleteShader(vertex);
+        gl->glDeleteShader(geometry);
+        gl->glDeleteShader(fragment);
+        GLint linked = GL_FALSE;
+        gl->glGetProgramiv(mesh_program_, GL_LINK_STATUS, &linked);
+        if (linked != GL_TRUE) {
+            GLint length = 0;
+            gl->glGetProgramiv(mesh_program_, GL_INFO_LOG_LENGTH, &length);
+            std::vector<char> log(
+                static_cast<std::size_t>((std::max)(1, length)));
+            gl->glGetProgramInfoLog(mesh_program_, length, nullptr,
+                                    log.data());
+            const std::string message =
+                std::string("OpenGL displacement-mesh shader linking failed: ")
+                + log.data();
+            gl->glDeleteProgram(mesh_program_);
+            mesh_program_ = 0U;
+            return fail(error, message);
+        }
+        gl->glGenVertexArrays(1, &mesh_vertex_array_);
+        return mesh_vertex_array_ != 0U
+                   || fail(error,
+                           "OpenGL could not create a displacement-mesh vertex array.");
+    }
+
+    bool ensure_mesh_buffers(QOpenGLExtraFunctions* gl,
+                             const std::shared_ptr<const ObjMesh>& mesh,
+                             std::string* error) {
+        if (cached_mesh_ == mesh && mesh_vertex_buffer_ != 0U
+            && mesh_index_buffer_ != 0U && mesh_index_count_ > 0) {
+            return true;
+        }
+        if (!mesh || mesh->positions.empty() || mesh->triangles.empty()
+            || mesh->texcoords.size() != mesh->positions.size()
+            || mesh->normals.size() != mesh->positions.size()) {
+            return fail(error,
+                        "OpenGL received an inconsistent displacement-plane mesh.");
+        }
+        if (mesh->triangles.size()
+                > static_cast<std::size_t>((std::numeric_limits<GLsizei>::max)())
+                      / 3U) {
+            return fail(error,
+                        "The displacement-plane index count exceeds OpenGL's draw limit.");
+        }
+
+        std::vector<GpuMeshVertex> vertices(mesh->positions.size());
+        for (std::size_t index = 0U; index < vertices.size(); ++index) {
+            const ObjVec3& position = mesh->positions[index];
+            const ObjVec2& uv = mesh->texcoords[index];
+            const ObjVec3& normal = mesh->normals[index];
+            vertices[index] = {{static_cast<float>(position.x),
+                                static_cast<float>(position.y),
+                                static_cast<float>(position.z)},
+                               {static_cast<float>(uv.x),
+                                static_cast<float>(uv.y)},
+                               {static_cast<float>(normal.x),
+                                static_cast<float>(normal.y),
+                                static_cast<float>(normal.z)}};
+        }
+        std::vector<std::uint32_t> indices;
+        indices.reserve(mesh->triangles.size() * 3U);
+        for (const ObjTriangle& triangle : mesh->triangles) {
+            for (const ObjCorner& corner : triangle.corners) {
+                if (corner.position >= vertices.size()
+                    || corner.texcoord != corner.position
+                    || corner.normal != corner.position) {
+                    return fail(error,
+                                "OpenGL displacement meshes require aligned position, UV, and normal indices.");
+                }
+                indices.push_back(corner.position);
+            }
+        }
+        const std::size_t vertex_bytes = vertices.size() * sizeof(vertices[0]);
+        const std::size_t index_bytes = indices.size() * sizeof(indices[0]);
+        if (vertex_bytes
+                > static_cast<std::size_t>(
+                    (std::numeric_limits<GLsizeiptr>::max)())
+            || index_bytes
+                   > static_cast<std::size_t>(
+                       (std::numeric_limits<GLsizeiptr>::max)())) {
+            return fail(error,
+                        "The displacement-plane buffers exceed OpenGL's addressable upload size.");
+        }
+
+        if (mesh_vertex_buffer_ == 0U) {
+            gl->glGenBuffers(1, &mesh_vertex_buffer_);
+        }
+        if (mesh_index_buffer_ == 0U) {
+            gl->glGenBuffers(1, &mesh_index_buffer_);
+        }
+        if (mesh_vertex_buffer_ == 0U || mesh_index_buffer_ == 0U) {
+            return fail(error,
+                        "OpenGL could not allocate displacement-plane buffers.");
+        }
+        gl->glBindVertexArray(mesh_vertex_array_);
+        gl->glBindBuffer(GL_ARRAY_BUFFER, mesh_vertex_buffer_);
+        gl->glBufferData(GL_ARRAY_BUFFER,
+                         static_cast<GLsizeiptr>(vertex_bytes),
+                         vertices.data(), GL_STATIC_DRAW);
+        gl->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh_index_buffer_);
+        gl->glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                         static_cast<GLsizeiptr>(index_bytes), indices.data(),
+                         GL_STATIC_DRAW);
+        gl->glEnableVertexAttribArray(0U);
+        gl->glVertexAttribPointer(
+            0U, 3, GL_FLOAT, GL_FALSE, sizeof(GpuMeshVertex),
+            reinterpret_cast<const void*>(offsetof(GpuMeshVertex, position)));
+        gl->glEnableVertexAttribArray(1U);
+        gl->glVertexAttribPointer(
+            1U, 2, GL_FLOAT, GL_FALSE, sizeof(GpuMeshVertex),
+            reinterpret_cast<const void*>(offsetof(GpuMeshVertex, uv)));
+        gl->glEnableVertexAttribArray(2U);
+        gl->glVertexAttribPointer(
+            2U, 3, GL_FLOAT, GL_FALSE, sizeof(GpuMeshVertex),
+            reinterpret_cast<const void*>(offsetof(GpuMeshVertex, normal)));
+        const GLenum upload_status = gl->glGetError();
+        if (upload_status != GL_NO_ERROR) {
+            return fail(error,
+                        "OpenGL displacement-plane upload failed with error "
+                            + std::to_string(upload_status) + ".");
+        }
+        cached_mesh_ = mesh;
+        mesh_index_count_ = static_cast<GLsizei>(indices.size());
+        return true;
+    }
+
+    bool render_displacement_mesh(
+        QOpenGLExtraFunctions* gl, const Image& source, Image& destination,
+        const SurfaceConfig& surface, double loop_phase,
+        const std::shared_ptr<const ObjMesh>& mesh, std::size_t pixel_count,
+        std::string* error) {
+        if (!ensure_mesh_program(gl, error)
+            || !ensure_mesh_buffers(gl, mesh, error)) {
+            return false;
+        }
+
+        GLuint source_texture = 0U;
+        GLuint color_texture = 0U;
+        std::array<GLuint, 2U> depth_textures{};
+        GLuint framebuffer = 0U;
+        const auto cleanup = [&] {
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+            if (framebuffer != 0U) gl->glDeleteFramebuffers(1, &framebuffer);
+            gl->glDeleteTextures(static_cast<GLsizei>(depth_textures.size()),
+                                 depth_textures.data());
+            if (color_texture != 0U) gl->glDeleteTextures(1, &color_texture);
+            if (source_texture != 0U) gl->glDeleteTextures(1, &source_texture);
+        };
+
+        gl->glGenTextures(1, &source_texture);
+        gl->glBindTexture(GL_TEXTURE_2D, source_texture);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                            GL_CLAMP_TO_EDGE);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                            GL_CLAMP_TO_EDGE);
+        gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, source.width,
+                         source.height, 0, GL_RGBA, GL_FLOAT,
+                         source.pixels.data());
+
+        gl->glGenTextures(1, &color_texture);
+        gl->glBindTexture(GL_TEXTURE_2D, color_texture);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, source.width,
+                         source.height, 0, GL_RGBA, GL_FLOAT, nullptr);
+
+        gl->glGenTextures(static_cast<GLsizei>(depth_textures.size()),
+                          depth_textures.data());
+        for (const GLuint depth_texture : depth_textures) {
+            gl->glBindTexture(GL_TEXTURE_2D, depth_texture);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                                GL_CLAMP_TO_EDGE);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                GL_CLAMP_TO_EDGE);
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F,
+                             source.width, source.height, 0,
+                             GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        }
+
+        gl->glGenFramebuffers(1, &framebuffer);
+        gl->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, color_texture, 0);
+        gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                   GL_TEXTURE_2D, depth_textures[0], 0);
+        if (gl->glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            != GL_FRAMEBUFFER_COMPLETE) {
+            cleanup();
+            return fail(error,
+                        "OpenGL could not create a float displacement-mesh framebuffer.");
+        }
+
+        double half_x = 1.0e-9;
+        double half_y = 1.0e-9;
+        for (const ObjVec3& position : mesh->positions) {
+            const double object_x =
+                (position.x - mesh->normalization_center.x)
+                * mesh->normalization_scale;
+            const double object_y =
+                (position.y - mesh->normalization_center.y)
+                * mesh->normalization_scale;
+            half_x = (std::max)(half_x, std::fabs(object_x));
+            half_y = (std::max)(half_y, std::fabs(object_y));
+        }
+
+        gl->glViewport(0, 0, source.width, source.height);
+        gl->glDisable(GL_BLEND);
+        gl->glDisable(GL_CULL_FACE);
+        gl->glEnable(GL_DEPTH_TEST);
+        gl->glDepthFunc(GL_LESS);
+        gl->glDepthMask(GL_TRUE);
+        gl->glUseProgram(mesh_program_);
+        gl->glUniform2i(gl->glGetUniformLocation(mesh_program_, "imageSize"),
+                        source.width, source.height);
+        gl->glUniform1i(gl->glGetUniformLocation(mesh_program_, "projection"),
+                        static_cast<int>(surface.projection));
+        gl->glUniform1i(gl->glGetUniformLocation(mesh_program_, "sizing"),
+                        static_cast<int>(surface.sizing));
+        gl->glUniform1i(
+            gl->glGetUniformLocation(mesh_program_, "rotationOrder"),
+            static_cast<int>(surface.rotation_order));
+        constexpr double pi = 3.141592653589793238462643383279502884;
+        constexpr double tau = 2.0 * pi;
+        double wrapped_loop_phase = std::fmod(loop_phase, tau);
+        if (wrapped_loop_phase < 0.0) wrapped_loop_phase += tau;
+        gl->glUniform3f(
+            gl->glGetUniformLocation(mesh_program_, "rotation"),
+            static_cast<float>(surface.rotation_x_degrees * pi / 180.0
+                + static_cast<double>(surface.rotation_x_turns_per_loop)
+                      * wrapped_loop_phase),
+            static_cast<float>(surface.rotation_y_degrees * pi / 180.0
+                + static_cast<double>(surface.rotation_y_turns_per_loop)
+                      * wrapped_loop_phase),
+            static_cast<float>(surface.rotation_z_degrees * pi / 180.0
+                + static_cast<double>(surface.rotation_z_turns_per_loop)
+                      * wrapped_loop_phase));
+        gl->glUniform3f(gl->glGetUniformLocation(mesh_program_, "objectScale"),
+                        static_cast<float>(surface.scale_x),
+                        static_cast<float>(surface.scale_y),
+                        static_cast<float>(surface.scale_z));
+        gl->glUniform3f(
+            gl->glGetUniformLocation(mesh_program_, "screenPosition"),
+            static_cast<float>(surface.position_x_percent),
+            static_cast<float>(surface.position_y_percent),
+            static_cast<float>(surface.position_z));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(mesh_program_, "sizeMultiplier"),
+            static_cast<float>(surface.size_percent / 100.0));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(mesh_program_, "cameraDistance"),
+            static_cast<float>(surface.camera_distance));
+        gl->glUniform1f(gl->glGetUniformLocation(mesh_program_, "focalLength"),
+                        static_cast<float>(surface.focal_length));
+        gl->glUniform3f(
+            gl->glGetUniformLocation(mesh_program_, "normalizationCenter"),
+            static_cast<float>(mesh->normalization_center.x),
+            static_cast<float>(mesh->normalization_center.y),
+            static_cast<float>(mesh->normalization_center.z));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(mesh_program_, "normalizationScale"),
+            static_cast<float>(mesh->normalization_scale));
+        gl->glUniform2f(gl->glGetUniformLocation(mesh_program_, "meshHalfExtent"),
+                        static_cast<float>(half_x),
+                        static_cast<float>(half_y));
+        gl->glUniform1f(gl->glGetUniformLocation(mesh_program_, "lighting"),
+                        static_cast<float>(surface.lighting
+                            * std::clamp(surface.curvature, 0.0, 1.0)));
+        gl->glUniform3f(
+            gl->glGetUniformLocation(mesh_program_, "lightDirection"),
+            static_cast<float>(surface.light_direction_x),
+            static_cast<float>(surface.light_direction_y),
+            static_cast<float>(surface.light_direction_z));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(mesh_program_, "lightAmbient"),
+            static_cast<float>(surface.light_ambient));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(mesh_program_, "lightDiffuse"),
+            static_cast<float>(surface.light_diffuse));
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glBindTexture(GL_TEXTURE_2D, source_texture);
+        gl->glUniform1i(gl->glGetUniformLocation(mesh_program_, "sourceImage"),
+                        0);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(mesh_program_, "previousDepth"), 1);
+        gl->glBindVertexArray(mesh_vertex_array_);
+
+        std::vector<float> mapped(pixel_count * 4U, 0.0F);
+        std::vector<float> layer(pixel_count * 4U, 0.0F);
+        std::vector<float> depth(pixel_count, 1.0F);
+        std::vector<unsigned char> coverage(pixel_count, 0U);
+        constexpr float opaque_threshold = 1.0F - 1.0e-7F;
+        bool source_opaque = true;
+        for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
+            const float alpha = source.pixels[pixel * 4U + 3U];
+            if (!std::isfinite(alpha) || alpha < opaque_threshold) {
+                source_opaque = false;
+                break;
+            }
+        }
+        const bool peel_backfaces =
+            surface.composite_backfaces && !source_opaque;
+        std::size_t current_depth = 0U;
+        bool render_failed = false;
+        GLenum render_status = GL_NO_ERROR;
+        for (std::size_t pass = 0U;
+             pass <= mesh->triangles.size(); ++pass) {
+            gl->glFramebufferTexture2D(
+                GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                depth_textures[current_depth], 0);
+            gl->glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+            gl->glClearDepthf(1.0F);
+            gl->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            gl->glActiveTexture(GL_TEXTURE1);
+            gl->glBindTexture(
+                GL_TEXTURE_2D,
+                depth_textures[current_depth == 0U ? 1U : 0U]);
+            gl->glUniform1i(
+                gl->glGetUniformLocation(mesh_program_, "hasPreviousDepth"),
+                pass == 0U ? 0 : 1);
+            gl->glDrawElements(GL_TRIANGLES, mesh_index_count_,
+                               GL_UNSIGNED_INT, nullptr);
+            gl->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            gl->glReadPixels(0, 0, source.width, source.height, GL_RGBA,
+                             GL_FLOAT, layer.data());
+            gl->glReadPixels(0, 0, source.width, source.height,
+                             GL_DEPTH_COMPONENT, GL_FLOAT, depth.data());
+            render_status = gl->glGetError();
+            if (render_status != GL_NO_ERROR) {
+                render_failed = true;
+                break;
+            }
+
+            std::size_t hit_count = 0U;
+            std::size_t transparent_count = 0U;
+            for (int gl_y = 0; gl_y < source.height; ++gl_y) {
+                const int top_y = source.height - 1 - gl_y;
+                for (int x = 0; x < source.width; ++x) {
+                    const std::size_t gl_pixel =
+                        static_cast<std::size_t>(gl_y)
+                            * static_cast<std::size_t>(source.width)
+                        + static_cast<std::size_t>(x);
+                    const std::size_t pixel =
+                        static_cast<std::size_t>(top_y)
+                            * static_cast<std::size_t>(source.width)
+                        + static_cast<std::size_t>(x);
+                    if (!(depth[gl_pixel] < 1.0F)) {
+                        depth[gl_pixel] = 1.0F;
+                        continue;
+                    }
+                    ++hit_count;
+                    const std::size_t source_offset = gl_pixel * 4U;
+                    const std::size_t output_offset = pixel * 4U;
+                    if (pass == 0U) {
+                        std::copy_n(layer.data() + source_offset, 4U,
+                                    mapped.data() + output_offset);
+                    } else {
+                        const double front_alpha = std::clamp(
+                            static_cast<double>(mapped[output_offset + 3U]),
+                            0.0, 1.0);
+                        const double back_alpha = std::clamp(
+                            static_cast<double>(layer[source_offset + 3U]),
+                            0.0, 1.0);
+                        const double back_weight =
+                            back_alpha * (1.0 - front_alpha);
+                        const double output_alpha = front_alpha + back_weight;
+                        if (output_alpha > 1.0e-12) {
+                            for (std::size_t channel = 0U; channel < 3U;
+                                 ++channel) {
+                                mapped[output_offset + channel] =
+                                    static_cast<float>((
+                                        mapped[output_offset + channel]
+                                            * front_alpha
+                                        + layer[source_offset + channel]
+                                            * back_weight)
+                                        / output_alpha);
+                            }
+                        }
+                        mapped[output_offset + 3U] =
+                            static_cast<float>(output_alpha);
+                    }
+                    coverage[pixel] = 1U;
+                    if (peel_backfaces
+                        && mapped[output_offset + 3U] < opaque_threshold) {
+                        ++transparent_count;
+                    } else {
+                        depth[gl_pixel] = 1.0F;
+                    }
+                }
+            }
+            if (hit_count == 0U || !peel_backfaces
+                || transparent_count == 0U) {
+                break;
+            }
+            gl->glBindTexture(GL_TEXTURE_2D,
+                              depth_textures[current_depth]);
+            gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, source.width,
+                                source.height, GL_DEPTH_COMPONENT, GL_FLOAT,
+                                depth.data());
+            current_depth = current_depth == 0U ? 1U : 0U;
+        }
+
+        gl->glDisable(GL_DEPTH_TEST);
+        cleanup();
+        if (render_failed) {
+            return fail(error,
+                        "OpenGL displacement-mesh rendering failed with error "
+                            + std::to_string(render_status) + ".");
+        }
+
+        destination.width = source.width;
+        destination.height = source.height;
+        destination.pixels.resize(source.pixels.size());
+        const double curvature = std::clamp(surface.curvature, 0.0, 1.0);
+        for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
+            const std::size_t offset = pixel * 4U;
+            if (coverage[pixel] == 0U
+                && surface.outside != SurfaceOutside::Transparent) {
+                std::copy_n(source.pixels.data() + offset, 4U,
+                            destination.pixels.data() + offset);
+                continue;
+            }
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                destination.pixels[offset + channel] = static_cast<float>(
+                    source.pixels[offset + channel] * (1.0 - curvature)
+                    + mapped[offset + channel] * curvature);
+            }
+            destination.pixels[offset + 3U] = std::clamp(
+                destination.pixels[offset + 3U], 0.0F, 1.0F);
+        }
+        return true;
+    }
+
     bool render_on_gpu_thread(const Image& source, Image& destination,
                               const SurfaceConfig& surface, double loop_phase,
+                              const std::shared_ptr<const ObjMesh>& displacement_mesh,
                               std::string* error) {
         std::size_t expected_values = 0U;
         const bool dimensions_fit = source.width > 0 && source.height > 0
@@ -866,6 +1583,13 @@ private:
         while (gl->glGetError() != GL_NO_ERROR) {
             // Discard context-creation diagnostics before attributing an error
             // to this frame's transactional surface pass.
+        }
+        if (displacement_mesh) {
+            const bool rendered = render_displacement_mesh(
+                gl, source, destination, surface, loop_phase,
+                displacement_mesh, expected_values, error);
+            context_->doneCurrent();
+            return rendered;
         }
         if (!ensure_program(gl, error)) {
             context_->doneCurrent();
@@ -1014,6 +1738,12 @@ private:
     QObject* worker_ = nullptr;
     GLuint program_ = 0U;
     GLuint vertex_array_ = 0U;
+    GLuint mesh_program_ = 0U;
+    GLuint mesh_vertex_array_ = 0U;
+    GLuint mesh_vertex_buffer_ = 0U;
+    GLuint mesh_index_buffer_ = 0U;
+    GLsizei mesh_index_count_ = 0;
+    std::shared_ptr<const ObjMesh> cached_mesh_;
 };
 
 OpenGLSurfaceService* g_service_instance = nullptr;
@@ -1040,6 +1770,9 @@ bool surface_has_supported_work(const SurfaceConfig& surface) {
         return false;
     }
     if (surface.mapping == SurfaceMapping::Plane) {
+        if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
+            return true;
+        }
         return surface.projection != SurfaceProjection::Orthographic
                || surface.sizing != SurfaceSizing::Contain
                || surface.rotation_x_turns_per_loop != 0

@@ -3027,6 +3027,8 @@ QWidget* MainWindow::createSynchronizationPage() {
     project_mic_status_->setObjectName(QStringLiteral("projectMicStatus"));
     project_mic_status_->setWordWrap(true);
     clock_interpolation_ = new QComboBox;
+    clock_interpolation_->setObjectName(
+        QStringLiteral("clockInterpolation"));
     for (const auto value : {pvt::ClockInterpolation::Hold,
                              pvt::ClockInterpolation::Linear,
                              pvt::ClockInterpolation::Smoothstep}) {
@@ -3215,6 +3217,8 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_mic_status_->setObjectName(QStringLiteral("layerMicStatus"));
     layer_mic_status_->setWordWrap(true);
     layer_clock_interpolation_ = new QComboBox;
+    layer_clock_interpolation_->setObjectName(
+        QStringLiteral("layerClockInterpolation"));
     for (const auto value : {pvt::ClockInterpolation::Hold,
                              pvt::ClockInterpolation::Linear,
                              pvt::ClockInterpolation::Smoothstep}) {
@@ -9671,7 +9675,11 @@ void MainWindow::updateSynchronizationState() {
     music_frequency_stream_->setEnabled(
         editable && !config_.clock.music.source_sha256.empty()
         && !config_.clock.audio_processing.frequency_streams.empty());
-    clock_interpolation_->setEnabled(editable && pulse_clock);
+    // Live audio uses the authored interpolation too. Keep the control
+    // reachable when the deterministic offline fallback is Default; entering
+    // or leaving LIVE must never be required to edit an authoring value.
+    clock_interpolation_->setEnabled(editable
+                                     && (pulse_clock || project_mic));
     clock_fit_->setEnabled(editable
                            && (mode == pvt::ClockMode::Frame
                                || mode == pvt::ClockMode::Time
@@ -9802,7 +9810,8 @@ void MainWindow::updateSynchronizationState() {
                              || local_mode == pvt::ClockMode::Time
                              || local_mode == pvt::ClockMode::Meter
                              || local_mode == pvt::ClockMode::Music;
-    layer_clock_interpolation_->setEnabled(local_enabled && local_pulse);
+    layer_clock_interpolation_->setEnabled(
+        layer_editable && ((local_enabled && local_pulse) || layer_mic));
     layer_clock_fit_->setEnabled(
         local_enabled && (local_mode == pvt::ClockMode::Frame
                           || local_mode == pvt::ClockMode::Time
@@ -15428,6 +15437,54 @@ bool MainWindow::runSmokeChecks(QString* error) {
         restoreLiveWorkspace(false);
         if (error != nullptr) {
             *error = tr("Opening the project editor interrupted the Live runtime.");
+        }
+        return false;
+    }
+
+    // A Mic route can use Default as its deterministic offline fallback. Its
+    // Between pulses control must remain editable while performance LIVE is
+    // running, and the ordinary signal path must update the authored clock
+    // without interrupting that runtime.
+    const pvt::ClockConfig live_edit_clock_before = config_.clock;
+    const pvt::LiveConfig live_edit_routes_before = config_.live;
+    config_.clock.mode = pvt::ClockMode::Default;
+    QString live_edit_route_error;
+    const auto live_edit_role = ensureStandardMicRoute(
+        false, &live_edit_route_error);
+    syncActiveRender();
+    syncProjectGlobals();
+    loadGlobalEditors();
+    updateSynchronizationState();
+    const pvt::ClockInterpolation live_edit_target =
+        config_.clock.interpolation == pvt::ClockInterpolation::Hold
+            ? pvt::ClockInterpolation::Smoothstep
+            : pvt::ClockInterpolation::Hold;
+    const int live_edit_index = clock_interpolation_->findData(
+        static_cast<int>(live_edit_target));
+    if (live_edit_role.has_value() && live_edit_index >= 0
+        && clock_interpolation_->isEnabled()) {
+        clock_interpolation_->setCurrentIndex(live_edit_index);
+        QApplication::processEvents();
+    }
+    const bool live_clock_editable = live_edit_role.has_value()
+        && live_edit_route_error.isEmpty() && live_edit_index >= 0
+        && clock_interpolation_->isEnabled()
+        && config_.clock.interpolation == live_edit_target
+        && live_workspace_->isLiveActive()
+        && live_popout_window_ == automatic_live_window
+        && automatic_live_window->isVisible();
+    config_.clock = live_edit_clock_before;
+    config_.live = live_edit_routes_before;
+    syncActiveRender();
+    syncProjectGlobals();
+    loadGlobalEditors();
+    updateSynchronizationState();
+    if (!live_clock_editable) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr(
+                "Between pulses could not be edited through an active Mic route without stopping performance LIVE: %1")
+                         .arg(live_edit_route_error);
         }
         return false;
     }

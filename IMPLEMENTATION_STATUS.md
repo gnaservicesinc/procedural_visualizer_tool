@@ -6,6 +6,47 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 8.0.1 Linux OpenGL surface correction
+
+OpenGL now routes a displaced Plane through a dedicated indexed mesh shader
+before considering its flat analytic transform. Generated position/UV/normal
+buffers are cached by immutable mesh identity, while a float color target,
+depth testing, and bounded depth peeling preserve transformed height geometry,
+lighting, outside-fill, and straight-alpha rear-surface composition. CPU + GPU
+and strict GPU therefore keep the expensive raster stage accelerated instead
+of rendering a flat substitute or collapsing to CPU. The flat analytic Plane
+path remains supported consistently on Linux and Windows.
+
+The Linux runtime parity test compares straight-alpha images in composited
+space and retains a separate fully opaque raw-float fixture. This ignores only
+RGB that is mathematically hidden by zero alpha while continuing to catch
+visible color, alpha, projection, rotation, lighting, and sampling divergence.
+
+Live audio and MIDI route phase now receives the reference clock's authored
+interpolation. Latency compensation is applied to the physical beat position
+first, then Hold, Linear, or Smoothstep shapes its fractional beat before the
+authored beats-per-loop divisor. Project and active-layer Mic routes keep the
+Between pulses selector enabled even when their deterministic fallback mode
+would not use pulse interpolation. The GUI smoke test changes the value through
+the ordinary signal path while performance Live remains active and visible.
+
+`VERSION` is registered in CMake's configure-dependency set. Incremental build
+trees therefore regenerate product definitions, bundle metadata, package
+configuration, and the full `libProceduralVisualizerTool.8.0.1` filename after
+a bump instead of retaining the previous patch version until a manual configure.
+
+Local 8.0.1 validation passes all 24 native Release tests, all 23 C++20 tests,
+all 23 AddressSanitizer plus UndefinedBehaviorSanitizer tests, and all 24
+shared-library tests. The installed CMake consumer links and runs against
+`libProceduralVisualizerTool.8.0.1.dylib`. The distribution verifier checks 26
+Mach-O files; deep strict signing, embedded CLI version/self-test, packaged
+Cocoa smoke, arm64, plist version, deployment target, `/usr/lib` RPATH,
+archive-root, and SHA-256 checks pass. Independent C++17/C++20 warning-clean
+syntax checks cover the Qt OpenGL source and runtime test, and all five embedded
+GLSL 3.3 stages pass `glslangValidator`. Native Linux x64/ARM64 and Windows
+x64/ARM64 runtime execution remains an enforced package-workflow gate before
+the release tag is created.
+
 ## 8.0.0 explicit surface composition
 
 The surface pipeline has no type-triggered presentation changes for new work.
