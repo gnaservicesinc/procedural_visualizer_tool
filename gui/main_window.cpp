@@ -2335,6 +2335,13 @@ MainWindow::MainWindow(QWidget* parent)
     updateWindowTitle();
     updateCompatibilityWarning();
     restoreUserSettings();
+    if (QCoreApplication::arguments().contains(QStringLiteral("--smoke-test"))) {
+        // CI package validation must not enter a display-driver capability
+        // probe or start a GPU preview. Headless OpenGL context creation can
+        // block inside a vendor driver and cannot be bounded by Qt. The normal
+        // application path still probes and reports the real accelerator.
+        render_backend_ = pvt::RenderBackend::Cpu;
+    }
     setDriversExpanded(false);
     setWorkflowStage(1);
     if (!custom_defaults_load_warning_.isEmpty()) {
@@ -15168,11 +15175,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const int saved_backend = saved_settings.value(
         QStringLiteral("preferences/renderBackend"),
         static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
-    const pvt::RenderBackend expected_backend =
-        saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
-                && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
-            ? static_cast<pvt::RenderBackend>(saved_backend)
-            : pvt::RenderBackend::CpuAndGpu;
+    const bool automated_smoke = QCoreApplication::arguments().contains(
+        QStringLiteral("--smoke-test"));
+    pvt::RenderBackend expected_backend = pvt::RenderBackend::Cpu;
+    if (!automated_smoke) {
+        expected_backend =
+            saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
+                    && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
+                ? static_cast<pvt::RenderBackend>(saved_backend)
+                : pvt::RenderBackend::CpuAndGpu;
+    }
     if (undo_stack_ == nullptr || undo_stack_->undoLimit() != expected_undo_limit
         || render_backend_ != expected_backend
         || frameRenderOptions().backend != render_backend_) {
@@ -15183,10 +15195,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
 
     {
+        pvt::RendererCapabilities smoke_capabilities;
+        smoke_capabilities.opengl_surface_compiled = true;
+        smoke_capabilities.opengl_surface_status =
+            "Hardware capability probe omitted during deterministic smoke test.";
         ApplicationSettingsDialog settings_dialog(
             expected_undo_limit, expected_backend,
             recent_project_limit_,
-            hasCustomNewProjectDefaults(), this);
+            hasCustomNewProjectDefaults(), this, &smoke_capabilities);
         configure_readable_layouts(&settings_dialog);
         auto* tabs = settings_dialog.findChild<QTabWidget*>(
             QStringLiteral("applicationSettingsTabs"));

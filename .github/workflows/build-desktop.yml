@@ -142,16 +142,18 @@ jobs:
             python_exe="$GITHUB_WORKSPACE/.venv/bin/python3"
           fi
           "$python_exe" -m pip install "aqtinstall==$AQTINSTALL_VERSION"
+          # Use an absolute root because aqt writes this location into the
+          # Windows ARM64 qtpaths wrapper, which later runs from package/.
           "$python_exe" -m aqt install-qt \
             "${{ matrix.qt-host }}" desktop "$QT_VERSION" \
-            "${{ matrix.qt-arch }}" --outputdir .qt
+            "${{ matrix.qt-arch }}" --outputdir "$GITHUB_WORKSPACE/.qt"
           qt_root="$GITHUB_WORKSPACE/.qt/$QT_VERSION/${{ matrix.qt-dir }}"
           echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
           echo "$qt_root/bin" >> "$GITHUB_PATH"
           if [[ "${{ matrix.qt-arch }}" == *arm64_cross_compiled ]]; then
             "$python_exe" -m aqt install-qt \
               windows desktop "$QT_VERSION" win64_msvc2022_64 \
-              --outputdir .qt
+              --outputdir "$GITHUB_WORKSPACE/.qt"
             # aqt patches the target Qt's qtpaths*.bat wrappers to find the
             # companion host tools as a sibling of msvc2022_arm64. Keep both
             # installations under the same version root so windeployqt can

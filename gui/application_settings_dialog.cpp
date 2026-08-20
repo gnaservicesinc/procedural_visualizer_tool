@@ -36,7 +36,8 @@ QLabel* explanatory_label(const QString& text, QWidget* parent) {
 ApplicationSettingsDialog::ApplicationSettingsDialog(
     int undoLimit, pvt::RenderBackend renderBackend,
     int recentProjectLimit,
-    bool hasCustomNewProjectDefaults, QWidget* parent)
+    bool hasCustomNewProjectDefaults, QWidget* parent,
+    const pvt::RendererCapabilities* capabilitiesOverride)
     : QDialog(parent) {
     setObjectName(QStringLiteral("applicationSettingsDialog"));
     setWindowTitle(tr("Application Settings"));
@@ -159,7 +160,9 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
            "lanes. GPU is strict and reports unsupported work or runtime "
            "acceleration failures instead of silently retrying on CPU."));
     backend_form->addRow(tr("Backend"), render_backend_);
-    const pvt::RendererCapabilities capabilities = pvt::renderer_capabilities();
+    const pvt::RendererCapabilities capabilities =
+        capabilitiesOverride == nullptr ? pvt::renderer_capabilities()
+                                        : *capabilitiesOverride;
     QString accelerator_status;
     if (capabilities.metal_available) {
         accelerator_status = tr("Metal ready: %1")

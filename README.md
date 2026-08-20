@@ -18,7 +18,10 @@ installations share the layout expected by that wrapper, preventing
 `windeployqt` from placing x64 Qt DLLs beside the ARM64 application. Package
 validation checks the PE machine type of the application, Qt Core, and both
 platform plugins before launching smoke tests, so an architecture mismatch is
-reported directly instead of appearing as a hung application.
+reported directly instead of appearing as a hung application. The packaged GUI
+smoke test is hardware-independent and never opens an OpenGL capability probe,
+preventing headless display drivers from blocking release validation while the
+normal application continues to report and use real accelerator capabilities.
 
 ## 7.0.1 high-precision image input and cross-platform reliability
 

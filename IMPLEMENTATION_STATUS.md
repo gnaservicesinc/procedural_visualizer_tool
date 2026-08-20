@@ -14,14 +14,18 @@ therefore searched for a target `qtpaths.exe`, missed the wrapper, and invoked
 the x64 host `windeployqt` without target metadata. The resulting package mixed
 an ARM64 application with x64 Qt DLLs and its unattended smoke check stalled.
 
-The companion x64 Qt tools now install beside the ARM64 target as required by
-aqt's wrapper, and the public Qt deployment API receives that wrapper through
-`DEPLOY_TOOL_OPTIONS`. Windows packaging reads the COFF machine field from the
-installed application, Qt Core, offscreen plugin, and Windows plugin before
-launch, requiring one consistent x64 or ARM64 architecture. Product behavior,
-the public SONAME 7 ABI, setup format 15, and layer format 13 are unchanged.
-The native 7.0.2 Release build and all 24 registered tests pass locally; the
-native Windows ARM64 package job remains the definitive deployment check.
+The companion x64 Qt tools now install beside the ARM64 target through an
+absolute aqt root, as required by the generated wrapper, and the public Qt
+deployment API receives that wrapper through `DEPLOY_TOOL_OPTIONS`. Windows
+packaging reads the COFF machine field from the installed application, Qt Core,
+offscreen plugin, and Windows plugin before launch, requiring one consistent
+x64 or ARM64 architecture. Automated GUI smoke tests force the CPU reference
+renderer and inject a hardware-free capability status so a headless Qt/OpenGL
+driver cannot block package validation; normal application launches still
+probe and use the real accelerator. Product behavior, the public SONAME 7 ABI,
+setup format 15, and layer format 13 are unchanged. The native 7.0.2 Release
+build and all 24 registered tests pass locally; the native Windows ARM64
+package job remains the definitive deployment check.
 
 ## 7.0.1 high-precision imports and Windows reliability
 

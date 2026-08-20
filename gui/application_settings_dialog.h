@@ -21,7 +21,9 @@ public:
     ApplicationSettingsDialog(int undoLimit, pvt::RenderBackend renderBackend,
                               int recentProjectLimit,
                               bool hasCustomNewProjectDefaults,
-                              QWidget* parent = nullptr);
+                              QWidget* parent = nullptr,
+                              const pvt::RendererCapabilities*
+                                  capabilitiesOverride = nullptr);
 
     int undoLimit() const;
     pvt::RenderBackend renderBackend() const;
