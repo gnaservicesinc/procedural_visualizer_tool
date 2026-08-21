@@ -1,0 +1,23 @@
+PVT_VERSION	5
+version.number	1
+version.uuid	d60d720a-7f91-413b-bba4-298b6ca029d5
+version.parent_digest	9971eebcd584a437448aeea979e7ea60de7d5d5781c2368963ceeb154a4938be
+version.reason	save
+version.saved_utc	2026-08-17T10%3A06%3A34Z
+version.saved_with_version	2.0.1
+version.reverted_from_digest	
+project.name	Lolli%20Pop
+render_output.sha256	9ebbbecfe020dcbcf27e651b5a4d08f47bac837b53e0e27888b90278304b73f2
+music_analysis.sha256	
+groups.count	0
+layers.count	1
+layers.0.file_id	0
+layers.0.uuid	c0814654-3292-431c-b1f3-b35b82db6860
+layers.0.name	Layer%201
+layers.0.enabled	1
+layers.0.blend_mode	none
+layers.0.alpha_mode	over
+layers.0.group_uuid	
+layers.0.opacity	1
+layers.0.sha256	dd7b56e6e52554797d3bdf3aed7430dbf929067bf2f47032e6be5e88d2c319d3
+attachments.count	0

@@ -268,6 +268,21 @@ int main() {
                 return 1;
             }
         }
+        if (available.hevc_alpha) {
+            options.codec = pvt::video::Codec::Hevc;
+            options.preserve_alpha = true;
+            options.hardware = pvt::video::HardwarePolicy::Prefer;
+            options.hevc_quality = pvt::video::HevcQuality::HighQuality;
+            const fs::path hevc_alpha = directory / "hevc-alpha.mov";
+            if (!pvt::video::export_project(
+                    project, hevc_alpha.string(), options, {}, &cancel,
+                    &report, &error)
+                || !inspect_movie(hevc_alpha, false, error)) {
+                std::cerr << "HEVC-with-alpha native video export failed: "
+                          << error << '\n';
+                return 1;
+            }
+        }
         std::cout << "Native video export checks passed.\n";
         return 0;
     }

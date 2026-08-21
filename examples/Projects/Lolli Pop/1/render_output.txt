@@ -1,0 +1,56 @@
+PVT_RENDER_OUTPUT	5
+canvas.width	7680
+canvas.height	4320
+canvas.block_size	1
+timing.total_frames	480
+timing.fps	60
+timing.clock.mode	default
+timing.clock.interpolation	linear
+timing.clock.fit	exact
+timing.clock.frame_interval	1
+timing.clock.time_interval_microseconds	500000
+timing.clock.meter.expression	4%2F4
+timing.clock.meter.bpm	120
+timing.clock.meter.tempo_note_denominator	4
+timing.clock.music_tempo	detected
+timing.clock.music_swing_policy	keep_all
+timing.clock.beat_offset_microseconds	0
+timing.clock.phase_offset_degrees	0
+timing.clock.reverse	0
+timing.clock.data_only	0
+audio_response_defaults.enabled	0
+audio_response_defaults.synchronized_only	1
+audio_response_defaults.waves_enabled	1
+audio_response_defaults.wave_source	beat
+audio_response_defaults.wave_amount	0.34999999999999998
+audio_response_defaults.effects_enabled	1
+audio_response_defaults.effect_source	energy
+audio_response_defaults.effect_amount	0.45000000000000001
+audio_response_defaults.color_enabled	1
+audio_response_defaults.color_source	energy
+audio_response_defaults.color_amount_degrees	180
+paths.count	0
+timing.music.schema_version	1
+timing.music.analyzer_version	
+timing.music.source_sha256	
+timing.music.source_basename	
+timing.music.source_format	
+timing.music.source_frame_count	0
+timing.music.source_sample_rate	0
+timing.music.source_channel_count	0
+timing.music.duration_seconds	0
+timing.music.detected_bpm	0
+timing.music.tempo_confidence	0
+timing.music.beat_times.count	0
+timing.music.tempo_points.count	0
+timing.music.feature_samples.count	0
+output.bit_depth	16
+output.png_compression_level	9
+output.dither_enabled	1
+output.dither_method	blue_noise
+output.write_alpha	0
+output.output_directory	.
+output.filename_prefix	frame_
+output.first_frame_number	0
+output.filename_digits	4
+output.overwrite_existing	0

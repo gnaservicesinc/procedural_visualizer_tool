@@ -1,0 +1,17 @@
+PVT_BUNDLE	1
+project.uuid	68c08b52-4b42-4c6a-8c04-d93a2dc2633a
+project.name	Lolli%20Pop
+project.first_created_utc	2026-08-17T01%3A00%3A01Z
+project.last_opened_utc	2026-08-17T09%3A55%3A06Z
+project.last_saved_utc	2026-08-17T10%3A06%3A34Z
+project.created_with_version	1.2.6
+project.last_changed_with_version	2.0.1
+versions.count	2
+versions.0.number	0
+versions.0.metadata_sha256	9971eebcd584a437448aeea979e7ea60de7d5d5781c2368963ceeb154a4938be
+versions.0.tree_sha256	d4f94b3652c6a4026b822b98627bba9a545882de4f0d53e04389e80f1ecfd625
+versions.1.number	1
+versions.1.metadata_sha256	ea9bde5ba1490ac233fda7d252c37abe6a23a77218eb53d73858919edc6b3d29
+versions.1.tree_sha256	568b0499ef0921ec7d9825ac128c36451b521ca3f852ed6fc3ce93cdbdbcc646
+lineage_aliases.count	0
+preserved.count	0

@@ -622,8 +622,10 @@ NSDictionary* video_settings(const pvt::ProjectConfig& project,
                                ? @0.96 : @0.92);
     }
     if (options.preserve_alpha) {
-        compression[(__bridge NSString*)kVTCompressionPropertyKey_PreserveAlphaChannel]
-            = @YES;
+        // AVVideoCodecTypeHEVCWithAlpha preserves alpha by definition, and
+        // VideoToolbox documents this optional property's default as true.
+        // macOS 27 rejects AVAssetWriter settings that redundantly include
+        // kVTCompressionPropertyKey_PreserveAlphaChannel for that codec.
         compression[(__bridge NSString*)kVTCompressionPropertyKey_TargetQualityForAlpha]
             = @1.0;
         compression[(__bridge NSString*)kVTCompressionPropertyKey_AlphaChannelMode]

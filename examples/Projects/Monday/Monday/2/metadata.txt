@@ -1,0 +1,32 @@
+PVT_VERSION	5
+version.number	2
+version.uuid	eda1671e-a3f8-45fb-9d71-62cc9ef3fc96
+version.parent_digest	06fcb01ec4b93d8ad784aa98bf1693de29abca1652f4d35a9a94d888a0edf9f0
+version.reason	save
+version.saved_utc	2026-08-17T05%3A41%3A32Z
+version.saved_with_version	1.2.6
+version.reverted_from_digest	
+project.name	Monday
+render_output.sha256	b7579df88acd453a5c48b960e56a0d8a5116560cd3c0017782766b6c930da0da
+music_analysis.sha256	
+groups.count	0
+layers.count	2
+layers.0.file_id	0
+layers.0.uuid	febe300c-0378-444d-ad39-294bedc199a1
+layers.0.name	Layer%201
+layers.0.enabled	1
+layers.0.blend_mode	none
+layers.0.alpha_mode	over
+layers.0.group_uuid	
+layers.0.opacity	1
+layers.0.sha256	7918836e12b85e79ea78ee381e1c03a9d2c292e88b10b5d1b2933e60781b4129
+layers.1.file_id	1
+layers.1.uuid	cf5ace80-f8bc-4d8a-bd43-8cacfb1f1129
+layers.1.name	Layer%201%20copy
+layers.1.enabled	1
+layers.1.blend_mode	subtract
+layers.1.alpha_mode	over
+layers.1.group_uuid	
+layers.1.opacity	1
+layers.1.sha256	a020583e4925cd01be623c04db9d49ebb886613b656bcbe842a2ac06ec61dc24
+attachments.count	0
