@@ -1,6 +1,7 @@
 #ifndef PVT_APPLICATION_SETTINGS_DIALOG_H
 #define PVT_APPLICATION_SETTINGS_DIALOG_H
 
+#include "performance_settings.h"
 #include "procedural_visualizer_tool.h"
 
 #include <QDialog>
@@ -18,7 +19,8 @@ public:
         RestoreBuiltIn
     };
 
-    ApplicationSettingsDialog(int undoLimit, pvt::RenderBackend renderBackend,
+    ApplicationSettingsDialog(int undoLimit,
+                              const PerformanceSettings& performanceSettings,
                               int recentProjectLimit,
                               bool hasCustomNewProjectDefaults,
                               QWidget* parent = nullptr,
@@ -26,13 +28,18 @@ public:
                                   capabilitiesOverride = nullptr);
 
     int undoLimit() const;
-    pvt::RenderBackend renderBackend() const;
+    PerformanceSettings performanceSettings() const;
     int recentProjectLimit() const;
     NewProjectDefaultsAction newProjectDefaultsAction() const;
 
 private:
     QSpinBox* undo_limit_ = nullptr;
     QComboBox* render_backend_ = nullptr;
+    QSpinBox* preview_live_cpu_workers_ = nullptr;
+    QSpinBox* export_frame_workers_ = nullptr;
+    QSpinBox* export_cpu_workers_ = nullptr;
+    QSpinBox* gpu_frames_in_flight_ = nullptr;
+    QSpinBox* render_memory_budget_mib_ = nullptr;
     QSpinBox* recent_project_limit_ = nullptr;
     QLabel* defaults_status_ = nullptr;
     NewProjectDefaultsAction defaults_action_ =

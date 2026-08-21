@@ -1,3 +1,12 @@
+procedural-visualizer-tool (10.0.0) stonking; urgency=medium
+
+  * Make CPU + GPU scheduling GPU-primary and scale independent CPU layers.
+  * Add machine-local performance, worker, GPU-admission, and memory controls.
+  * Correct realtime output lifecycle and reorganize Project/Layers controls.
+  * Advance the shared-library ABI to 10 for FrameRenderOptions growth.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 20 Aug 2026 21:22:38 -0400
+
 procedural-visualizer-tool (9.0.0) stonking; urgency=medium
 
   * Add numeric layer LFOs with four waveforms, ranges, phase, and persistence.

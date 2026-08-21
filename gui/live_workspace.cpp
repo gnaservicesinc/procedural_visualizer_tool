@@ -33,6 +33,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPixmap>
+#include <QPointer>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
@@ -592,6 +593,9 @@ struct LiveWorkspace::Impl {
     void dismissOutput();
     void showOutput();
     void applyVisibleOutputPolicy();
+    void restoreOutputOwnerFocus();
+    void showStartingState();
+    void showStandbyState();
     QScreen* selectedScreen() const;
     const pvt::LiveEndpointConfig* endpoint(const std::string& uuid) const;
     pvt::LiveEndpointConfig* endpoint(pvt::LiveConfig& value,
@@ -699,6 +703,7 @@ void LiveWorkspace::Impl::buildUi() {
     render_lamp->setText(q->tr("STANDBY"));
     header_layout->addWidget(render_lamp);
     live_button = new QPushButton(q->tr("GO LIVE"));
+    live_button->setObjectName(QStringLiteral("liveRuntimeButton"));
     live_button->setCheckable(true);
     live_button->setMinimumWidth(105);
     header_layout->addWidget(live_button);
@@ -2112,8 +2117,12 @@ void LiveWorkspace::Impl::setActive(bool value) {
         live_button->setText(value ? q->tr("LIVE · ON") : q->tr("GO LIVE"));
     }
     if (value) {
+        // Publish ownership before launching the first realtime render so the
+        // editor can cancel queued/in-flight preview work first.
+        emit q->liveActiveChanged(true);
         ++render_generation;
         renderer.cancelCurrent();
+        audio_snapshot = {};
         last_image = {};
         stage.clearFrame();
         presented_frame_clock.invalidate();
@@ -2129,8 +2138,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         good_streak = 0;
         render_failed = false;
         adaptive_scale = 1.0;
-        render_lamp->setState(StatusLamp::State::Warning);
-        render_lamp->setText(q->tr("STARTING"));
+        showStartingState();
         startIo();
         const pvt::ProjectConfig project = project_provider
             ? project_provider() : pvt::default_project();
@@ -2146,6 +2154,11 @@ void LiveWorkspace::Impl::setActive(bool value) {
         render_timer.stop();
         ui_timer.stop();
         midi_clock_timer.stop();
+        stage.setFrozen(false);
+        stage.setBlackout(false);
+        // Ask the window system to leave the stage/full-screen Space before
+        // waiting for a cooperative render cancellation to drain.
+        stage.dismiss();
         renderer.stop();
         stopIo();
         scene_transition = {};
@@ -2168,19 +2181,16 @@ void LiveWorkspace::Impl::setActive(bool value) {
             QSignalBlocker b(blackout_button);
             blackout_button->setChecked(false);
         }
-        stage.setFrozen(false);
-        stage.setBlackout(false);
-        stage.hide();
         stage.clearFrame();
+        audio_snapshot = {};
         last_image = {};
         presented_frame_clock.invalidate();
         output_button->setChecked(false);
-        render_lamp->setState(StatusLamp::State::Off);
-        render_lamp->setText(q->tr("STANDBY"));
-        audio_lamp->setState(StatusLamp::State::Off);
-        midi_lamp->setState(StatusLamp::State::Off);
-        monitor->setText(q->tr("PROGRAM OUTPUT\nStandby"));
+        showStandbyState();
         emit q->runtimeStatusChanged(q->tr("Live performance runtime stopped."));
+        // A false transition is published only after the synchronous renderer
+        // drain so editor export/preview work cannot overlap teardown.
+        emit q->liveActiveChanged(false);
     }
 }
 
@@ -2188,6 +2198,11 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
     if (presentation_active == value) return;
     if (value && active) setActive(false);
     presentation_active = value;
+    if (value) {
+        // Give the editor a chance to surrender its preview budget before the
+        // presentation controller submits the first frame.
+        emit q->presentationActiveChanged(true);
+    }
     ++render_generation;
     if (value) {
         renderer.cancelCurrent();
@@ -2201,10 +2216,7 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
         stage.setFrozen(false);
         stage.setBlackout(false);
         presented_frame_clock.invalidate();
-        render_lamp->setState(StatusLamp::State::Warning);
-        render_lamp->setText(q->tr("STARTING"));
-        fps_readout->setText(q->tr("0.0 fps delivered"));
-        frame_readout->setText(q->tr("Waiting for first frame"));
+        showStartingState();
         const pvt::ProjectConfig project = presentation_project_provider
             ? presentation_project_provider()
             : (project_provider ? project_provider() : pvt::default_project());
@@ -2215,19 +2227,23 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
             q->tr("Live Preview Output started without performance inputs."));
     } else {
         render_timer.stop();
+        stage.setFrozen(false);
+        stage.setBlackout(false);
+        // Exit the stage surface promptly even if the in-flight renderer
+        // needs a moment to observe cooperative cancellation.
+        stage.dismiss();
         // Do not report the real-time output as inactive while a Metal frame
         // can still drain: export admission relies on this synchronous,
         // cooperative teardown having completed.
         renderer.stop();
-        stage.setFrozen(false);
-        stage.setBlackout(false);
-        stage.hide();
         stage.clearFrame();
         last_image = {};
         presented_frame_clock.invalidate();
+        output_button->setChecked(false);
+        showStandbyState();
         emit q->runtimeStatusChanged(q->tr("Live Preview Output stopped."));
+        emit q->presentationActiveChanged(false);
     }
-    emit q->presentationActiveChanged(value);
 }
 
 void LiveWorkspace::Impl::resetRealtimeFrame() {
@@ -2396,7 +2412,6 @@ QScreen* LiveWorkspace::Impl::selectedScreen() const {
 }
 
 void LiveWorkspace::Impl::applyVisibleOutputPolicy() {
-    if (!stage.isVisible()) return;
     QScreen* target = selectedScreen();
     const bool fullscreen = presentation_active
         ? QSettings().value(QStringLiteral("previewOutput/fullscreen"), true).toBool()
@@ -2427,7 +2442,9 @@ void LiveWorkspace::Impl::applyVisibleOutputPolicy() {
 void LiveWorkspace::Impl::showOutput() {
     stage.setSmoothScaling(true);
     stage.setFrame(last_image);
-    stage.show();
+    // The screen-specific helper performs the only show. In particular, macOS
+    // must create/assign the native window to the selected display before it
+    // becomes visible or a projector output can flash on the primary display.
     applyVisibleOutputPolicy();
     output_button->setChecked(active && stage.isVisible());
 }
@@ -2435,10 +2452,61 @@ void LiveWorkspace::Impl::showOutput() {
 void LiveWorkspace::Impl::dismissOutput() {
     if (presentation_active) {
         setPresentationActive(false);
+        restoreOutputOwnerFocus();
         return;
     }
-    stage.hide();
+    stage.dismiss();
     output_button->setChecked(false);
+    if (active) {
+        // Discard any frame sized for the stage and immediately replace it
+        // with one sized for the in-window program monitor.
+        ++render_generation;
+        renderer.cancelCurrent();
+        requestFrame();
+    }
+    restoreOutputOwnerFocus();
+}
+
+void LiveWorkspace::Impl::restoreOutputOwnerFocus() {
+    // User dismissal should return keyboard focus to the window that owns the
+    // output mode: the editor for presentation-only output, or the LIVE
+    // companion for performance output. State teardown calls stage.dismiss()
+    // directly and therefore never steal focus during shutdown.
+    QPointer<QWidget> owner(q->window());
+    QTimer::singleShot(0, q, [owner] {
+        if (owner == nullptr || !owner->isVisible()) return;
+        owner->raise();
+        owner->activateWindow();
+    });
+}
+
+void LiveWorkspace::Impl::showStartingState() {
+    render_lamp->setState(StatusLamp::State::Warning);
+    render_lamp->setText(q->tr("STARTING"));
+    render_lamp->setToolTip({});
+    fps_readout->setText(q->tr("0.0 fps delivered"));
+    frame_readout->setText(q->tr("Waiting for first frame"));
+    monitor->setPixmap({});
+    monitor->setText(q->tr("PROGRAM OUTPUT\nWaiting for first frame"));
+}
+
+void LiveWorkspace::Impl::showStandbyState() {
+    render_lamp->setState(StatusLamp::State::Off);
+    render_lamp->setText(q->tr("STANDBY"));
+    render_lamp->setToolTip({});
+    audio_lamp->setState(StatusLamp::State::Off);
+    audio_lamp->setToolTip({});
+    midi_lamp->setState(StatusLamp::State::Off);
+    midi_lamp->setToolTip({});
+    audio_meter->setLevel(0.0);
+    audio_meter->setPeakWarning(false);
+    detected_tempo->setText(q->tr("Waiting for audio…"));
+    fps_readout->setText(q->tr("— fps"));
+    frame_readout->setText(q->tr("No frame"));
+    monitor->setPixmap({});
+    monitor->setText(q->tr("PROGRAM OUTPUT\nStandby"));
+    freeze_button->setText(q->tr("FREEZE"));
+    blackout_button->setText(q->tr("BLACKOUT"));
 }
 
 void LiveWorkspace::Impl::toggleOutput() {

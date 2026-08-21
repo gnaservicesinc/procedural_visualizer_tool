@@ -117,6 +117,98 @@ constexpr std::size_t kMaximumPrefixBytes = kMaximumNameBytes;
 constexpr int kDefaultUndoLimit = 500;
 constexpr int kMinimumUndoLimit = 0;
 constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
+constexpr std::size_t kMebibyte = std::size_t{1024U} * 1024U;
+
+std::size_t maximum_memory_preference_mib() {
+    return (std::min)(
+        (std::numeric_limits<std::size_t>::max)() / kMebibyte,
+        static_cast<std::size_t>((std::numeric_limits<int>::max)()));
+}
+
+std::size_t read_size_preference(const QSettings& settings,
+                                 const QString& key,
+                                 std::size_t maximum) {
+    bool ok = false;
+    const qlonglong value = settings.value(key, 0).toLongLong(&ok);
+    if (!ok || value <= 0) return 0U;
+    const qulonglong unsigned_value = static_cast<qulonglong>(value);
+    if (unsigned_value > static_cast<qulonglong>(maximum)) return maximum;
+    return static_cast<std::size_t>(unsigned_value);
+}
+
+PerformanceSettings read_performance_settings(const QSettings& settings) {
+    PerformanceSettings performance;
+    const QString backend_key =
+        QStringLiteral("performance/backendPreference");
+    if (settings.contains(backend_key)) {
+        const int backend = settings.value(backend_key).toInt();
+        if (backend >= static_cast<int>(RenderBackendPreference::Automatic)
+            && backend <= static_cast<int>(RenderBackendPreference::Gpu)) {
+            performance.backend =
+                static_cast<RenderBackendPreference>(backend);
+        }
+    } else if (settings.contains(
+                   QStringLiteral("preferences/renderBackend"))) {
+        // Preserve an existing user's explicit legacy choice. Fresh installs
+        // receive Automatic, which resolves to the GPU-primary hybrid policy.
+        const int legacy_backend = settings.value(
+            QStringLiteral("preferences/renderBackend")).toInt();
+        switch (legacy_backend) {
+            case static_cast<int>(pvt::RenderBackend::Cpu):
+                performance.backend = RenderBackendPreference::Cpu;
+                break;
+            case static_cast<int>(pvt::RenderBackend::CpuAndGpu):
+                performance.backend = RenderBackendPreference::CpuAndGpu;
+                break;
+            case static_cast<int>(pvt::RenderBackend::Gpu):
+                performance.backend = RenderBackendPreference::Gpu;
+                break;
+            default:
+                performance.backend = RenderBackendPreference::Automatic;
+                break;
+        }
+    }
+    performance.preview_live_cpu_workers = read_size_preference(
+        settings, QStringLiteral("performance/previewLiveCpuWorkers"),
+        pvt::kMaximumSequenceWorkers);
+    performance.export_frame_workers = read_size_preference(
+        settings, QStringLiteral("performance/exportFrameWorkers"),
+        pvt::kMaximumSequenceWorkers);
+    performance.export_cpu_workers = read_size_preference(
+        settings, QStringLiteral("performance/exportCpuWorkers"),
+        pvt::kMaximumSequenceWorkers);
+    performance.gpu_frames_in_flight = read_size_preference(
+        settings, QStringLiteral("performance/gpuFramesInFlight"),
+        pvt::kMaximumGpuFramesInFlight);
+    performance.render_memory_budget_mib = read_size_preference(
+        settings, QStringLiteral("performance/renderMemoryBudgetMiB"),
+        maximum_memory_preference_mib());
+    return performance;
+}
+
+pvt::RenderBackend resolved_render_backend(
+    RenderBackendPreference preference,
+    bool allow_capability_probe = true) {
+    switch (preference) {
+        case RenderBackendPreference::Automatic: {
+            if (!allow_capability_probe) return pvt::RenderBackend::Cpu;
+            const pvt::RendererCapabilities capabilities =
+                pvt::renderer_capabilities();
+            return capabilities.metal_available
+                       || capabilities.opengl_surface_available
+                ? pvt::RenderBackend::CpuAndGpu
+                : pvt::RenderBackend::Cpu;
+        }
+        case RenderBackendPreference::CpuAndGpu:
+            return pvt::RenderBackend::CpuAndGpu;
+        case RenderBackendPreference::Cpu:
+            return pvt::RenderBackend::Cpu;
+        case RenderBackendPreference::Gpu:
+            return pvt::RenderBackend::Gpu;
+    }
+    return pvt::RenderBackend::CpuAndGpu;
+}
+
 const double kMaximumRenderParameter =
     pvt::maximum_render_parameter_magnitude();
 constexpr double kMinimumPositiveUiValue = 0.000001;
@@ -2035,8 +2127,25 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::refreshLivePreviewOutputControls);
     connect(live_workspace_, &LiveWorkspace::audioInputsChanged,
             this, &MainWindow::refreshStandardMicControls);
+    connect(live_workspace_, &LiveWorkspace::liveActiveChanged,
+            this, [this](bool active) {
+                updateExportAvailability();
+                if (active) {
+                    suspendEditorPreviewForRealtime();
+                    stopPlayback();
+                } else if (!suppress_realtime_preview_resume_
+                    && live_workspace_ != nullptr
+                    && !live_workspace_->isPresentationActive()) {
+                    if (status_ != nullptr) {
+                        status_->setText(
+                            tr("Performance LIVE stopped — editor preview resumed."));
+                    }
+                    schedulePreview();
+                }
+            });
     connect(live_workspace_, &LiveWorkspace::presentationActiveChanged,
             this, [this](bool active) {
+                if (active) suspendEditorPreviewForRealtime();
                 if (live_preview_output_action_ != nullptr) {
                     const QSignalBlocker blocker(live_preview_output_action_);
                     live_preview_output_action_->setChecked(active);
@@ -2053,7 +2162,9 @@ MainWindow::MainWindow(QWidget* parent)
                             : tr("Stopped — start this to present the editor preview without entering LIVE."));
                 }
                 updateExportAvailability();
-                if (!active) schedulePreview();
+                if (!active && !suppress_realtime_preview_resume_) {
+                    schedulePreview();
+                }
             });
     refreshLivePreviewOutputControls();
     refreshStandardMicControls();
@@ -2142,13 +2253,17 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             }
         }
-        if (preview_deferred_) {
+        const bool realtime_output = live_workspace_ != nullptr
+            && live_workspace_->isRealtimeOutputActive();
+        if (preview_deferred_ && !realtime_output) {
             preview_deferred_ = false;
             if (playback_timer_->isActive()) {
                 QTimer::singleShot(0, this, &MainWindow::startPreview);
             } else {
                 preview_timer_->start();
             }
+        } else if (realtime_output) {
+            preview_deferred_ = false;
         }
     });
     connect(export_watcher_, &QFutureWatcher<ExportResult>::finished, this, [this] {
@@ -2697,11 +2812,11 @@ void MainWindow::updateWorkflowSummaries() {
         if (!workflow_project_context_.isEmpty()) {
             message = tr("These settings apply to the whole project and are independent of the selected layer stage.");
         } else if (selected_group_uuid_) {
-            message = tr("Select a layer row to edit its render pipeline. Group controls remain in the Project & Layers panel.");
+            message = tr("Select a layer row to edit its render pipeline. Group controls remain in the Layers & Groups panel.");
         } else if (layer == nullptr) {
             message = tr("Add or select a layer to begin editing this pipeline.");
         } else if (locked) {
-            message = tr("This layer belongs to a locked group. Unlock the group in Project & Layers to edit layer stages.");
+            message = tr("This layer belongs to a locked group. Unlock the group in Layers & Groups to edit layer stages.");
         } else if (workflow_project_context_.isEmpty()
                    && workflow_stage_index_ == 3 && !config_.motion.enabled) {
             message = tr("Whole-layer motion is off. Waves and reusable path editing remain available.");
@@ -2736,6 +2851,12 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
+    const bool previous_preview_suppression =
+        suppress_realtime_preview_resume_;
+    suppress_realtime_preview_resume_ = true;
+    ScopeExit restore_preview_suppression([this, previous_preview_suppression] {
+        suppress_realtime_preview_resume_ = previous_preview_suppression;
+    });
     cancelMusicAnalysis();
     stopPlayback();
     if (live_workspace_ != nullptr
@@ -5009,6 +5130,52 @@ QWidget* MainWindow::createOutputPage() {
         "Project-wide image dimensions, block resolution, frame count, and playback rate. These values define the timeline shared by every layer."));
     canvas_intro->setWordWrap(true);
     canvas_layout->addWidget(canvas_intro);
+
+    auto* identity_group = new QGroupBox(tr("Project Identity"));
+    auto* identity_form = new QFormLayout(identity_group);
+    project_name_ = new QLineEdit;
+    project_name_->setObjectName(QStringLiteral("projectName"));
+    project_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
+    project_name_->setValidator(
+        new Utf8TextValidator(TextRule::ProjectName, project_name_));
+    project_name_->setToolTip(
+        tr("The display name appears in the window title and supplies the default bundle name."));
+    identity_form->addRow(tr("Name"), project_name_);
+    canvas_layout->addWidget(identity_group);
+
+    auto* project_settings = new QGroupBox(tr("Project Settings"));
+    project_settings->setObjectName(QStringLiteral("projectSettingsNavigator"));
+    auto* project_settings_layout = new QGridLayout(project_settings);
+    project_canvas_button_ = new QPushButton(tr("Canvas && Loop"));
+    project_sync_button_ = new QPushButton(tr("Sync && Audio"));
+    project_export_button_ = new QPushButton(tr("Export"));
+    project_history_button_ = new QPushButton(tr("History"));
+    project_canvas_button_->setToolTip(
+        tr("Open project-wide dimensions, frame count, and playback rate."));
+    project_sync_button_->setToolTip(
+        tr("Open the persistent Drivers controls for project clock and inherited audio response."));
+    project_export_button_->setToolTip(
+        tr("Open project-wide image encoding and output destination settings."));
+    project_history_button_->setToolTip(
+        tr("Open immutable saved versions, rollback actions, and semantic comparison."));
+    project_canvas_button_->setAccessibleName(tr("Project settings: Canvas and Loop"));
+    project_sync_button_->setAccessibleName(tr("Project settings: Synchronization and Audio"));
+    project_export_button_->setAccessibleName(tr("Project settings: Export"));
+    project_history_button_->setAccessibleName(tr("Project settings: History"));
+    project_settings_layout->addWidget(project_canvas_button_, 0, 0);
+    project_settings_layout->addWidget(project_sync_button_, 0, 1);
+    project_settings_layout->addWidget(project_export_button_, 1, 0);
+    project_settings_layout->addWidget(project_history_button_, 1, 1);
+    canvas_layout->addWidget(project_settings);
+
+    compatibility_warning_label_ = new QLabel;
+    compatibility_warning_label_->setWordWrap(true);
+    compatibility_warning_label_->setStyleSheet(
+        QStringLiteral("QLabel { background: #5b4815; color: #fff2b2; "
+                       "border: 1px solid #c89b24; border-radius: 4px; padding: 6px; }"));
+    compatibility_warning_label_->hide();
+    canvas_layout->addWidget(compatibility_warning_label_);
+
     auto* export_intro = new QLabel(tr(
         "Everything needed to understand or start an export is collected here. Canvas size and frame timing are summarized below and remain editable in Project; encoding, destination, and file naming are editable on this page."));
     export_intro->setWordWrap(true);
@@ -5561,7 +5728,7 @@ void MainWindow::revertSelectedVersion() {
 }
 
 void MainWindow::createLayerDock() {
-    layers_dock_ = new QDockWidget(tr("Project && Layers"), this);
+    layers_dock_ = new QDockWidget(tr("Layers && Groups"), this);
     layers_dock_->setObjectName(QStringLiteral("projectLayersDock"));
     layers_dock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     layers_dock_->setMinimumWidth(250);
@@ -5570,49 +5737,6 @@ void MainWindow::createLayerDock() {
 
     auto* contents = new QWidget;
     auto* layout = new QVBoxLayout(contents);
-    auto* project_form = new QFormLayout;
-    project_name_ = new QLineEdit;
-    project_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
-    project_name_->setValidator(
-        new Utf8TextValidator(TextRule::ProjectName, project_name_));
-    project_name_->setToolTip(
-        tr("The display name appears in the window title and supplies the default bundle name."));
-    project_form->addRow(tr("Project"), project_name_);
-    layout->addLayout(project_form);
-
-    auto* project_settings = new QGroupBox(tr("Project Settings"));
-    project_settings->setObjectName(QStringLiteral("projectSettingsNavigator"));
-    auto* project_settings_layout = new QGridLayout(project_settings);
-    project_canvas_button_ = new QPushButton(tr("Canvas && Loop"));
-    project_sync_button_ = new QPushButton(tr("Sync && Audio"));
-    project_export_button_ = new QPushButton(tr("Export"));
-    project_history_button_ = new QPushButton(tr("History"));
-    project_canvas_button_->setToolTip(
-        tr("Open project-wide dimensions, frame count, and playback rate."));
-    project_sync_button_->setToolTip(
-        tr("Open the persistent Drivers controls for project clock and inherited audio response."));
-    project_export_button_->setToolTip(
-        tr("Open project-wide image encoding and output destination settings."));
-    project_history_button_->setToolTip(
-        tr("Open immutable saved versions, rollback actions, and semantic comparison."));
-    project_canvas_button_->setAccessibleName(tr("Project settings: Canvas and Loop"));
-    project_sync_button_->setAccessibleName(tr("Project settings: Synchronization and Audio"));
-    project_export_button_->setAccessibleName(tr("Project settings: Export"));
-    project_history_button_->setAccessibleName(tr("Project settings: History"));
-    project_settings_layout->addWidget(project_canvas_button_, 0, 0);
-    project_settings_layout->addWidget(project_sync_button_, 0, 1);
-    project_settings_layout->addWidget(project_export_button_, 1, 0);
-    project_settings_layout->addWidget(project_history_button_, 1, 1);
-    layout->addWidget(project_settings);
-
-    compatibility_warning_label_ = new QLabel;
-    compatibility_warning_label_->setWordWrap(true);
-    compatibility_warning_label_->setStyleSheet(
-        QStringLiteral("QLabel { background: #5b4815; color: #fff2b2; "
-                       "border: 1px solid #c89b24; border-radius: 4px; padding: 6px; }"));
-    compatibility_warning_label_->hide();
-    layout->addWidget(compatibility_warning_label_);
-
     auto* explanation = new QLabel(
         tr("Top rows paint over the layers below them. Groups are contiguous folders "
            "that move, hide, lock, and solo their layers together. Solo is preview-only."));
@@ -5712,7 +5836,7 @@ void MainWindow::createLayerDock() {
             [this](bool floating) {
                 if (floating && status_ != nullptr) {
                     status_->setText(
-                        tr("Project & Layers is floating. Double-click its title bar to dock it, or use View > Restore Project & Layers Panel."));
+                        tr("Layers & Groups is floating. Double-click its title bar to dock it, or use View > Restore Layers & Groups Panel."));
                 }
             });
 
@@ -5962,7 +6086,7 @@ void MainWindow::restoreLayersDock(bool makeVisible) {
         layers_dock_->show();
         layers_dock_->raise();
         if (status_ != nullptr) {
-            status_->setText(tr("Project & Layers restored to the left side."));
+            status_->setText(tr("Layers & Groups restored to the left side."));
         }
     } else {
         layers_dock_->hide();
@@ -6037,6 +6161,14 @@ QWidget* MainWindow::createTimeline() {
 
 void MainWindow::togglePlayback() {
     if (playback_timer_ == nullptr || play_button_ == nullptr) return;
+    if (live_workspace_ != nullptr && live_workspace_->isLiveActive()) {
+        stopPlayback();
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "Stop performance LIVE before starting editor playback."));
+        }
+        return;
+    }
     if (playback_timer_->isActive()) {
         stopPlayback();
     } else {
@@ -6103,6 +6235,15 @@ void MainWindow::openLiveMode() {
     setLiveMode(true);
 }
 
+void MainWindow::suspendEditorPreviewForRealtime() {
+    if (preview_timer_ != nullptr) preview_timer_->stop();
+    preview_deferred_ = false;
+    ++preview_generation_;
+    if (preview_cancel_ != nullptr) {
+        preview_cancel_->store(true, std::memory_order_relaxed);
+    }
+}
+
 void MainWindow::setLiveMode(bool live) {
     if (workspace_stack_ == nullptr || editor_workspace_ == nullptr
         || live_workspace_ == nullptr) {
@@ -6145,6 +6286,7 @@ void MainWindow::setLiveMode(bool live) {
         setLivePreviewOutputActive(false);
     }
 
+    suspendEditorPreviewForRealtime();
     stopPlayback();
     live_workspace_->setProjectLiveConfig(project_.canvas.live);
     live_workspace_->refreshProjectSnapshot();
@@ -6200,9 +6342,7 @@ void MainWindow::setLivePreviewOutputActive(bool active) {
     if (active && live_workspace_->isLiveActive()) {
         restoreLiveWorkspace(false);
     }
-    if (active && preview_cancel_ != nullptr) {
-        preview_cancel_->store(true, std::memory_order_relaxed);
-    }
+    if (active) suspendEditorPreviewForRealtime();
     live_workspace_->setPresentationActive(active);
     updateExportAvailability();
 }
@@ -6246,6 +6386,12 @@ void MainWindow::showLiveWindow() {
 void MainWindow::restoreLiveWorkspace(bool resume_editor_preview) {
     if (workspace_stack_ == nullptr || editor_workspace_ == nullptr
         || live_workspace_ == nullptr) return;
+    const bool previous_preview_suppression =
+        suppress_realtime_preview_resume_;
+    suppress_realtime_preview_resume_ = true;
+    ScopeExit restore_preview_suppression([this, previous_preview_suppression] {
+        suppress_realtime_preview_resume_ = previous_preview_suppression;
+    });
     if (live_workspace_->isLiveActive()) live_workspace_->setLiveActive(false);
 
     if (live_popout_window_ != nullptr) {
@@ -6277,7 +6423,14 @@ void MainWindow::restoreLiveWorkspace(bool resume_editor_preview) {
     }
     if (status_ != nullptr) status_->setText(tr("Edit mode — Flow Workbench ready."));
     updateExportAvailability();
-    if (resume_editor_preview) schedulePreview();
+    if (resume_editor_preview) {
+        schedulePreview();
+        QTimer::singleShot(0, this, [this] {
+            if (!isVisible()) show();
+            raise();
+            activateWindow();
+        });
+    }
 }
 
 void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
@@ -6468,16 +6621,16 @@ void MainWindow::createToolbar() {
     connect(settings_action_, &QAction::triggered,
             this, &MainWindow::showApplicationSettings);
     QAction* const layers_visibility = layers_dock_->toggleViewAction();
-    layers_visibility->setText(tr("Project & Layers Panel"));
+    layers_visibility->setText(tr("Layers && Groups Panel"));
     layers_visibility->setStatusTip(
-        tr("Show or hide the project and layer controls."));
+        tr("Show or hide the layer and group controls."));
     view_menu->addAction(layers_visibility);
     restore_layers_dock_action_ = new QAction(
-        tr("Restore Project & Layers Panel"), this);
+        tr("Restore Layers && Groups Panel"), this);
     restore_layers_dock_action_->setObjectName(
         QStringLiteral("restoreProjectLayersDockAction"));
     restore_layers_dock_action_->setStatusTip(
-        tr("Show the Project & Layers panel and dock it on the left side."));
+        tr("Show the Layers & Groups panel and dock it on the left side."));
     view_menu->addAction(restore_layers_dock_action_);
     connect(restore_layers_dock_action_, &QAction::triggered, this,
             [this] { restoreLayersDock(true); });
@@ -9522,13 +9675,11 @@ void MainWindow::restoreUserSettings() {
     recent_project_limit_ = (std::clamp)(
         settings.value(QStringLiteral("preferences/recentProjectLimit"), 10).toInt(),
         0, (std::numeric_limits<int>::max)());
-    const int saved_backend = settings.value(
-        QStringLiteral("preferences/renderBackend"),
-        static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
-    render_backend_ = saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
-                              && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
-                          ? static_cast<pvt::RenderBackend>(saved_backend)
-                          : pvt::RenderBackend::CpuAndGpu;
+    performance_settings_ = read_performance_settings(settings);
+    const bool automated_smoke = QCoreApplication::arguments().contains(
+        QStringLiteral("--smoke-test"));
+    render_backend_ = resolved_render_backend(
+        performance_settings_.backend, !automated_smoke);
     const QString saved_directory = settings.value(QStringLiteral("paths/lastDialogDirectory"))
                                         .toString();
     if (!existing_writable_directory(saved_directory, true).isEmpty()) {
@@ -9568,6 +9719,28 @@ void MainWindow::saveUserSettings() {
     }
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(render_backend_));
+    settings.setValue(QStringLiteral("performance/backendPreference"),
+                      static_cast<int>(performance_settings_.backend));
+    settings.setValue(
+        QStringLiteral("performance/previewLiveCpuWorkers"),
+        QVariant::fromValue<qulonglong>(
+            performance_settings_.preview_live_cpu_workers));
+    settings.setValue(
+        QStringLiteral("performance/exportFrameWorkers"),
+        QVariant::fromValue<qulonglong>(
+            performance_settings_.export_frame_workers));
+    settings.setValue(
+        QStringLiteral("performance/exportCpuWorkers"),
+        QVariant::fromValue<qulonglong>(
+            performance_settings_.export_cpu_workers));
+    settings.setValue(
+        QStringLiteral("performance/gpuFramesInFlight"),
+        QVariant::fromValue<qulonglong>(
+            performance_settings_.gpu_frames_in_flight));
+    settings.setValue(
+        QStringLiteral("performance/renderMemoryBudgetMiB"),
+        QVariant::fromValue<qulonglong>(
+            performance_settings_.render_memory_budget_mib));
     settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
                       recent_project_limit_);
     if (audio_volume_ != nullptr) {
@@ -9579,22 +9752,34 @@ void MainWindow::saveUserSettings() {
 void MainWindow::showApplicationSettings() {
     if (undo_stack_ == nullptr) return;
     const int current_undo_limit = undo_stack_->undoLimit();
-    const pvt::RenderBackend current_backend = render_backend_;
+    const PerformanceSettings current_performance = performance_settings_;
     const int current_recent_limit = recent_project_limit_;
-    ApplicationSettingsDialog dialog(current_undo_limit, current_backend,
+    ApplicationSettingsDialog dialog(current_undo_limit, current_performance,
                                      current_recent_limit,
                                      hasCustomNewProjectDefaults(), this);
     configure_readable_layouts(&dialog);
     if (dialog.exec() != QDialog::Accepted) return;
 
     const int requested_undo_limit = dialog.undoLimit();
-    const pvt::RenderBackend requested_backend = dialog.renderBackend();
+    const PerformanceSettings requested_performance =
+        dialog.performanceSettings();
+    const pvt::RenderBackend requested_backend = resolved_render_backend(
+        requested_performance.backend);
     const int requested_recent_limit = dialog.recentProjectLimit();
     const auto defaults_action = dialog.newProjectDefaultsAction();
     const bool undo_limit_changed = requested_undo_limit != current_undo_limit;
-    const bool backend_changed = requested_backend != current_backend;
+    const bool performance_changed =
+        requested_performance != current_performance;
+    const bool interactive_performance_changed =
+        requested_performance.backend != current_performance.backend
+        || requested_performance.preview_live_cpu_workers
+               != current_performance.preview_live_cpu_workers
+        || requested_performance.gpu_frames_in_flight
+               != current_performance.gpu_frames_in_flight
+        || requested_performance.render_memory_budget_mib
+               != current_performance.render_memory_budget_mib;
     const bool recent_limit_changed = requested_recent_limit != current_recent_limit;
-    if (!undo_limit_changed && !backend_changed && !recent_limit_changed
+    if (!undo_limit_changed && !performance_changed && !recent_limit_changed
         && defaults_action
                == ApplicationSettingsDialog::NewProjectDefaultsAction::Keep) {
         return;
@@ -9615,8 +9800,11 @@ void MainWindow::showApplicationSettings() {
         undo_stack_->setClean();
         updateWindowTitle();
     }
-    if (backend_changed) {
+    if (performance_changed) {
+        performance_settings_ = requested_performance;
         render_backend_ = requested_backend;
+    }
+    if (interactive_performance_changed) {
         if (preview_cancel_ != nullptr) {
             preview_cancel_->store(true, std::memory_order_relaxed);
         }
@@ -9636,6 +9824,28 @@ void MainWindow::showApplicationSettings() {
                       requested_undo_limit);
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(requested_backend));
+    settings.setValue(QStringLiteral("performance/backendPreference"),
+                      static_cast<int>(requested_performance.backend));
+    settings.setValue(
+        QStringLiteral("performance/previewLiveCpuWorkers"),
+        QVariant::fromValue<qulonglong>(
+            requested_performance.preview_live_cpu_workers));
+    settings.setValue(
+        QStringLiteral("performance/exportFrameWorkers"),
+        QVariant::fromValue<qulonglong>(
+            requested_performance.export_frame_workers));
+    settings.setValue(
+        QStringLiteral("performance/exportCpuWorkers"),
+        QVariant::fromValue<qulonglong>(
+            requested_performance.export_cpu_workers));
+    settings.setValue(
+        QStringLiteral("performance/gpuFramesInFlight"),
+        QVariant::fromValue<qulonglong>(
+            requested_performance.gpu_frames_in_flight));
+    settings.setValue(
+        QStringLiteral("performance/renderMemoryBudgetMiB"),
+        QVariant::fromValue<qulonglong>(
+            requested_performance.render_memory_budget_mib));
     settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
                       requested_recent_limit);
     settings.sync();
@@ -9670,11 +9880,14 @@ void MainWindow::showApplicationSettings() {
         QMessageBox::critical(this, tr("Could not update new-project defaults"),
                               defaults_error);
     }
+    const QString backend_description =
+        requested_performance.backend == RenderBackendPreference::Automatic
+            ? tr("Automatic GPU-first")
+            : QString::fromUtf8(pvt::render_backend_name(requested_backend));
     status_->setText(
         tr("Application settings saved — %1 undo steps, %2 rendering, %3 recent projects.%4")
             .arg(requested_undo_limit)
-            .arg(QString::fromUtf8(
-                pvt::render_backend_name(requested_backend)))
+            .arg(backend_description)
             .arg(requested_recent_limit)
             .arg(defaults_message));
 }
@@ -10341,6 +10554,8 @@ void MainWindow::updateMusicSummary() {
 void MainWindow::updateExportAvailability() {
     const bool realtime_output = live_workspace_ != nullptr
         && live_workspace_->isRealtimeOutputActive();
+    const bool performance_live = live_workspace_ != nullptr
+        && live_workspace_->isLiveActive();
     const bool transaction_idle = !music_analysis_active_ && !project_io_active_;
     const QString realtime_tooltip = tr(
         "Stop LIVE or Live Preview Output before exporting so the realtime display keeps its frame budget.");
@@ -10391,6 +10606,13 @@ void MainWindow::updateExportAvailability() {
     }
     if (live_mode_action_ != nullptr) {
         live_mode_action_->setEnabled(!export_active_ && transaction_idle);
+    }
+    if (play_button_ != nullptr) {
+        play_button_->setEnabled(!performance_live);
+        play_button_->setToolTip(
+            performance_live
+                ? tr("Stop performance LIVE before starting editor playback.")
+                : QString{});
     }
 }
 
@@ -14683,13 +14905,39 @@ void MainWindow::schedulePreview() {
 pvt::FrameRenderOptions MainWindow::frameRenderOptions() const {
     pvt::FrameRenderOptions options;
     options.backend = render_backend_;
-    // Two shared working sets let Metal overlap submission without letting a
-    // fast playback timer or frame-parallel export build an unbounded queue.
-    options.maximum_gpu_frames_in_flight = 2U;
+    options.maximum_cpu_workers =
+        performance_settings_.preview_live_cpu_workers;
+    options.maximum_gpu_frames_in_flight =
+        performance_settings_.gpu_frames_in_flight;
+    options.cpu_memory_budget_bytes = renderMemoryBudgetBytes();
     return options;
 }
 
+pvt::FrameRenderOptions MainWindow::exportFrameRenderOptions() const {
+    pvt::FrameRenderOptions options = frameRenderOptions();
+    // Sequence and native-video coordinators own the outer frame pool. Auto
+    // partitions host CPU capacity across the workers actually admitted;
+    // nonzero remains an intentional per-frame layer-worker override.
+    options.maximum_cpu_workers = performance_settings_.export_cpu_workers;
+    options.cpu_memory_budget_bytes = 0U;
+    return options;
+}
+
+std::size_t MainWindow::renderMemoryBudgetBytes() const {
+    if (performance_settings_.render_memory_budget_mib == 0U) return 0U;
+    return performance_settings_.render_memory_budget_mib * kMebibyte;
+}
+
 void MainWindow::startPreview() {
+    if (live_workspace_ != nullptr
+        && live_workspace_->isRealtimeOutputActive()) {
+        if (preview_timer_ != nullptr) preview_timer_->stop();
+        preview_deferred_ = false;
+        if (preview_cancel_ != nullptr) {
+            preview_cancel_->store(true, std::memory_order_relaxed);
+        }
+        return;
+    }
     if (preview_watcher_->isRunning()) {
         preview_deferred_ = true;
         return;
@@ -14920,7 +15168,9 @@ bool MainWindow::startExport() {
     try {
         auto project = project_;
         pvt::SequenceRenderOptions render_options;
-        render_options.frame = frameRenderOptions();
+        render_options.worker_count = performance_settings_.export_frame_workers;
+        render_options.memory_budget_bytes = renderMemoryBudgetBytes();
+        render_options.frame = exportFrameRenderOptions();
         project.output.output_directory =
             resolvedOutputDirectory(QString::fromStdString(project.output.output_directory))
                 .toStdString();
@@ -15121,7 +15371,9 @@ bool MainWindow::startVideoExport() {
     }
     options.music_source_path.clear();
     options.include_project_music = options.include_project_music && has_music;
-    options.frame = frameRenderOptions();
+    options.worker_count = performance_settings_.export_frame_workers;
+    options.memory_budget_bytes = renderMemoryBudgetBytes();
+    options.frame = exportFrameRenderOptions();
 
     cancel_export_.store(false);
     export_active_ = true;
@@ -15446,6 +15698,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
     auto* edit_live_project = live_workspace_ != nullptr
         ? live_workspace_->findChild<QPushButton*>(
               QStringLiteral("editLiveProjectButton")) : nullptr;
+    auto* live_runtime_button = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("liveRuntimeButton")) : nullptr;
     const auto* live_audio_period = live_workspace_ != nullptr
         ? live_workspace_->findChild<QSpinBox*>(
               QStringLiteral("liveAudioPeriodFrames")) : nullptr;
@@ -15519,7 +15774,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_tabs->tabText(0) != tr("Rig")
         || live_tabs->tabText(1) != tr("Control Map")
         || live_tabs->tabText(2) != tr("Scenes")
-        || edit_live_project == nullptr
+        || edit_live_project == nullptr || live_runtime_button == nullptr
         || music_processing_ == nullptr || music_frequency_stream_ == nullptr
         || layer_music_processing_ == nullptr
         || layer_music_frequency_stream_ == nullptr
@@ -15667,6 +15922,41 @@ bool MainWindow::runSmokeChecks(QString* error) {
             }
             return false;
         }
+
+        // Exercise the native full-screen state latch directly: dismissing a
+        // full-screen stage must normalize it while hidden, and the next
+        // windowed presentation must not jump back into the old Space.
+        live_workspace_->setPresentationFullscreen(true);
+        live_preview_output_action_->trigger();
+        QApplication::processEvents();
+        const bool entered_fullscreen = presentation_stage->isVisible()
+            && presentation_stage->isFullScreen();
+        QApplication::sendEvent(presentation_stage, &escape);
+        QApplication::processEvents();
+        const bool dismissed_fullscreen =
+            !live_workspace_->isPresentationActive()
+            && !presentation_stage->isVisible()
+            && !presentation_stage->isFullScreen();
+        live_workspace_->setPresentationFullscreen(false);
+        live_preview_output_action_->trigger();
+        QApplication::processEvents();
+        const bool restarted_windowed =
+            live_workspace_->isPresentationActive()
+            && presentation_stage->isVisible()
+            && !presentation_stage->isFullScreen();
+        QApplication::sendEvent(presentation_stage, &escape);
+        QApplication::processEvents();
+        if (!entered_fullscreen || !dismissed_fullscreen
+            || !restarted_windowed
+            || live_workspace_->isPresentationActive()
+            || presentation_stage->isVisible()) {
+            live_workspace_->setPresentationActive(false);
+            if (error != nullptr) {
+                *error = tr(
+                    "Live Preview Output did not cleanly transition from full-screen dismissal to a windowed restart.");
+            }
+            return false;
+        }
     }
 
     // Realtime presentation and project transactions have symmetric
@@ -15745,6 +16035,34 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
+    // The in-window transport can stop and restart the runtime without closing
+    // the companion. Stopping must immediately release export guards and resume
+    // the editor preview; restarting must suspend that competing render again.
+    live_runtime_button->click();
+    QApplication::processEvents();
+    const bool stopped_runtime_cleanly = !live_workspace_->isLiveActive()
+        && export_action_->isEnabled()
+        && current_frame_export_action_->isEnabled()
+        && (preview_timer_->isActive() || preview_watcher_->isRunning());
+    togglePlayback();
+    const bool editor_playback_started = playback_timer_->isActive();
+    live_runtime_button->click();
+    QApplication::processEvents();
+    const bool restarted_runtime_cleanly = live_workspace_->isLiveActive()
+        && !export_action_->isEnabled()
+        && !current_frame_export_action_->isEnabled()
+        && !preview_timer_->isActive() && !preview_deferred_
+        && !playback_timer_->isActive();
+    if (!stopped_runtime_cleanly || !editor_playback_started
+        || !restarted_runtime_cleanly) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr(
+                "The GO LIVE transport did not release editor/export state when stopped and reclaim the realtime render budget when restarted.");
+        }
+        return false;
+    }
+
     // Authoring is a focus change, not a transport stop. Exercise the actual
     // Live-header button so a future UI refactor cannot quietly reintroduce
     // teardown while MIDI/OSC edits continue to work.
@@ -15756,6 +16074,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         restoreLiveWorkspace(false);
         if (error != nullptr) {
             *error = tr("Opening the project editor interrupted the Live runtime.");
+        }
+        return false;
+    }
+    const bool editor_playback_guarded = play_button_ != nullptr
+        && !play_button_->isEnabled();
+    if (play_button_ != nullptr) play_button_->click();
+    QApplication::processEvents();
+    if (!editor_playback_guarded || playback_timer_->isActive()) {
+        restoreLiveWorkspace(false);
+        if (error != nullptr) {
+            *error = tr(
+                "Editor playback remained reachable while performance LIVE was active.");
         }
         return false;
     }
@@ -15858,7 +16188,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (layers_dock_->isFloating() || layers_dock_->isHidden()
         || dockWidgetArea(layers_dock_) != Qt::LeftDockWidgetArea) {
         if (error != nullptr) {
-            *error = tr("The Project & Layers panel could not be restored from a floating or hidden state.");
+            *error = tr("The Layers & Groups panel could not be restored from a floating or hidden state.");
         }
         return false;
     }
@@ -15900,22 +16230,25 @@ bool MainWindow::runSmokeChecks(QString* error) {
         saved_settings.value(QStringLiteral("preferences/undoLimit"),
                              kDefaultUndoLimit).toInt(),
         kMinimumUndoLimit, kMaximumUndoLimit);
-    const int saved_backend = saved_settings.value(
-        QStringLiteral("preferences/renderBackend"),
-        static_cast<int>(pvt::RenderBackend::CpuAndGpu)).toInt();
+    const PerformanceSettings expected_performance =
+        read_performance_settings(saved_settings);
     const bool automated_smoke = QCoreApplication::arguments().contains(
         QStringLiteral("--smoke-test"));
-    pvt::RenderBackend expected_backend = pvt::RenderBackend::Cpu;
-    if (!automated_smoke) {
-        expected_backend =
-            saved_backend >= static_cast<int>(pvt::RenderBackend::Cpu)
-                    && saved_backend <= static_cast<int>(pvt::RenderBackend::Gpu)
-                ? static_cast<pvt::RenderBackend>(saved_backend)
-                : pvt::RenderBackend::CpuAndGpu;
-    }
+    const pvt::RenderBackend expected_backend = automated_smoke
+        ? pvt::RenderBackend::Cpu
+        : resolved_render_backend(expected_performance.backend);
+    const pvt::FrameRenderOptions expected_frame_options =
+        frameRenderOptions();
     if (undo_stack_ == nullptr || undo_stack_->undoLimit() != expected_undo_limit
+        || performance_settings_ != expected_performance
         || render_backend_ != expected_backend
-        || frameRenderOptions().backend != render_backend_) {
+        || expected_frame_options.backend != render_backend_
+        || expected_frame_options.maximum_cpu_workers
+               != expected_performance.preview_live_cpu_workers
+        || expected_frame_options.maximum_gpu_frames_in_flight
+               != expected_performance.gpu_frames_in_flight
+        || expected_frame_options.cpu_memory_budget_bytes
+               != renderMemoryBudgetBytes()) {
         if (error != nullptr) {
             *error = tr("Application preferences were not restored from per-user settings.");
         }
@@ -15930,8 +16263,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
             "Deterministic OpenGL test device";
         smoke_capabilities.opengl_surface_status =
             "Hardware capability probe omitted during deterministic smoke test.";
+        PerformanceSettings dialog_performance;
+        dialog_performance.backend = RenderBackendPreference::Gpu;
+        dialog_performance.preview_live_cpu_workers = 3U;
+        dialog_performance.export_frame_workers = 4U;
+        dialog_performance.export_cpu_workers = 6U;
+        dialog_performance.gpu_frames_in_flight = 5U;
+        dialog_performance.render_memory_budget_mib = 768U;
         ApplicationSettingsDialog settings_dialog(
-            expected_undo_limit, pvt::RenderBackend::Gpu,
+            expected_undo_limit, dialog_performance,
             recent_project_limit_,
             hasCustomNewProjectDefaults(), this, &smoke_capabilities);
         configure_readable_layouts(&settings_dialog);
@@ -15945,6 +16285,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("parameterLfoAction"));
         const auto* recent_limit = settings_dialog.findChild<QSpinBox*>(
             QStringLiteral("recentProjectLimitPreference"));
+        const auto* preview_workers = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("previewLiveCpuWorkersPreference"));
+        const auto* export_frame_workers = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("exportFrameWorkersPreference"));
+        const auto* export_workers = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("exportCpuWorkersPreference"));
+        const auto* gpu_frames = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("gpuFramesInFlightPreference"));
+        const auto* memory_budget = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("renderMemoryBudgetPreference"));
+        auto* reset_performance = settings_dialog.findChild<QPushButton*>(
+            QStringLiteral("resetPerformancePreferences"));
+        const auto* precision_status = settings_dialog.findChild<QLabel*>(
+            QStringLiteral("workingPrecisionStatus"));
+        const auto* host_status = settings_dialog.findChild<QLabel*>(
+            QStringLiteral("performanceHostStatus"));
         const auto* save_defaults = settings_dialog.findChild<QPushButton*>(
             QStringLiteral("saveCurrentProjectDefaults"));
         const auto* restore_defaults = settings_dialog.findChild<QPushButton*>(
@@ -15977,13 +16333,33 @@ bool MainWindow::runSmokeChecks(QString* error) {
                     <= settings_screen->availableGeometry().width() - 16
                 && settings_dialog.height()
                     <= settings_screen->availableGeometry().height() - 16);
+        const bool supplied_performance_valid =
+            settings_dialog.performanceSettings() == dialog_performance;
+        if (reset_performance != nullptr) reset_performance->click();
+        const bool reset_performance_valid =
+            settings_dialog.performanceSettings() == PerformanceSettings{};
         settings_dialog.hide();
         if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
             || recent_limit == nullptr
-            || backend == nullptr || backend->count() != 3
-            || backend->findData(static_cast<int>(pvt::RenderBackend::Gpu)) < 0
+            || tabs->tabText(1) != tr("Performance")
+            || backend == nullptr || backend->count() != 4
+            || backend->findData(
+                   static_cast<int>(RenderBackendPreference::Gpu)) < 0
             || backend->itemText(backend->findData(
-                    static_cast<int>(pvt::RenderBackend::Gpu))) != tr("GPU")
+                    static_cast<int>(RenderBackendPreference::Gpu))) != tr("GPU")
+            || preview_workers == nullptr || preview_workers->value() != 0
+            || export_frame_workers == nullptr
+            || export_frame_workers->value() != 0
+            || export_workers == nullptr || export_workers->value() != 0
+            || gpu_frames == nullptr || gpu_frames->value() != 0
+            || gpu_frames->isEnabled()
+            || !gpu_frames->toolTip().contains(QStringLiteral("OpenGL"))
+            || memory_budget == nullptr || memory_budget->value() != 0
+            || reset_performance == nullptr
+            || precision_status == nullptr
+            || !precision_status->text().contains(QStringLiteral("float32"))
+            || host_status == nullptr || host_status->text().isEmpty()
+            || !supplied_performance_valid || !reset_performance_valid
             || lfo_action == nullptr || lfo_action->text() != tr("LFOs…")
             || save_defaults == nullptr || restore_defaults == nullptr
             || settings_scroll == nullptr || !settings_scroll->widgetResizable()
@@ -15994,8 +16370,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || !wheel_edit_safe
             || !settings_fit_screen
             || settings_dialog.undoLimit() != expected_undo_limit
-            || settings_dialog.recentProjectLimit() != recent_project_limit_
-            || settings_dialog.renderBackend() != pvt::RenderBackend::Gpu) {
+            || settings_dialog.recentProjectLimit() != recent_project_limit_) {
             if (error != nullptr) {
                 *error = tr("The extensible Application Settings dialog is incomplete or malformed.");
             }
@@ -16714,6 +17089,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
 
     auto* const starting_colors_help = findChild<QLabel*>(
         QStringLiteral("startingColorsHelp"));
+    auto* const project_settings_navigator = findChild<QGroupBox*>(
+        QStringLiteral("projectSettingsNavigator"));
     if (starting_colors_help != nullptr) {
         starting_colors_help->resize(420, starting_colors_help->height());
         update_wrapped_label_height(starting_colors_help);
@@ -16735,6 +17112,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || tabs_->indexOf(project_sync_page_) < 0
         || tabs_->indexOf(project_export_page_) < 0
         || tabs_->indexOf(history_page_) < 0
+        || project_name_ == nullptr
+        || !project_canvas_page_->isAncestorOf(project_name_)
+        || layers_dock_->isAncestorOf(project_name_)
+        || project_settings_navigator == nullptr
+        || !project_canvas_page_->isAncestorOf(project_settings_navigator)
+        || compatibility_warning_label_ == nullptr
+        || !project_canvas_page_->isAncestorOf(compatibility_warning_label_)
+        || layers_dock_->isAncestorOf(compatibility_warning_label_)
+        || layers_dock_->windowTitle() != tr("Layers && Groups")
+        || restore_layers_dock_action_->text()
+               != tr("Restore Layers && Groups Panel")
         || workflow_stage_buttons_.size() != 7U
         || workflow_stage_buttons_[0]->text() != tr("Project")
         || workflow_stage_buttons_[1]->text() != tr("Starting Colors")

@@ -52,6 +52,15 @@ void StageOutputWindow::showWindowedOnScreen(QScreen* requested,
     setFocus(Qt::OtherFocusReason);
 }
 
+void StageOutputWindow::dismiss() {
+    // Hiding a native full-screen window does not necessarily clear Qt's
+    // full-screen state. Normalize the hidden surface so a later windowed
+    // presentation does not briefly return to the old full-screen Space.
+    const bool was_fullscreen = isFullScreen();
+    hide();
+    if (was_fullscreen) setWindowState(Qt::WindowNoState);
+}
+
 void StageOutputWindow::setFrame(const QImage& frame) {
     if (frozen_ || frame.isNull()) return;
     last_good_frame_ = frame;

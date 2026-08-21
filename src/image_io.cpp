@@ -1123,12 +1123,57 @@ bool select_sequence_worker_count(const SequenceRenderOptions& options,
     return true;
 }
 
+FrameRenderOptions sequence_frame_options(
+    const SequenceRenderOptions& options, std::size_t outer_worker_count,
+    std::size_t outer_worker_index) {
+    FrameRenderOptions frame = options.frame;
+    outer_worker_count = std::max<std::size_t>(1U, outer_worker_count);
+    outer_worker_index = std::min(outer_worker_index,
+                                  outer_worker_count - 1U);
+    if (frame.maximum_cpu_workers == 0U) {
+        const std::size_t hardware_workers = std::max<std::size_t>(
+            1U, std::thread::hardware_concurrency());
+        const std::size_t total_cpu_budget = std::min(
+            hardware_workers, kMaximumSequenceWorkers);
+        const std::size_t workers_per_frame =
+            total_cpu_budget / outer_worker_count;
+        const std::size_t remainder =
+            total_cpu_budget % outer_worker_count;
+        // Assign the indivisible remainder to stable outer worker indexes. The
+        // sum is exactly the host layer-render worker budget, while a
+        // short or memory-limited sequence can still use spare cores inside
+        // each frame. Outer threads may also composite or encode; this avoids
+        // nested N-by-N render pools rather than promising no runnable overlap.
+        frame.maximum_cpu_workers = std::max<std::size_t>(
+            1U, workers_per_frame
+                    + (outer_worker_index < remainder ? 1U : 0U));
+    }
+    if (frame.cpu_memory_budget_bytes == 0U) {
+        const std::size_t aggregate_budget =
+            options.memory_budget_bytes == 0U
+                ? kDefaultSequenceMemoryBudgetBytes
+                : options.memory_budget_bytes;
+        // Match automatic nested CPU work to the sequence's aggregate memory
+        // preference. The per-frame scheduler still admits one valid layer if
+        // this integer share is smaller than its conservative estimate.
+        const std::size_t bytes_per_frame =
+            aggregate_budget / outer_worker_count;
+        const std::size_t remainder =
+            aggregate_budget % outer_worker_count;
+        frame.cpu_memory_budget_bytes = std::max<std::size_t>(
+            1U, bytes_per_frame
+                    + (outer_worker_index < remainder ? 1U : 0U));
+    }
+    return frame;
+}
+
 std::size_t backend_adjusted_peak_bytes(
     std::size_t reference_peak_bytes,
     const SequenceRenderOptions& options) {
-    // Hybrid project rendering can hold one CPU and one Metal layer working
-    // set concurrently. Count that pair in the existing aggregate sequence
-    // budget so frame-level workers cannot multiply hidden per-layer memory.
+    // Hybrid project rendering pipelines a second admitted layer while the
+    // first is composited. Reserve that bounded overlap when choosing outer
+    // frame workers; the per-worker shared admission gate then divides the
+    // sequence memory budget across CPU and GPU-owned layer results.
     if (options.frame.backend != RenderBackend::CpuAndGpu) {
         return reference_peak_bytes;
     }
@@ -1216,7 +1261,6 @@ bool render_prepared_sequence(int total_frames,
                                       estimated_peak_bytes, &worker_count, error)) {
         return false;
     }
-
     std::atomic_bool stop {false};
     std::atomic<int> next_frame {0};
     std::mutex mutex;
@@ -1230,6 +1274,8 @@ bool render_prepared_sequence(int total_frames,
     for (std::size_t worker = 0U; worker < worker_count; ++worker) {
         threads.emplace_back([&, worker] {
             try {
+                const FrameRenderOptions frame_options =
+                    sequence_frame_options(options, worker_count, worker);
                 Image image;
                 for (;;) {
                     {
@@ -1252,7 +1298,8 @@ bool render_prepared_sequence(int total_frames,
                     FrameWorkResult result;
                     result.failure_stage = FrameFailureStage::Render;
                     try {
-                        if (render_frame(frame_index, image, &stop, &result.error)) {
+                        if (render_frame(frame_index, frame_options, image,
+                                         &stop, &result.error)) {
                             result.failure_stage = FrameFailureStage::Encode;
                             result.prepared = std::make_unique<PreparedOutput>();
                             fs::path frame_path;
@@ -1422,10 +1469,11 @@ bool render_sequence_impl(const RenderConfig& config,
         total_frames, output_config,
         backend_adjusted_peak_bytes(validation.estimated_peak_bytes, options),
         options, progress, cancel, "Rendering", "frame",
-        [&config, &options](int frame_index, Image& image,
+        [&config](int frame_index,
+                  const FrameRenderOptions& frame_options, Image& image,
                   const std::atomic_bool* worker_cancel,
                   std::string* frame_error) {
-            return render_frame(config, frame_index, options.frame, image,
+            return render_frame(config, frame_index, frame_options, image,
                                 worker_cancel, frame_error);
         },
         error);
@@ -1508,10 +1556,11 @@ bool render_project_sequence_impl(const ProjectConfig& project,
         backend_adjusted_peak_bytes(validation.estimated_peak_bytes, options),
         options, progress, cancel,
         "Project rendering", "project frame",
-        [&project, &options](int frame_index, Image& image,
+        [&project](int frame_index,
+                   const FrameRenderOptions& frame_options, Image& image,
                    const std::atomic_bool* worker_cancel,
                    std::string* frame_error) {
-            return render_project_frame(project, frame_index, options.frame,
+            return render_project_frame(project, frame_index, frame_options,
                                         image, worker_cancel, frame_error);
         },
         error);

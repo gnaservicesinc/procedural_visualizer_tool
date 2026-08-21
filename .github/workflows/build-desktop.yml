@@ -485,8 +485,18 @@ jobs:
           else
             release_summary="is the current stable release."
           fi
-          cat > release-notes.md <<EOF
-          Procedural Visualizer Tool $product_version $release_summary
+          printf 'Procedural Visualizer Tool %s %s\n\n' \
+            "$product_version" "$release_summary" > release-notes.md
+          cat >> release-notes.md <<'EOF'
+          Version 10.0.0 makes CPU + GPU rendering GPU-primary. Every Metal-supported project layer remains on Metal, while bounded host-adaptive CPU workers handle only genuinely unsupported independent work. CPU mode uses the same scalable layer pool, authored-order compositing, cooperative cancellation, worker-exception propagation, and a shared host-memory admission gate. Sequence and native-video exports partition automatic CPU and memory capacity across the outer frame workers actually admitted, avoiding nested thread-pool oversubscription without silently single-threading a serialized frame.
+
+          On the supplied six-layer 512x512 project, the same 12-frame CLI workload with one outer worker, project loading, and PNG encoding improved from 6.18 seconds to 3.17 seconds in CPU + GPU mode; strict GPU remained effectively flat at 3.23 to 3.25 seconds. CPU improved from 6.73 to 4.34 seconds, and hybrid output was byte-identical to strict GPU. With the project already loaded, automatic CPU layer scheduling reached 6.682 fps versus 1.434 fps with one layer worker.
+
+          Application Settings gains a machine-local Performance tab that defaults to Automatic GPU-first and retains explicit CPU, CPU + GPU, and strict GPU choices. Separate 0=Auto controls cover preview/LIVE/still CPU workers, concurrent export frames, CPU layer workers per export frame, Metal frames in flight, and aggregate render memory. Metal admission is disabled and explained on OpenGL-only or CPU-only systems. The UI reports the existing native linear RGBA float32 working precision instead of offering simulated low-bit modes that would add quantization work and reduce quality; authored output bit depth remains project-local.
+
+          Realtime ownership is now explicit: starting Performance LIVE or Live Preview Output cancels competing editor preview work, stopping GO LIVE restores export and preview state, editor playback cannot start under performance LIVE, stage shutdown clears stale monitor/device state, and full-screen dismissal returns cleanly to a windowed restart on the selected display. Project identity and navigation move to the Project page, while the saved-layout-compatible dock is visibly renamed Layers & Groups and contains only layer/group work.
+
+          `FrameRenderOptions` gains CPU-worker and host-memory fields. The product major and installed shared-library ABI therefore advance together to 10.0.0/SONAME 10; installed-library clients must rebuild. Project, setup, layer, and bundle formats are unchanged.
 
           Version 9.0.0 adds layer-local numeric LFOs for the editor, library, preview, and export pipeline. Artists can drive supported numeric render values between authored minimum and maximum values with Sine, Triangle, Smooth pulse, or Bounce waveforms, plus whole cycles per loop, phase, and pulse shape. Stable wave, swing, and effect IDs survive reordering; the underlying numeric field remains the authored fallback; undo and setup/project persistence retain the oscillator definitions.
 

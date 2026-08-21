@@ -21,6 +21,7 @@ public:
 
     void showOnScreen(QScreen* screen);
     void showWindowedOnScreen(QScreen* screen, const QRect& geometry);
+    void dismiss();
     void setFrame(const QImage& frame);
     void setFrozen(bool frozen);
     void setBlackout(bool blackout);

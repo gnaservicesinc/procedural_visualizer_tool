@@ -55,7 +55,13 @@ bool validate_frame_options(const FrameRenderOptions& options,
     if (options.maximum_gpu_frames_in_flight
         > kMaximumGpuFramesInFlight) {
         return fail(error,
-                    "GPU frames in flight must fit the signed-int API limit.");
+                    "GPU frames in flight cannot exceed "
+                        + std::to_string(kMaximumGpuFramesInFlight) + ".");
+    }
+    if (options.maximum_cpu_workers > kMaximumSequenceWorkers) {
+        return fail(error,
+                    "CPU layer worker count cannot exceed "
+                        + std::to_string(kMaximumSequenceWorkers) + ".");
     }
     return true;
 }

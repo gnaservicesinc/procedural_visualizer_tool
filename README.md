@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **9.0.0**. The version is read from `VERSION` by every
+Current product version: **10.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,46 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 10.0.0 GPU-first scheduling and performance controls
+
+The macOS CPU + GPU scheduler is now GPU-primary: every Metal-supported layer
+stays on Metal, while bounded CPU workers handle only genuinely unsupported
+independent layers. CPU rendering no longer stops at two busy cores; independent
+project layers use a host-adaptive worker pool with authored-order compositing,
+cooperative cancellation, and a shared host-memory admission gate. Image and
+native-video exports divide automatic CPU and memory capacity across their
+actual outer frame workers, avoiding nested thread-pool oversubscription.
+
+On the attached six-layer 512×512 project, the same 12-frame CLI workload
+(`--workers 1`, including project load and PNG encoding) changed from 6.18 s to
+3.17 s in CPU + GPU mode; strict GPU was 3.23 s before and 3.25 s after. CPU
+changed from 6.73 s to 4.34 s, and the hybrid PNGs were byte-identical to strict
+GPU. With the project already loaded, automatic CPU layer scheduling reached
+6.682 fps versus 1.434 fps with one layer worker (4.66×).
+
+**Application Settings > Performance** is machine-local and defaults to
+**Automatic (GPU-first)**, falling back to CPU only when no usable accelerator
+is available. It also exposes safe 0=Auto limits for preview/LIVE/still CPU
+workers, concurrent export frames, CPU layer workers per export frame, Metal
+frames in flight, and render memory. Serializing outer export frames therefore
+does not silently single-thread the independent layers inside each frame.
+The Metal admission control is disabled with an explanatory effective value of
+one when the platform is using Qt's serialized OpenGL context.
+Working color remains native linear float32 RGBA; simulated 1/2/4-bit buffers
+would add quantization work and reduce quality, so output bit depth remains the
+honest project-local precision control.
+
+Starting either realtime output now cancels queued and in-flight editor preview
+work. Stopping GO LIVE restores export availability and editor preview, while
+stage/companion dismissal clears stale full-screen state and returns focus to
+the appropriate window. Project identity and project navigation now live in the
+Project page; the compatible saved-layout dock is visibly named **Layers &
+Groups** and contains only layer/group work.
+
+`FrameRenderOptions` gains CPU-worker and host-memory fields. Version 10.0.0
+therefore advances the product major and installed shared-library SONAME to 10;
+installed clients must rebuild against the new ABI.
 
 ## 9.0.0 numeric LFOs and universal GPU admission
 
@@ -408,7 +448,7 @@ surface placement remains an advanced per-effect option. A compact collapsible
 Synchronization strip summarizes project clock, active-layer clock, Swing, and
 audio routing without permanently consuming editor space. Project Canvas &
 Loop, Synchronization & Audio, Export, and History are also directly reachable
-from the Project & Layers panel.
+from the Project page.
 
 This release also adds opt-in project/layer clock mixing, Kaleidoscope and seamless
 Domain Warp generated-source shaping, and Glitch, Starburst, and Lens Distortion
@@ -757,12 +797,12 @@ sudo apt install procedural-visualizer-tool
   default of 5. EXR output is unaffected.
 - Optional deterministic blue-noise-like, ordered Bayer, or Floyd-Steinberg
   dithering for integer PNG output. Dithering is never applied to float EXR.
-- CPU, CPU + GPU, and GPU frame backends. The application presents CPU + GPU as
-  **CPU + GPU (Recommended)** and **GPU** as a first-class performance and
-  debugging choice. On macOS it runs adjacent project
-  layers through bounded CPU and
-  Metal lanes, with Metal covering the broad parallel pixel pipeline and CPU
-  handling ordered dependencies such as mesh rasterization. On Windows and
+- Automatic GPU-first, CPU, CPU + GPU, and GPU frame policies. Automatic is the
+  recommended machine-local default, while **GPU** remains a strict performance
+  and debugging choice. On macOS every Metal-supported project layer remains on
+  Metal; bounded CPU workers run only independently unsupported layers, and
+  ordered CPU stages such as mesh rasterization stay inside an otherwise
+  accelerated layer. On Windows and
   Linux it dispatches ordinary Continuous hue generated layers and supported
   analytic Cylinder/Sphere/Cube and flat/displaced Plane mapping through a
   serialized offscreen OpenGL 3.3 shader service. An admitted GPU-stage failure
@@ -772,7 +812,7 @@ sudo apt install procedural-visualizer-tool
 
 The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
-topmost-first Project & Layers dock. Surface mapping is an advanced Modifiers
+topmost-first Layers & Groups dock. Surface mapping is an advanced Modifiers
 section rather than a primary workspace. The Layer Effects workspace filters
 the single ordered effect stack into five type-based catalogs; Texture versus
 mapped-surface placement remains editable on each effect without duplicating
@@ -803,19 +843,19 @@ main toolbar. File dialogs remember their last usable folder and otherwise
 begin in the home folder. Dense editors use consistent spacing, frameless
 scrolling, scrollable document tabs, and field-specific tooltips that explain
 units, stage order, inheritance, destructive boundaries, and non-obvious ranges.
-The Project & Layers panel can be floated or docked by dragging/double-clicking
-its title bar; **View > Restore Project & Layers Panel** always shows it and
-redocks it on the right. Off-screen floating geometry is repaired on launch.
+The Layers & Groups panel can be floated or docked by dragging/double-clicking
+its title bar; **View > Restore Layers & Groups Panel** always shows it and
+redocks it on the left. Off-screen floating geometry is repaired on launch.
 Checkable optional blocks collapse to compact headers when off, keeping the
 Synchronization workspace readable without hiding available controls.
 
 Every GUI field edit and structural move participates in session undo/redo.
 **Settings > Application Settings…** (also available from the main toolbar)
-provides extensible General and Rendering pages for program-wide preferences.
+provides extensible General and Performance pages for program-wide preferences.
 **Help > About PVT** shows the product version and GPLv3-or-later/no-warranty
 notice, and provides direct Project Website, Report a Bug, and Report a
 Vulnerability links through the system browser.
-The undo step limit, rendering backend, window layout, and dialog locations are
+The undo step limit, performance policy, window layout, and dialog locations are
 stored with the platform's normal per-user settings service (`QSettings`), so
 they persist across projects and relaunches and are never placed inside a
 portable project. The General page can also capture the complete current
@@ -957,10 +997,12 @@ ascending frame order, and progress callbacks run serially on the calling
 thread. This keeps collision protection, deterministic filenames, cancellation,
 and callback behavior compatible with the former sequential exporter.
 
-The CLI and GUI default to **CPU + GPU**. A multi-layer frame pairs one CPU lane
-with one Metal lane, while a single layer and any remaining layer use Metal for
-the parallel pixel pipeline. CPU rendering remains the reference and is used
-automatically only when Metal is unavailable. Generated source ordering,
+The CLI defaults to **CPU + GPU**; the GUI's machine-local **Automatic** policy
+selects that GPU-primary scheduler when Metal or Qt OpenGL is usable and CPU
+otherwise. On macOS, Metal-supported layers are never displaced onto CPU merely
+to keep a CPU lane busy. Independent unsupported layers use a bounded,
+host-adaptive CPU pool beside a one-thread Metal submission pipeline, while
+authored compositing order stays deterministic. Generated source ordering,
 source alpha, starting-image palette selection, starting-image fitting,
 particles, reusable path resolution, built-in placement, rotation, and scale
 all keep Metal active. Floyd-Steinberg source dithering, custom OBJ depth
@@ -982,8 +1024,8 @@ Metal compiles the embedded shader source once per process, caches its command
 queue and compute pipelines, and admits at most two frames by default before
 allocating their three shared float-RGBA working buffers. Starting PNGs retain
 the bounded decoded cache and are uploaded as an additional read-only source
-buffer for GPU fitting. An explicit admission bound may use the full signed-int
-API range.
+buffer for GPU fitting. Explicit CPU-worker and GPU-in-flight controls are capped
+at 256, a scheduler-safety boundary rather than an authored-project limit.
 The device's recommended working-set size and the existing aggregate sequence
 memory budget provide additional bounds. Cancellation prevents queued work from
 being submitted and keeps the destination transactional. A command buffer that

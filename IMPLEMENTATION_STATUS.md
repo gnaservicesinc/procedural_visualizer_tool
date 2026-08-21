@@ -6,6 +6,81 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 10.0.0 GPU-first performance and realtime correction
+
+Application Settings now has a dedicated **Performance** tab. Its default
+Automatic policy selects the GPU-primary CPU + GPU scheduler when Metal or Qt
+OpenGL is usable and CPU otherwise, while explicit CPU, CPU + GPU, and strict
+GPU policies remain available for portability and diagnostics. Separate 0=Auto
+controls bound per-frame preview/LIVE/still CPU workers, concurrent
+sequence/movie frames, per-frame export CPU layer workers, Metal frames in
+flight, and render memory. The settings live only in `QSettings`: opening the
+same project on a different machine neither changes authored output nor dirties
+the project. Sequence and movie
+coordinators divide automatic inner layer parallelism and memory across the
+outer frame workers they actually admit, avoiding nested oversubscription.
+The Metal admission control is disabled on OpenGL-only/CPU-only systems because
+the current Qt OpenGL service owns one serialized context (effective value one).
+
+The macOS hybrid regression was forced scheduling, not a shortage of requested
+threads: adjacent Metal-capable layers were deliberately split between CPU and
+GPU, making the frame wait for a much slower CPU copy of work the GPU could
+finish. CPU and non-Metal hybrid paths were also hard-coded to two layer lanes.
+The new scheduler keeps every Metal-supported layer on Metal, assigns only
+genuinely unsupported independent layers to CPU, and scales CPU layer work to a
+safe host-adaptive pool. Results remain composited in authored order, CPU/GPU
+host working sets share one bounded admission gate, GPU submission remains
+serialized, and an admitted GPU failure is still surfaced without whole-frame
+CPU retry. CPU-worker and Metal-in-flight controls are capped at 256 to prevent a
+machine-local preference from becoming an operating-system thread or command-
+buffer bomb; this does not limit authored project data.
+
+Focused measurement on the supplied six-layer 512×512 fixture used the same
+12-frame CLI workload with one outer frame worker, including load and PNG
+encoding. CPU + GPU improved from 6.18 s to 3.17 s while strict GPU remained
+effectively flat (3.23 s to 3.25 s); CPU improved from 6.73 s to 4.34 s. Hybrid
+PNGs were byte-identical to strict GPU. In a loaded-once CPU measurement,
+automatic scheduling used the six independent layers for 6.682 fps versus
+1.434 fps with one layer worker (4.66×).
+
+Realtime output no longer competes with a pending editor preview. Entering
+Performance LIVE or Live Preview Output stops the queued preview timer, clears
+deferred work, invalidates its generation, and cooperatively cancels any active
+task; completion cannot restart it while realtime owns the frame budget. A real
+GO LIVE state signal refreshes export availability and resumes the editor after
+the in-window transport stops. Full-screen dismissal clears the latched window
+state, returns focus to the visible editor or LIVE companion after user-driven
+dismissal, and clears stale monitor, telemetry, audio, freeze, and blackout
+state between sessions.
+
+Project identity and the Project Settings navigator now live in the Project
+page. The dock keeps its stable `projectLayersDock`/restore-action object names
+for saved layouts and automation, but its visible name is **Layers & Groups**
+and it now contains only layer/group work.
+
+Internal working precision remains native linear RGBA float32 in both stored
+image buffers and accelerated kernels. The Performance page says so explicitly
+instead of offering fake 1/2/4-bit modes that would add a quantization pass,
+reduce quality, and usually run slower. Output bit depth remains project-local
+for reproducibility. A future precision control requires real fp16 and/or fp64
+storage plus CPU and GPU kernel variants, device-capability probing, parity and
+quality policy, memory estimates, and cross-platform performance validation.
+
+Adding fields to public by-value `FrameRenderOptions` changes the installed
+library ABI. Version 10.0.0 advances the product major and SONAME together;
+installed consumers must rebuild against the new ABI.
+
+Local 10.0.0 release validation passes all 24 native static Release tests, all
+24 shared-library Release tests, all 23 strict C++20 tests, and all 23
+AddressSanitizer plus UndefinedBehaviorSanitizer tests with unsupported macOS
+leak detection disabled. The macOS distribution verifier checks 26 Mach-O
+files; Cocoa smoke, embedded `pvt-render` version/self-test, arm64 architecture,
+plist 10.0.0 metadata, `/usr/lib` RPATH resolution, deep strict signing, and a
+fresh app/README/license ZIP round-trip all pass. A clean external CMake
+consumer links and runs against `libProceduralVisualizerTool.10.dylib`.
+Linux x64/ARM64 and Windows x64/ARM64 packages remain the tag-triggered native
+workflow's responsibility.
+
 ## 9.0.0 numeric LFOs and GPU admission correction
 
 The backend selector now says **GPU** and describes both performance and

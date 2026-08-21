@@ -784,6 +784,23 @@ bool export_project(const pvt::ProjectConfig& project,
                                        error)) {
             return false;
         }
+        const std::size_t hardware_workers = std::max<std::size_t>(
+            1U, std::thread::hardware_concurrency());
+        const std::size_t total_cpu_budget = std::min(
+            hardware_workers,
+            pvt::kMaximumSequenceWorkers);
+        const std::size_t cpu_workers_per_frame =
+            total_cpu_budget / render_worker_count;
+        const std::size_t cpu_worker_remainder =
+            total_cpu_budget % render_worker_count;
+        const std::size_t aggregate_memory_budget =
+            options.memory_budget_bytes == 0U
+                ? pvt::kDefaultSequenceMemoryBudgetBytes
+                : options.memory_budget_bytes;
+        const std::size_t memory_bytes_per_frame =
+            aggregate_memory_budget / render_worker_count;
+        const std::size_t memory_byte_remainder =
+            aggregate_memory_budget % render_worker_count;
         if (options.codec != Codec::PngLossless
             && ((project.canvas.width & 1) != 0
                 || (project.canvas.height & 1) != 0)) {
@@ -1007,6 +1024,25 @@ bool export_project(const pvt::ProjectConfig& project,
                         frame_threads.emplace_back([&, worker] {
                             @autoreleasepool {
                                 try {
+                                    pvt::FrameRenderOptions frame_options =
+                                        options.frame;
+                                    if (frame_options.maximum_cpu_workers == 0U) {
+                                        frame_options.maximum_cpu_workers =
+                                            std::max<std::size_t>(
+                                                1U, cpu_workers_per_frame
+                                                        + (worker
+                                                               < cpu_worker_remainder
+                                                               ? 1U : 0U));
+                                    }
+                                    if (frame_options.cpu_memory_budget_bytes
+                                        == 0U) {
+                                        frame_options.cpu_memory_budget_bytes =
+                                            std::max<std::size_t>(
+                                                1U, memory_bytes_per_frame
+                                                        + (worker
+                                                               < memory_byte_remainder
+                                                               ? 1U : 0U));
+                                    }
                                     pvt::Image image;
                                     for (;;) {
                                         {
@@ -1031,7 +1067,7 @@ bool export_project(const pvt::ProjectConfig& project,
                                             if (pvt::render_project_frame(
                                                     project,
                                                     options.first_frame + frame,
-                                                    options.frame,
+                                                    frame_options,
                                                     image, &stop, &result.error)) {
                                                 result.ok = options.codec
                                                         == Codec::PngLossless

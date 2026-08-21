@@ -54,8 +54,12 @@ constexpr std::size_t kBuiltInPaletteCount = 6;
 // The text codec, CLI, and Qt editors ultimately expose signed-int counts.
 // Their bounds replace the former small product-policy ceilings.
 constexpr std::size_t kMaximumSetupBytes = kMaximumUiItems;
-constexpr std::size_t kMaximumSequenceWorkers = kMaximumUiItems;
-constexpr std::size_t kMaximumGpuFramesInFlight = kMaximumUiItems;
+// Threads and in-flight GPU submissions are operating-system workloads, not
+// authored project data. Keep their public controls broadly useful while
+// preventing a valid-but-extreme value from attempting millions of threads or
+// command buffers before the memory admission limits can intervene.
+constexpr std::size_t kMaximumSequenceWorkers = 256;
+constexpr std::size_t kMaximumGpuFramesInFlight = 256;
 constexpr std::size_t kMaximumMusicFeatureSamples = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicBeats = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicTempoPoints = kMaximumUiItems;
@@ -1389,6 +1393,18 @@ struct FrameRenderOptions {
     // bound therefore limits both queued command buffers and GPU-visible frame
     // working sets. Zero selects the conservative default of two.
     std::size_t maximum_gpu_frames_in_flight = 0;
+    // Maximum independent CPU layer renders inside one composite project
+    // frame. Zero adapts to the host's reported hardware concurrency. The
+    // actual count is also limited by contributing work, memory admission, and
+    // kMaximumSequenceWorkers. GPU-supported layers do not consume this budget.
+    std::size_t maximum_cpu_workers = 0;
+    // Aggregate host-memory admission budget across CPU and GPU-owned project
+    // layer working sets plus completed layer images awaiting ordered
+    // compositing. GPU device allocations also have their own device-specific
+    // admission bound. Zero selects the conservative
+    // kDefaultSequenceMemoryBudgetBytes default. One layer is always admitted
+    // so a valid large frame remains renderable instead of deadlocking.
+    std::size_t cpu_memory_budget_bytes = 0;
 };
 
 struct RendererCapabilities {
@@ -1412,10 +1428,19 @@ using ProgressCallback = std::function<bool(int completed_frames, int total_fram
 // A valid render always receives at least one worker even when its single-frame
 // estimate exceeds the aggregate budget.
 //
-// Workers render and encode independently. Final output names are installed
-// atomically in ascending frame order, and progress callbacks are serialized on
-// the calling thread after each installation. This preserves legacy callback
-// cancellation and visible output-order semantics.
+// Workers render and encode independently. `worker_count` controls that outer
+// frame concurrency only. When inner project-layer workers are automatic, the
+// renderer divides the host's hardware layer-render budget across the actual
+// outer worker count instead of multiplying two auto pools. Thus an explicit
+// single outer worker can still use every host core within a multi-layer frame.
+// Outer workers may still perform ordered
+// compositing or encoding while inner work is active. The automatic per-frame
+// host-memory budget is divided from this sequence's aggregate budget the same
+// way. Explicit nonzero frame worker and memory values remain intentional
+// caller overrides. Final output names are
+// installed atomically in ascending frame order, and progress callbacks are
+// serialized on the calling thread after each installation. This preserves
+// legacy callback cancellation and visible output-order semantics.
 struct SequenceRenderOptions {
     std::size_t worker_count = 0;
     std::size_t memory_budget_bytes = 0;

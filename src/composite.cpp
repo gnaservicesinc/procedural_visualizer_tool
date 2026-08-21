@@ -8,10 +8,12 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <exception>
 #include <limits>
 #include <locale>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <random>
@@ -27,6 +29,306 @@ namespace pvt {
 namespace {
 
 constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
+
+bool fail(std::string* error, std::string message);
+bool cancelled(const std::atomic_bool* cancel);
+
+struct LayerPoolTask {
+    std::size_t position = 0U;
+    std::size_t layer_index = 0U;
+    std::size_t admitted_bytes = 0U;
+};
+
+struct LayerPoolResult {
+    Image image;
+    std::string error;
+    std::size_t admitted_bytes = 0U;
+    bool ok = false;
+    bool ready = false;
+};
+
+// One ordered admission gate is shared by the CPU and GPU-owned layer queues.
+// Besides making the machine-local memory preference meaningful across the
+// whole project-frame pipeline, ordered admission prevents a later completed
+// layer from occupying the budget needed by an earlier layer that the
+// compositor must consume first.
+class LayerMemoryAdmission final {
+public:
+    LayerMemoryAdmission(std::size_t memory_budget,
+                         const std::atomic_bool* external_cancel)
+        : memory_budget_(memory_budget),
+          external_cancel_(external_cancel) {}
+
+    bool acquire(std::size_t position, std::size_t bytes,
+                 const std::atomic_bool* local_cancel) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        for (;;) {
+            if (stop_ || cancelled(external_cancel_)
+                || cancelled(local_cancel)) {
+                return false;
+            }
+            const bool fits = live_count_ == 0U
+                || (live_bytes_ <= memory_budget_
+                    && bytes <= memory_budget_ - live_bytes_);
+            if (position == next_position_ && fits) {
+                ++next_position_;
+                ++live_count_;
+                live_bytes_ += bytes;
+                lock.unlock();
+                wake_.notify_all();
+                return true;
+            }
+            wake_.wait_for(lock, std::chrono::milliseconds(5));
+        }
+    }
+
+    void release(std::size_t bytes) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            live_bytes_ -= std::min(live_bytes_, bytes);
+            if (live_count_ > 0U) --live_count_;
+        }
+        wake_.notify_all();
+    }
+
+    void cancel() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+        }
+        wake_.notify_all();
+    }
+
+private:
+    std::size_t memory_budget_ = 0U;
+    const std::atomic_bool* external_cancel_ = nullptr;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::size_t next_position_ = 0U;
+    std::size_t live_count_ = 0U;
+    std::size_t live_bytes_ = 0U;
+    bool stop_ = false;
+};
+
+// Renders independent layers ahead of the ordered compositor without letting
+// completed images accumulate with the project layer count. Admission remains
+// reserved until the calling thread consumes a result, so the same bound covers
+// active working sets and finished images waiting behind an earlier layer.
+class LayerRenderPool final {
+public:
+    using Render = std::function<bool(std::size_t, Image&,
+                                      const std::atomic_bool*, std::string&)>;
+
+    LayerRenderPool(std::vector<LayerPoolTask> tasks,
+                    std::size_t result_count,
+                    std::size_t live_limit,
+                    LayerMemoryAdmission& admission,
+                    const std::atomic_bool* external_cancel,
+                    Render render)
+        : tasks_(std::move(tasks)),
+          results_(result_count),
+          live_limit_(std::max<std::size_t>(1U, live_limit)),
+          admission_(admission),
+          external_cancel_(external_cancel),
+          render_(std::move(render)) {}
+
+    LayerRenderPool(const LayerRenderPool&) = delete;
+    LayerRenderPool& operator=(const LayerRenderPool&) = delete;
+
+    ~LayerRenderPool() { stop_and_join(); }
+
+    bool start(std::size_t worker_count, std::string* error) {
+        if (tasks_.empty()) return true;
+        worker_count = std::max<std::size_t>(
+            1U, std::min(worker_count, tasks_.size()));
+        try {
+            workers_.reserve(worker_count);
+            for (std::size_t worker = 0U; worker < worker_count; ++worker) {
+                workers_.emplace_back([this] {
+                    try {
+                        worker_loop();
+                    } catch (...) {
+                        record_worker_exception(std::current_exception());
+                    }
+                });
+            }
+            return true;
+        } catch (const std::exception& exception) {
+            request_stop();
+            join();
+            return fail(error, "Could not start the bounded layer renderer: "
+                                   + std::string(exception.what()));
+        } catch (...) {
+            request_stop();
+            join();
+            return fail(error,
+                        "Could not start the bounded layer renderer.");
+        }
+    }
+
+    bool take(std::size_t position, Image& image, bool& ok,
+              std::size_t& admitted_bytes, std::string& layer_error) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        for (;;) {
+            LayerPoolResult& result = results_[position];
+            if (result.ready) {
+                image = std::move(result.image);
+                layer_error = std::move(result.error);
+                ok = result.ok;
+                admitted_bytes = result.admitted_bytes;
+                if (live_count_ > 0U) --live_count_;
+                result = {};
+                lock.unlock();
+                wake_.notify_all();
+                return true;
+            }
+            if (cancelled(external_cancel_)) {
+                stop_ = true;
+                worker_cancel_.store(true, std::memory_order_relaxed);
+                lock.unlock();
+                wake_.notify_all();
+                return false;
+            }
+            if (stop_ || worker_failed_.load(std::memory_order_relaxed)) {
+                const std::exception_ptr worker_exception = worker_exception_;
+                lock.unlock();
+                if (worker_exception != nullptr) {
+                    try {
+                        std::rethrow_exception(worker_exception);
+                    } catch (const std::bad_alloc&) {
+                        layer_error =
+                            "The bounded layer renderer ran out of memory.";
+                    } catch (const std::exception& exception) {
+                        layer_error =
+                            "The bounded layer renderer failed: "
+                            + std::string(exception.what());
+                    } catch (...) {
+                        layer_error =
+                            "The bounded layer renderer failed with an unknown exception.";
+                    }
+                } else if (layer_error.empty()) {
+                    layer_error = "The bounded layer renderer stopped before producing this layer.";
+                }
+                return false;
+            }
+            wake_.wait_for(lock, std::chrono::milliseconds(5));
+        }
+    }
+
+    void request_stop() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+            worker_cancel_.store(true, std::memory_order_relaxed);
+        }
+        wake_.notify_all();
+        admission_.cancel();
+    }
+
+private:
+    void record_worker_exception(std::exception_ptr exception) noexcept {
+        try {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (worker_exception_ == nullptr) {
+                    worker_exception_ = std::move(exception);
+                }
+                stop_ = true;
+                worker_cancel_.store(true, std::memory_order_relaxed);
+            }
+            worker_failed_.store(true, std::memory_order_relaxed);
+            wake_.notify_all();
+            admission_.cancel();
+        } catch (...) {
+            // Preserve cancellation if synchronization itself failed while
+            // reporting the original worker exception.
+            worker_failed_.store(true, std::memory_order_relaxed);
+            worker_cancel_.store(true, std::memory_order_relaxed);
+            wake_.notify_all();
+        }
+    }
+
+    void worker_loop() {
+        for (;;) {
+            LayerPoolTask task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                for (;;) {
+                    if (cancelled(external_cancel_)) {
+                        stop_ = true;
+                        worker_cancel_.store(true,
+                                             std::memory_order_relaxed);
+                        wake_.notify_all();
+                        return;
+                    }
+                    if (stop_ || next_task_ >= tasks_.size()) return;
+                    if (live_count_ < live_limit_) {
+                        task = tasks_[next_task_++];
+                        ++live_count_;
+                        break;
+                    }
+                    wake_.wait_for(lock, std::chrono::milliseconds(5));
+                }
+            }
+
+            if (!admission_.acquire(task.position, task.admitted_bytes,
+                                    &worker_cancel_)) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (live_count_ > 0U) --live_count_;
+                wake_.notify_all();
+                return;
+            }
+
+            LayerPoolResult completed;
+            completed.admitted_bytes = task.admitted_bytes;
+            try {
+                completed.ok = render_(task.layer_index, completed.image,
+                                       &worker_cancel_, completed.error);
+            } catch (const std::bad_alloc&) {
+                completed.error = "Layer rendering ran out of memory.";
+            } catch (const std::exception& exception) {
+                completed.error = std::string("Layer rendering failed: ")
+                                  + exception.what();
+            } catch (...) {
+                completed.error =
+                    "Layer rendering failed with an unknown exception.";
+            }
+            completed.ready = true;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                results_[task.position] = std::move(completed);
+            }
+            wake_.notify_all();
+        }
+    }
+
+    void join() noexcept {
+        for (std::thread& worker : workers_) {
+            if (worker.joinable()) worker.join();
+        }
+    }
+
+    void stop_and_join() noexcept {
+        request_stop();
+        join();
+    }
+
+    std::vector<LayerPoolTask> tasks_;
+    std::vector<LayerPoolResult> results_;
+    std::size_t live_limit_ = 1U;
+    LayerMemoryAdmission& admission_;
+    const std::atomic_bool* external_cancel_ = nullptr;
+    Render render_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::vector<std::thread> workers_;
+    std::atomic_bool worker_cancel_ {false};
+    std::atomic_bool worker_failed_ {false};
+    std::exception_ptr worker_exception_;
+    std::size_t next_task_ = 0U;
+    std::size_t live_count_ = 0U;
+    bool stop_ = false;
+};
 
 bool checked_multiply(std::size_t left, std::size_t right, std::size_t& result) {
     if (left != 0U && right > std::numeric_limits<std::size_t>::max() / left) {
@@ -826,9 +1128,29 @@ bool render_project_with_backend_validated(
     double normalized_phase,
     const int* synchronized_frame,
     const FrameRenderOptions& options,
+    std::size_t validated_project_peak_bytes,
     Image& destination,
     const std::atomic_bool* cancel,
     std::string* error) {
+    switch (options.backend) {
+        case RenderBackend::Cpu:
+        case RenderBackend::CpuAndGpu:
+        case RenderBackend::Gpu:
+            break;
+        default:
+            return fail(error, "The selected rendering backend is invalid.");
+    }
+    if (options.maximum_gpu_frames_in_flight
+        > kMaximumGpuFramesInFlight) {
+        return fail(error,
+                    "GPU frames in flight cannot exceed "
+                        + std::to_string(kMaximumGpuFramesInFlight) + ".");
+    }
+    if (options.maximum_cpu_workers > kMaximumSequenceWorkers) {
+        return fail(error,
+                    "CPU layer worker count cannot exceed "
+                        + std::to_string(kMaximumSequenceWorkers) + ".");
+    }
     std::size_t pixel_count = 0U;
     std::size_t component_count = 0U;
     if (!checked_multiply(static_cast<std::size_t>(project.canvas.width),
@@ -860,7 +1182,8 @@ bool render_project_with_backend_validated(
     const auto render_one = [&](std::size_t index,
                                 const FrameRenderOptions& selected,
                                 Image& image,
-                                std::string& layer_error) {
+                                std::string& layer_error,
+                                const std::atomic_bool* render_cancel) {
         const LayerTimelineSelection timeline = select_layer_timeline(
             project, project.layers[index], normalized_phase,
             synchronized_frame);
@@ -869,9 +1192,9 @@ bool render_project_with_backend_validated(
             project.layers[index].render.layer_clock.enabled;
         return synchronized_frame == nullptr && !layer_owns_clock
             ? render_frame_at_phase(render, normalized_phase, selected,
-                                    image, cancel, &layer_error)
+                                    image, render_cancel, &layer_error)
             : render_frame(render, timeline.frame, selected,
-                           image, cancel, &layer_error);
+                           image, render_cancel, &layer_error);
     };
     const auto composite_one = [&](std::size_t index, Image& image) {
         if (cancelled(cancel)) {
@@ -905,7 +1228,7 @@ bool render_project_with_backend_validated(
         for (const std::size_t index : contributing) {
             Image image;
             std::string layer_error;
-            if (!render_one(index, options, image, layer_error)) {
+            if (!render_one(index, options, image, layer_error, cancel)) {
                 return contextual_failure(index, layer_error);
             }
             if (!composite_one(index, image)) return false;
@@ -914,184 +1237,155 @@ bool render_project_with_backend_validated(
         return true;
     }
 
-    // Hybrid preview rendering uses one reference CPU lane beside one Metal
-    // lane. Results are retained only for the current pair and composited in
-    // paint order, so parallelism cannot reorder alpha/blend semantics or grow
-    // memory with the layer count.
+    // A Metal-capable layer remains GPU-owned in CPU + GPU mode. CPU workers
+    // are reserved for genuinely unsupported independent layers; they run
+    // beside a bounded one-thread Metal pipeline. The calling thread only
+    // composites completed images in authored order, which both preserves
+    // blend semantics and overlaps CPU compositing of layer N with GPU
+    // rendering of layer N+1.
     std::string metal_device;
     std::string metal_status;
     const bool metal_available = options.backend == RenderBackend::CpuAndGpu
         && detail::metal_backend_available(&metal_device, &metal_status);
 
-    // The portable OpenGL backend accelerates the analytic surface stage
-    // inside each reference render rather than occupying an independent
-    // whole-layer lane. Preserve the requested CPU + GPU policy so every
-    // eligible Windows/Linux layer reaches that stage.
-    if (!metal_available) {
-        // Independent layers can use two bounded CPU lanes even when the
-        // selected platform GPU is unavailable or the user explicitly chose
-        // the reference CPU backend. Rendering remains deterministic because
-        // completed images are composited only afterward in authored order.
-        for (std::size_t position = 0U; position < contributing.size();) {
-            const std::size_t first_index = contributing[position];
-            if (position + 1U >= contributing.size()) {
-                Image image;
-                std::string layer_error;
-                if (!render_one(first_index, options, image, layer_error)) {
-                    return contextual_failure(first_index, layer_error);
-                }
-                if (!composite_one(first_index, image)) return false;
-                ++position;
-                continue;
-            }
-
-            const std::size_t second_index = contributing[position + 1U];
-            const ValidationResult first_validation = validate(
-                materialize(first_index));
-            const ValidationResult second_validation = validate(
-                materialize(second_index));
-            std::size_t concurrent_peak = 0U;
-            const bool bounded_pair = first_validation.ok
-                && second_validation.ok
-                && checked_add(first_validation.estimated_peak_bytes,
-                               second_validation.estimated_peak_bytes,
-                               concurrent_peak);
-            if (!bounded_pair) {
-                for (const std::size_t index : {first_index, second_index}) {
-                    Image image;
-                    std::string layer_error;
-                    if (!render_one(index, options, image, layer_error)) {
-                        return contextual_failure(index, layer_error);
-                    }
-                    if (!composite_one(index, image)) return false;
-                }
-                position += 2U;
-                continue;
-            }
-
-            Image first_image;
-            Image second_image;
-            std::string first_error;
-            std::string second_error;
-            bool first_ok = false;
-            std::thread first_worker([&] {
-                first_ok = render_one(first_index, options, first_image,
-                                      first_error);
-            });
-            const bool second_ok = render_one(second_index, options,
-                                              second_image, second_error);
-            first_worker.join();
-            if (!first_ok) return contextual_failure(first_index, first_error);
-            if (!second_ok) {
-                return contextual_failure(second_index, second_error);
-            }
-            if (!composite_one(first_index, first_image)
-                || !composite_one(second_index, second_image)) {
-                return false;
-            }
-            position += 2U;
-        }
-        destination = std::move(accumulator);
-        return true;
-    }
     FrameRenderOptions cpu_options = options;
     cpu_options.backend = RenderBackend::Cpu;
     FrameRenderOptions gpu_options = options;
     gpu_options.backend = RenderBackend::Gpu;
 
-    for (std::size_t position = 0U; position < contributing.size();) {
-        const std::size_t first_index = contributing[position];
-        if (position + 1U >= contributing.size()) {
-            Image image;
-            std::string layer_error;
-            FrameRenderOptions selected = options;
-            if (!render_one(first_index, selected, image, layer_error)) {
-                return contextual_failure(first_index, layer_error);
-            }
-            if (!composite_one(first_index, image)) return false;
-            ++position;
-            continue;
+    struct LayerDispatch {
+        std::size_t index = 0U;
+        std::size_t admitted_bytes = 0U;
+        bool gpu_owned = false;
+    };
+    std::size_t frame_bytes = 0U;
+    if (!checked_multiply(component_count, sizeof(float), frame_bytes)) {
+        return fail(error,
+                    "Project canvas dimensions overflow the frame byte size.");
+    }
+    std::size_t project_buffers = 0U;
+    const bool project_buffers_bounded =
+        checked_multiply(frame_bytes, 2U, project_buffers);
+    // validate(ProjectConfig) computes the worst contributing layer peak plus
+    // the accumulator and compositing image. Reuse that result instead of
+    // materializing and deeply validating every RenderConfig again during
+    // dispatch. Applying globals here would otherwise copy a project's cached
+    // music-analysis vectors once per layer before actual rendering begins.
+    const std::size_t worst_layer_peak =
+        project_buffers_bounded
+                && validated_project_peak_bytes >= project_buffers
+            ? validated_project_peak_bytes - project_buffers
+            : validated_project_peak_bytes;
+    const std::size_t layer_peak_bytes = std::max(frame_bytes,
+                                                  worst_layer_peak);
+    std::vector<LayerDispatch> dispatch;
+    dispatch.reserve(contributing.size());
+    std::vector<LayerPoolTask> cpu_tasks;
+    std::vector<LayerPoolTask> gpu_tasks;
+    cpu_tasks.reserve(contributing.size());
+    gpu_tasks.reserve(contributing.size());
+    for (std::size_t position = 0U; position < contributing.size(); ++position) {
+        const std::size_t index = contributing[position];
+        bool gpu_owned = false;
+        if (metal_available) {
+            // Metal's ownership preflight reads only dimensions and effects.
+            // Keep this probe intentionally light: copying the full applied
+            // config would duplicate potentially multi-megabyte music analysis
+            // for every layer. The frame renderer resolves LFOs and repeats
+            // strict backend support validation immediately before submission,
+            // so an unsupported time-varying state remains an explicit error
+            // rather than a silent CPU fallback.
+            RenderConfig metal_probe;
+            metal_probe.width = project.canvas.width;
+            metal_probe.height = project.canvas.height;
+            metal_probe.effects = project.layers[index].render.effects;
+            std::string ignored_reason;
+            gpu_owned = detail::metal_backend_supports(
+                metal_probe, &ignored_reason);
         }
-
-        const std::size_t second_index = contributing[position + 1U];
-        const RenderConfig first_render = materialize(first_index);
-        const RenderConfig second_render = materialize(second_index);
-        std::string ignored_reason;
-        const bool first_gpu = metal_available
-                               && detail::metal_backend_supports(
-                                      first_render, &ignored_reason);
-        const bool second_gpu = metal_available
-                                && detail::metal_backend_supports(
-                                       second_render, &ignored_reason);
-        if (!first_gpu && !second_gpu) {
-            for (const std::size_t index : {first_index, second_index}) {
-                Image image;
-                std::string layer_error;
-                if (!render_one(index, cpu_options, image, layer_error)) {
-                    return contextual_failure(index, layer_error);
-                }
-                if (!composite_one(index, image)) return false;
-            }
-            position += 2U;
-            continue;
+        dispatch.push_back({index, layer_peak_bytes, gpu_owned});
+        LayerPoolTask task {position, index, layer_peak_bytes};
+        if (gpu_owned) {
+            gpu_tasks.push_back(task);
+        } else {
+            cpu_tasks.push_back(task);
         }
+    }
 
-        // Prefer the second layer for Metal when either is supported. This
-        // lets the CPU start the bottom layer immediately while the GPU works
-        // independently, then preserves bottom-to-top compositing below.
-        const bool gpu_is_second = second_gpu;
-        const std::size_t cpu_index = gpu_is_second ? first_index : second_index;
-        const std::size_t gpu_index = gpu_is_second ? second_index : first_index;
-        const ValidationResult cpu_validation = validate(materialize(cpu_index));
-        const ValidationResult gpu_validation = validate(materialize(gpu_index));
-        std::size_t concurrent_peak = 0U;
-        const bool bounded_pair = cpu_validation.ok && gpu_validation.ok
-            && checked_add(cpu_validation.estimated_peak_bytes,
-                           gpu_validation.estimated_peak_bytes,
-                           concurrent_peak);
-        if (!bounded_pair) {
-            // Memory safety outranks concurrency. Still use Metal for supported
-            // work, but complete and release one layer before starting the next.
-            for (const std::size_t index : {first_index, second_index}) {
-                Image image;
-                std::string layer_error;
-                const bool supported = index == first_index ? first_gpu : second_gpu;
-                const FrameRenderOptions& selected = supported
-                                                         ? gpu_options
-                                                         : cpu_options;
-                if (!render_one(index, selected, image, layer_error)) {
-                    return contextual_failure(index, layer_error);
-                }
-                if (!composite_one(index, image)) return false;
-            }
-            position += 2U;
-            continue;
-        }
+    const std::size_t hardware_workers = std::max<std::size_t>(
+        1U, std::thread::hardware_concurrency());
+    const std::size_t requested_cpu_workers =
+        options.maximum_cpu_workers == 0U
+            ? hardware_workers : options.maximum_cpu_workers;
+    const std::size_t cpu_worker_count = cpu_tasks.empty()
+        ? 1U
+        : std::max<std::size_t>(
+              1U, std::min({requested_cpu_workers, cpu_tasks.size(),
+                            kMaximumSequenceWorkers}));
+    const std::size_t cpu_memory_budget =
+        options.cpu_memory_budget_bytes == 0U
+            ? kDefaultSequenceMemoryBudgetBytes
+            : options.cpu_memory_budget_bytes;
 
-        Image cpu_image;
-        Image gpu_image;
-        std::string cpu_error;
-        std::string gpu_error;
-        bool cpu_ok = false;
-        std::thread cpu_worker([&] {
-            cpu_ok = render_one(cpu_index, cpu_options, cpu_image, cpu_error);
+    const FrameRenderOptions& selected_cpu_options = metal_available
+        ? cpu_options : options;
+    LayerMemoryAdmission layer_memory(cpu_memory_budget, cancel);
+    LayerRenderPool cpu_pool(
+        std::move(cpu_tasks), dispatch.size(), cpu_worker_count,
+        layer_memory, cancel,
+        [&](std::size_t index, Image& image,
+            const std::atomic_bool* worker_cancel, std::string& layer_error) {
+            return render_one(index, selected_cpu_options, image, layer_error,
+                              worker_cancel);
         });
-        const bool gpu_ok = render_one(gpu_index, gpu_options,
-                                       gpu_image, gpu_error);
-        cpu_worker.join();
-        if (!cpu_ok) return contextual_failure(cpu_index, cpu_error);
-        if (!gpu_ok) {
-            return contextual_failure(gpu_index, gpu_error);
+    // Two live GPU results are sufficient to overlap the next Metal layer with
+    // CPU compositing while bounding retained layer images independently of
+    // the project layer count.
+    LayerRenderPool gpu_pool(
+        std::move(gpu_tasks), dispatch.size(), 2U, layer_memory,
+        cancel,
+        [&](std::size_t index, Image& image,
+            const std::atomic_bool* worker_cancel, std::string& layer_error) {
+            return render_one(index, gpu_options, image, layer_error,
+                              worker_cancel);
+        });
+    if (!cpu_pool.start(cpu_worker_count, error)
+        || !gpu_pool.start(1U, error)) {
+        cpu_pool.request_stop();
+        gpu_pool.request_stop();
+        return false;
+    }
+
+    for (std::size_t position = 0U; position < dispatch.size(); ++position) {
+        const LayerDispatch& layer = dispatch[position];
+        Image image;
+        std::string layer_error;
+        bool rendered = false;
+        std::size_t admitted_bytes = 0U;
+        LayerRenderPool& pool = layer.gpu_owned ? gpu_pool : cpu_pool;
+        if (!pool.take(position, image, rendered, admitted_bytes,
+                       layer_error)) {
+            cpu_pool.request_stop();
+            gpu_pool.request_stop();
+            return contextual_failure(layer.index, layer_error);
         }
-        Image& first_image = first_index == cpu_index
-                                 ? cpu_image : gpu_image;
-        Image& second_image = second_index == cpu_index
-                                  ? cpu_image : gpu_image;
-        if (!composite_one(first_index, first_image)
-            || !composite_one(second_index, second_image)) {
+        if (!rendered) {
+            image = {};
+            layer_memory.release(admitted_bytes);
+            cpu_pool.request_stop();
+            gpu_pool.request_stop();
+            return contextual_failure(layer.index, layer_error);
+        }
+        const bool composited = composite_one(layer.index, image);
+        // Release host storage before returning the shared admission token; a
+        // tiny explicit budget must never overlap two oversized layer images.
+        image = {};
+        layer_memory.release(admitted_bytes);
+        if (!composited) {
+            cpu_pool.request_stop();
+            gpu_pool.request_stop();
             return false;
         }
-        position += 2U;
     }
 
     destination = std::move(accumulator);
@@ -1829,6 +2123,7 @@ bool render_project_frame_at_phase(
         }
         return render_project_with_backend_validated(
             project, normalized_phase, nullptr, options,
+            validation.estimated_peak_bytes,
             destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");
@@ -1867,7 +2162,8 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
             project,
             static_cast<double>(wrapped_frame)
                 / static_cast<double>(frame_count),
-            &wrapped_frame, options, destination, cancel, error);
+            &wrapped_frame, options, validation.estimated_peak_bytes,
+            destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");
     } catch (const std::exception& exception) {

@@ -773,6 +773,11 @@ void test_project_cancellation_during_layer_render() {
         wave.id = static_cast<std::uint64_t>(1000U + index);
         render.waves.push_back(std::move(wave));
     }
+    pvt::LayerConfig upper = pvt::default_layer(1U);
+    upper.file_id = pvt::allocate_layer_file_id(project);
+    upper.render = render;
+    upper.opacity = 0.5;
+    project.layers.push_back(std::move(upper));
     CHECK(pvt::validate(project).ok);
 
     pvt::Image destination;
@@ -785,11 +790,14 @@ void test_project_cancellation_during_layer_render() {
     std::atomic_bool finished {false};
     bool rendered = true;
     std::string error;
+    pvt::FrameRenderOptions options;
+    options.backend = pvt::RenderBackend::Cpu;
+    options.maximum_cpu_workers = 4U;
 
     std::thread worker([&] {
         entered.store(true, std::memory_order_release);
         rendered = pvt::render_project_frame_at_phase(
-            project, 0.25, destination, &cancel, &error);
+            project, 0.25, options, destination, &cancel, &error);
         finished.store(true, std::memory_order_release);
     });
     while (!entered.load(std::memory_order_acquire)) {
@@ -805,6 +813,65 @@ void test_project_cancellation_during_layer_render() {
     CHECK(destination.width == preserved.width);
     CHECK(destination.height == preserved.height);
     CHECK(destination.pixels == preserved.pixels);
+}
+
+void test_project_layer_worker_policy() {
+    CHECK(pvt::kMaximumSequenceWorkers == 256U);
+    CHECK(pvt::kMaximumGpuFramesInFlight == 256U);
+
+    pvt::ProjectConfig project = pvt::default_project();
+    make_small(project);
+    project.canvas.width = 72;
+    project.canvas.height = 48;
+    project.canvas.block_size = 1;
+    project.output.write_alpha = true;
+    for (std::size_t index = 1U; index < 6U; ++index) {
+        pvt::LayerConfig layer = pvt::default_layer(index);
+        layer.file_id = pvt::allocate_layer_file_id(project);
+        layer.opacity = 0.35 + 0.1 * static_cast<double>(index);
+        layer.blend_mode = index % 2U == 0U
+                               ? pvt::BlendMode::Multiply
+                               : pvt::BlendMode::Overlay;
+        layer.render.hue_cycles = static_cast<int>(index + 1U);
+        layer.render.alpha.enabled = true;
+        layer.render.alpha.minimum = 0.2;
+        layer.render.alpha.maximum = 0.9;
+        project.layers.push_back(std::move(layer));
+    }
+    CHECK(pvt::validate(project).ok);
+
+    pvt::FrameRenderOptions one_worker;
+    one_worker.backend = pvt::RenderBackend::Cpu;
+    one_worker.maximum_cpu_workers = 1U;
+    pvt::FrameRenderOptions four_workers = one_worker;
+    four_workers.maximum_cpu_workers = 4U;
+    pvt::FrameRenderOptions memory_constrained = four_workers;
+    memory_constrained.cpu_memory_budget_bytes = 1U;
+    pvt::Image reference;
+    pvt::Image parallel;
+    pvt::Image constrained;
+    std::string error;
+    CHECK(pvt::render_project_frame(project, 3, one_worker, reference,
+                                    nullptr, &error));
+    CHECK(pvt::render_project_frame(project, 3, four_workers, parallel,
+                                    nullptr, &error));
+    CHECK(pvt::render_project_frame(project, 3, memory_constrained,
+                                    constrained, nullptr, &error));
+    // Layer pixels may finish out of order, but authored compositing order and
+    // floating-point operations remain byte-for-byte deterministic.
+    CHECK(parallel.pixels == reference.pixels);
+    CHECK(constrained.pixels == reference.pixels);
+
+    pvt::FrameRenderOptions excessive = four_workers;
+    excessive.maximum_cpu_workers = pvt::kMaximumSequenceWorkers + 1U;
+    pvt::Image sentinel = solid(0.25F, 0.5F);
+    const pvt::Image preserved = sentinel;
+    CHECK(!pvt::render_project_frame(project, 3, excessive, sentinel,
+                                     nullptr, &error));
+    CHECK(error.find("CPU layer worker count") != std::string::npos);
+    CHECK(sentinel.width == preserved.width);
+    CHECK(sentinel.height == preserved.height);
+    CHECK(sentinel.pixels == preserved.pixels);
 }
 
 void test_project_sequence() {
@@ -973,6 +1040,7 @@ int main() {
     test_project_rendering_order_equivalence_and_seam();
     test_layer_groups();
     test_project_cancellation_during_layer_render();
+    test_project_layer_worker_policy();
     test_project_sequence();
     test_active_layer_clock_mappings();
 

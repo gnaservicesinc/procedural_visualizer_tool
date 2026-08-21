@@ -104,6 +104,7 @@ signals:
     void runtimeStatusChanged(const QString& summary);
     void livePreviewFrame(const QImage& image);
     void runtimeOutputSettingsChanged();
+    void liveActiveChanged(bool active);
     void presentationActiveChanged(bool active);
     void audioInputsChanged();
 

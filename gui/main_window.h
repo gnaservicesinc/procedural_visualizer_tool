@@ -1,6 +1,7 @@
 #ifndef PVT_MAIN_WINDOW_H
 #define PVT_MAIN_WINDOW_H
 
+#include "performance_settings.h"
 #include "procedural_visualizer_tool.h"
 #include "../src/project_bundle.h"
 
@@ -146,6 +147,7 @@ private:
     void showLiveWindow();
     void restoreLiveWorkspace(bool resumeEditorPreview);
     void setLivePreviewOutputActive(bool active);
+    void suspendEditorPreviewForRealtime();
     void refreshLivePreviewOutputControls();
     void applyAuthoredLiveConfig(const pvt::LiveConfig& live,
                                  const QString& reason);
@@ -317,6 +319,8 @@ private:
                                          pvt::FrameRenderOptions renderOptions,
                                          const std::shared_ptr<std::atomic_bool>& cancel);
     pvt::FrameRenderOptions frameRenderOptions() const;
+    pvt::FrameRenderOptions exportFrameRenderOptions() const;
+    std::size_t renderMemoryBudgetBytes() const;
     void randomizeExistingStackSettings();
     void randomizeStackComposition();
     QString resolvedOutputDirectory(const QString& path) const;
@@ -378,6 +382,8 @@ private:
     bool export_active_ = false;
     bool close_after_export_ = false;
     bool playback_preview_advanced_ = false;
+    bool suppress_realtime_preview_resume_ = false;
+    PerformanceSettings performance_settings_;
     pvt::RenderBackend render_backend_ = pvt::RenderBackend::CpuAndGpu;
     int recent_project_limit_ = 10;
     int last_previewed_frame_ = -1;
