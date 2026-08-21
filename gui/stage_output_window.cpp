@@ -53,12 +53,12 @@ void StageOutputWindow::showWindowedOnScreen(QScreen* requested,
 }
 
 void StageOutputWindow::dismiss() {
-    // Hiding a native full-screen window does not necessarily clear Qt's
-    // full-screen state. Normalize the hidden surface so a later windowed
-    // presentation does not briefly return to the old full-screen Space.
-    const bool was_fullscreen = isFullScreen();
+    // On macOS, showFullScreen() gives the application a dedicated desktop.
+    // Leave that native full-screen desktop while the window is still visible;
+    // changing only the latent state after hide() can strand a black Space on
+    // the output display even though Qt reports this widget as hidden.
+    if (isFullScreen()) showNormal();
     hide();
-    if (was_fullscreen) setWindowState(Qt::WindowNoState);
 }
 
 void StageOutputWindow::setFrame(const QImage& frame) {

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **10.0.0**. The version is read from `VERSION` by every
+Current product version: **10.0.3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,21 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 10.0.3 macOS video and secondary-display recovery
+
+Native HEVC-with-alpha export no longer supplies the redundant
+`PreserveAlphaChannel` encoder property that macOS 27 rejects. The codec still
+preserves straight alpha and retains the authored HEVC data rate and dedicated
+alpha-quality settings. The native export regression test now covers HEVC with
+transparency and the High Quality preset.
+
+Stopping full-screen Live Preview Output now exits Qt's native full-screen
+desktop before hiding the stage window. A selected secondary display therefore
+returns to its normal desktop instead of remaining on a black output Space.
+The Cocoa smoke test enforces the full-screen state-change-before-hide ordering
+and still covers a subsequent windowed restart. The public ABI, SONAME 10,
+project/setup/layer formats, and bundle formats are unchanged.
 
 ## 10.0.0 GPU-first scheduling and performance controls
 

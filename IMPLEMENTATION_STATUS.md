@@ -6,6 +6,34 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 10.0.3 macOS video and secondary-display recovery
+
+The native AVFoundation exporter no longer passes
+`kVTCompressionPropertyKey_PreserveAlphaChannel` for
+`AVVideoCodecTypeHEVCWithAlpha`. macOS 27 rejects that redundant property at
+`canApplyOutputSettings`, while VideoToolbox documents preservation as the
+default for the alpha codec. Straight-alpha mode, target alpha quality, the
+selected HEVC rate, hardware policy, atomic output installation, and chunk
+behavior remain intact. Native coverage now renders and inspects an actual
+HEVC-with-alpha movie using the High Quality preset.
+
+The stage-output teardown now calls `showNormal()` before `hide()` when the
+surface is full-screen. On macOS, Qt full-screen owns a dedicated desktop;
+clearing only the hidden widget's latent state left that black desktop active
+on a secondary monitor. Cocoa smoke observes that the full-screen state change
+occurs before the hide event, verifies the output is inactive and invisible,
+and then exercises a clean windowed restart. Non-macOS smoke retains the
+portable visibility and restart assertions without depending on macOS event
+ordering. The public ABI, SONAME 10, and persisted formats are unchanged.
+
+Local 10.0.3 release validation passes all 24 native static Release tests. The
+macOS distribution verifier checks 50 Mach-O files; Cocoa smoke, native
+HEVC-with-alpha export, embedded `pvt-render` version/self-test, arm64
+architecture, plist 10.0.3 metadata, `/usr/lib` RPATH resolution, deep strict
+signing, and a fresh app/README/license ZIP integrity and root-layout check all
+pass. Linux x64/ARM64 and Windows x64/ARM64 packages remain the tag-triggered
+native workflow's responsibility.
+
 ## 10.0.0 GPU-first performance and realtime correction
 
 Application Settings now has a dedicated **Performance** tab. Its default

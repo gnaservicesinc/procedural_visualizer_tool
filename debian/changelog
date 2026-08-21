@@ -1,3 +1,11 @@
+procedural-visualizer-tool (10.0.3) stonking; urgency=medium
+
+  * Restore native HEVC-with-alpha export on macOS 27.
+  * Return secondary displays to their desktop after Live Preview Output.
+  * Add native video and Cocoa full-screen lifecycle regression coverage.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 20 Aug 2026 23:48:24 -0400
+
 procedural-visualizer-tool (10.0.0) stonking; urgency=medium
 
   * Make CPU + GPU scheduling GPU-primary and scale independent CPU layers.

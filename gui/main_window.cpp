@@ -15931,8 +15931,29 @@ bool MainWindow::runSmokeChecks(QString* error) {
         QApplication::processEvents();
         const bool entered_fullscreen = presentation_stage->isVisible()
             && presentation_stage->isFullScreen();
+        class FullscreenDismissalObserver final : public QObject {
+        public:
+            bool exited_before_hide = false;
+            bool hide_observed = false;
+
+        protected:
+            bool eventFilter(QObject* watched, QEvent* event) override {
+                auto* stage = qobject_cast<QWidget*>(watched);
+                if (stage == nullptr || event == nullptr) return false;
+                if (event->type() == QEvent::Hide) {
+                    hide_observed = true;
+                } else if (event->type() == QEvent::WindowStateChange
+                           && !hide_observed && stage->isVisible()
+                           && !stage->isFullScreen()) {
+                    exited_before_hide = true;
+                }
+                return false;
+            }
+        } dismissal_observer;
+        presentation_stage->installEventFilter(&dismissal_observer);
         QApplication::sendEvent(presentation_stage, &escape);
         QApplication::processEvents();
+        presentation_stage->removeEventFilter(&dismissal_observer);
         const bool dismissed_fullscreen =
             !live_workspace_->isPresentationActive()
             && !presentation_stage->isVisible()
@@ -15946,14 +15967,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
             && !presentation_stage->isFullScreen();
         QApplication::sendEvent(presentation_stage, &escape);
         QApplication::processEvents();
-        if (!entered_fullscreen || !dismissed_fullscreen
+        const bool native_desktop_released =
+#ifdef Q_OS_MACOS
+            dismissal_observer.exited_before_hide;
+#else
+            true;
+#endif
+        if (!entered_fullscreen || !native_desktop_released
+            || !dismissed_fullscreen
             || !restarted_windowed
             || live_workspace_->isPresentationActive()
             || presentation_stage->isVisible()) {
             live_workspace_->setPresentationActive(false);
             if (error != nullptr) {
                 *error = tr(
-                    "Live Preview Output did not cleanly transition from full-screen dismissal to a windowed restart.");
+                    "Live Preview Output did not leave the native full-screen desktop before hiding or did not restart windowed.");
             }
             return false;
         }
