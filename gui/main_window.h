@@ -187,7 +187,10 @@ private:
     void updateSurfaceEditorState();
     void updatePostProcessEditorState();
     void refreshPostProcessOrder(int selectedRow = -1);
+    void addSelectedPostProcessStage();
+    void removeSelectedPostProcessStage();
     void moveSelectedPostProcessStage(int direction);
+    void resetPostProcessChannelRouting();
     void applyWaveEditor(const QObject* changedEditor);
     void applySwingEditor(const QObject* changedEditor);
     void applyEffectEditor(const QObject* changedEditor);
@@ -233,6 +236,10 @@ private:
     void syncProjectGlobals();
     void refreshLayerList();
     void loadLayerEditors();
+    bool stageNewLayerFromDefaults(
+        pvt::ProjectConfig& stagedProject,
+        std::unique_ptr<pvt::ProjectDocument>& stagedDocument,
+        QString* notice = nullptr, QString* error = nullptr) const;
     void addLayer();
     void duplicateLayer();
     void removeLayer();
@@ -849,11 +856,16 @@ private:
     QComboBox* post_channel_green_source_ = nullptr;
     QComboBox* post_channel_blue_source_ = nullptr;
     QComboBox* post_channel_alpha_source_ = nullptr;
+    QLabel* post_channel_map_summary_ = nullptr;
+    QPushButton* post_channel_map_reset_ = nullptr;
     QCheckBox* post_antialias_enabled_ = nullptr;
     QDoubleSpinBox* post_antialias_strength_ = nullptr;
     QDoubleSpinBox* post_antialias_threshold_ = nullptr;
     QSpinBox* post_antialias_passes_ = nullptr;
     QListWidget* post_process_order_ = nullptr;
+    QComboBox* post_process_available_ = nullptr;
+    QPushButton* post_process_add_ = nullptr;
+    QPushButton* post_process_remove_ = nullptr;
     QPushButton* post_process_up_ = nullptr;
     QPushButton* post_process_down_ = nullptr;
     QCheckBox* quantization_enabled_ = nullptr;

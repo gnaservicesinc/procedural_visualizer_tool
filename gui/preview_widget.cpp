@@ -45,6 +45,14 @@ void PreviewWidget::setConfiguration(const pvt::RenderConfig& config) {
 }
 
 void PreviewWidget::setOverlayMode(OverlayMode mode) {
+    // Selecting a preview handle can navigate to the handle's workflow page.
+    // That page refreshes the overlay even when it is already showing the
+    // requested kind. Treat that refresh as idempotent so it cannot cancel the
+    // drag between mousePressEvent()'s selection and drag-start signals.
+    if (overlay_mode_ == mode) {
+        update();
+        return;
+    }
     if (dragged_handle_) {
         emitDragFinished(*dragged_handle_);
         dragged_handle_.reset();

@@ -60,6 +60,7 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QPlainTextEdit>
 #include <QProgressBar>
@@ -102,10 +103,12 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <iterator>
 #include <limits>
 #include <random>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -120,6 +123,116 @@ constexpr int kMinimumUndoLimit = 0;
 constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
 constexpr std::size_t kMebibyte = std::size_t{1024U} * 1024U;
 constexpr std::size_t kGibibyte = kMebibyte * 1024U;
+constexpr int kReusableMotionPathIdRole = Qt::UserRole + 1;
+constexpr auto kNewLayerTemplateIndexKey =
+    "preferences/customNewLayerTemplateIndex";
+
+bool post_process_stage_enabled(const pvt::RenderConfig& config,
+                                pvt::PostProcessStage stage) {
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            return config.post_process.invert_rgb_enabled;
+        case pvt::PostProcessStage::InvertRed:
+            return config.post_process.invert_red_enabled;
+        case pvt::PostProcessStage::InvertGreen:
+            return config.post_process.invert_green_enabled;
+        case pvt::PostProcessStage::InvertBlue:
+            return config.post_process.invert_blue_enabled;
+        case pvt::PostProcessStage::InvertAlpha:
+            return config.post_process.invert_alpha_enabled;
+        case pvt::PostProcessStage::ChannelMap:
+            return config.post_process.channel_map.enabled;
+        case pvt::PostProcessStage::Antialias:
+            return config.post_process.antialias_enabled;
+        case pvt::PostProcessStage::Quantization:
+            return config.quantization.enabled;
+    }
+    return false;
+}
+
+void set_post_process_stage_enabled(pvt::RenderConfig& config,
+                                    pvt::PostProcessStage stage,
+                                    bool enabled) {
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            config.post_process.invert_rgb_enabled = enabled;
+            break;
+        case pvt::PostProcessStage::InvertRed:
+            config.post_process.invert_red_enabled = enabled;
+            break;
+        case pvt::PostProcessStage::InvertGreen:
+            config.post_process.invert_green_enabled = enabled;
+            break;
+        case pvt::PostProcessStage::InvertBlue:
+            config.post_process.invert_blue_enabled = enabled;
+            break;
+        case pvt::PostProcessStage::InvertAlpha:
+            config.post_process.invert_alpha_enabled = enabled;
+            break;
+        case pvt::PostProcessStage::ChannelMap:
+            config.post_process.channel_map.enabled = enabled;
+            break;
+        case pvt::PostProcessStage::Antialias:
+            config.post_process.antialias_enabled = enabled;
+            break;
+        case pvt::PostProcessStage::Quantization:
+            config.quantization.enabled = enabled;
+            break;
+    }
+}
+
+QString post_process_stage_label(pvt::PostProcessStage stage) {
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            return QObject::tr("Invert RGB");
+        case pvt::PostProcessStage::InvertRed:
+            return QObject::tr("Invert red");
+        case pvt::PostProcessStage::InvertGreen:
+            return QObject::tr("Invert green");
+        case pvt::PostProcessStage::InvertBlue:
+            return QObject::tr("Invert blue");
+        case pvt::PostProcessStage::InvertAlpha:
+            return QObject::tr("Invert alpha");
+        case pvt::PostProcessStage::ChannelMap:
+            return QObject::tr("Channel routing");
+        case pvt::PostProcessStage::Antialias:
+            return QObject::tr("Edge antialiasing");
+        case pvt::PostProcessStage::Quantization:
+            return QObject::tr("Quantization");
+    }
+    return QObject::tr("Unknown effect");
+}
+
+QString channel_source_label(pvt::ChannelSource source) {
+    switch (source) {
+        case pvt::ChannelSource::Red: return QObject::tr("input red");
+        case pvt::ChannelSource::Green: return QObject::tr("input green");
+        case pvt::ChannelSource::Blue: return QObject::tr("input blue");
+        case pvt::ChannelSource::Alpha: return QObject::tr("input alpha");
+        case pvt::ChannelSource::Zero: return QObject::tr("constant 0");
+        case pvt::ChannelSource::One: return QObject::tr("constant 1");
+    }
+    return QObject::tr("unknown");
+}
+
+void place_post_process_stage(pvt::RenderConfig& config,
+                              pvt::PostProcessStage stage,
+                              bool active) {
+    auto& order = config.post_process.order;
+    const auto stage_position = std::find(order.begin(), order.end(), stage);
+    if (stage_position != order.end()) order.erase(stage_position);
+    if (!active) {
+        order.push_back(stage);
+        return;
+    }
+    auto insertion = order.begin();
+    for (auto candidate = order.begin(); candidate != order.end(); ++candidate) {
+        if (post_process_stage_enabled(config, *candidate)) {
+            insertion = std::next(candidate);
+        }
+    }
+    order.insert(insertion, stage);
+}
 
 std::size_t read_size_preference(const QSettings& settings,
                                  const QString& key,
@@ -279,6 +392,16 @@ QString custom_new_project_defaults_path() {
     return root.isEmpty()
                ? QString{}
                : QDir(root).filePath(QStringLiteral("new-project-default.zip"));
+}
+
+std::size_t configured_new_layer_template_index(
+    const pvt::ProjectDocument& document) {
+    if (document.project.layers.empty()) return 0U;
+    bool valid = false;
+    const qulonglong stored = QSettings().value(
+        QString::fromLatin1(kNewLayerTemplateIndexKey), 0).toULongLong(&valid);
+    return valid && stored < document.project.layers.size()
+               ? static_cast<std::size_t>(stored) : 0U;
 }
 
 QString shell_single_quote(QString value) {
@@ -690,6 +813,10 @@ void populate_effect_types(QComboBox* combo, int category) {
 
 pvt::EffectConfig new_effect_for_ui(pvt::EffectType type) {
     auto effect = pvt::default_effect(type);
+    // The library default remains disabled so pre-populated configurations and
+    // compatibility callers stay neutral. An explicit Add action is user
+    // intent, so its new effect should be immediately visible.
+    effect.enabled = true;
     // Surface placement is intentionally advanced and opt-in. Keep this UI
     // invariant independent of any renderer or project-file defaults.
     effect.space = pvt::EffectSpace::Texture;
@@ -753,6 +880,82 @@ template <typename Enum>
 void select_enum(QComboBox* combo, Enum value) {
     const int index = combo->findData(static_cast<int>(value));
     combo->setCurrentIndex(std::max(0, index));
+}
+
+void populate_layer_motion_paths(
+    QComboBox* combo, const std::vector<pvt::CubicMotionPath>& reusable_paths,
+    const pvt::LayerMotionConfig& motion) {
+    const QSignalBlocker blocker(combo);
+    combo->clear();
+    for (const auto path : {pvt::LayerMotionPath::None,
+                            pvt::LayerMotionPath::Orbit,
+                            pvt::LayerMotionPath::FigureEight,
+                            pvt::LayerMotionPath::Bounce,
+                            pvt::LayerMotionPath::Lissajous}) {
+        add_enum_item(combo,
+                      QString::fromUtf8(pvt::layer_motion_path_name(path)),
+                      path);
+    }
+
+    int selected = combo->findData(static_cast<int>(motion.path));
+    if (!reusable_paths.empty()) {
+        combo->insertSeparator(combo->count());
+    }
+    for (const auto& path : reusable_paths) {
+        combo->addItem(QObject::tr("Reusable: %1")
+                           .arg(QString::fromStdString(path.name)),
+                       static_cast<int>(pvt::LayerMotionPath::None));
+        const int index = combo->count() - 1;
+        combo->setItemData(
+            index, QVariant::fromValue<qulonglong>(path.id),
+            kReusableMotionPathIdRole);
+        if (motion.custom_path.enabled
+            && motion.custom_path.path_id == path.id) {
+            selected = index;
+        }
+    }
+    combo->setCurrentIndex(std::max(0, selected));
+}
+
+std::uint64_t selected_reusable_motion_path_id(const QComboBox* combo) {
+    return combo->currentData(kReusableMotionPathIdRole).toULongLong();
+}
+
+bool motion_paths_equal(const pvt::CubicMotionPath& left,
+                        const pvt::CubicMotionPath& right) {
+    if (left.id != right.id || left.name != right.name
+        || left.nodes.size() != right.nodes.size()) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.nodes.size(); ++index) {
+        const auto& a = left.nodes[index];
+        const auto& b = right.nodes[index];
+        if (a.id != b.id || a.x != b.x || a.y != b.y
+            || a.in_x != b.in_x || a.in_y != b.in_y
+            || a.out_x != b.out_x || a.out_y != b.out_y
+            || a.handle_mode != b.handle_mode) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::uint64_t allocate_motion_path_id(
+    const std::vector<pvt::CubicMotionPath>& paths) {
+    std::unordered_set<std::uint64_t> used;
+    used.reserve(paths.size());
+    std::uint64_t maximum = 0U;
+    for (const auto& path : paths) {
+        used.insert(path.id);
+        maximum = std::max(maximum, path.id);
+    }
+    if (maximum != std::numeric_limits<std::uint64_t>::max()) {
+        return maximum + 1U;
+    }
+    for (std::uint64_t candidate = 1U; candidate != 0U; ++candidate) {
+        if (used.find(candidate) == used.end()) return candidate;
+    }
+    return 0U;
 }
 
 float linear_to_srgb(float value) {
@@ -4409,14 +4612,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion_group_->setObjectName(QStringLiteral("layerMotionGroup"));
     auto* motion = new QFormLayout(motion_group_);
     motion_path_ = new QComboBox;
-    for (const auto path : {pvt::LayerMotionPath::None,
-                            pvt::LayerMotionPath::Orbit,
-                            pvt::LayerMotionPath::FigureEight,
-                            pvt::LayerMotionPath::Bounce,
-                            pvt::LayerMotionPath::Lissajous}) {
-        add_enum_item(motion_path_,
-                      QString::fromUtf8(pvt::layer_motion_path_name(path)), path);
-    }
+    motion_path_->setObjectName(QStringLiteral("layerMotionPath"));
+    populate_layer_motion_paths(motion_path_, {}, {});
     motion_center_x_ = real_editor(-kMaximumRenderParameter,
                                    kMaximumRenderParameter, 4, 0.01);
     motion_center_y_ = real_editor(-kMaximumRenderParameter,
@@ -4441,8 +4638,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     motion_paths_edit_ = new QPushButton(tr("Edit reusable paths and bindings…"));
     motion_paths_edit_->setObjectName(QStringLiteral("motionPathsEditorButton"));
     motion_paths_edit_->setToolTip(tr(
-        "Project-wide paths can drive this layer, individual waves, or effect centers. "
-        "They remain editable while whole-layer motion is disabled."));
+        "Create and edit project-wide closed paths. New paths appear in the "
+        "Closed path list above; advanced bindings can also drive individual "
+        "waves or effect centers."));
     motion->addRow(tr("Closed path"), motion_path_);
     motion->addRow(tr("Path center X"), motion_center_x_);
     motion->addRow(tr("Path center Y"), motion_center_y_);
@@ -4462,9 +4660,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* reusable_paths_group = new QGroupBox(tr("Reusable motion paths"));
     auto* reusable_paths_layout = new QVBoxLayout(reusable_paths_group);
     auto* reusable_paths_help = new QLabel(tr(
-        "Edit shared closed cubic paths and bind them to the whole layer, a wave, "
-        "or an effect center. This library is independent of the whole-layer "
-        "motion switch above."));
+        "Create shared closed cubic paths here, then choose one directly from "
+        "Closed path above. The editor also provides advanced per-wave and "
+        "per-effect bindings."));
     reusable_paths_help->setWordWrap(true);
     reusable_paths_layout->addWidget(reusable_paths_help);
     reusable_paths_layout->addWidget(motion_paths_edit_, 0, Qt::AlignLeft);
@@ -4798,12 +4996,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_layout->addWidget(surface_group);
 
     auto* post_process_order_group = new QGroupBox(
-        tr("Finishing pipeline order"));
+        tr("Active post-effect stack"));
     post_process_order_group->setObjectName(
         QStringLiteral("postProcessOrderGroup"));
     post_process_order_group->setToolTip(tr(
-        "Every finishing stage appears exactly once. Disabled stages remain in "
-        "the list so enabling one later preserves the authored order."));
+        "Only effects currently applied to this layer appear here. Add, remove, "
+        "or reorder them; the stack runs from top to bottom."));
     auto* post_process_order_layout = new QVBoxLayout(
         post_process_order_group);
     post_process_order_ = new QListWidget;
@@ -4811,8 +5009,21 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_process_order_->setSelectionMode(
         QAbstractItemView::SingleSelection);
     post_process_order_->setAlternatingRowColors(true);
+    post_process_order_->setMinimumHeight(150);
     post_process_order_->setToolTip(tr(
-        "Stages run from top to bottom on this layer before it is composited."));
+        "Active effects run from top to bottom on this layer before it is composited."));
+    auto* post_process_add_row = new QWidget;
+    auto* post_process_add_layout = new QHBoxLayout(post_process_add_row);
+    post_process_add_layout->setContentsMargins(0, 0, 0, 0);
+    post_process_available_ = new QComboBox;
+    post_process_available_->setObjectName(
+        QStringLiteral("postProcessAvailable"));
+    post_process_available_->setToolTip(tr(
+        "Effects not currently in the active stack."));
+    post_process_add_ = new QPushButton(tr("Add effect"));
+    post_process_add_->setObjectName(QStringLiteral("postProcessAdd"));
+    post_process_add_layout->addWidget(post_process_available_, 1);
+    post_process_add_layout->addWidget(post_process_add_);
     auto* post_process_order_buttons = new QWidget;
     auto* post_process_order_button_layout = new QHBoxLayout(
         post_process_order_buttons);
@@ -4821,26 +5032,41 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_process_up_->setObjectName(QStringLiteral("postProcessMoveUp"));
     post_process_down_ = new QPushButton(tr("Move down"));
     post_process_down_->setObjectName(QStringLiteral("postProcessMoveDown"));
+    post_process_remove_ = new QPushButton(tr("Remove effect"));
+    post_process_remove_->setObjectName(
+        QStringLiteral("postProcessRemove"));
     post_process_order_button_layout->addWidget(post_process_up_);
     post_process_order_button_layout->addWidget(post_process_down_);
+    post_process_order_button_layout->addWidget(post_process_remove_);
     post_process_order_button_layout->addStretch(1);
     auto* post_process_order_help = new QLabel(tr(
-        "Order is layer-local and affects CPU and GPU rendering identically. "
-        "Channel routing reads every source from the same incoming pixel, so "
-        "swaps never depend on output-row order."));
+        "Removing an effect bypasses it without erasing its settings, so adding "
+        "it again restores those settings. Order is layer-local and identical "
+        "for CPU and GPU rendering."));
     post_process_order_help->setWordWrap(true);
     post_process_order_layout->addWidget(post_process_order_);
+    post_process_order_layout->addWidget(post_process_add_row);
     post_process_order_layout->addWidget(post_process_order_buttons);
     post_process_order_layout->addWidget(post_process_order_help);
     connect(post_process_up_, &QPushButton::clicked, this,
             [this] { moveSelectedPostProcessStage(-1); });
     connect(post_process_down_, &QPushButton::clicked, this,
             [this] { moveSelectedPostProcessStage(1); });
+    connect(post_process_add_, &QPushButton::clicked, this,
+            &MainWindow::addSelectedPostProcessStage);
+    connect(post_process_remove_, &QPushButton::clicked, this,
+            &MainWindow::removeSelectedPostProcessStage);
+    connect(post_process_available_, &QComboBox::currentIndexChanged, this,
+            [this] {
+                post_process_add_->setEnabled(
+                    post_process_available_->currentIndex() >= 0);
+            });
     connect(post_process_order_, &QListWidget::currentRowChanged, this,
             [this](int row) {
                 post_process_up_->setEnabled(row > 0);
                 post_process_down_->setEnabled(
                     row >= 0 && row + 1 < post_process_order_->count());
+                post_process_remove_->setEnabled(row >= 0);
             });
     finish_layout->addWidget(post_process_order_group);
 
@@ -4904,27 +5130,28 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_invert_alpha_mix_->setToolTip(tr(
         "Crossfade from the original alpha at 0 to fully inverted alpha at 1."));
     post_channel_map_enabled_ = new QCheckBox(
-        tr("Simultaneous RGBA channel routing"));
+        tr("Use custom channel routing (off keeps RGBA unchanged)"));
     post_channel_map_enabled_->setObjectName(
         QStringLiteral("postChannelMapEnabled"));
     post_channel_map_enabled_->setToolTip(tr(
-        "Route, duplicate, swap, fill, or drop channels without cascading "
-        "writes between output channels."));
+        "When off, red stays red, green stays green, blue stays blue, and alpha "
+        "stays alpha. When on, each output uses the input selected below."));
     post_channel_map_mix_ = real_editor(0.0, 1.0, 4, 0.01);
     post_channel_map_mix_->setObjectName(
         QStringLiteral("postChannelMapMix"));
     post_channel_map_mix_->setToolTip(tr(
-        "Crossfade from the incoming pixel at 0 to the routed pixel at 1."));
+        "0 keeps the incoming pixel unchanged; 1 applies the selected routing "
+        "fully. Intermediate values blend between them."));
     const auto make_channel_source = [](
         const QString& object_name) {
         auto* editor = new QComboBox;
         editor->setObjectName(object_name);
-        add_enum_item(editor, tr("Red"), pvt::ChannelSource::Red);
-        add_enum_item(editor, tr("Green"), pvt::ChannelSource::Green);
-        add_enum_item(editor, tr("Blue"), pvt::ChannelSource::Blue);
-        add_enum_item(editor, tr("Alpha"), pvt::ChannelSource::Alpha);
-        add_enum_item(editor, tr("Zero (drop)"), pvt::ChannelSource::Zero);
-        add_enum_item(editor, tr("One (fill)"), pvt::ChannelSource::One);
+        add_enum_item(editor, tr("Input red"), pvt::ChannelSource::Red);
+        add_enum_item(editor, tr("Input green"), pvt::ChannelSource::Green);
+        add_enum_item(editor, tr("Input blue"), pvt::ChannelSource::Blue);
+        add_enum_item(editor, tr("Input alpha"), pvt::ChannelSource::Alpha);
+        add_enum_item(editor, tr("Constant 0 (empty)"), pvt::ChannelSource::Zero);
+        add_enum_item(editor, tr("Constant 1 (full)"), pvt::ChannelSource::One);
         editor->setToolTip(tr(
             "Select the incoming channel or constant used for this output. "
             "All four selections read the same incoming pixel."));
@@ -4938,6 +5165,19 @@ QWidget* MainWindow::createLayerSettingsPage() {
         QStringLiteral("postChannelBlueSource"));
     post_channel_alpha_source_ = make_channel_source(
         QStringLiteral("postChannelAlphaSource"));
+    post_channel_map_summary_ = new QLabel;
+    post_channel_map_summary_->setObjectName(
+        QStringLiteral("postChannelMapSummary"));
+    post_channel_map_summary_->setWordWrap(true);
+    post_channel_map_summary_->setTextInteractionFlags(
+        Qt::TextSelectableByMouse);
+    post_channel_map_reset_ = new QPushButton(tr("Keep original RGBA"));
+    post_channel_map_reset_->setObjectName(
+        QStringLiteral("postChannelMapReset"));
+    post_channel_map_reset_->setToolTip(tr(
+        "Turn channel routing off and reset every output to its matching input."));
+    connect(post_channel_map_reset_, &QPushButton::clicked, this,
+            &MainWindow::resetPostProcessChannelRouting);
     post_antialias_enabled_ = new QCheckBox(tr("Edge antialiasing"));
     post_antialias_enabled_->setObjectName(
         QStringLiteral("postEdgeAntialiasing"));
@@ -4970,11 +5210,14 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_process->addRow(post_invert_alpha_enabled_);
     post_process->addRow(tr("Alpha invert mix"), post_invert_alpha_mix_);
     post_process->addRow(post_channel_map_enabled_);
-    post_process->addRow(tr("Channel routing mix"), post_channel_map_mix_);
-    post_process->addRow(tr("Output red from"), post_channel_red_source_);
-    post_process->addRow(tr("Output green from"), post_channel_green_source_);
-    post_process->addRow(tr("Output blue from"), post_channel_blue_source_);
-    post_process->addRow(tr("Output alpha from"), post_channel_alpha_source_);
+    post_process->addRow(tr("Routing amount (0 = unchanged, 1 = routed)"),
+                         post_channel_map_mix_);
+    post_process->addRow(tr("Red output  ←"), post_channel_red_source_);
+    post_process->addRow(tr("Green output  ←"), post_channel_green_source_);
+    post_process->addRow(tr("Blue output  ←"), post_channel_blue_source_);
+    post_process->addRow(tr("Alpha output  ←"), post_channel_alpha_source_);
+    post_process->addRow(post_channel_map_summary_);
+    post_process->addRow(post_channel_map_reset_);
     post_process->addRow(post_antialias_enabled_);
     post_process->addRow(tr("Strength"), post_antialias_strength_);
     post_process->addRow(tr("Edge threshold"), post_antialias_threshold_);
@@ -8607,6 +8850,231 @@ void MainWindow::loadLayerEditors() {
     updateWorkflowSummaries();
 }
 
+bool MainWindow::stageNewLayerFromDefaults(
+    pvt::ProjectConfig& staged_project,
+    std::unique_ptr<pvt::ProjectDocument>& staged_document,
+    QString* notice, QString* error) const {
+    if (notice != nullptr) notice->clear();
+    if (error != nullptr) error->clear();
+    try {
+        QString template_warning;
+        std::unique_ptr<pvt::ProjectDocument> defaults =
+            makeNewProjectDocument(&template_warning);
+        if (defaults == nullptr || defaults->project.layers.empty()) {
+            if (error != nullptr) {
+                *error = tr("The selected new-project default has no layer template.");
+            }
+            return false;
+        }
+        if (notice != nullptr) *notice = template_warning;
+
+        const std::size_t template_index =
+            configured_new_layer_template_index(*defaults);
+        const pvt::LayerConfig& source_layer =
+            defaults->project.layers[template_index];
+        pvt::LayerConfig layer = source_layer;
+        const std::string source_uuid = source_layer.uuid;
+
+        staged_project = project_;
+        staged_document = document_ != nullptr
+            ? std::make_unique<pvt::ProjectDocument>(*document_)
+            : std::make_unique<pvt::ProjectDocument>(
+                  pvt::default_project_document());
+
+        const auto uuid_in_use = [this](const std::string& uuid) {
+            return std::any_of(
+                project_.layers.begin(), project_.layers.end(),
+                [&uuid](const pvt::LayerConfig& existing) {
+                    return existing.uuid == uuid;
+                });
+        };
+        for (int attempt = 0; uuid_in_use(layer.uuid) && attempt < 128;
+             ++attempt) {
+            layer.uuid = pvt::generate_uuid();
+        }
+        if (layer.uuid.empty() || uuid_in_use(layer.uuid)) {
+            if (error != nullptr) {
+                *error = tr("Could not allocate a unique identity for the new layer.");
+            }
+            return false;
+        }
+        layer.file_id = pvt::allocate_layer_file_id(staged_project);
+        layer.name = tr("Layer %1").arg(staged_project.layers.size() + 1U)
+                         .toStdString();
+        // A layer template may have belonged to a template-only group. Keep
+        // its authored layer settings, but do not create a dangling group
+        // reference in the destination project.
+        layer.group_uuid.clear();
+
+        std::unordered_map<std::uint64_t, std::uint64_t> imported_path_ids;
+        const auto import_binding = [&](pvt::PathBinding& binding) -> bool {
+            if (binding.path_id == 0U) return true;
+            const auto remapped = imported_path_ids.find(binding.path_id);
+            if (remapped != imported_path_ids.end()) {
+                binding.path_id = remapped->second;
+                return true;
+            }
+            const auto source_path = std::find_if(
+                defaults->project.canvas.motion_paths.begin(),
+                defaults->project.canvas.motion_paths.end(),
+                [&binding](const pvt::CubicMotionPath& path) {
+                    return path.id == binding.path_id;
+                });
+            if (source_path == defaults->project.canvas.motion_paths.end()) {
+                // Disabled bindings are allowed to retain an unresolved old
+                // selection. Enabled ones must remain immediately usable.
+                if (!binding.enabled) return true;
+                if (error != nullptr) {
+                    *error = tr("The new-layer template refers to a missing reusable motion path.");
+                }
+                return false;
+            }
+
+            std::uint64_t destination_id = source_path->id;
+            const auto conflict = std::find_if(
+                staged_project.canvas.motion_paths.begin(),
+                staged_project.canvas.motion_paths.end(),
+                [destination_id](const pvt::CubicMotionPath& path) {
+                    return path.id == destination_id;
+                });
+            if (conflict != staged_project.canvas.motion_paths.end()
+                && !motion_paths_equal(*conflict, *source_path)) {
+                destination_id = allocate_motion_path_id(
+                    staged_project.canvas.motion_paths);
+                if (destination_id == 0U) {
+                    if (error != nullptr) {
+                        *error = tr("The reusable motion-path identity space is exhausted.");
+                    }
+                    return false;
+                }
+            }
+            if (conflict == staged_project.canvas.motion_paths.end()
+                || destination_id != source_path->id) {
+                if (staged_project.canvas.motion_paths.size()
+                    >= pvt::kMaximumMotionPaths) {
+                    if (error != nullptr) {
+                        *error = tr("The project has no room for the new layer's reusable motion path.");
+                    }
+                    return false;
+                }
+                pvt::CubicMotionPath copied = *source_path;
+                copied.id = destination_id;
+                staged_project.canvas.motion_paths.push_back(std::move(copied));
+            }
+            imported_path_ids.emplace(binding.path_id, destination_id);
+            binding.path_id = destination_id;
+            return true;
+        };
+
+        if (!import_binding(layer.render.motion.custom_path)) return false;
+        for (auto& wave : layer.render.waves) {
+            if (!import_binding(wave.path)) return false;
+        }
+        for (auto& effect : layer.render.effects) {
+            if (!import_binding(effect.path)) return false;
+        }
+
+        const auto transfer_attachment = [&defaults, &staged_document,
+                                          error](
+            const std::string& source_reference,
+            const std::string& destination_reference,
+            pvt::ProjectAttachment& attached) {
+            const pvt::ProjectAttachment* source =
+                pvt::find_project_attachment(*defaults, source_reference);
+            if (source == nullptr || source->local_path.empty()) {
+                if (error != nullptr) {
+                    *error = QObject::tr(
+                        "A managed asset required by the new-layer template is unavailable.");
+                }
+                return false;
+            }
+            std::string attachment_error;
+            if (!pvt::attach_project_file(
+                    *staged_document, destination_reference,
+                    source->local_path, &attached, &attachment_error)) {
+                if (error != nullptr) {
+                    *error = QString::fromStdString(attachment_error);
+                }
+                return false;
+            }
+            return true;
+        };
+
+        pvt::ProjectAttachment attached;
+        if (!layer.render.surface.obj_sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::surface_obj_attachment_id(source_uuid),
+                    pvt::surface_obj_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            layer.render.surface.obj_path = attached.local_path;
+            layer.render.surface.obj_sha256 = attached.sha256;
+            layer.render.surface.obj_basename = attached.basename;
+        }
+        if (!layer.render.surface.plane_displacement.sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::plane_displacement_attachment_id(source_uuid),
+                    pvt::plane_displacement_attachment_id(layer.uuid),
+                    attached)) {
+                return false;
+            }
+            auto& displacement = layer.render.surface.plane_displacement;
+            displacement.path = attached.local_path;
+            displacement.sha256 = attached.sha256;
+            displacement.basename = attached.basename;
+        }
+        if (!layer.render.starting_image.sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::starting_image_attachment_id(source_uuid),
+                    pvt::starting_image_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            layer.render.starting_image.path = attached.local_path;
+            layer.render.starting_image.sha256 = attached.sha256;
+            layer.render.starting_image.basename = attached.basename;
+        }
+        if (!layer.render.layer_clock.clock.music.source_sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::layer_music_attachment_id(source_uuid),
+                    pvt::layer_music_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            auto& music = layer.render.layer_clock.clock.music;
+            music.source_sha256 = attached.sha256;
+            music.source_basename = attached.basename;
+        }
+
+        staged_project.layers.push_back(std::move(layer));
+        const pvt::ValidationResult validation = pvt::validate(staged_project);
+        if (!validation.ok) {
+            if (error != nullptr) {
+                *error = tr("The new-layer template is not valid in this project: %1")
+                             .arg(QString::fromStdString(validation.message));
+            }
+            return false;
+        }
+        staged_document->project = staged_project;
+        staged_document->dirty = true;
+        return true;
+    } catch (const std::bad_alloc&) {
+        if (error != nullptr) {
+            *error = tr("Not enough memory to create a layer from the saved default.");
+        }
+        return false;
+    } catch (const std::exception& exception) {
+        if (error != nullptr) {
+            *error = tr("Could not create a layer from the saved default: %1")
+                         .arg(QString::fromUtf8(exception.what()));
+        }
+        return false;
+    } catch (...) {
+        if (error != nullptr) {
+            *error = tr("Could not create a layer from the saved default.");
+        }
+        return false;
+    }
+}
+
 void MainWindow::addLayer() {
     if (project_.layers.size() >= pvt::kMaximumLayers) {
         QMessageBox::warning(
@@ -8616,18 +9084,25 @@ void MainWindow::addLayer() {
     }
     auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
-    auto layer = pvt::default_layer(project_.layers.size());
-    layer.uuid = pvt::generate_uuid();
-    layer.file_id = pvt::allocate_layer_file_id(project_);
-    layer.name = tr("Layer %1").arg(project_.layers.size() + 1U).toStdString();
-    active_layer_uuid_ = layer.uuid;
+    pvt::ProjectConfig staged_project;
+    std::unique_ptr<pvt::ProjectDocument> staged_document;
+    QString notice;
+    QString error;
+    if (!stageNewLayerFromDefaults(staged_project, staged_document,
+                                   &notice, &error)) {
+        QMessageBox::critical(this, tr("Could not add layer"), error);
+        return;
+    }
+    active_layer_uuid_ = staged_project.layers.back().uuid;
     selected_group_uuid_.reset();
-    project_.layers.push_back(std::move(layer));
+    project_ = std::move(staged_project);
+    document_ = std::move(staged_document);
     loadActiveConfiguration();
     refreshLayerList();
     refreshAll();
     recordProjectStateChange(tr("Add layer"), std::move(before), before_active);
     schedulePreview();
+    if (!notice.isEmpty()) status_->setText(notice);
 }
 
 void MainWindow::duplicateLayer() {
@@ -10186,7 +10661,8 @@ void MainWindow::showApplicationSettings() {
         const auto choice = QMessageBox::question(
             this, tr("Replace new-project default?"),
             tr("Save the current project — including all layers and embedded assets — "
-               "as the template used by every future New Project command?"),
+               "as the template used by every future New Project command? "
+               "The active layer will also become the Add Layer template."),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (choice == QMessageBox::Yes) {
             if (saveCurrentProjectAsDefaults(&defaults_error)) {
@@ -10269,6 +10745,16 @@ bool MainWindow::saveCurrentProjectAsDefaults(QString* error) {
     if (error != nullptr) error->clear();
     syncActiveRender();
     syncProjectGlobals();
+    std::size_t layer_template_index = 0U;
+    const auto selected_layer = std::find_if(
+        project_.layers.begin(), project_.layers.end(),
+        [this](const pvt::LayerConfig& layer) {
+            return layer.uuid == active_layer_uuid_;
+        });
+    if (selected_layer != project_.layers.end()) {
+        layer_template_index = static_cast<std::size_t>(
+            std::distance(project_.layers.begin(), selected_layer));
+    }
     pvt::ProjectDocument source = document_ != nullptr
                                       ? *document_
                                       : pvt::default_project_document();
@@ -10339,6 +10825,8 @@ bool MainWindow::saveCurrentProjectAsDefaults(QString* error) {
     }
     QSettings settings;
     settings.setValue(QStringLiteral("preferences/customNewProjectDefaults"), true);
+    settings.setValue(QString::fromLatin1(kNewLayerTemplateIndexKey),
+                      QVariant::fromValue<qulonglong>(layer_template_index));
     settings.sync();
     if (settings.status() != QSettings::NoError) {
         if (error != nullptr) {
@@ -10353,6 +10841,7 @@ bool MainWindow::restoreBuiltInProjectDefaults(QString* error) {
     if (error != nullptr) error->clear();
     QSettings settings;
     settings.setValue(QStringLiteral("preferences/customNewProjectDefaults"), false);
+    settings.remove(QString::fromLatin1(kNewLayerTemplateIndexKey));
     settings.sync();
     if (settings.status() != QSettings::NoError) {
         if (error != nullptr) {
@@ -11803,7 +12292,8 @@ void MainWindow::loadGlobalEditors() {
     transform_flip_vertical_->setChecked(config_.transform.flip_vertical);
     select_enum(transform_mirror_, config_.transform.mirror);
     motion_group_->setChecked(config_.motion.enabled);
-    select_enum(motion_path_, config_.motion.path);
+    populate_layer_motion_paths(motion_path_, config_.motion_paths,
+                                config_.motion);
     motion_center_x_->setValue(config_.motion.center_x);
     motion_center_y_->setValue(config_.motion.center_y);
     motion_travel_x_->setValue(config_.motion.travel_x);
@@ -12006,6 +12496,8 @@ void MainWindow::updatePostProcessEditorState() {
         || post_channel_green_source_ == nullptr
         || post_channel_blue_source_ == nullptr
         || post_channel_alpha_source_ == nullptr
+        || post_channel_map_summary_ == nullptr
+        || post_channel_map_reset_ == nullptr
         || post_antialias_enabled_ == nullptr
         || post_antialias_strength_ == nullptr
         || post_antialias_threshold_ == nullptr
@@ -12025,6 +12517,35 @@ void MainWindow::updatePostProcessEditorState() {
     post_channel_green_source_->setEnabled(channel_map);
     post_channel_blue_source_->setEnabled(channel_map);
     post_channel_alpha_source_->setEnabled(channel_map);
+    const auto selected_source = [](const QComboBox* editor) {
+        return static_cast<pvt::ChannelSource>(
+            editor->currentData().toInt());
+    };
+    if (!channel_map) {
+        post_channel_map_summary_->setText(tr(
+            "Routing off — no swap: R ← input red · G ← input green · "
+            "B ← input blue · A ← input alpha"));
+    } else {
+        post_channel_map_summary_->setText(
+            tr("Routing on: R ← %1 · G ← %2 · B ← %3 · A ← %4")
+                .arg(channel_source_label(selected_source(
+                         post_channel_red_source_)),
+                     channel_source_label(selected_source(
+                         post_channel_green_source_)),
+                     channel_source_label(selected_source(
+                         post_channel_blue_source_)),
+                     channel_source_label(selected_source(
+                         post_channel_alpha_source_))));
+    }
+    const bool identity =
+        selected_source(post_channel_red_source_) == pvt::ChannelSource::Red
+        && selected_source(post_channel_green_source_)
+               == pvt::ChannelSource::Green
+        && selected_source(post_channel_blue_source_)
+               == pvt::ChannelSource::Blue
+        && selected_source(post_channel_alpha_source_)
+               == pvt::ChannelSource::Alpha;
+    post_channel_map_reset_->setEnabled(channel_map || !identity);
     const bool antialiasing = post_antialias_enabled_->isChecked();
     post_antialias_strength_->setEnabled(antialiasing);
     post_antialias_threshold_->setEnabled(antialiasing);
@@ -12033,33 +12554,95 @@ void MainWindow::updatePostProcessEditorState() {
 
 void MainWindow::refreshPostProcessOrder(int selectedRow) {
     if (post_process_order_ == nullptr || post_process_up_ == nullptr
-        || post_process_down_ == nullptr) {
+        || post_process_down_ == nullptr || post_process_available_ == nullptr
+        || post_process_add_ == nullptr || post_process_remove_ == nullptr) {
         return;
     }
     if (selectedRow < 0) selectedRow = post_process_order_->currentRow();
-    if (selectedRow < 0 && !config_.post_process.order.empty()) {
-        selectedRow = 0;
-    }
-    const QSignalBlocker blocker(post_process_order_);
+    const QSignalBlocker order_blocker(post_process_order_);
+    const QSignalBlocker available_blocker(post_process_available_);
     post_process_order_->clear();
-    for (std::size_t index = 0U;
-         index < config_.post_process.order.size(); ++index) {
-        const pvt::PostProcessStage stage = config_.post_process.order[index];
-        auto* item = new QListWidgetItem(
-            tr("%1. %2")
-                .arg(static_cast<qulonglong>(index + 1U))
-                .arg(QString::fromUtf8(pvt::post_process_stage_name(stage))),
-            post_process_order_);
-        item->setData(Qt::UserRole, static_cast<int>(stage));
+    post_process_available_->clear();
+    int active_index = 0;
+    for (const pvt::PostProcessStage stage : config_.post_process.order) {
+        if (post_process_stage_enabled(config_, stage)) {
+            auto* item = new QListWidgetItem(
+                tr("%1. %2")
+                    .arg(active_index + 1)
+                    .arg(post_process_stage_label(stage)),
+                post_process_order_);
+            item->setData(Qt::UserRole, static_cast<int>(stage));
+            ++active_index;
+        } else {
+            post_process_available_->addItem(
+                post_process_stage_label(stage), static_cast<int>(stage));
+        }
     }
     if (post_process_order_->count() > 0) {
+        if (selectedRow < 0) selectedRow = 0;
         selectedRow = std::clamp(selectedRow, 0,
                                  post_process_order_->count() - 1);
         post_process_order_->setCurrentRow(selectedRow);
+    } else {
+        selectedRow = -1;
     }
     post_process_up_->setEnabled(selectedRow > 0);
     post_process_down_->setEnabled(
         selectedRow >= 0 && selectedRow + 1 < post_process_order_->count());
+    post_process_remove_->setEnabled(selectedRow >= 0);
+    post_process_add_->setEnabled(post_process_available_->count() > 0);
+}
+
+void MainWindow::addSelectedPostProcessStage() {
+    if (populating_ || post_process_available_ == nullptr
+        || post_process_available_->currentIndex() < 0) {
+        return;
+    }
+    const auto stage = static_cast<pvt::PostProcessStage>(
+        post_process_available_->currentData().toInt());
+    if (post_process_stage_enabled(config_, stage)) return;
+    auto before = captureActiveState();
+    set_post_process_stage_enabled(config_, stage, true);
+    place_post_process_stage(config_, stage, true);
+    ensureAlphaForTransparency();
+    syncActiveRender();
+    loadGlobalEditors();
+    int selected_row = -1;
+    for (int row = 0; row < post_process_order_->count(); ++row) {
+        if (post_process_order_->item(row)->data(Qt::UserRole).toInt()
+            == static_cast<int>(stage)) {
+            selected_row = row;
+            break;
+        }
+    }
+    refreshPostProcessOrder(selected_row);
+    updateWorkflowSummaries();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    status_->setText(tr("Added %1 to the post-effect stack.")
+                         .arg(post_process_stage_label(stage)));
+    recordActiveStateChange(tr("Add post effect"), std::move(before));
+}
+
+void MainWindow::removeSelectedPostProcessStage() {
+    if (populating_ || post_process_order_ == nullptr) return;
+    const int row = post_process_order_->currentRow();
+    if (row < 0) return;
+    const auto stage = static_cast<pvt::PostProcessStage>(
+        post_process_order_->item(row)->data(Qt::UserRole).toInt());
+    if (!post_process_stage_enabled(config_, stage)) return;
+    auto before = captureActiveState();
+    set_post_process_stage_enabled(config_, stage, false);
+    place_post_process_stage(config_, stage, false);
+    syncActiveRender();
+    loadGlobalEditors();
+    refreshPostProcessOrder(row);
+    updateWorkflowSummaries();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    status_->setText(tr("Removed %1 from the post-effect stack; its settings were kept.")
+                         .arg(post_process_stage_label(stage)));
+    recordActiveStateChange(tr("Remove post effect"), std::move(before));
 }
 
 void MainWindow::moveSelectedPostProcessStage(int direction) {
@@ -12070,13 +12653,24 @@ void MainWindow::moveSelectedPostProcessStage(int direction) {
     const int row = post_process_order_->currentRow();
     const int destination = row + direction;
     if (row < 0 || destination < 0
-        || destination >= static_cast<int>(config_.post_process.order.size())) {
+        || destination >= post_process_order_->count()) {
+        return;
+    }
+    const auto stage = static_cast<pvt::PostProcessStage>(
+        post_process_order_->item(row)->data(Qt::UserRole).toInt());
+    const auto destination_stage = static_cast<pvt::PostProcessStage>(
+        post_process_order_->item(destination)->data(Qt::UserRole).toInt());
+    auto stage_position = std::find(config_.post_process.order.begin(),
+                                    config_.post_process.order.end(), stage);
+    auto destination_position = std::find(
+        config_.post_process.order.begin(), config_.post_process.order.end(),
+        destination_stage);
+    if (stage_position == config_.post_process.order.end()
+        || destination_position == config_.post_process.order.end()) {
         return;
     }
     auto before = captureActiveState();
-    std::swap(config_.post_process.order[static_cast<std::size_t>(row)],
-              config_.post_process.order[
-                  static_cast<std::size_t>(destination)]);
+    std::iter_swap(stage_position, destination_position);
     syncActiveRender();
     refreshPostProcessOrder(destination);
     updateWorkflowSummaries();
@@ -12085,6 +12679,35 @@ void MainWindow::moveSelectedPostProcessStage(int direction) {
     status_->setText(tr("Moved finishing stage to position %1.")
                          .arg(destination + 1));
     recordActiveStateChange(tr("Reorder finishing stages"),
+                            std::move(before));
+}
+
+void MainWindow::resetPostProcessChannelRouting() {
+    if (populating_) return;
+    const auto& channel_map = config_.post_process.channel_map;
+    const bool already_original = !channel_map.enabled
+        && channel_map.mix == 1.0
+        && channel_map.red_source == pvt::ChannelSource::Red
+        && channel_map.green_source == pvt::ChannelSource::Green
+        && channel_map.blue_source == pvt::ChannelSource::Blue
+        && channel_map.alpha_source == pvt::ChannelSource::Alpha;
+    if (already_original) return;
+    auto before = captureActiveState();
+    config_.post_process.channel_map.enabled = false;
+    config_.post_process.channel_map.mix = 1.0;
+    config_.post_process.channel_map.red_source = pvt::ChannelSource::Red;
+    config_.post_process.channel_map.green_source = pvt::ChannelSource::Green;
+    config_.post_process.channel_map.blue_source = pvt::ChannelSource::Blue;
+    config_.post_process.channel_map.alpha_source = pvt::ChannelSource::Alpha;
+    place_post_process_stage(config_, pvt::PostProcessStage::ChannelMap,
+                             false);
+    syncActiveRender();
+    loadGlobalEditors();
+    updateWorkflowSummaries();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    status_->setText(tr("Channel routing is off; original RGBA channels are preserved."));
+    recordActiveStateChange(tr("Keep original RGBA channels"),
                             std::move(before));
 }
 
@@ -14004,14 +14627,24 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == motion_group_) {
         config_.motion.enabled = motion_group_->isChecked();
         if (config_.motion.enabled
-            && config_.motion.path == pvt::LayerMotionPath::None) {
+            && config_.motion.path == pvt::LayerMotionPath::None
+            && !config_.motion.custom_path.enabled) {
             config_.motion.path = pvt::LayerMotionPath::Orbit;
-            const QSignalBlocker blocker(motion_path_);
-            select_enum(motion_path_, config_.motion.path);
+            populate_layer_motion_paths(motion_path_, config_.motion_paths,
+                                        config_.motion);
         }
     } else if (changed_editor == motion_path_) {
-        config_.motion.path = static_cast<pvt::LayerMotionPath>(
-            motion_path_->currentData().toInt());
+        const std::uint64_t reusable_id =
+            selected_reusable_motion_path_id(motion_path_);
+        if (reusable_id != 0U) {
+            config_.motion.path = pvt::LayerMotionPath::None;
+            config_.motion.custom_path.enabled = true;
+            config_.motion.custom_path.path_id = reusable_id;
+        } else {
+            config_.motion.path = static_cast<pvt::LayerMotionPath>(
+                motion_path_->currentData().toInt());
+            config_.motion.custom_path.enabled = false;
+        }
     } else if (changed_editor == motion_center_x_) {
         config_.motion.center_x = motion_center_x_->value();
     } else if (changed_editor == motion_center_y_) {
@@ -14249,32 +14882,50 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == post_invert_rgb_enabled_) {
         config_.post_process.invert_rgb_enabled =
             post_invert_rgb_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::InvertRgb,
+            config_.post_process.invert_rgb_enabled);
     } else if (changed_editor == post_invert_rgb_mix_) {
         config_.post_process.invert_rgb_mix = post_invert_rgb_mix_->value();
     } else if (changed_editor == post_invert_red_enabled_) {
         config_.post_process.invert_red_enabled =
             post_invert_red_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::InvertRed,
+            config_.post_process.invert_red_enabled);
     } else if (changed_editor == post_invert_red_mix_) {
         config_.post_process.invert_red_mix = post_invert_red_mix_->value();
     } else if (changed_editor == post_invert_green_enabled_) {
         config_.post_process.invert_green_enabled =
             post_invert_green_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::InvertGreen,
+            config_.post_process.invert_green_enabled);
     } else if (changed_editor == post_invert_green_mix_) {
         config_.post_process.invert_green_mix =
             post_invert_green_mix_->value();
     } else if (changed_editor == post_invert_blue_enabled_) {
         config_.post_process.invert_blue_enabled =
             post_invert_blue_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::InvertBlue,
+            config_.post_process.invert_blue_enabled);
     } else if (changed_editor == post_invert_blue_mix_) {
         config_.post_process.invert_blue_mix = post_invert_blue_mix_->value();
     } else if (changed_editor == post_invert_alpha_enabled_) {
         config_.post_process.invert_alpha_enabled =
             post_invert_alpha_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::InvertAlpha,
+            config_.post_process.invert_alpha_enabled);
     } else if (changed_editor == post_invert_alpha_mix_) {
         config_.post_process.invert_alpha_mix = post_invert_alpha_mix_->value();
     } else if (changed_editor == post_channel_map_enabled_) {
         config_.post_process.channel_map.enabled =
             post_channel_map_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::ChannelMap,
+            config_.post_process.channel_map.enabled);
     } else if (changed_editor == post_channel_map_mix_) {
         config_.post_process.channel_map.mix = post_channel_map_mix_->value();
     } else if (changed_editor == post_channel_red_source_) {
@@ -14296,6 +14947,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == post_antialias_enabled_) {
         config_.post_process.antialias_enabled =
             post_antialias_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::Antialias,
+            config_.post_process.antialias_enabled);
     } else if (changed_editor == post_antialias_strength_) {
         config_.post_process.antialias_strength =
             post_antialias_strength_->value();
@@ -14307,6 +14961,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             post_antialias_passes_->value();
     } else if (changed_editor == quantization_enabled_) {
         config_.quantization.enabled = quantization_enabled_->isChecked();
+        place_post_process_stage(
+            config_, pvt::PostProcessStage::Quantization,
+            config_.quantization.enabled);
     } else if (changed_editor == quantization_levels_) {
         config_.quantization.levels = quantization_levels_->value();
     } else if (changed_editor == quantization_mix_) {
@@ -14404,6 +15061,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         || changed_editor == post_channel_map_enabled_
         || changed_editor == post_antialias_enabled_
         || changed_editor == quantization_enabled_) {
+        refreshPostProcessOrder();
         updateWorkflowSummaries();
     }
     if (changed_editor == frames_ || changed_editor == fps_) {
@@ -17455,6 +18113,68 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    QComboBox motion_path_probe;
+    const pvt::CubicMotionPath reusable_probe = pvt::default_ellipse_path(
+        91001U, 91002U, "Smoke orbit");
+    pvt::LayerMotionConfig motion_probe;
+    motion_probe.enabled = true;
+    motion_probe.custom_path.enabled = true;
+    motion_probe.custom_path.path_id = reusable_probe.id;
+    populate_layer_motion_paths(&motion_path_probe, {reusable_probe},
+                                motion_probe);
+    const int reusable_probe_index = motion_path_probe.currentIndex();
+    if (motion_path_ == nullptr
+        || motion_path_->objectName() != QStringLiteral("layerMotionPath")
+        || reusable_probe_index < 0
+        || selected_reusable_motion_path_id(&motion_path_probe)
+               != reusable_probe.id
+        || !motion_path_probe.currentText().contains(
+               QString::fromStdString(reusable_probe.name))) {
+        if (error != nullptr) {
+            *error = tr("Reusable paths do not appear as selectable closed layer-motion paths.");
+        }
+        return false;
+    }
+    if (project_.canvas.motion_paths.size() < pvt::kMaximumMotionPaths) {
+        const ActiveDocumentState before_motion_choice = captureActiveState();
+        const std::string motion_choice_layer = active_layer_uuid_;
+        pvt::CubicMotionPath selectable_path = pvt::default_ellipse_path(
+            allocate_motion_path_id(project_.canvas.motion_paths),
+            92001U, "Selectable smoke orbit");
+        const std::uint64_t selectable_id = selectable_path.id;
+        project_.canvas.motion_paths.push_back(std::move(selectable_path));
+        config_.motion_paths = project_.canvas.motion_paths;
+        config_.motion.enabled = true;
+        config_.motion.path = pvt::LayerMotionPath::Orbit;
+        config_.motion.custom_path.enabled = false;
+        syncActiveRender();
+        loadGlobalEditors();
+        int selectable_index = -1;
+        for (int index = 0; index < motion_path_->count(); ++index) {
+            if (motion_path_->itemData(index, kReusableMotionPathIdRole)
+                    .toULongLong() == selectable_id) {
+                selectable_index = index;
+                break;
+            }
+        }
+        if (selectable_index >= 0) {
+            motion_path_->setCurrentIndex(selectable_index);
+        }
+        const bool selected_custom_path = selectable_index >= 0
+            && config_.motion.enabled
+            && config_.motion.path == pvt::LayerMotionPath::None
+            && config_.motion.custom_path.enabled
+            && config_.motion.custom_path.path_id == selectable_id;
+        restoreActiveState(motion_choice_layer, before_motion_choice);
+        clearUndoHistory(false);
+        undo_stack_->setClean();
+        if (!selected_custom_path) {
+            if (error != nullptr) {
+                *error = tr("Selecting a reusable closed path did not bind it to the active layer.");
+            }
+            return false;
+        }
+    }
     bool inspected_motion_path_editor = false;
     QTimer::singleShot(0, this, [this, &inspected_motion_path_editor] {
         if (auto* dialog = findChild<QDialog*>(
@@ -17790,6 +18510,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     std::unordered_set<int> categorized_effect_types;
     int categorized_effect_entries = 0;
     bool categorized_effects_start_on_texture = true;
+    bool categorized_effects_start_enabled = true;
     QComboBox effect_catalog_probe;
     for (int category = 0; category < EffectUiCategoryCount; ++category) {
         populate_effect_types(&effect_catalog_probe, category);
@@ -17801,12 +18522,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 categorized_effects_start_on_texture
                 && new_effect_for_ui(static_cast<pvt::EffectType>(value)).space
                        == pvt::EffectSpace::Texture;
+            categorized_effects_start_enabled =
+                categorized_effects_start_enabled
+                && new_effect_for_ui(static_cast<pvt::EffectType>(value)).enabled;
         }
     }
     const bool effect_catalog_complete =
         categorized_effect_entries == 13
         && categorized_effect_types.size() == 13U
-        && categorized_effects_start_on_texture;
+        && categorized_effects_start_on_texture
+        && categorized_effects_start_enabled;
 
     auto* const starting_colors_help = findChild<QLabel*>(
         QStringLiteral("startingColorsHelp"));
@@ -17932,11 +18657,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_channel_green_source_ == nullptr
         || post_channel_blue_source_ == nullptr
         || post_channel_alpha_source_ == nullptr
+        || post_channel_map_summary_ == nullptr
+        || post_channel_map_reset_ == nullptr
         || post_antialias_enabled_ == nullptr
         || post_antialias_strength_ == nullptr
         || post_antialias_threshold_ == nullptr
         || post_antialias_passes_ == nullptr
         || post_process_order_ == nullptr
+        || post_process_available_ == nullptr
+        || post_process_add_ == nullptr || post_process_remove_ == nullptr
         || post_process_up_ == nullptr || post_process_down_ == nullptr
         || post_invert_rgb_mix_->minimum() != 0.0
         || post_invert_rgb_mix_->maximum() != 1.0
@@ -17954,8 +18683,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_channel_green_source_->count() != 6
         || post_channel_blue_source_->count() != 6
         || post_channel_alpha_source_->count() != 6
-        || post_process_order_->count()
+        || post_process_order_->count() + post_process_available_->count()
                != static_cast<int>(pvt::kPostProcessStageCount)
+        || post_channel_map_summary_->text().isEmpty()
         || post_antialias_strength_->minimum() != 0.0
         || post_antialias_strength_->maximum() != 1.0
         || post_antialias_threshold_->minimum() != 0.0
@@ -18022,42 +18752,176 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || finish_groups->indexOf(post_process_group)
                >= finish_groups->indexOf(quantization_group)) {
         if (error != nullptr) {
-            *error = tr("The authored finishing order is not presented before its stage controls.");
+            *error = tr("The active post-effect stack is not presented before its effect controls.");
         }
         return false;
     }
-    for (int row = 0; row < post_process_order_->count(); ++row) {
-        if (post_process_order_->item(row)->data(Qt::UserRole).toInt()
-            != static_cast<int>(config_.post_process.order[
-                static_cast<std::size_t>(row)])) {
-            if (error != nullptr) {
-                *error = tr("The finishing-order editor disagrees with the active layer.");
+    int active_row = 0;
+    int available_row = 0;
+    for (const pvt::PostProcessStage stage : config_.post_process.order) {
+        if (post_process_stage_enabled(config_, stage)) {
+            if (post_process_order_->item(active_row) == nullptr
+                || post_process_order_->item(active_row)
+                           ->data(Qt::UserRole).toInt()
+                       != static_cast<int>(stage)) {
+                if (error != nullptr) {
+                    *error = tr("The active post-effect stack disagrees with the active layer.");
+                }
+                return false;
             }
-            return false;
+            ++active_row;
+        } else {
+            if (post_process_available_->itemData(available_row).toInt()
+                != static_cast<int>(stage)) {
+                if (error != nullptr) {
+                    *error = tr("The available post-effect list disagrees with the active layer.");
+                }
+                return false;
+            }
+            ++available_row;
         }
     }
-    const std::vector<pvt::PostProcessStage> order_before_move =
-        config_.post_process.order;
-    post_process_order_->setCurrentRow(1);
-    post_process_up_->click();
-    const bool order_moved = config_.post_process.order.size() >= 2U
-        && config_.post_process.order[0U] == order_before_move[1U]
-        && config_.post_process.order[1U] == order_before_move[0U]
-        && post_process_order_->currentRow() == 0
-        && !post_process_up_->isEnabled() && post_process_down_->isEnabled();
-    if (!order_moved || undo_stack_ == nullptr || !undo_stack_->canUndo()) {
+
+    const pvt::PostProcessConfig post_process_before_stack_probe =
+        config_.post_process;
+    const pvt::QuantizationConfig quantization_before_stack_probe =
+        config_.quantization;
+    for (const pvt::PostProcessStage stage : config_.post_process.order) {
+        set_post_process_stage_enabled(config_, stage, false);
+    }
+    config_.post_process.order = pvt::default_config().post_process.order;
+    config_.post_process.invert_rgb_mix = 0.37;
+    set_post_process_stage_enabled(
+        config_, pvt::PostProcessStage::InvertRgb, true);
+    place_post_process_stage(
+        config_, pvt::PostProcessStage::InvertRgb, true);
+    set_post_process_stage_enabled(
+        config_, pvt::PostProcessStage::InvertRed, true);
+    place_post_process_stage(
+        config_, pvt::PostProcessStage::InvertRed, true);
+    syncActiveRender();
+    loadGlobalEditors();
+    if (post_process_order_->count() != 2
+        || post_process_available_->count() != 6
+        || !post_channel_map_summary_->text().contains(tr("no swap"),
+                                                       Qt::CaseInsensitive)) {
         if (error != nullptr) {
-            *error = tr("The finishing-order move controls did not update the active layer.");
+            *error = tr("The post-effect editor does not clearly separate active, available, and bypassed effects.");
+        }
+        return false;
+    }
+
+    const int channel_map_choice = post_process_available_->findData(
+        static_cast<int>(pvt::PostProcessStage::ChannelMap));
+    post_process_available_->setCurrentIndex(channel_map_choice);
+    post_process_add_->click();
+    const bool channel_map_added = channel_map_choice >= 0
+        && config_.post_process.channel_map.enabled
+        && post_process_order_->count() == 3
+        && post_process_available_->count() == 5
+        && post_channel_map_summary_->text().contains(tr("Routing on"));
+    if (!channel_map_added || undo_stack_ == nullptr
+        || !undo_stack_->canUndo()) {
+        if (error != nullptr) {
+            *error = tr("Adding channel routing did not activate and append it to the post-effect stack.");
+        }
+        return false;
+    }
+    post_channel_map_reset_->click();
+    const bool routing_reset = !config_.post_process.channel_map.enabled
+        && config_.post_process.channel_map.mix == 1.0
+        && config_.post_process.channel_map.red_source
+               == pvt::ChannelSource::Red
+        && config_.post_process.channel_map.green_source
+               == pvt::ChannelSource::Green
+        && config_.post_process.channel_map.blue_source
+               == pvt::ChannelSource::Blue
+        && config_.post_process.channel_map.alpha_source
+               == pvt::ChannelSource::Alpha
+        && post_process_order_->count() == 2
+        && post_channel_map_summary_->text().contains(tr("no swap"),
+                                                       Qt::CaseInsensitive);
+    if (!routing_reset || !undo_stack_->canUndo()) {
+        if (error != nullptr) {
+            *error = tr("The original-RGBA action did not bypass and reset channel routing.");
         }
         return false;
     }
     undo_stack_->undo();
-    if (config_.post_process.order != order_before_move) {
+    if (!config_.post_process.channel_map.enabled
+        || post_process_order_->count() != 3) {
         if (error != nullptr) {
-            *error = tr("A finishing-order move did not undo cleanly.");
+            *error = tr("Resetting channel routing did not undo cleanly.");
         }
         return false;
     }
+    undo_stack_->undo();
+    if (config_.post_process.channel_map.enabled
+        || post_process_order_->count() != 2) {
+        if (error != nullptr) {
+            *error = tr("Adding a post effect did not undo cleanly.");
+        }
+        return false;
+    }
+
+    post_process_order_->setCurrentRow(0);
+    post_process_remove_->click();
+    const bool effect_removed =
+        !config_.post_process.invert_rgb_enabled
+        && config_.post_process.invert_rgb_mix == 0.37
+        && post_process_order_->count() == 1
+        && post_process_available_->findData(
+               static_cast<int>(pvt::PostProcessStage::InvertRgb)) >= 0;
+    if (!effect_removed || !undo_stack_->canUndo()) {
+        if (error != nullptr) {
+            *error = tr("Removing a post effect did not bypass it while preserving its settings.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (!config_.post_process.invert_rgb_enabled
+        || config_.post_process.invert_rgb_mix != 0.37
+        || post_process_order_->count() != 2) {
+        if (error != nullptr) {
+            *error = tr("Removing a post effect did not undo cleanly.");
+        }
+        return false;
+    }
+
+    const auto first_stage_before_move = static_cast<pvt::PostProcessStage>(
+        post_process_order_->item(0)->data(Qt::UserRole).toInt());
+    const auto second_stage_before_move = static_cast<pvt::PostProcessStage>(
+        post_process_order_->item(1)->data(Qt::UserRole).toInt());
+    post_process_order_->setCurrentRow(1);
+    post_process_up_->click();
+    const bool order_moved = post_process_order_->count() == 2
+        && post_process_order_->item(0)->data(Qt::UserRole).toInt()
+               == static_cast<int>(second_stage_before_move)
+        && post_process_order_->item(1)->data(Qt::UserRole).toInt()
+               == static_cast<int>(first_stage_before_move)
+        && post_process_order_->currentRow() == 0
+        && !post_process_up_->isEnabled() && post_process_down_->isEnabled();
+    if (!order_moved || !undo_stack_->canUndo()) {
+        if (error != nullptr) {
+            *error = tr("The post-effect move controls did not update the active stack.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (post_process_order_->count() != 2
+        || post_process_order_->item(0)->data(Qt::UserRole).toInt()
+               != static_cast<int>(first_stage_before_move)
+        || post_process_order_->item(1)->data(Qt::UserRole).toInt()
+               != static_cast<int>(second_stage_before_move)) {
+        if (error != nullptr) {
+            *error = tr("A post-effect stack move did not undo cleanly.");
+        }
+        return false;
+    }
+    config_.post_process = post_process_before_stack_probe;
+    config_.quantization = quantization_before_stack_probe;
+    syncActiveRender();
+    loadGlobalEditors();
 
     bool bypass_dependencies = false;
     bool active_dependencies = false;
@@ -19727,15 +20591,37 @@ bool MainWindow::runSmokeChecks(QString* error) {
     phrase_warp_->setValue(0.25);
     const std::string base_uuid = active_layer_uuid_;
     const double base_phrase_warp = config_.phrase_warp;
+    QString layer_template_warning;
+    const std::unique_ptr<pvt::ProjectDocument> layer_template =
+        makeNewProjectDocument(&layer_template_warning);
+    if (layer_template == nullptr || layer_template->project.layers.empty()) {
+        if (error != nullptr) {
+            *error = tr("The Add Layer regression setup has no default layer template.");
+        }
+        return false;
+    }
+    const std::size_t layer_template_index =
+        configured_new_layer_template_index(*layer_template);
+    const pvt::LayerConfig expected_new_layer =
+        layer_template->project.layers[layer_template_index];
     addLayer();
     if (project_.layers.size() != 2U || active_layer_uuid_ != project_.layers.back().uuid
-        || project_.output.write_alpha || write_alpha_->isChecked()
+        || project_.output.write_alpha != write_alpha_->isChecked()
         || layer_list_->count() != 2
         || layer_list_->item(0)->data(Qt::UserRole).toString().toStdString()
                != project_.layers.back().uuid
-        || config_.phrase_warp == base_phrase_warp) {
+        || !render_data_equal(
+               config_, expected_new_layer.render,
+               &project_.canvas.motion_paths,
+               &layer_template->project.canvas.motion_paths)
+        || project_.layers.back().enabled != expected_new_layer.enabled
+        || project_.layers.back().blend_mode != expected_new_layer.blend_mode
+        || project_.layers.back().alpha_mode != expected_new_layer.alpha_mode
+        || project_.layers.back().opacity != expected_new_layer.opacity
+        || (visible_stack_requires_alpha(project_)
+            && !project_.output.write_alpha)) {
         if (error != nullptr) {
-            *error = tr("Adding an opaque layer did not preserve paint order, isolation, or the valid RGB output choice.");
+            *error = tr("Add Layer did not use the selected saved layer template or preserve a valid compositing state.");
         }
         return false;
     }
@@ -20070,6 +20956,57 @@ bool MainWindow::runSmokeChecks(QString* error) {
     undo_stack_->setClean();
     const double original_wave_x = config_.waves.front().x_percent;
     const double original_wave_y = config_.waves.front().y_percent;
+
+    // Exercise the actual mouse path. Selecting a handle navigates to the
+    // Movement workflow stage, which used to reapply the same overlay mode and
+    // cancel the gesture before the first move arrived.
+    setWorkflowStage(0);
+    preview_->setOverlayMode(PreviewWidget::OverlayMode::Waves);
+    preview_->setConfiguration(config_);
+    const QSize source_size(std::max(1, config_.width),
+                            std::max(1, config_.height));
+    QSizeF fitted_size = source_size;
+    fitted_size.scale(preview_->size(), Qt::KeepAspectRatio);
+    const QRectF preview_image(
+        (preview_->width() - fitted_size.width()) * 0.5,
+        (preview_->height() - fitted_size.height()) * 0.5,
+        fitted_size.width(), fitted_size.height());
+    const QPointF wave_start(
+        preview_image.left()
+            + preview_image.width() * original_wave_x / 100.0,
+        preview_image.top()
+            + preview_image.height() * original_wave_y / 100.0);
+    const QPointF wave_destination(
+        preview_image.left() + preview_image.width() * 0.20,
+        preview_image.top() + preview_image.height() * 0.30);
+    const auto global_point = [this](const QPointF& local) {
+        return QPointF(preview_->mapToGlobal(local.toPoint()));
+    };
+    QMouseEvent wave_press(
+        QEvent::MouseButtonPress, wave_start, global_point(wave_start),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent wave_move(
+        QEvent::MouseMove, wave_destination, global_point(wave_destination),
+        Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent wave_release(
+        QEvent::MouseButtonRelease, wave_destination,
+        global_point(wave_destination), Qt::LeftButton, Qt::NoButton,
+        Qt::NoModifier);
+    QApplication::sendEvent(preview_, &wave_press);
+    QApplication::sendEvent(preview_, &wave_move);
+    QApplication::sendEvent(preview_, &wave_release);
+    if (workflow_stage_index_ != 3 || undo_stack_->count() != 1
+        || std::abs(config_.waves.front().x_percent - 20.0) > 1e-9
+        || std::abs(config_.waves.front().y_percent - 30.0) > 1e-9) {
+        if (error != nullptr) {
+            *error = tr("A numbered preview handle could not be dragged after workflow navigation.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+
     preview_->waveDragStarted(0U);
     preview_->waveDragFinished(0U);
     if (undo_stack_->count() != 0

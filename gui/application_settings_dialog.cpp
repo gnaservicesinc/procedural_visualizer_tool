@@ -151,7 +151,9 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     defaults_layout->addWidget(explanatory_label(
         tr("Save the complete project currently open behind this dialog as a "
            "new-project template. New projects receive fresh project and layer "
-           "identities; the template may include layers and embedded assets."),
+           "identities; the template may include layers and embedded assets. "
+           "The currently selected layer also becomes the template used by "
+           "Add Layer."),
         defaults_group));
     auto* defaults_buttons = new QHBoxLayout;
     auto* save_defaults = new QPushButton(

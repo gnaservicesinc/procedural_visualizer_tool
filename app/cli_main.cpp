@@ -1130,6 +1130,7 @@ void configure_effects(RenderConfig& config) {
             }
             auto effect = pvt::default_effect(choose_effect_type());
             effect.id = pvt::allocate_id(config);
+            effect.enabled = true;
             config.effects.push_back(std::move(effect));
             g_prompt_changed = true;
             configure_effect(config, config.effects.size() - 1);
