@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **11.0.1**. The version is read from `VERSION` by every
+Current product version: **11.0.2**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -10,13 +10,23 @@ independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
 
+## 11.0.2 deterministic release validation
+
+Verified no-change Save smoke coverage now checks durable project state: the
+project remains clean and no bundle version is appended or selected. It no
+longer requires the status bar to retain “No changes,” because a concurrent
+preview may legitimately replace that transient message with “Rendering
+preview…”. GUI smoke failures are also written to standard error on Windows,
+where Qt otherwise sends GUI diagnostics only to the debugger. This repairs
+the macOS ARM64 and Windows ARM64 release gates without changing product
+behavior, public ABI/SONAME 11, setup format 18, or layer format 16.
+
 ## 11.0.1 cross-platform release repair
 
-GUI smoke validation now waits for the background Save completion handler to
-adopt the saved document before inspecting dirty state and the title. This
-removes a timing race that failed the 11.0.0 macOS ARM64 package verification
-and Windows ARM64 test job after a fast no-change Save. Product behavior,
-public ABI/SONAME 11, setup format 18, and layer format 16 are unchanged.
+The first release-repair attempt made GUI smoke validation wait for the
+background Save completion handler before inspecting dirty state and the
+title. The 11.0.1 tag did not publish because its remaining status-text
+assertion could still race preview progress; 11.0.2 supersedes it.
 
 ## 11.0.0 project location and channel inversion controls
 

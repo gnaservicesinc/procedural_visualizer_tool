@@ -1,7 +1,15 @@
+procedural-visualizer-tool (11.0.2) stonking; urgency=medium
+
+  * Validate no-change Save through durable clean/version state, not transient
+    status-bar text overwritten by preview progress.
+  * Preserve GUI smoke failure details in Windows CI logs.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sat, 22 Aug 2026 09:25:06 -0400
+
 procedural-visualizer-tool (11.0.1) stonking; urgency=medium
 
-  * Remove a GUI smoke-test race around fast verified no-change saves.
-  * Restore macOS ARM64 package and Windows ARM64 release validation.
+  * Wait for the queued GUI Save completion before smoke assertions.
+  * Superseded by 11.0.2 after a remaining transient status-text race.
 
  -- gnaservicesinc <alast.andy@gmail.com>  Sat, 22 Aug 2026 09:01:16 -0400
 

@@ -19639,18 +19639,35 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 }
                 return false;
             }
+            const std::size_t version_count_before_validation =
+                document_->versions.size();
+            const std::uint64_t current_version_before_validation =
+                document_->current_version;
             save_action_->trigger();
             wait_for_project_io();
             if (hasUnsavedChanges() || isWindowModified()
-                || status_ == nullptr
-                || !status_->text().contains(tr("No changes"))) {
+                || document_ == nullptr
+                || document_->versions.size()
+                       != version_count_before_validation
+                || document_->current_version
+                       != current_version_before_validation) {
                 if (error != nullptr) {
-                    *error = tr("A verified no-change Save left the %1 project in the wrong state (dirty %2; window modified %3; status '%4').")
+                    *error = tr("A verified no-change Save changed the %1 project state (dirty %2; window modified %3; versions %4, expected %5; current version %6, expected %7).")
                                  .arg(unpacked ? tr("folder") : tr("ZIP"))
                                  .arg(hasUnsavedChanges())
                                  .arg(isWindowModified())
-                                 .arg(status_ != nullptr ? status_->text()
-                                                        : tr("missing"));
+                                 .arg(static_cast<qulonglong>(
+                                     document_ != nullptr
+                                         ? document_->versions.size()
+                                         : 0U))
+                                 .arg(static_cast<qulonglong>(
+                                     version_count_before_validation))
+                                 .arg(static_cast<qulonglong>(
+                                     document_ != nullptr
+                                         ? document_->current_version
+                                         : 0U))
+                                 .arg(static_cast<qulonglong>(
+                                     current_version_before_validation));
                 }
                 return false;
             }

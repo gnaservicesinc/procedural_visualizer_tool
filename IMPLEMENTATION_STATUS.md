@@ -6,17 +6,25 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 11.0.2 deterministic release validation
+
+No-change Save smoke coverage now records the bundle version count and current
+version before Save, waits for the queued UI completion boundary, and verifies
+that those durable values and clean state remain unchanged. It deliberately
+does not assert the status string: preview work already in flight may replace
+“No changes” with “Rendering preview…” after a valid Save, which caused the
+11.0.0/11.0.1 macOS ARM64 package and Windows ARM64 test failures even though
+both dirty indicators were false. Windows GUI smoke failures are mirrored to
+inherited standard error so CTest and packaged checks retain diagnostics.
+ABI/SONAME 11 and all persisted format versions remain unchanged.
+
 ## 11.0.1 cross-platform release repair
 
-The GUI smoke test's project-I/O wait now observes `project_io_active_`, which
-is cleared only after the queued `QFutureWatcher` completion handler adopts the
-saved document, resets the Undo clean point, and refreshes the window title.
-Waiting only for `QFutureWatcher::isRunning()` was racy because the future can
-stop before that queued UI handler runs; a sufficiently fast verified
-no-change folder Save was therefore inspected one event-loop turn early on the
-11.0.0 macOS ARM64 and Windows ARM64 release runners. The focused Cocoa smoke
-passes with the UI completion boundary. ABI/SONAME 11 and all persisted format
-versions remain unchanged.
+The first repair made the project-I/O wait observe `project_io_active_`, which
+is cleared after the queued `QFutureWatcher` completion handler adopts the
+saved document and refreshes the title. The 11.0.1 tag did not publish because
+the test still coupled Save success to transient status text; 11.0.2 replaces
+that proxy with durable bundle-state assertions.
 
 ## 11.0.0 project location and channel inversion controls
 

@@ -488,7 +488,9 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
-          Version 11.0.1 repairs the cross-platform release gate. GUI smoke validation now waits for the queued background Save completion handler before inspecting dirty state and the title, eliminating the timing race exposed by fast verified no-change saves on the macOS ARM64 and Windows ARM64 runners. Product behavior, public ABI/SONAME 11, setup format 18, and layer format 16 are unchanged.
+          Version 11.0.2 makes the release gate deterministic. Verified no-change Save smoke coverage now checks that the project stays clean and no bundle version is appended or selected; it no longer requires the status bar to retain “No changes” when concurrent preview work legitimately reports “Rendering preview…”. Windows GUI smoke failures are mirrored to standard error so native CTest and packaged checks keep actionable diagnostics. Product behavior, public ABI/SONAME 11, setup format 18, and layer format 16 are unchanged.
+
+          Version 11.0.1 made GUI smoke validation wait for the queued background Save completion handler before inspecting dirty state and the title. Its tag did not publish because the test still coupled Save success to transient status text; version 11.0.2 supersedes that release-repair attempt.
 
           Version 11.0.0 adds File > Show Project in File Browser and places the absolute saved bundle or imported setup path before the project name and version in the window title. Folder bundles open directly; file bundles are revealed and selected through Finder, Explorer, or the Linux FileManager1 service with a containing-folder fallback.
 
