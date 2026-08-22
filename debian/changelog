@@ -1,3 +1,10 @@
+procedural-visualizer-tool (11.0.1) stonking; urgency=medium
+
+  * Remove a GUI smoke-test race around fast verified no-change saves.
+  * Restore macOS ARM64 package and Windows ARM64 release validation.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sat, 22 Aug 2026 09:01:16 -0400
+
 procedural-visualizer-tool (11.0.0) stonking; urgency=medium
 
   * Reveal saved projects in the native file browser and show their paths in

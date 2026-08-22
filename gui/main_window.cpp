@@ -19527,7 +19527,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
     undo_stack_->setClean();
     baseline_dirty_ = false;
     const auto wait_for_project_io = [this] {
-        while (project_io_watcher_->isRunning()) {
+        // QFutureWatcher can report that its future stopped running before
+        // the queued finished handler has adopted the saved document.  The
+        // UI operation flag is cleared by that handler, so it is the actual
+        // completion boundary for smoke checks (and avoids a fast no-change
+        // save being inspected one event-loop turn too early).
+        while (project_io_active_ || project_io_watcher_->isRunning()) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
             QThread::msleep(1);
         }

@@ -6,6 +6,18 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 11.0.1 cross-platform release repair
+
+The GUI smoke test's project-I/O wait now observes `project_io_active_`, which
+is cleared only after the queued `QFutureWatcher` completion handler adopts the
+saved document, resets the Undo clean point, and refreshes the window title.
+Waiting only for `QFutureWatcher::isRunning()` was racy because the future can
+stop before that queued UI handler runs; a sufficiently fast verified
+no-change folder Save was therefore inspected one event-loop turn early on the
+11.0.0 macOS ARM64 and Windows ARM64 release runners. The focused Cocoa smoke
+passes with the UI completion boundary. ABI/SONAME 11 and all persisted format
+versions remain unchanged.
+
 ## 11.0.0 project location and channel inversion controls
 
 Saved bundle paths are now first-class GUI state. The title format is

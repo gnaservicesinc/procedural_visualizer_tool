@@ -488,6 +488,8 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 11.0.1 repairs the cross-platform release gate. GUI smoke validation now waits for the queued background Save completion handler before inspecting dirty state and the title, eliminating the timing race exposed by fast verified no-change saves on the macOS ARM64 and Windows ARM64 runners. Product behavior, public ABI/SONAME 11, setup format 18, and layer format 16 are unchanged.
+
           Version 11.0.0 adds File > Show Project in File Browser and places the absolute saved bundle or imported setup path before the project name and version in the window title. Folder bundles open directly; file bundles are revealed and selected through Finder, Explorer, or the Linux FileManager1 service with a containing-folder fallback.
 
           Post Effects gains independent red, green, and blue inversion stages with individual mixes. The existing all-RGB stage runs first, so combining it with a channel stage intentionally supports double inversion. CPU, Metal, GUI, CLI, numeric LFO/Live targets, persistence, and migration share the same semantics. Setup format 18 and layer format 16 give older projects neutral disabled defaults. The public PostProcessConfig layout changes, so the product ABI and SONAME advance together to 11 and installed-library clients must rebuild.

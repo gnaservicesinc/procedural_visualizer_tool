@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **11.0.0**. The version is read from `VERSION` by every
+Current product version: **11.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,14 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 11.0.1 cross-platform release repair
+
+GUI smoke validation now waits for the background Save completion handler to
+adopt the saved document before inspecting dirty state and the title. This
+removes a timing race that failed the 11.0.0 macOS ARM64 package verification
+and Windows ARM64 test job after a fast no-change Save. Product behavior,
+public ABI/SONAME 11, setup format 18, and layer format 16 are unchanged.
 
 ## 11.0.0 project location and channel inversion controls
 
