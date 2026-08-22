@@ -1526,6 +1526,18 @@ void configure_color(RenderConfig& config) {
                         config.post_process.invert_rgb_enabled)
         || !prompt_real("Invert colors mix",
                         config.post_process.invert_rgb_mix, 0.0, 1.0)
+        || !prompt_bool("Invert red channel",
+                        config.post_process.invert_red_enabled)
+        || !prompt_real("Invert red mix",
+                        config.post_process.invert_red_mix, 0.0, 1.0)
+        || !prompt_bool("Invert green channel",
+                        config.post_process.invert_green_enabled)
+        || !prompt_real("Invert green mix",
+                        config.post_process.invert_green_mix, 0.0, 1.0)
+        || !prompt_bool("Invert blue channel",
+                        config.post_process.invert_blue_enabled)
+        || !prompt_real("Invert blue mix",
+                        config.post_process.invert_blue_mix, 0.0, 1.0)
         || !prompt_bool("Invert alpha",
                         config.post_process.invert_alpha_enabled)
         || !prompt_real("Invert alpha mix",

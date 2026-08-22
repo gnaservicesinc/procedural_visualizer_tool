@@ -111,6 +111,12 @@ void test_parameter_lfos() {
     animated.parameter_lfos.push_back(lfo);
     CHECK(pvt::validate(animated).ok);
     CHECK(pvt::parameter_lfo_target_supported(animated, "saturation"));
+    CHECK(pvt::parameter_lfo_target_supported(
+        animated, "post.invert_red_mix"));
+    CHECK(pvt::parameter_lfo_target_supported(
+        animated, "post.invert_green_mix"));
+    CHECK(pvt::parameter_lfo_target_supported(
+        animated, "post.invert_blue_mix"));
     CHECK(!pvt::parameter_lfo_target_supported(animated, "not/a/target"));
 
     const auto maximum_difference = [](const pvt::Image& left,
@@ -164,7 +170,7 @@ void test_parameter_lfos() {
 
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t17\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t18\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -578,6 +584,37 @@ void test_post_process_effects(const fs::path& directory) {
     }
 
     config.post_process = {};
+    config.post_process.invert_red_enabled = true;
+    config.post_process.invert_red_mix = 0.25;
+    config.post_process.invert_green_enabled = true;
+    config.post_process.invert_green_mix = 0.5;
+    config.post_process.invert_blue_enabled = true;
+    config.post_process.invert_blue_mix = 1.0;
+    pvt::Image channel_inverted;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, channel_inverted, &error));
+    if (const float* pixel = channel_inverted.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[0] - 0.75F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[1] - 0.5F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[2] - 1.0F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[3] - 1.0F) < 1.0e-6F);
+    }
+
+    // The all-RGB stage deliberately precedes the channel stages. A full
+    // red inversion in both stages therefore restores red while green and
+    // blue remain globally inverted.
+    config.post_process = {};
+    config.post_process.invert_rgb_enabled = true;
+    config.post_process.invert_red_enabled = true;
+    pvt::Image double_inverted;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, double_inverted, &error));
+    if (const float* pixel = double_inverted.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[0] - 1.0F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[1] - 1.0F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[2] - 1.0F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[3] - 1.0F) < 1.0e-6F);
+    }
+
+    config.post_process = {};
     config.post_process.antialias_enabled = true;
     config.post_process.antialias_strength = 1.0;
     config.post_process.antialias_threshold = 0.0;
@@ -611,6 +648,9 @@ void test_post_process_effects(const fs::path& directory) {
     CHECK(!pvt::validate(invalid).ok);
     invalid = config;
     invalid.post_process.invert_rgb_mix = -0.01;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.invert_blue_mix = 1.01;
     CHECK(!pvt::validate(invalid).ok);
 }
 
@@ -728,7 +768,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t17\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t18\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -3948,6 +3988,12 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.quantization.mode = pvt::QuantizationMode::Hue;
     original.post_process.invert_rgb_enabled = true;
     original.post_process.invert_rgb_mix = 0.61;
+    original.post_process.invert_red_enabled = true;
+    original.post_process.invert_red_mix = 0.23;
+    original.post_process.invert_green_enabled = true;
+    original.post_process.invert_green_mix = 0.47;
+    original.post_process.invert_blue_enabled = true;
+    original.post_process.invert_blue_mix = 0.79;
     original.post_process.invert_alpha_enabled = true;
     original.post_process.invert_alpha_mix = 0.37;
     original.post_process.antialias_enabled = true;
@@ -4216,6 +4262,12 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
           == UINT64_C(0xfedcba9876543210));
     CHECK(loaded.post_process.invert_rgb_enabled);
     CHECK(loaded.post_process.invert_rgb_mix == 0.61);
+    CHECK(loaded.post_process.invert_red_enabled);
+    CHECK(loaded.post_process.invert_red_mix == 0.23);
+    CHECK(loaded.post_process.invert_green_enabled);
+    CHECK(loaded.post_process.invert_green_mix == 0.47);
+    CHECK(loaded.post_process.invert_blue_enabled);
+    CHECK(loaded.post_process.invert_blue_mix == 0.79);
     CHECK(loaded.post_process.invert_alpha_enabled);
     CHECK(loaded.post_process.invert_alpha_mix == 0.37);
     CHECK(loaded.post_process.antialias_enabled);
@@ -4413,9 +4465,31 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t17\n", 0U) == 0U);
-    std::string version_fifteen(current_version_bytes.begin(),
-                                current_version_bytes.end());
+              .rfind("PVT_SETUP\t18\n", 0U) == 0U);
+    std::string version_seventeen(current_version_bytes.begin(),
+                                  current_version_bytes.end());
+    version_seventeen.replace(0U, std::string("PVT_SETUP\t18").size(),
+                              "PVT_SETUP\t17");
+    for (const char* key : {
+             "post_process.invert_red_enabled",
+             "post_process.invert_red_mix",
+             "post_process.invert_green_enabled",
+             "post_process.invert_green_mix",
+             "post_process.invert_blue_enabled",
+             "post_process.invert_blue_mix"}) {
+        erase_record(version_seventeen, key);
+    }
+    pvt::RenderConfig loaded_version_seventeen;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_seventeen, loaded_version_seventeen, &error));
+    CHECK(!loaded_version_seventeen.post_process.invert_red_enabled);
+    CHECK(loaded_version_seventeen.post_process.invert_red_mix == 1.0);
+    CHECK(!loaded_version_seventeen.post_process.invert_green_enabled);
+    CHECK(loaded_version_seventeen.post_process.invert_green_mix == 1.0);
+    CHECK(!loaded_version_seventeen.post_process.invert_blue_enabled);
+    CHECK(loaded_version_seventeen.post_process.invert_blue_mix == 1.0);
+
+    std::string version_fifteen = version_seventeen;
     version_fifteen.replace(0U, std::string("PVT_SETUP\t17").size(),
                             "PVT_SETUP\t15");
     erase_record(version_fifteen, "parameter_lfos.count");

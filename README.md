@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **10.0.3**. The version is read from `VERSION` by every
+Current product version: **11.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,30 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 11.0.0 project location and channel inversion controls
+
+The File menu now includes **Show Project in File Browser**. Unpacked project
+folders open directly. ZIP/file projects are revealed and selected through
+Finder on macOS, Explorer on Windows, or the desktop-neutral
+`org.freedesktop.FileManager1` service on Linux/Ubuntu; Linux falls back to
+opening the containing folder when selection is unavailable. Saved projects
+and imported legacy setups also show their absolute file/folder path before the
+project name and PVT version in the title bar.
+
+Post Effects adds independent **Invert red**, **Invert green**, and **Invert
+blue** stages, each with its own 0-to-1 mix. The existing all-RGB and alpha
+inversions remain available. All-RGB inversion runs first and each channel
+stage runs afterward, so enabling both at full strength intentionally applies a
+double inversion to that channel. CPU and Metal rendering, the desktop editor,
+interactive CLI, numeric LFO/Live target registries, persistence, migration,
+and parity coverage share the same order and defaults.
+
+Persistence advances to setup format 18 and layer format 16. Older formats
+load with the new channel stages disabled and full-strength mixes ready for
+deliberate enabling. Adding these fields to the public by-value
+`PostProcessConfig` changes the installed library ABI, so version 11.0.0 also
+advances the shared-library SONAME to 11; installed consumers must rebuild.
 
 ## 10.0.3 macOS video and secondary-display recovery
 
@@ -1301,8 +1325,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-16 remain importable;
-current explicit legacy output is setup format 17. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-17 remain importable;
+current explicit legacy output is setup format 18. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1327,8 +1351,9 @@ projection, sizing, XYZ transforms/loop rotations, Euler order, camera, outside
 fill, lighting model, rear compositing, and OBJ normalization explicit. Older
 files receive visible compatibility values that reproduce their former
 presentation without carrying hidden behavior forward. Format 17 adds numeric
-parameter LFOs; project layer records use the corresponding current layer
-format 15. Import creates a new unsaved
+parameter LFOs. Format 18 adds the independent red, green, and blue inversion
+stages; project layer records use the corresponding current layer format 16.
+Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.
 The CLI exposes

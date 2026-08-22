@@ -2710,7 +2710,16 @@ void MainWindow::updateWorkflowSummaries() {
                 .arg(static_cast<qulonglong>(config_.effects.size())));
         QStringList active_post_effects;
         if (config_.post_process.invert_rgb_enabled) {
-            active_post_effects.append(tr("color invert"));
+            active_post_effects.append(tr("all-RGB invert"));
+        }
+        if (config_.post_process.invert_red_enabled) {
+            active_post_effects.append(tr("red invert"));
+        }
+        if (config_.post_process.invert_green_enabled) {
+            active_post_effects.append(tr("green invert"));
+        }
+        if (config_.post_process.invert_blue_enabled) {
+            active_post_effects.append(tr("blue invert"));
         }
         if (config_.post_process.invert_alpha_enabled) {
             active_post_effects.append(tr("alpha invert"));
@@ -4740,7 +4749,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "Layer-local finishing effects. Inversion runs first, followed by "
         "alpha-aware edge antialiasing and then color quantization."));
     auto* post_process = new QFormLayout(post_process_group);
-    post_invert_rgb_enabled_ = new QCheckBox(tr("Invert colors"));
+    post_invert_rgb_enabled_ = new QCheckBox(tr("Invert all RGB channels"));
     post_invert_rgb_enabled_->setObjectName(
         QStringLiteral("postInvertColors"));
     post_invert_rgb_enabled_->setToolTip(tr(
@@ -4750,7 +4759,37 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_invert_rgb_mix_->setObjectName(
         QStringLiteral("postInvertColorMix"));
     post_invert_rgb_mix_->setToolTip(tr(
-        "Crossfade from the original color at 0 to fully inverted color at 1."));
+        "Crossfade from the original color at 0 to fully inverted color at 1. "
+        "This stage runs before the individual channel inversions."));
+    const auto make_channel_invert_check = [](const QString& label,
+                                              const QString& object_name) {
+        auto* editor = new QCheckBox(label);
+        editor->setObjectName(object_name);
+        editor->setToolTip(tr(
+            "Invert this linear-light channel after the all-RGB inversion. "
+            "Enabling both can intentionally invert the channel twice."));
+        return editor;
+    };
+    const auto make_channel_invert_mix = [](const QString& object_name) {
+        auto* editor = real_editor(0.0, 1.0, 4, 0.01);
+        editor->setObjectName(object_name);
+        editor->setToolTip(tr(
+            "Crossfade between the value entering this channel stage at 0 "
+            "and its inversion at 1."));
+        return editor;
+    };
+    post_invert_red_enabled_ = make_channel_invert_check(
+        tr("Invert red"), QStringLiteral("postInvertRed"));
+    post_invert_red_mix_ = make_channel_invert_mix(
+        QStringLiteral("postInvertRedMix"));
+    post_invert_green_enabled_ = make_channel_invert_check(
+        tr("Invert green"), QStringLiteral("postInvertGreen"));
+    post_invert_green_mix_ = make_channel_invert_mix(
+        QStringLiteral("postInvertGreenMix"));
+    post_invert_blue_enabled_ = make_channel_invert_check(
+        tr("Invert blue"), QStringLiteral("postInvertBlue"));
+    post_invert_blue_mix_ = make_channel_invert_mix(
+        QStringLiteral("postInvertBlueMix"));
     post_invert_alpha_enabled_ = new QCheckBox(tr("Invert alpha"));
     post_invert_alpha_enabled_->setObjectName(
         QStringLiteral("postInvertAlpha"));
@@ -4783,7 +4822,13 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_antialias_passes_->setToolTip(tr(
         "Repeat the antialias pass for stronger smoothing. Additional passes cost frame time."));
     post_process->addRow(post_invert_rgb_enabled_);
-    post_process->addRow(tr("Color invert mix"), post_invert_rgb_mix_);
+    post_process->addRow(tr("All-RGB invert mix"), post_invert_rgb_mix_);
+    post_process->addRow(post_invert_red_enabled_);
+    post_process->addRow(tr("Red invert mix"), post_invert_red_mix_);
+    post_process->addRow(post_invert_green_enabled_);
+    post_process->addRow(tr("Green invert mix"), post_invert_green_mix_);
+    post_process->addRow(post_invert_blue_enabled_);
+    post_process->addRow(tr("Blue invert mix"), post_invert_blue_mix_);
     post_process->addRow(post_invert_alpha_enabled_);
     post_process->addRow(tr("Alpha invert mix"), post_invert_alpha_mix_);
     post_process->addRow(post_antialias_enabled_);
@@ -6487,6 +6532,8 @@ void MainWindow::createToolbar() {
     new_action_ = new QAction(tr("New Project"), this);
     open_action_ = new QAction(tr("Open / Import…"), this);
     open_folder_action_ = new QAction(tr("Open Bundle Folder…"), this);
+    show_project_in_browser_action_ = new QAction(
+        tr("Show Project in File Browser"), this);
     save_action_ = new QAction(tr("Save…"), this);
     save_as_action_ = new QAction(tr("Save As…"), this);
     new_action_->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
@@ -6495,6 +6542,11 @@ void MainWindow::createToolbar() {
     open_action_->setObjectName(QStringLiteral("openImportAction"));
     open_folder_action_->setObjectName(
         QStringLiteral("openBundleFolderAction"));
+    show_project_in_browser_action_->setObjectName(
+        QStringLiteral("showProjectInFileBrowserAction"));
+    show_project_in_browser_action_->setToolTip(tr(
+        "Open a folder project directly, or reveal and select a project file "
+        "in the environment's default file browser."));
     save_as_action_->setObjectName(QStringLiteral("saveAsAction"));
     new_action_->setShortcut(QKeySequence::New);
     open_action_->setShortcut(QKeySequence::Open);
@@ -6504,6 +6556,7 @@ void MainWindow::createToolbar() {
     recent_projects_menu_ = file_menu->addMenu(tr("Open Recent"));
     recent_projects_menu_->setObjectName(QStringLiteral("recentProjectsMenu"));
     refreshRecentProjectsMenu();
+    file_menu->addAction(show_project_in_browser_action_);
     file_menu->addSeparator();
     file_menu->addActions({save_action_, save_as_action_});
     file_menu->addSeparator();
@@ -6657,6 +6710,8 @@ void MainWindow::createToolbar() {
         rememberDialogLocation(path);
         startProjectLoad(path);
     });
+    connect(show_project_in_browser_action_, &QAction::triggered,
+            this, &MainWindow::showProjectInFileBrowser);
     connect(save_action_, &QAction::triggered, this, &MainWindow::saveSetup);
     connect(save_as_action_, &QAction::triggered, this, &MainWindow::saveSetupAs);
     connect(randomize_values_action_, &QAction::triggered, this, [this] {
@@ -7874,6 +7929,8 @@ void MainWindow::connectEditors() {
                          surface_light_y_, surface_light_z_,
                          surface_light_ambient_, surface_light_diffuse_,
                          post_invert_rgb_mix_,
+                         post_invert_red_mix_, post_invert_green_mix_,
+                         post_invert_blue_mix_,
                          post_invert_alpha_mix_, post_antialias_strength_,
                          post_antialias_threshold_, quantization_mix_, alpha_minimum_,
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
@@ -7891,6 +7948,8 @@ void MainWindow::connectEditors() {
     for (auto* editor : {displacement_enabled_, lighting_enabled_, spiral_enabled_,
                          wall_enabled_, surface_enabled_, post_invert_rgb_enabled_,
                          surface_plane_displacement_enabled_,
+                         post_invert_red_enabled_, post_invert_green_enabled_,
+                         post_invert_blue_enabled_,
                          post_invert_alpha_enabled_, post_antialias_enabled_,
                          quantization_enabled_,
                          alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
@@ -9497,14 +9556,106 @@ void MainWindow::noteDocumentChange() {
     schedulePreview();
 }
 
+QString MainWindow::activeProjectLocation() const {
+    const QString path = current_project_path_.isEmpty()
+                             ? imported_legacy_path_
+                             : current_project_path_;
+    return path.isEmpty() ? QString{} : QFileInfo(path).absoluteFilePath();
+}
+
+void MainWindow::showProjectInFileBrowser() {
+    const QString path = activeProjectLocation();
+    const QFileInfo information(path);
+    if (path.isEmpty() || (!information.exists() && !information.isSymLink())) {
+        status_->setText(tr(
+            "Save the project before showing it in the file browser."));
+        return;
+    }
+
+    bool opened = false;
+    bool selected_file = false;
+    if (information.isDir()) {
+        opened = QDesktopServices::openUrl(
+            QUrl::fromLocalFile(information.absoluteFilePath()));
+    } else {
+#ifdef Q_OS_MACOS
+        opened = QProcess::startDetached(
+            QStringLiteral("/usr/bin/open"),
+            {QStringLiteral("-R"), information.absoluteFilePath()});
+        selected_file = opened;
+#elif defined(Q_OS_WIN)
+        opened = QProcess::startDetached(
+            QStringLiteral("explorer.exe"),
+            {QStringLiteral("/select,")
+             + QDir::toNativeSeparators(information.absoluteFilePath())});
+        selected_file = opened;
+#else
+        // org.freedesktop.FileManager1 is the desktop-neutral selection API
+        // implemented by common GNOME, KDE, and Ubuntu file managers. Fall
+        // back to opening the parent directory when the active environment
+        // does not provide the service or dbus-send utility.
+        const QString dbus_send = QStandardPaths::findExecutable(
+            QStringLiteral("dbus-send"));
+        if (!dbus_send.isEmpty()) {
+            QProcess request;
+            request.start(
+                dbus_send,
+                {QStringLiteral("--session"),
+                 QStringLiteral("--print-reply"),
+                 QStringLiteral("--type=method_call"),
+                 QStringLiteral("--dest=org.freedesktop.FileManager1"),
+                 QStringLiteral("/org/freedesktop/FileManager1"),
+                 QStringLiteral("org.freedesktop.FileManager1.ShowItems"),
+                 QStringLiteral("array:string:")
+                     + QUrl::fromLocalFile(information.absoluteFilePath())
+                           .toString(QUrl::FullyEncoded),
+                 QStringLiteral("string:")});
+            if (request.waitForFinished(1500)) {
+                selected_file = request.exitStatus() == QProcess::NormalExit
+                                && request.exitCode() == 0;
+            } else {
+                request.kill();
+                request.waitForFinished(250);
+            }
+        }
+        opened = selected_file
+                 || QDesktopServices::openUrl(QUrl::fromLocalFile(
+                     information.absolutePath()));
+#endif
+    }
+
+    if (!opened) {
+        status_->setText(tr("The default file browser could not open %1.")
+                             .arg(QDir::toNativeSeparators(path)));
+    } else if (information.isFile() && !selected_file) {
+        status_->setText(tr(
+            "Opened the containing folder. This file browser did not expose file selection."));
+    } else {
+        status_->setText(information.isDir()
+                             ? tr("Opened project folder %1.")
+                                   .arg(QDir::toNativeSeparators(path))
+                             : tr("Revealed project file %1.")
+                                   .arg(QDir::toNativeSeparators(path)));
+    }
+}
+
 void MainWindow::updateWindowTitle() {
     const QString name = QString::fromStdString(project_.name.empty()
                                                     ? std::string("Untitled Fire")
                                                     : project_.name);
-    setWindowFilePath(current_project_path_);
+    const QString location = activeProjectLocation();
+    setWindowFilePath(location);
     setWindowModified(hasUnsavedChanges());
-    setWindowTitle(tr("%1[*] — PVT %2")
-                       .arg(name, QStringLiteral(PVT_PROGRAM_VERSION)));
+    setWindowTitle(
+        location.isEmpty()
+            ? tr("%1[*] — PVT %2")
+                  .arg(name, QStringLiteral(PVT_PROGRAM_VERSION))
+            : tr("%1 — %2[*] — PVT %3")
+                  .arg(QDir::toNativeSeparators(location), name,
+                       QStringLiteral(PVT_PROGRAM_VERSION)));
+    if (show_project_in_browser_action_ != nullptr) {
+        show_project_in_browser_action_->setEnabled(!location.isEmpty());
+    }
 }
 
 void MainWindow::updateCompatibilityWarning() {
@@ -11448,6 +11599,15 @@ void MainWindow::loadGlobalEditors() {
     post_invert_rgb_enabled_->setChecked(
         config_.post_process.invert_rgb_enabled);
     post_invert_rgb_mix_->setValue(config_.post_process.invert_rgb_mix);
+    post_invert_red_enabled_->setChecked(
+        config_.post_process.invert_red_enabled);
+    post_invert_red_mix_->setValue(config_.post_process.invert_red_mix);
+    post_invert_green_enabled_->setChecked(
+        config_.post_process.invert_green_enabled);
+    post_invert_green_mix_->setValue(config_.post_process.invert_green_mix);
+    post_invert_blue_enabled_->setChecked(
+        config_.post_process.invert_blue_enabled);
+    post_invert_blue_mix_->setValue(config_.post_process.invert_blue_mix);
     post_invert_alpha_enabled_->setChecked(
         config_.post_process.invert_alpha_enabled);
     post_invert_alpha_mix_->setValue(config_.post_process.invert_alpha_mix);
@@ -11587,6 +11747,12 @@ void MainWindow::updateSurfaceEditorState() {
 void MainWindow::updatePostProcessEditorState() {
     if (post_invert_rgb_enabled_ == nullptr
         || post_invert_rgb_mix_ == nullptr
+        || post_invert_red_enabled_ == nullptr
+        || post_invert_red_mix_ == nullptr
+        || post_invert_green_enabled_ == nullptr
+        || post_invert_green_mix_ == nullptr
+        || post_invert_blue_enabled_ == nullptr
+        || post_invert_blue_mix_ == nullptr
         || post_invert_alpha_enabled_ == nullptr
         || post_invert_alpha_mix_ == nullptr
         || post_antialias_enabled_ == nullptr
@@ -11596,6 +11762,10 @@ void MainWindow::updatePostProcessEditorState() {
         return;
     }
     post_invert_rgb_mix_->setEnabled(post_invert_rgb_enabled_->isChecked());
+    post_invert_red_mix_->setEnabled(post_invert_red_enabled_->isChecked());
+    post_invert_green_mix_->setEnabled(
+        post_invert_green_enabled_->isChecked());
+    post_invert_blue_mix_->setEnabled(post_invert_blue_enabled_->isChecked());
     post_invert_alpha_mix_->setEnabled(
         post_invert_alpha_enabled_->isChecked());
     const bool antialiasing = post_antialias_enabled_->isChecked();
@@ -13767,6 +13937,22 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             post_invert_rgb_enabled_->isChecked();
     } else if (changed_editor == post_invert_rgb_mix_) {
         config_.post_process.invert_rgb_mix = post_invert_rgb_mix_->value();
+    } else if (changed_editor == post_invert_red_enabled_) {
+        config_.post_process.invert_red_enabled =
+            post_invert_red_enabled_->isChecked();
+    } else if (changed_editor == post_invert_red_mix_) {
+        config_.post_process.invert_red_mix = post_invert_red_mix_->value();
+    } else if (changed_editor == post_invert_green_enabled_) {
+        config_.post_process.invert_green_enabled =
+            post_invert_green_enabled_->isChecked();
+    } else if (changed_editor == post_invert_green_mix_) {
+        config_.post_process.invert_green_mix =
+            post_invert_green_mix_->value();
+    } else if (changed_editor == post_invert_blue_enabled_) {
+        config_.post_process.invert_blue_enabled =
+            post_invert_blue_enabled_->isChecked();
+    } else if (changed_editor == post_invert_blue_mix_) {
+        config_.post_process.invert_blue_mix = post_invert_blue_mix_->value();
     } else if (changed_editor == post_invert_alpha_enabled_) {
         config_.post_process.invert_alpha_enabled =
             post_invert_alpha_enabled_->isChecked();
@@ -13876,6 +14062,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     updateWaveOutputState();
     png_compression_->setEnabled(config_.output.bit_depth != 32);
     if (changed_editor == post_invert_rgb_enabled_
+        || changed_editor == post_invert_red_enabled_
+        || changed_editor == post_invert_green_enabled_
+        || changed_editor == post_invert_blue_enabled_
         || changed_editor == post_invert_alpha_enabled_
         || changed_editor == post_antialias_enabled_
         || changed_editor == quantization_enabled_) {
@@ -17055,6 +17244,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
                              had_recent_entries, original_recent_entries] {
         preview_test_delay_ms_ = 0;
         independent_copy_test_path_.clear();
+        save_as_test_path_.clear();
         if (playback_timer_ != nullptr) playback_timer_->stop();
         project_ = original_project;
         document_ = original_document
@@ -17225,6 +17415,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || alpha_use_source_ == nullptr
         || post_invert_rgb_enabled_ == nullptr
         || post_invert_rgb_mix_ == nullptr
+        || post_invert_red_enabled_ == nullptr
+        || post_invert_red_mix_ == nullptr
+        || post_invert_green_enabled_ == nullptr
+        || post_invert_green_mix_ == nullptr
+        || post_invert_blue_enabled_ == nullptr
+        || post_invert_blue_mix_ == nullptr
         || post_invert_alpha_enabled_ == nullptr
         || post_invert_alpha_mix_ == nullptr
         || post_antialias_enabled_ == nullptr
@@ -17233,6 +17429,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_antialias_passes_ == nullptr
         || post_invert_rgb_mix_->minimum() != 0.0
         || post_invert_rgb_mix_->maximum() != 1.0
+        || post_invert_red_mix_->minimum() != 0.0
+        || post_invert_red_mix_->maximum() != 1.0
+        || post_invert_green_mix_->minimum() != 0.0
+        || post_invert_green_mix_->maximum() != 1.0
+        || post_invert_blue_mix_->minimum() != 0.0
+        || post_invert_blue_mix_->maximum() != 1.0
         || post_invert_alpha_mix_->minimum() != 0.0
         || post_invert_alpha_mix_->maximum() != 1.0
         || post_antialias_strength_->minimum() != 0.0
@@ -17304,22 +17506,37 @@ bool MainWindow::runSmokeChecks(QString* error) {
     bool active_dependencies = false;
     {
         const QSignalBlocker rgb_blocker(post_invert_rgb_enabled_);
+        const QSignalBlocker red_blocker(post_invert_red_enabled_);
+        const QSignalBlocker green_blocker(post_invert_green_enabled_);
+        const QSignalBlocker blue_blocker(post_invert_blue_enabled_);
         const QSignalBlocker alpha_blocker(post_invert_alpha_enabled_);
         const QSignalBlocker antialias_blocker(post_antialias_enabled_);
         post_invert_rgb_enabled_->setChecked(false);
+        post_invert_red_enabled_->setChecked(false);
+        post_invert_green_enabled_->setChecked(false);
+        post_invert_blue_enabled_->setChecked(false);
         post_invert_alpha_enabled_->setChecked(false);
         post_antialias_enabled_->setChecked(false);
         updatePostProcessEditorState();
         bypass_dependencies = !post_invert_rgb_mix_->isEnabled()
+                              && !post_invert_red_mix_->isEnabled()
+                              && !post_invert_green_mix_->isEnabled()
+                              && !post_invert_blue_mix_->isEnabled()
                               && !post_invert_alpha_mix_->isEnabled()
                               && !post_antialias_strength_->isEnabled()
                               && !post_antialias_threshold_->isEnabled()
                               && !post_antialias_passes_->isEnabled();
         post_invert_rgb_enabled_->setChecked(true);
+        post_invert_red_enabled_->setChecked(true);
+        post_invert_green_enabled_->setChecked(true);
+        post_invert_blue_enabled_->setChecked(true);
         post_invert_alpha_enabled_->setChecked(true);
         post_antialias_enabled_->setChecked(true);
         updatePostProcessEditorState();
         active_dependencies = post_invert_rgb_mix_->isEnabled()
+                              && post_invert_red_mix_->isEnabled()
+                              && post_invert_green_mix_->isEnabled()
+                              && post_invert_blue_mix_->isEnabled()
                               && post_invert_alpha_mix_->isEnabled()
                               && post_antialias_strength_->isEnabled()
                               && post_antialias_threshold_->isEnabled()
@@ -18023,10 +18240,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
-    if (!windowTitle().startsWith(QString::fromStdString(project_.name))
+    const QString imported_title_prefix =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath())
+        + QStringLiteral(" — ") + QString::fromStdString(project_.name);
+    if (!windowTitle().startsWith(imported_title_prefix)
+        || show_project_in_browser_action_ == nullptr
+        || !show_project_in_browser_action_->isEnabled()
         || !windowTitle().contains(tr("PVT"))) {
         if (error != nullptr) {
-            *error = tr("The project name was not reflected in the window title.");
+            *error = tr("The imported path and project name were not reflected in the window title.");
         }
         return false;
     }
@@ -18894,7 +19116,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !windowTitle().startsWith(display_name)
         || undo_stack_->count() != 1) {
         if (error != nullptr) {
-            *error = tr("Project naming, title binding, or rename undo registration failed.");
+            *error = tr("Project naming, title binding, or rename undo registration failed (model '%1'; title '%2'; undo %3).")
+                         .arg(QString::fromStdString(project_.name), windowTitle())
+                         .arg(undo_stack_->count());
         }
         return false;
     }
@@ -19302,6 +19526,98 @@ bool MainWindow::runSmokeChecks(QString* error) {
     clearUndoHistory(false);
     undo_stack_->setClean();
     baseline_dirty_ = false;
+    const auto wait_for_project_io = [this] {
+        while (project_io_watcher_->isRunning()) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+            QThread::msleep(1);
+        }
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+    };
+    const auto verify_new_project_save =
+        [this, &directory, &wait_for_project_io, error](
+            const QString& name, bool unpacked, bool finish_edit_first) {
+            replaceWithNewProject();
+            if (show_project_in_browser_action_ == nullptr
+                || show_project_in_browser_action_->isEnabled()) {
+                if (error != nullptr) {
+                    *error = tr("An unsaved project incorrectly exposed its file-browser location action.");
+                }
+                return false;
+            }
+            project_name_->setText(name);
+            project_name_->setFocus(Qt::OtherFocusReason);
+            if (finish_edit_first
+                && !QMetaObject::invokeMethod(project_name_, "editingFinished",
+                                              Qt::DirectConnection)) {
+                if (error != nullptr) {
+                    *error = tr("The project-name save regression could not finish the editor.");
+                }
+                return false;
+            }
+            const QString path = unpacked
+                ? directory.filePath(name)
+                : directory.filePath(name + QStringLiteral(".zip"));
+            save_as_test_path_ = path;
+            save_action_->trigger();
+            wait_for_project_io();
+            pvt::ProjectDocument reloaded;
+            std::string reload_error;
+            const bool loaded = pvt::load_project_document(
+                path.toStdString(), reloaded, &reload_error);
+            const QString absolute_path = QFileInfo(path).absoluteFilePath();
+            const QString title_prefix = QDir::toNativeSeparators(absolute_path)
+                                         + QStringLiteral(" — ") + name;
+            if (!save_as_test_path_.isEmpty()
+                || project_.name != name.toStdString()
+                || document_ == nullptr
+                || document_->project.name != name.toStdString()
+                || current_project_path_ != path
+                || hasUnsavedChanges() || isWindowModified()
+                || show_project_in_browser_action_ == nullptr
+                || !show_project_in_browser_action_->isEnabled()
+                || windowFilePath() != absolute_path
+                || !windowTitle().startsWith(title_prefix)
+                || !windowTitle().contains(QStringLiteral(PVT_PROGRAM_VERSION))
+                || !loaded || reloaded.project.name != name.toStdString()) {
+                if (error != nullptr) {
+                    *error = tr("Save did not commit the project-name editor, persist that name, and leave the completed %1 project clean: %2")
+                                 .arg(unpacked ? tr("folder") : tr("ZIP"),
+                                      QString::fromStdString(reload_error));
+                }
+                return false;
+            }
+            // A focus event delivered after the background save must be a
+            // no-op because the editor and the saved model are synchronized.
+            if (!QMetaObject::invokeMethod(project_name_, "editingFinished",
+                                           Qt::DirectConnection)
+                || hasUnsavedChanges() || isWindowModified()) {
+                if (error != nullptr) {
+                    *error = tr("A late project-name focus event dirtied the saved %1 project.")
+                                 .arg(unpacked ? tr("folder") : tr("ZIP"));
+                }
+                return false;
+            }
+            save_action_->trigger();
+            wait_for_project_io();
+            if (hasUnsavedChanges() || isWindowModified()
+                || status_ == nullptr
+                || !status_->text().contains(tr("No changes"))) {
+                if (error != nullptr) {
+                    *error = tr("A verified no-change Save left the %1 project marked as unsaved.")
+                                 .arg(unpacked ? tr("folder") : tr("ZIP"));
+                }
+                return false;
+            }
+            return true;
+        };
+    if (!verify_new_project_save(
+            QStringLiteral("Pending Folder Save"), true, true)
+        || !verify_new_project_save(
+            QStringLiteral("Pending ZIP Save"), false, false)) {
+        return false;
+    }
+
+    replaceWithNewProject();
     const QString bundle_path = directory.filePath(QStringLiteral("smoke-project.zip"));
     setWorkflowStage(4);
     QWidget* const tab_before_save = tabs_->currentWidget();
@@ -19473,7 +19789,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || project_.name != saved_project_name
         || project_name_->text().toStdString() != saved_project_name
         || !windowTitle().startsWith(
-            QString::fromStdString(saved_project_name))
+            QDir::toNativeSeparators(QFileInfo(bundle_path).absoluteFilePath())
+            + QStringLiteral(" — ")
+            + QString::fromStdString(saved_project_name))
         || playback_timer_->isActive()
         || play_button_->text() != tr("Play")) {
         if (error != nullptr) {
@@ -19502,7 +19820,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || project_.name != second_version_name
         || project_name_->text().toStdString() != second_version_name
         || !windowTitle().startsWith(
-            QString::fromStdString(second_version_name))) {
+            QDir::toNativeSeparators(QFileInfo(bundle_path).absoluteFilePath())
+            + QStringLiteral(" — ")
+            + QString::fromStdString(second_version_name))) {
         if (error != nullptr) {
             *error = tr("Revert did not create and cleanly select a new immutable version "
                         "(versions %1, expected %2; current %3, source %4; dirty %5; undo %6).")
@@ -19607,7 +19927,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
 }
 
 void MainWindow::finishProjectNameEdit() {
-    if (populating_) return;
+    (void)commitProjectNameEdit();
+}
+
+MainWindow::ProjectNameCommitResult MainWindow::commitProjectNameEdit() {
+    if (populating_) return ProjectNameCommitResult::ContinueSave;
     const QString edited = project_name_->text();
     const auto restore_editor = [this] {
         const QSignalBlocker blocker(project_name_);
@@ -19617,15 +19941,15 @@ void MainWindow::finishProjectNameEdit() {
         restore_editor();
         status_->setText(
             tr("Use a nonempty project name without control characters or path separators."));
-        return;
+        return ProjectNameCommitResult::Aborted;
     }
 
     const std::string before = project_.name;
     const std::string after = edited.toStdString();
-    if (before == after) return;
+    if (before == after) return ProjectNameCommitResult::ContinueSave;
     if (current_project_path_.isEmpty()) {
         applyProjectNameChange(before, after);
-        return;
+        return ProjectNameCommitResult::ContinueSave;
     }
 
     const SavedProjectRenameAction action =
@@ -19633,36 +19957,37 @@ void MainWindow::finishProjectNameEdit() {
     if (action == SavedProjectRenameAction::Cancel) {
         restore_editor();
         status_->setText(tr("Project rename canceled; no project was changed."));
-        return;
+        return ProjectNameCommitResult::Aborted;
     }
     if (action == SavedProjectRenameAction::KeepBundleFilename) {
         applyProjectNameChange(before, after);
         status_->setText(
             tr("Project renamed. The existing bundle filename is unchanged; Save will append the rename as a new version."));
-        return;
+        return ProjectNameCommitResult::ContinueSave;
     }
 
     const bool open_copy = action == SavedProjectRenameAction::SaveCopyAndOpen;
     if (open_copy && !documentReplacementAllowed()) {
         restore_editor();
-        return;
+        return ProjectNameCommitResult::Aborted;
     }
     const QString path = chooseIndependentCopyPath(after);
     if (path.isEmpty()) {
         restore_editor();
         status_->setText(tr("Project copy canceled; the current project was not changed."));
-        return;
+        return ProjectNameCommitResult::Aborted;
     }
     QString copy_error;
     if (!saveIndependentRenamedCopy(after, path, open_copy, &copy_error)) {
         restore_editor();
         QMessageBox::critical(
             this, tr("Could not create independent project"), copy_error);
-        return;
+        return ProjectNameCommitResult::Aborted;
     }
     if (!open_copy) {
         restore_editor();
     }
+    return ProjectNameCommitResult::SaveHandled;
 }
 
 void MainWindow::applyProjectNameChange(const std::string& before,
@@ -19955,6 +20280,12 @@ bool MainWindow::saveIndependentRenamedCopy(
 }
 
 void MainWindow::saveSetup() {
+    // Toolbar actions intentionally do not take focus from line edits on every
+    // platform. Commit the visible name before deciding whether this is Save
+    // or Save As and before constructing the background persistence snapshot.
+    if (commitProjectNameEdit() != ProjectNameCommitResult::ContinueSave) {
+        return;
+    }
     QString editor_error;
     if (!outputEditorsValid(&editor_error)) {
         QMessageBox::warning(this, tr("Invalid output text"), editor_error);
@@ -19968,8 +20299,19 @@ void MainWindow::saveSetup() {
 }
 
 void MainWindow::saveSetupAs() {
+    // Save As can be invoked directly, so it owns the same editor boundary as
+    // Save. The second call through saveSetup() is harmless and idempotent.
+    if (commitProjectNameEdit() != ProjectNameCommitResult::ContinueSave) {
+        return;
+    }
     const QString filename = QString::fromStdString(
         pvt::portable_project_filename(project_.name));
+    if (!save_as_test_path_.isEmpty()) {
+        QString path;
+        path.swap(save_as_test_path_);
+        startProjectSave(path);
+        return;
+    }
     QMessageBox choice(this);
     choice.setWindowTitle(tr("Save project as"));
     choice.setIcon(QMessageBox::Question);
@@ -20093,6 +20435,10 @@ void MainWindow::finishProjectSave(pvt::ProjectDocument saved,
                                    const QString& path) {
     document_ = std::make_unique<pvt::ProjectDocument>(std::move(saved));
     project_ = document_->project;
+    if (project_name_ != nullptr) {
+        const QSignalBlocker blocker(project_name_);
+        project_name_->setText(QString::fromStdString(project_.name));
+    }
     current_project_path_ = QString::fromStdString(document_->source_path);
     imported_legacy_path_.clear();
     baseline_dirty_ = false;

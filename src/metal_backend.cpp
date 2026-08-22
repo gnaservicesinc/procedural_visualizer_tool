@@ -71,6 +71,8 @@ struct alignas(16) GpuFrameConstants {
     Float4 shaping_values; // rotation, mix, warp strength, warp scale
     UInt4 post_flags; // invert RGB, invert alpha, antialias, passes
     Float4 post_values; // invert mixes, antialias strength, threshold
+    UInt4 post_channel_flags; // invert red, green, blue, reserved
+    Float4 post_channel_mixes; // red, green, blue, reserved
 };
 
 struct alignas(16) GpuWave {
@@ -124,7 +126,7 @@ struct alignas(16) GpuParticleGrid {
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
-static_assert(sizeof(GpuFrameConstants) == 320U);
+static_assert(sizeof(GpuFrameConstants) == 352U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 96U);
@@ -607,6 +609,16 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<float>(config.post_process.invert_alpha_mix),
         static_cast<float>(config.post_process.antialias_strength),
         static_cast<float>(config.post_process.antialias_threshold)};
+    result.post_channel_flags = {
+        config.post_process.invert_red_enabled ? 1U : 0U,
+        config.post_process.invert_green_enabled ? 1U : 0U,
+        config.post_process.invert_blue_enabled ? 1U : 0U,
+        0U};
+    result.post_channel_mixes = {
+        static_cast<float>(config.post_process.invert_red_mix),
+        static_cast<float>(config.post_process.invert_green_mix),
+        static_cast<float>(config.post_process.invert_blue_mix),
+        0.0F};
     return result;
 }
 
@@ -1685,6 +1697,12 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     }
     if ((config.post_process.invert_rgb_enabled
          && config.post_process.invert_rgb_mix > 0.0)
+        || (config.post_process.invert_red_enabled
+            && config.post_process.invert_red_mix > 0.0)
+        || (config.post_process.invert_green_enabled
+            && config.post_process.invert_green_mix > 0.0)
+        || (config.post_process.invert_blue_enabled
+            && config.post_process.invert_blue_mix > 0.0)
         || (config.post_process.invert_alpha_enabled
             && config.post_process.invert_alpha_mix > 0.0)) {
         encode_grid(command_buffer, context.pipeline(Pipeline::PostInvert),

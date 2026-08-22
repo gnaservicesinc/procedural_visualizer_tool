@@ -478,6 +478,24 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
         add_nested(QStringLiteral("post.invert_rgb_mix"), QObject::tr("Invert color mix"),
                    QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
                    render.post_process.invert_rgb_mix, [](pvt::RenderData& r, double v) { r.post_process.invert_rgb_mix = v; });
+        add_nested(QStringLiteral("post.invert_red"), QObject::tr("Invert red"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
+                   render.post_process.invert_red_enabled, [](pvt::RenderData& r, double v) { r.post_process.invert_red_enabled = v >= 0.5; });
+        add_nested(QStringLiteral("post.invert_red_mix"), QObject::tr("Invert red mix"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
+                   render.post_process.invert_red_mix, [](pvt::RenderData& r, double v) { r.post_process.invert_red_mix = v; });
+        add_nested(QStringLiteral("post.invert_green"), QObject::tr("Invert green"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
+                   render.post_process.invert_green_enabled, [](pvt::RenderData& r, double v) { r.post_process.invert_green_enabled = v >= 0.5; });
+        add_nested(QStringLiteral("post.invert_green_mix"), QObject::tr("Invert green mix"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
+                   render.post_process.invert_green_mix, [](pvt::RenderData& r, double v) { r.post_process.invert_green_mix = v; });
+        add_nested(QStringLiteral("post.invert_blue"), QObject::tr("Invert blue"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
+                   render.post_process.invert_blue_enabled, [](pvt::RenderData& r, double v) { r.post_process.invert_blue_enabled = v >= 0.5; });
+        add_nested(QStringLiteral("post.invert_blue_mix"), QObject::tr("Invert blue mix"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
+                   render.post_process.invert_blue_mix, [](pvt::RenderData& r, double v) { r.post_process.invert_blue_mix = v; });
         add_nested(QStringLiteral("post.invert_alpha"), QObject::tr("Invert alpha"),
                    QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
                    render.post_process.invert_alpha_enabled, [](pvt::RenderData& r, double v) { r.post_process.invert_alpha_enabled = v >= 0.5; });

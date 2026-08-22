@@ -1637,6 +1637,9 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
     else if (path == "quantization.levels") render.quantization.levels = std::max(2, lfo_integer(value));
     else if (path == "quantization.mix") render.quantization.mix = finite(0.0, 1.0);
     else if (path == "post.invert_rgb_mix") render.post_process.invert_rgb_mix = finite(0.0, 1.0);
+    else if (path == "post.invert_red_mix") render.post_process.invert_red_mix = finite(0.0, 1.0);
+    else if (path == "post.invert_green_mix") render.post_process.invert_green_mix = finite(0.0, 1.0);
+    else if (path == "post.invert_blue_mix") render.post_process.invert_blue_mix = finite(0.0, 1.0);
     else if (path == "post.invert_alpha_mix") render.post_process.invert_alpha_mix = finite(0.0, 1.0);
     else if (path == "post.antialias_strength") render.post_process.antialias_strength = finite(0.0, 1.0);
     else if (path == "post.antialias_threshold") render.post_process.antialias_threshold = finite(0.0, 1.0);
@@ -3585,6 +3588,9 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result("Quantization values are out of range.");
     }
     if (!finite_in_range(config.post_process.invert_rgb_mix, 0.0, 1.0)
+        || !finite_in_range(config.post_process.invert_red_mix, 0.0, 1.0)
+        || !finite_in_range(config.post_process.invert_green_mix, 0.0, 1.0)
+        || !finite_in_range(config.post_process.invert_blue_mix, 0.0, 1.0)
         || !finite_in_range(config.post_process.invert_alpha_mix, 0.0, 1.0)
         || !finite_in_range(config.post_process.antialias_strength, 0.0, 1.0)
         || !finite_in_range(config.post_process.antialias_threshold, 0.0, 1.0)
@@ -6297,9 +6303,16 @@ void apply_channel_inversion(Image& image,
                              const std::atomic_bool* cancel) {
     const double rgb_amount = post_process.invert_rgb_enabled
                                   ? post_process.invert_rgb_mix : 0.0;
+    const double red_amount = post_process.invert_red_enabled
+                                  ? post_process.invert_red_mix : 0.0;
+    const double green_amount = post_process.invert_green_enabled
+                                    ? post_process.invert_green_mix : 0.0;
+    const double blue_amount = post_process.invert_blue_enabled
+                                   ? post_process.invert_blue_mix : 0.0;
     const double alpha_amount = post_process.invert_alpha_enabled
                                     ? post_process.invert_alpha_mix : 0.0;
-    if (rgb_amount <= 0.0 && alpha_amount <= 0.0) return;
+    if (rgb_amount <= 0.0 && red_amount <= 0.0 && green_amount <= 0.0
+        && blue_amount <= 0.0 && alpha_amount <= 0.0) return;
     for (int y = 0; y < image.height; ++y) {
         throw_if_cancelled(cancel);
         for (int x = 0; x < image.width; ++x) {
@@ -6311,6 +6324,18 @@ void apply_channel_inversion(Image& image,
                 color.r = mix_value(color.r, 1.0 - color.r, rgb_amount);
                 color.g = mix_value(color.g, 1.0 - color.g, rgb_amount);
                 color.b = mix_value(color.b, 1.0 - color.b, rgb_amount);
+            }
+            // Channel controls intentionally run after the combined control.
+            // At full mix, enabling both restores that channel; partial mixes
+            // remain a composable two-stage crossfade.
+            if (red_amount > 0.0) {
+                color.r = mix_value(color.r, 1.0 - color.r, red_amount);
+            }
+            if (green_amount > 0.0) {
+                color.g = mix_value(color.g, 1.0 - color.g, green_amount);
+            }
+            if (blue_amount > 0.0) {
+                color.b = mix_value(color.b, 1.0 - color.b, blue_amount);
             }
             if (alpha_amount > 0.0) {
                 color.a = mix_value(color.a, 1.0 - color.a, alpha_amount);

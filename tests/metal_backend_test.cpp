@@ -547,6 +547,12 @@ void test_backend_contract() {
     post_processed.quantization.enabled = false;
     post_processed.post_process.invert_rgb_enabled = true;
     post_processed.post_process.invert_rgb_mix = 0.73;
+    post_processed.post_process.invert_red_enabled = true;
+    post_processed.post_process.invert_red_mix = 1.0;
+    post_processed.post_process.invert_green_enabled = true;
+    post_processed.post_process.invert_green_mix = 0.29;
+    post_processed.post_process.invert_blue_enabled = true;
+    post_processed.post_process.invert_blue_mix = 0.57;
     post_processed.post_process.invert_alpha_enabled = true;
     post_processed.post_process.invert_alpha_mix = 0.41;
     post_processed.post_process.antialias_enabled = true;
@@ -558,7 +564,7 @@ void test_backend_contract() {
     CHECK(pvt::render_frame(post_processed, 8, gpu_options,
                             gpu, nullptr, &error));
     check_close(cpu, gpu, 0.12, 0.012, 0.003, 0.0003,
-                "post-process inversion/straight-alpha antialias");
+                "post-process global/channel double inversion/straight-alpha antialias");
 
     // Coordinate stages and glow exercise every shared-buffer direction and
     // retain straight-alpha coverage through the Metal blur pipeline.

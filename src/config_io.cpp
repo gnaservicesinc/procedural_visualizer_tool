@@ -82,6 +82,8 @@ namespace {
 // orientation, and rotation controls. Version 16 replaces implicit surface
 // camera/orientation constants with a completely authored surface view.
 // Version 17 adds layer-local numeric parameter LFOs with stable target paths.
+// Version 18 adds independently mixed red, green, and blue inversion stages
+// after the existing combined RGB inversion.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -93,8 +95,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 17U,
-              "config_io.cpp implements setup format version 17");
+static_assert(kSetupFormatVersion == 18U,
+              "config_io.cpp implements setup format version 18");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -293,6 +295,15 @@ bool setup_v16_record(std::string_view key) {
 
 bool setup_v17_record(std::string_view key) {
     return starts_with(key, "parameter_lfos.");
+}
+
+bool setup_v18_record(std::string_view key) {
+    return key == "post_process.invert_red_enabled"
+           || key == "post_process.invert_red_mix"
+           || key == "post_process.invert_green_enabled"
+           || key == "post_process.invert_green_mix"
+           || key == "post_process.invert_blue_enabled"
+           || key == "post_process.invert_blue_mix";
 }
 
 void clear_error(std::string* error) {
@@ -2087,6 +2098,18 @@ bool serialize_setup(const RenderConfig& config,
                      config.post_process.invert_rgb_enabled);
     builder.add_double("post_process.invert_rgb_mix",
                        config.post_process.invert_rgb_mix);
+    builder.add_bool("post_process.invert_red_enabled",
+                     config.post_process.invert_red_enabled);
+    builder.add_double("post_process.invert_red_mix",
+                       config.post_process.invert_red_mix);
+    builder.add_bool("post_process.invert_green_enabled",
+                     config.post_process.invert_green_enabled);
+    builder.add_double("post_process.invert_green_mix",
+                       config.post_process.invert_green_mix);
+    builder.add_bool("post_process.invert_blue_enabled",
+                     config.post_process.invert_blue_enabled);
+    builder.add_double("post_process.invert_blue_mix",
+                       config.post_process.invert_blue_mix);
     builder.add_bool("post_process.invert_alpha_enabled",
                      config.post_process.invert_alpha_enabled);
     builder.add_double("post_process.invert_alpha_mix",
@@ -3594,6 +3617,23 @@ bool deserialize_setup(Records& records,
             return false;
         }
     }
+    if (setup_version >= 18U) {
+        PostProcessConfig& post = candidate.post_process;
+        if (!consume_bool(records, "post_process.invert_red_enabled",
+                          post.invert_red_enabled, error)
+            || !consume_double(records, "post_process.invert_red_mix",
+                               post.invert_red_mix, error)
+            || !consume_bool(records, "post_process.invert_green_enabled",
+                             post.invert_green_enabled, error)
+            || !consume_double(records, "post_process.invert_green_mix",
+                               post.invert_green_mix, error)
+            || !consume_bool(records, "post_process.invert_blue_enabled",
+                             post.invert_blue_enabled, error)
+            || !consume_double(records, "post_process.invert_blue_mix",
+                               post.invert_blue_mix, error)) {
+            return false;
+        }
+    }
     if (setup_version >= 10U) {
         StartingColorConfig& starting = candidate.starting_colors;
         if (!consume_bool(records, "alpha.use_source_alpha",
@@ -4183,7 +4223,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 14U && setup_v14_record(key))
              || (setup_version < 15U && setup_v15_record(key))
              || (setup_version < 16U && setup_v16_record(key))
-             || (setup_version < 17U && setup_v17_record(key)));
+             || (setup_version < 17U && setup_v17_record(key))
+             || (setup_version < 18U && setup_v18_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

@@ -305,6 +305,12 @@ void test_layer_codec_backward_compatibility() {
     original.starting_colors.domain_warp.seed = UINT64_C(0x123456789abcdef0);
     original.post_process.invert_rgb_enabled = true;
     original.post_process.invert_rgb_mix = 0.67;
+    original.post_process.invert_red_enabled = true;
+    original.post_process.invert_red_mix = 0.19;
+    original.post_process.invert_green_enabled = true;
+    original.post_process.invert_green_mix = 0.43;
+    original.post_process.invert_blue_enabled = true;
+    original.post_process.invert_blue_mix = 0.88;
     original.post_process.invert_alpha_enabled = true;
     original.post_process.invert_alpha_mix = 0.42;
     original.post_process.antialias_enabled = true;
@@ -367,7 +373,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t15\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t16\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -437,6 +443,12 @@ void test_layer_codec_backward_compatibility() {
           == UINT64_C(0x123456789abcdef0));
     CHECK(current_round_trip.post_process.invert_rgb_enabled);
     CHECK(current_round_trip.post_process.invert_rgb_mix == 0.67);
+    CHECK(current_round_trip.post_process.invert_red_enabled);
+    CHECK(current_round_trip.post_process.invert_red_mix == 0.19);
+    CHECK(current_round_trip.post_process.invert_green_enabled);
+    CHECK(current_round_trip.post_process.invert_green_mix == 0.43);
+    CHECK(current_round_trip.post_process.invert_blue_enabled);
+    CHECK(current_round_trip.post_process.invert_blue_mix == 0.88);
     CHECK(current_round_trip.post_process.invert_alpha_enabled);
     CHECK(current_round_trip.post_process.invert_alpha_mix == 0.42);
     CHECK(current_round_trip.post_process.antialias_enabled);
@@ -490,11 +502,41 @@ void test_layer_codec_backward_compatibility() {
             current_round_trip, loaded_lfo.target_path));
     }
 
+    // Layer v15/setup v17 predates per-channel inversion. It receives neutral
+    // disabled defaults while preserving the existing all-RGB inversion.
+    std::istringstream current_v17_input(current_layer);
+    std::ostringstream version_fifteen_output;
+    std::string line;
+    CHECK(static_cast<bool>(std::getline(current_v17_input, line)));
+    CHECK(line == "PVT_LAYER\t16");
+    version_fifteen_output << "PVT_LAYER\t15\n";
+    while (std::getline(current_v17_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v16_only = key == "post_process.invert_red_enabled"
+            || key == "post_process.invert_red_mix"
+            || key == "post_process.invert_green_enabled"
+            || key == "post_process.invert_green_mix"
+            || key == "post_process.invert_blue_enabled"
+            || key == "post_process.invert_blue_mix";
+        if (!v16_only) version_fifteen_output << line << '\n';
+    }
+    const std::string version_fifteen = version_fifteen_output.str();
+    pvt::RenderData loaded_version_fifteen;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_fifteen, loaded_version_fifteen, &error, &motion_paths));
+    CHECK(!loaded_version_fifteen.post_process.invert_red_enabled);
+    CHECK(loaded_version_fifteen.post_process.invert_red_mix == 1.0);
+    CHECK(!loaded_version_fifteen.post_process.invert_green_enabled);
+    CHECK(loaded_version_fifteen.post_process.invert_green_mix == 1.0);
+    CHECK(!loaded_version_fifteen.post_process.invert_blue_enabled);
+    CHECK(loaded_version_fifteen.post_process.invert_blue_mix == 1.0);
+    CHECK(loaded_version_fifteen.post_process.invert_rgb_enabled);
+
     // Layer v12/setup v14 predates the independent particle controls. Their
     // compatibility defaults retain the old renderer exactly.
-    std::istringstream current_v14_input(current_layer);
+    std::istringstream current_v14_input(version_fifteen);
     std::ostringstream version_twelve_output;
-    std::string line;
     CHECK(static_cast<bool>(std::getline(current_v14_input, line)));
     CHECK(line == "PVT_LAYER\t15");
     version_twelve_output << "PVT_LAYER\t12\n";
@@ -1095,7 +1137,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t15");
+    CHECK(line == "PVT_LAYER\t16");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -1127,8 +1169,15 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
             || key == "surface.normalize_obj";
         const bool current_lfo_field =
             key.rfind("parameter_lfos.", 0U) == 0U;
+        const bool current_channel_invert_field =
+            key == "post_process.invert_red_enabled"
+            || key == "post_process.invert_red_mix"
+            || key == "post_process.invert_green_enabled"
+            || key == "post_process.invert_green_mix"
+            || key == "post_process.invert_blue_enabled"
+            || key == "post_process.invert_blue_mix";
         if (!current_particle_field && !current_surface_field
-            && !current_lfo_field) {
+            && !current_lfo_field && !current_channel_invert_field) {
             legacy_layer << line << '\n';
         }
     }

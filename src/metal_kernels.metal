@@ -30,6 +30,8 @@ struct FrameConstants {
     float4 shaping_values; // kaleido rotation/mix, warp strength/scale
     uint4 post_flags; // invert RGB, invert alpha, antialias, passes
     float4 post_values; // invert mixes, antialias strength, threshold
+    uint4 post_channel_flags; // invert red, green, blue, reserved
+    float4 post_channel_mixes; // red, green, blue, reserved
 };
 
 struct GpuWave {
@@ -1981,6 +1983,21 @@ kernel void post_process_invert(
     if (frame.post_flags.x != 0u && frame.post_values.x > 0.0f) {
         color.rgb = mix(color.rgb, 1.0f - color.rgb,
                         frame.post_values.x);
+    }
+    if (frame.post_channel_flags.x != 0u
+        && frame.post_channel_mixes.x > 0.0f) {
+        color.r = mix(color.r, 1.0f - color.r,
+                      frame.post_channel_mixes.x);
+    }
+    if (frame.post_channel_flags.y != 0u
+        && frame.post_channel_mixes.y > 0.0f) {
+        color.g = mix(color.g, 1.0f - color.g,
+                      frame.post_channel_mixes.y);
+    }
+    if (frame.post_channel_flags.z != 0u
+        && frame.post_channel_mixes.z > 0.0f) {
+        color.b = mix(color.b, 1.0f - color.b,
+                      frame.post_channel_mixes.z);
     }
     if (frame.post_flags.y != 0u && frame.post_values.y > 0.0f) {
         color.a = mix(color.a, 1.0f - color.a, frame.post_values.y);

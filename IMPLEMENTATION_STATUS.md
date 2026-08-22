@@ -1,10 +1,35 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-20
+Last updated: 2026-08-22
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 11.0.0 project location and channel inversion controls
+
+Saved bundle paths are now first-class GUI state. The title format is
+`absolute project path — project name[*] — PVT version`, while unsaved projects
+retain the name/version form. **File > Show Project in File Browser** opens an
+unpacked bundle folder directly and reveals/selects a ZIP or legacy setup with
+Finder (`open -R`), Explorer (`/select,`), or Linux
+`org.freedesktop.FileManager1.ShowItems`; Linux opens the containing directory
+when selection is not exposed. Cocoa smoke verifies saved folder and ZIP title
+binding, native window file-path metadata, action reachability, and the unsaved
+disabled state without launching the user's browser during tests.
+
+`PostProcessConfig` now carries independent red, green, and blue inversion
+enable/mix pairs. CPU and Metal apply the original all-RGB inversion first,
+then red, green, and blue in order, then alpha. This intentionally makes a full
+global plus full channel inversion a double inversion. The Flow Workbench,
+interactive CLI, numeric LFO targets, Live control registry, validation, setup
+codec, layer codec, CPU endpoint tests, and CPU/Metal parity test share those
+semantics. Setup format 18 and layer format 16 omit the fields when synthesizing
+older records, yielding disabled channel stages with mix 1.0.
+
+The added public by-value fields change `PostProcessConfig` layout. Product
+version and installed shared-library SONAME therefore advance together to
+11.0.0/11, and installed consumers must rebuild.
 
 ## 10.0.3 macOS video and secondary-display recovery
 
@@ -1295,7 +1320,7 @@ consumers do not inherit minizip requirements.
 | 48 | Export current frame | Complete | The GUI renders the current timeline frame at full canvas resolution through the selected backend and transactionally writes the configured 8/16-bit PNG or 32-bit FLOAT EXR quality, independent of preview scaling. |
 | 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
-| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local linear RGB and alpha inversion have independent mixes; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, and interactive CLI paths share neutral defaults and representation-bounded controls. |
+| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local all-RGB, red, green, blue, and alpha inversion stages have independent mixes and deterministic double-inversion order; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, numeric LFO/Live targets, and interactive CLI paths share neutral defaults and representation-bounded controls. |
 | 52 | Pre-analysis audio processing and named clock streams | Complete; hardware qualification pending | Music and Live apply optional HP/LP plus graphical EQ before analysis, then expose stable named frequency-range analyses to project and active-layer clocks. Defaults are flat/full-band; validation, transactional reanalysis, setup-14 persistence, and causal/offline tests cover routing. |
 | 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, LIVE opens automatically in a visible companion window while the editor remains available, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
 | 54 | Edge/Twirl effects and particle shapes | Complete; release matrix pending | Linear-light Edge Detect, seamless Twirl, and five visibly distinct deterministic particle silhouettes share CPU/Metal, GUI, CLI, Live mapping, randomization, validation, migration, and persistence semantics. Custom PNG sprites remain deferred. |

@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 17;
+constexpr std::uint32_t kSetupFormatVersion = 18;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -978,6 +978,14 @@ struct QuantizationConfig {
 struct PostProcessConfig {
     bool invert_rgb_enabled = false;
     double invert_rgb_mix = 1.0;
+    // Per-channel inversions run after the combined RGB inversion. Enabling
+    // both at full mix deliberately applies two inversions to that channel.
+    bool invert_red_enabled = false;
+    double invert_red_mix = 1.0;
+    bool invert_green_enabled = false;
+    double invert_green_mix = 1.0;
+    bool invert_blue_enabled = false;
+    double invert_blue_mix = 1.0;
     bool invert_alpha_enabled = false;
     double invert_alpha_mix = 1.0;
     bool antialias_enabled = false;

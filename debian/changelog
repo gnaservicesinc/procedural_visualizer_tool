@@ -1,3 +1,12 @@
+procedural-visualizer-tool (11.0.0) stonking; urgency=medium
+
+  * Reveal saved projects in the native file browser and show their paths in
+    the application title.
+  * Add independent red, green, and blue inversion stages and mixes.
+  * Advance the public library ABI and SONAME to 11.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sat, 22 Aug 2026 00:51:40 -0400
+
 procedural-visualizer-tool (10.0.3) stonking; urgency=medium
 
   * Restore native HEVC-with-alpha export on macOS 27.

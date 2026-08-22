@@ -263,6 +263,15 @@ bool is_setup_v17_key(std::string_view key) {
     return starts_with(key, "parameter_lfos.");
 }
 
+bool is_setup_v18_key(std::string_view key) {
+    return key == "post_process.invert_red_enabled"
+           || key == "post_process.invert_red_mix"
+           || key == "post_process.invert_green_enabled"
+           || key == "post_process.invert_green_mix"
+           || key == "post_process.invert_blue_enabled"
+           || key == "post_process.invert_blue_mix";
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -283,7 +292,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 11U ? 13U
                     : layer_version == 12U ? 14U
                     : layer_version == 13U ? 15U
-                    : layer_version == 14U ? 16U : 17U;
+                    : layer_version == 14U ? 16U
+                    : layer_version == 15U ? 17U : 18U;
     return true;
 }
 
@@ -553,6 +563,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 17U && is_setup_v17_key(key)) {
+            continue;
+        }
+        if (setup_version < 18U && is_setup_v18_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

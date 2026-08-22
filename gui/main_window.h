@@ -131,6 +131,12 @@ private:
         SaveCopyAndStay
     };
 
+    enum class ProjectNameCommitResult {
+        ContinueSave,
+        SaveHandled,
+        Aborted
+    };
+
     QWidget* createWavePage();
     QWidget* createSynchronizationPage();
     QWidget* createSwingBlock();
@@ -235,6 +241,8 @@ private:
     bool setPlaneDisplacementSource(const QString& sourcePath);
     void exportPlaneDisplacementObj();
     bool setStartingImageSource(const QString& sourcePath);
+    QString activeProjectLocation() const;
+    void showProjectInFileBrowser();
     void updateWindowTitle();
     void updateCompatibilityWarning();
     void noteDocumentChange();
@@ -350,6 +358,7 @@ private:
     bool musicRenderReady() const;
     void navigateToBeat(int direction);
     void finishProjectNameEdit();
+    ProjectNameCommitResult commitProjectNameEdit();
     void applyProjectNameChange(const std::string& before,
                                 const std::string& after);
     SavedProjectRenameAction promptForSavedProjectRename(
@@ -389,6 +398,7 @@ private:
     int last_previewed_frame_ = -1;
     int preview_test_delay_ms_ = 0;
     QString independent_copy_test_path_;
+    QString save_as_test_path_;
     std::uint64_t preview_generation_ = 0;
     std::uint64_t document_revision_ = 1;
     struct ItemDragState {
@@ -491,6 +501,7 @@ private:
     QAction* new_action_ = nullptr;
     QAction* open_action_ = nullptr;
     QAction* open_folder_action_ = nullptr;
+    QAction* show_project_in_browser_action_ = nullptr;
     QAction* save_action_ = nullptr;
     QAction* save_as_action_ = nullptr;
     QAction* randomize_values_action_ = nullptr;
@@ -818,6 +829,12 @@ private:
     QDoubleSpinBox* starting_alpha_maximum_ = nullptr;
     QCheckBox* post_invert_rgb_enabled_ = nullptr;
     QDoubleSpinBox* post_invert_rgb_mix_ = nullptr;
+    QCheckBox* post_invert_red_enabled_ = nullptr;
+    QDoubleSpinBox* post_invert_red_mix_ = nullptr;
+    QCheckBox* post_invert_green_enabled_ = nullptr;
+    QDoubleSpinBox* post_invert_green_mix_ = nullptr;
+    QCheckBox* post_invert_blue_enabled_ = nullptr;
+    QDoubleSpinBox* post_invert_blue_mix_ = nullptr;
     QCheckBox* post_invert_alpha_enabled_ = nullptr;
     QDoubleSpinBox* post_invert_alpha_mix_ = nullptr;
     QCheckBox* post_antialias_enabled_ = nullptr;
