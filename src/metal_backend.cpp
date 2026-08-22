@@ -114,6 +114,27 @@ struct alignas(16) GpuMotion {
     Float4 rotation_scale;
 };
 
+struct alignas(16) GpuChannelMap {
+    UInt4 sources; // red, green, blue, alpha ChannelSource values
+    Float4 values; // mix, reserved...
+};
+
+static_assert(
+    static_cast<std::uint32_t>(ChannelSource::Red) == 0U
+        && static_cast<std::uint32_t>(ChannelSource::Green) == 1U
+        && static_cast<std::uint32_t>(ChannelSource::Blue) == 2U
+        && static_cast<std::uint32_t>(ChannelSource::Alpha) == 3U
+        && static_cast<std::uint32_t>(ChannelSource::Zero) == 4U
+        && static_cast<std::uint32_t>(ChannelSource::One) == 5U,
+    "Metal channel-map source codes must match ChannelSource.");
+static_assert(
+    static_cast<std::uint32_t>(PostProcessStage::InvertRgb) == 0U
+        && static_cast<std::uint32_t>(PostProcessStage::InvertRed) == 1U
+        && static_cast<std::uint32_t>(PostProcessStage::InvertGreen) == 2U
+        && static_cast<std::uint32_t>(PostProcessStage::InvertBlue) == 3U
+        && static_cast<std::uint32_t>(PostProcessStage::InvertAlpha) == 4U,
+    "Metal inversion stage codes must match PostProcessStage.");
+
 struct alignas(16) GpuParticlePoint {
     Float4 geometry;
     Float4 appearance;
@@ -127,6 +148,7 @@ static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
 static_assert(sizeof(GpuFrameConstants) == 352U);
+static_assert(sizeof(GpuChannelMap) == 32U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 96U);
@@ -208,6 +230,7 @@ enum class Pipeline : std::size_t {
     Transform,
     Motion,
     PostInvert,
+    PostChannelMap,
     PostAntialias,
     Quantize,
     Count
@@ -229,6 +252,7 @@ constexpr const char* kPipelineNames[] = {
     "transform_image",
     "layer_motion",
     "post_process_invert",
+    "post_process_channel_map",
     "post_process_antialias",
     "quantize_image"};
 static_assert(sizeof(kPipelineNames) / sizeof(*kPipelineNames)
@@ -1184,6 +1208,44 @@ GpuMotion make_motion(const RenderConfig& config,
     return result;
 }
 
+GpuChannelMap make_channel_map(const ChannelMapConfig& channel_map) {
+    GpuChannelMap result;
+    result.sources = {
+        static_cast<std::uint32_t>(channel_map.red_source),
+        static_cast<std::uint32_t>(channel_map.green_source),
+        static_cast<std::uint32_t>(channel_map.blue_source),
+        static_cast<std::uint32_t>(channel_map.alpha_source)};
+    result.values = {
+        static_cast<float>(channel_map.mix), 0.0F, 0.0F, 0.0F};
+    return result;
+}
+
+bool post_inversion_has_work(const PostProcessConfig& post_process,
+                             PostProcessStage stage) {
+    switch (stage) {
+        case PostProcessStage::InvertRgb:
+            return post_process.invert_rgb_enabled
+                   && post_process.invert_rgb_mix > 0.0;
+        case PostProcessStage::InvertRed:
+            return post_process.invert_red_enabled
+                   && post_process.invert_red_mix > 0.0;
+        case PostProcessStage::InvertGreen:
+            return post_process.invert_green_enabled
+                   && post_process.invert_green_mix > 0.0;
+        case PostProcessStage::InvertBlue:
+            return post_process.invert_blue_enabled
+                   && post_process.invert_blue_mix > 0.0;
+        case PostProcessStage::InvertAlpha:
+            return post_process.invert_alpha_enabled
+                   && post_process.invert_alpha_mix > 0.0;
+        case PostProcessStage::ChannelMap:
+        case PostProcessStage::Antialias:
+        case PostProcessStage::Quantization:
+            return false;
+    }
+    return false;
+}
+
 bool surface_has_work(const SurfaceConfig& surface) {
     if (!surface.enabled) return false;
     if (surface.mapping != SurfaceMapping::Plane) {
@@ -1695,45 +1757,82 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }
-    if ((config.post_process.invert_rgb_enabled
-         && config.post_process.invert_rgb_mix > 0.0)
-        || (config.post_process.invert_red_enabled
-            && config.post_process.invert_red_mix > 0.0)
-        || (config.post_process.invert_green_enabled
-            && config.post_process.invert_green_mix > 0.0)
-        || (config.post_process.invert_blue_enabled
-            && config.post_process.invert_blue_mix > 0.0)
-        || (config.post_process.invert_alpha_enabled
-            && config.post_process.invert_alpha_mix > 0.0)) {
-        encode_grid(command_buffer, context.pipeline(Pipeline::PostInvert),
+    for (const PostProcessStage stage : config.post_process.order) {
+        switch (stage) {
+            case PostProcessStage::InvertRgb:
+            case PostProcessStage::InvertRed:
+            case PostProcessStage::InvertGreen:
+            case PostProcessStage::InvertBlue:
+            case PostProcessStage::InvertAlpha: {
+                if (!post_inversion_has_work(config.post_process, stage)) {
+                    break;
+                }
+                const std::uint32_t stage_value =
+                    static_cast<std::uint32_t>(stage);
+                encode_grid(
+                    command_buffer, context.pipeline(Pipeline::PostInvert),
                     pixel_grid,
                     [&](MTL::ComputeCommandEncoder* encoder) {
-                        encoder->setBytes(&constants, sizeof(constants), 0U);
-                        encoder->setBuffer(current, 0U, 1U);
+                        encoder->setBytes(
+                            &constants, sizeof(constants), 0U);
+                        encoder->setBytes(
+                            &stage_value, sizeof(stage_value), 1U);
+                        encoder->setBuffer(current, 0U, 2U);
                     });
-    }
-    if (config.post_process.antialias_enabled
-        && config.post_process.antialias_strength > 0.0) {
-        for (int pass = 0;
-             pass < config.post_process.antialias_passes; ++pass) {
-            encode_grid(
-                command_buffer, context.pipeline(Pipeline::PostAntialias),
-                pixel_grid,
-                [&](MTL::ComputeCommandEncoder* encoder) {
-                    encoder->setBytes(&constants, sizeof(constants), 0U);
-                    encoder->setBuffer(current, 0U, 1U);
-                    encoder->setBuffer(scratch, 0U, 2U);
-                });
-            std::swap(current, scratch);
+                break;
+            }
+            case PostProcessStage::ChannelMap: {
+                if (!config.post_process.channel_map.enabled
+                    || config.post_process.channel_map.mix <= 0.0) {
+                    break;
+                }
+                const GpuChannelMap channel_map = make_channel_map(
+                    config.post_process.channel_map);
+                encode_grid(
+                    command_buffer,
+                    context.pipeline(Pipeline::PostChannelMap), pixel_grid,
+                    [&](MTL::ComputeCommandEncoder* encoder) {
+                        encoder->setBytes(
+                            &constants, sizeof(constants), 0U);
+                        encoder->setBytes(
+                            &channel_map, sizeof(channel_map), 1U);
+                        encoder->setBuffer(current, 0U, 2U);
+                    });
+                break;
+            }
+            case PostProcessStage::Antialias:
+                if (config.post_process.antialias_enabled
+                    && config.post_process.antialias_strength > 0.0) {
+                    for (int pass = 0;
+                         pass < config.post_process.antialias_passes; ++pass) {
+                        encode_grid(
+                            command_buffer,
+                            context.pipeline(Pipeline::PostAntialias),
+                            pixel_grid,
+                            [&](MTL::ComputeCommandEncoder* encoder) {
+                                encoder->setBytes(
+                                    &constants, sizeof(constants), 0U);
+                                encoder->setBuffer(current, 0U, 1U);
+                                encoder->setBuffer(scratch, 0U, 2U);
+                            });
+                        std::swap(current, scratch);
+                    }
+                }
+                break;
+            case PostProcessStage::Quantization:
+                if (config.quantization.enabled
+                    && config.quantization.mix > 0.0) {
+                    encode_grid(
+                        command_buffer, context.pipeline(Pipeline::Quantize),
+                        pixel_grid,
+                        [&](MTL::ComputeCommandEncoder* encoder) {
+                            encoder->setBytes(
+                                &constants, sizeof(constants), 0U);
+                            encoder->setBuffer(current, 0U, 1U);
+                        });
+                }
+                break;
         }
-    }
-    if (config.quantization.enabled && config.quantization.mix > 0.0) {
-        encode_grid(command_buffer, context.pipeline(Pipeline::Quantize),
-                    pixel_grid,
-                    [&](MTL::ComputeCommandEncoder* encoder) {
-                        encoder->setBytes(&constants, sizeof(constants), 0U);
-                        encoder->setBuffer(current, 0U, 1U);
-                    });
     }
 
     if (!complete_command_buffer()) return false;

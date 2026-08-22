@@ -84,6 +84,8 @@ namespace {
 // Version 17 adds layer-local numeric parameter LFOs with stable target paths.
 // Version 18 adds independently mixed red, green, and blue inversion stages
 // after the existing combined RGB inversion.
+// Version 19 adds simultaneous RGBA channel mapping and an authored exact
+// permutation of all post-process stages, including quantization.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -95,8 +97,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 18U,
-              "config_io.cpp implements setup format version 18");
+static_assert(kSetupFormatVersion == 19U,
+              "config_io.cpp implements setup format version 19");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -304,6 +306,11 @@ bool setup_v18_record(std::string_view key) {
            || key == "post_process.invert_green_mix"
            || key == "post_process.invert_blue_enabled"
            || key == "post_process.invert_blue_mix";
+}
+
+bool setup_v19_record(std::string_view key) {
+    return starts_with(key, "post_process.channel_map.")
+           || starts_with(key, "post_process.order.");
 }
 
 void clear_error(std::string* error) {
@@ -1050,6 +1057,29 @@ constexpr std::array<std::pair<std::string_view, QuantizationMode>, 3U> kQuantiz
     {"luminance", QuantizationMode::Luminance},
     {"hue", QuantizationMode::Hue},
 }};
+
+constexpr std::array<std::pair<std::string_view, ChannelSource>, 6U>
+    kChannelSources{{
+        {"red", ChannelSource::Red},
+        {"green", ChannelSource::Green},
+        {"blue", ChannelSource::Blue},
+        {"alpha", ChannelSource::Alpha},
+        {"zero", ChannelSource::Zero},
+        {"one", ChannelSource::One},
+    }};
+
+constexpr std::array<std::pair<std::string_view, PostProcessStage>,
+                     kPostProcessStageCount>
+    kPostProcessStages{{
+        {"invert_rgb", PostProcessStage::InvertRgb},
+        {"invert_red", PostProcessStage::InvertRed},
+        {"invert_green", PostProcessStage::InvertGreen},
+        {"invert_blue", PostProcessStage::InvertBlue},
+        {"invert_alpha", PostProcessStage::InvertAlpha},
+        {"channel_map", PostProcessStage::ChannelMap},
+        {"antialias", PostProcessStage::Antialias},
+        {"quantization", PostProcessStage::Quantization},
+    }};
 
 constexpr std::array<std::pair<std::string_view, MirrorMode>, 6U> kMirrorModes{{
     {"none", MirrorMode::None},
@@ -2114,6 +2144,22 @@ bool serialize_setup(const RenderConfig& config,
                      config.post_process.invert_alpha_enabled);
     builder.add_double("post_process.invert_alpha_mix",
                        config.post_process.invert_alpha_mix);
+    builder.add_bool("post_process.channel_map.enabled",
+                     config.post_process.channel_map.enabled);
+    builder.add_double("post_process.channel_map.mix",
+                       config.post_process.channel_map.mix);
+    builder.add_enum("post_process.channel_map.red_source",
+                     config.post_process.channel_map.red_source,
+                     kChannelSources);
+    builder.add_enum("post_process.channel_map.green_source",
+                     config.post_process.channel_map.green_source,
+                     kChannelSources);
+    builder.add_enum("post_process.channel_map.blue_source",
+                     config.post_process.channel_map.blue_source,
+                     kChannelSources);
+    builder.add_enum("post_process.channel_map.alpha_source",
+                     config.post_process.channel_map.alpha_source,
+                     kChannelSources);
     builder.add_bool("post_process.antialias_enabled",
                      config.post_process.antialias_enabled);
     builder.add_double("post_process.antialias_strength",
@@ -2122,6 +2168,14 @@ bool serialize_setup(const RenderConfig& config,
                        config.post_process.antialias_threshold);
     builder.add_integer("post_process.antialias_passes",
                         config.post_process.antialias_passes);
+    builder.add_integer("post_process.order.count",
+                        config.post_process.order.size());
+    for (std::size_t index = 0U;
+         index < config.post_process.order.size(); ++index) {
+        builder.add_enum(indexed_key("post_process.order", index, "stage"),
+                         config.post_process.order[index],
+                         kPostProcessStages);
+    }
 
     builder.add_bool("surface.enabled", config.surface.enabled);
     builder.add_enum("surface.mapping", config.surface.mapping, kSurfaceMappings);
@@ -3634,6 +3688,43 @@ bool deserialize_setup(Records& records,
             return false;
         }
     }
+    if (setup_version >= 19U) {
+        PostProcessConfig& post = candidate.post_process;
+        std::size_t order_count = 0U;
+        if (!consume_bool(records, "post_process.channel_map.enabled",
+                          post.channel_map.enabled, error)
+            || !consume_double(records, "post_process.channel_map.mix",
+                               post.channel_map.mix, error)
+            || !consume_enum(records,
+                             "post_process.channel_map.red_source",
+                             post.channel_map.red_source, kChannelSources,
+                             error)
+            || !consume_enum(records,
+                             "post_process.channel_map.green_source",
+                             post.channel_map.green_source, kChannelSources,
+                             error)
+            || !consume_enum(records,
+                             "post_process.channel_map.blue_source",
+                             post.channel_map.blue_source, kChannelSources,
+                             error)
+            || !consume_enum(records,
+                             "post_process.channel_map.alpha_source",
+                             post.channel_map.alpha_source, kChannelSources,
+                             error)
+            || !consume_count(records, "post_process.order.count",
+                              kPostProcessStageCount, order_count, error)) {
+            return false;
+        }
+        post.order.assign(order_count, PostProcessStage::InvertRgb);
+        for (std::size_t index = 0U; index < order_count; ++index) {
+            if (!consume_enum(
+                    records,
+                    indexed_key("post_process.order", index, "stage"),
+                    post.order[index], kPostProcessStages, error)) {
+                return false;
+            }
+        }
+    }
     if (setup_version >= 10U) {
         StartingColorConfig& starting = candidate.starting_colors;
         if (!consume_bool(records, "alpha.use_source_alpha",
@@ -4224,7 +4315,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 15U && setup_v15_record(key))
              || (setup_version < 16U && setup_v16_record(key))
              || (setup_version < 17U && setup_v17_record(key))
-             || (setup_version < 18U && setup_v18_record(key)));
+             || (setup_version < 18U && setup_v18_record(key))
+             || (setup_version < 19U && setup_v19_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

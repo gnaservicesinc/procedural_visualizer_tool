@@ -3,6 +3,7 @@
 #include "displacement_surface.h"
 #include "frame_renderer_internal.h"
 #include "obj_surface.h"
+#include "post_process_alpha.h"
 #include "source_image.h"
 
 #include <algorithm>
@@ -426,6 +427,34 @@ bool valid_enum(QuantizationMode value) {
         case QuantizationMode::Rgb:
         case QuantizationMode::Luminance:
         case QuantizationMode::Hue:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(ChannelSource value) {
+    switch (value) {
+        case ChannelSource::Red:
+        case ChannelSource::Green:
+        case ChannelSource::Blue:
+        case ChannelSource::Alpha:
+        case ChannelSource::Zero:
+        case ChannelSource::One:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(PostProcessStage value) {
+    switch (value) {
+        case PostProcessStage::InvertRgb:
+        case PostProcessStage::InvertRed:
+        case PostProcessStage::InvertGreen:
+        case PostProcessStage::InvertBlue:
+        case PostProcessStage::InvertAlpha:
+        case PostProcessStage::ChannelMap:
+        case PostProcessStage::Antialias:
+        case PostProcessStage::Quantization:
             return true;
     }
     return false;
@@ -1641,6 +1670,7 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
     else if (path == "post.invert_green_mix") render.post_process.invert_green_mix = finite(0.0, 1.0);
     else if (path == "post.invert_blue_mix") render.post_process.invert_blue_mix = finite(0.0, 1.0);
     else if (path == "post.invert_alpha_mix") render.post_process.invert_alpha_mix = finite(0.0, 1.0);
+    else if (path == "post.channel_map_mix") render.post_process.channel_map.mix = finite(0.0, 1.0);
     else if (path == "post.antialias_strength") render.post_process.antialias_strength = finite(0.0, 1.0);
     else if (path == "post.antialias_threshold") render.post_process.antialias_threshold = finite(0.0, 1.0);
     else if (path == "post.antialias_passes") render.post_process.antialias_passes = std::max(1, lfo_integer(value));
@@ -2449,6 +2479,32 @@ const char* quantization_mode_name(QuantizationMode value) {
         case QuantizationMode::Rgb: return "RGB";
         case QuantizationMode::Luminance: return "Luminance";
         case QuantizationMode::Hue: return "Hue";
+    }
+    return "Unknown";
+}
+
+const char* channel_source_name(ChannelSource value) {
+    switch (value) {
+        case ChannelSource::Red: return "Red";
+        case ChannelSource::Green: return "Green";
+        case ChannelSource::Blue: return "Blue";
+        case ChannelSource::Alpha: return "Alpha";
+        case ChannelSource::Zero: return "Zero";
+        case ChannelSource::One: return "One";
+    }
+    return "Unknown";
+}
+
+const char* post_process_stage_name(PostProcessStage value) {
+    switch (value) {
+        case PostProcessStage::InvertRgb: return "Invert RGB";
+        case PostProcessStage::InvertRed: return "Invert red";
+        case PostProcessStage::InvertGreen: return "Invert green";
+        case PostProcessStage::InvertBlue: return "Invert blue";
+        case PostProcessStage::InvertAlpha: return "Invert alpha";
+        case PostProcessStage::ChannelMap: return "Channel map";
+        case PostProcessStage::Antialias: return "Antialias";
+        case PostProcessStage::Quantization: return "Quantization";
     }
     return "Unknown";
 }
@@ -3592,11 +3648,33 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_in_range(config.post_process.invert_green_mix, 0.0, 1.0)
         || !finite_in_range(config.post_process.invert_blue_mix, 0.0, 1.0)
         || !finite_in_range(config.post_process.invert_alpha_mix, 0.0, 1.0)
+        || !finite_in_range(config.post_process.channel_map.mix, 0.0, 1.0)
+        || !valid_enum(config.post_process.channel_map.red_source)
+        || !valid_enum(config.post_process.channel_map.green_source)
+        || !valid_enum(config.post_process.channel_map.blue_source)
+        || !valid_enum(config.post_process.channel_map.alpha_source)
         || !finite_in_range(config.post_process.antialias_strength, 0.0, 1.0)
         || !finite_in_range(config.post_process.antialias_threshold, 0.0, 1.0)
         || config.post_process.antialias_passes < 1) {
         return invalid_result(
-            "Post-process inversion mixes, antialias strength/threshold, or pass count are out of range.");
+            "Post-process inversion, channel-map, or antialias values are out of range.");
+    }
+    if (config.post_process.order.size() != kPostProcessStageCount) {
+        return invalid_result(
+            "The post-process order must contain every stage exactly once.");
+    }
+    std::array<bool, kPostProcessStageCount> seen_post_process_stages{};
+    for (const PostProcessStage stage : config.post_process.order) {
+        if (!valid_enum(stage)) {
+            return invalid_result(
+                "The post-process order contains an unknown stage.");
+        }
+        const std::size_t index = static_cast<std::size_t>(stage);
+        if (seen_post_process_stages[index]) {
+            return invalid_result(
+                "The post-process order must contain every stage exactly once.");
+        }
+        seen_post_process_stages[index] = true;
     }
     const SurfaceConfig& surface = config.surface;
     const double light_length_squared =
@@ -3701,18 +3779,23 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             !config.starting_image.enabled && !config.palette.enabled
             && config.starting_colors.include_alpha
             && config.starting_colors.alpha_minimum < 1.0;
+        const bool post_processing_can_create_transparency =
+            detail::post_process_alpha_certainty(
+                config, detail::AlphaCertainty::One)
+            != detail::AlphaCertainty::One;
         if (!config.alpha.enabled && !config.output.write_alpha
             && (has_transparent_edge_effect || has_transparent_surface
                 || (config.starting_image.enabled
                     && config.alpha.use_source_alpha)
                 || motion_has_render_work(config.motion)
                 || has_transparent_palette_source
-                || has_transparent_generated_source)) {
+                || has_transparent_generated_source
+                || post_processing_can_create_transparency)) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
                 "edge handling, an active 3D surface has a transparent exterior, "
                 "layer motion can expose the canvas exterior, or the active source "
-                "can contain transparency.");
+                "or post-processing can contain or generate transparency.");
         }
         if (config.output.bit_depth != 8 && config.output.bit_depth != 16
             && config.output.bit_depth != 32) {
@@ -6298,49 +6381,108 @@ void apply_quantization(Image& image, const QuantizationConfig& quantization,
     }
 }
 
-void apply_channel_inversion(Image& image,
+void apply_channel_inversion(Image& image, PostProcessStage stage,
                              const PostProcessConfig& post_process,
                              const std::atomic_bool* cancel) {
-    const double rgb_amount = post_process.invert_rgb_enabled
-                                  ? post_process.invert_rgb_mix : 0.0;
-    const double red_amount = post_process.invert_red_enabled
-                                  ? post_process.invert_red_mix : 0.0;
-    const double green_amount = post_process.invert_green_enabled
-                                    ? post_process.invert_green_mix : 0.0;
-    const double blue_amount = post_process.invert_blue_enabled
-                                   ? post_process.invert_blue_mix : 0.0;
-    const double alpha_amount = post_process.invert_alpha_enabled
-                                    ? post_process.invert_alpha_mix : 0.0;
-    if (rgb_amount <= 0.0 && red_amount <= 0.0 && green_amount <= 0.0
-        && blue_amount <= 0.0 && alpha_amount <= 0.0) return;
+    bool invert_red = false;
+    bool invert_green = false;
+    bool invert_blue = false;
+    bool invert_alpha = false;
+    double amount = 0.0;
+    switch (stage) {
+        case PostProcessStage::InvertRgb:
+            invert_red = invert_green = invert_blue = true;
+            amount = post_process.invert_rgb_enabled
+                         ? post_process.invert_rgb_mix : 0.0;
+            break;
+        case PostProcessStage::InvertRed:
+            invert_red = true;
+            amount = post_process.invert_red_enabled
+                         ? post_process.invert_red_mix : 0.0;
+            break;
+        case PostProcessStage::InvertGreen:
+            invert_green = true;
+            amount = post_process.invert_green_enabled
+                         ? post_process.invert_green_mix : 0.0;
+            break;
+        case PostProcessStage::InvertBlue:
+            invert_blue = true;
+            amount = post_process.invert_blue_enabled
+                         ? post_process.invert_blue_mix : 0.0;
+            break;
+        case PostProcessStage::InvertAlpha:
+            invert_alpha = true;
+            amount = post_process.invert_alpha_enabled
+                         ? post_process.invert_alpha_mix : 0.0;
+            break;
+        default:
+            return;
+    }
+    if (amount <= 0.0) return;
     for (int y = 0; y < image.height; ++y) {
         throw_if_cancelled(cancel);
         for (int x = 0; x < image.width; ++x) {
             Color color = load_color(image, x, y);
-            if (rgb_amount > 0.0) {
-                // Do not clamp HDR input before inversion. The normalized
-                // channel operation 1-x remains reversible and intentionally
-                // allows artist-authored out-of-range working colors.
-                color.r = mix_value(color.r, 1.0 - color.r, rgb_amount);
-                color.g = mix_value(color.g, 1.0 - color.g, rgb_amount);
-                color.b = mix_value(color.b, 1.0 - color.b, rgb_amount);
+            // Do not clamp HDR input before inversion. The normalized channel
+            // operation 1-x remains reversible and intentionally allows
+            // artist-authored out-of-range working colors.
+            if (invert_red) {
+                color.r = mix_value(color.r, 1.0 - color.r, amount);
             }
-            // Channel controls intentionally run after the combined control.
-            // At full mix, enabling both restores that channel; partial mixes
-            // remain a composable two-stage crossfade.
-            if (red_amount > 0.0) {
-                color.r = mix_value(color.r, 1.0 - color.r, red_amount);
+            if (invert_green) {
+                color.g = mix_value(color.g, 1.0 - color.g, amount);
             }
-            if (green_amount > 0.0) {
-                color.g = mix_value(color.g, 1.0 - color.g, green_amount);
+            if (invert_blue) {
+                color.b = mix_value(color.b, 1.0 - color.b, amount);
             }
-            if (blue_amount > 0.0) {
-                color.b = mix_value(color.b, 1.0 - color.b, blue_amount);
-            }
-            if (alpha_amount > 0.0) {
-                color.a = mix_value(color.a, 1.0 - color.a, alpha_amount);
+            if (invert_alpha) {
+                color.a = mix_value(color.a, 1.0 - color.a, amount);
             }
             store_color(image, x, y, color);
+        }
+    }
+}
+
+double channel_source_value(const Color& color, ChannelSource source) {
+    switch (source) {
+        case ChannelSource::Red: return color.r;
+        case ChannelSource::Green: return color.g;
+        case ChannelSource::Blue: return color.b;
+        case ChannelSource::Alpha: return color.a;
+        case ChannelSource::Zero: return 0.0;
+        case ChannelSource::One: return 1.0;
+    }
+    return 0.0;
+}
+
+void apply_channel_map(Image& image, const ChannelMapConfig& channel_map,
+                       const std::atomic_bool* cancel) {
+    throw_if_cancelled(cancel);
+    if (!channel_map.enabled || channel_map.mix <= 0.0) return;
+    for (int y = 0; y < image.height; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = 0; x < image.width; ++x) {
+            const Color input = load_color(image, x, y);
+            Color output;
+            // All four selections read the immutable stage input. This makes
+            // swaps and cycles simultaneous instead of overwrite-dependent.
+            output.r = mix_value(
+                input.r,
+                channel_source_value(input, channel_map.red_source),
+                channel_map.mix);
+            output.g = mix_value(
+                input.g,
+                channel_source_value(input, channel_map.green_source),
+                channel_map.mix);
+            output.b = mix_value(
+                input.b,
+                channel_source_value(input, channel_map.blue_source),
+                channel_map.mix);
+            output.a = mix_value(
+                input.a,
+                channel_source_value(input, channel_map.alpha_source),
+                channel_map.mix);
+            store_color(image, x, y, output);
         }
     }
 }
@@ -6425,15 +6567,36 @@ void apply_antialias_pass(const Image& source, Image& destination,
 
 void apply_post_process(Image& image, Image& scratch,
                         const PostProcessConfig& post_process,
+                        const QuantizationConfig& quantization,
                         const std::atomic_bool* cancel) {
-    apply_channel_inversion(image, post_process, cancel);
-    if (!post_process.antialias_enabled
-        || post_process.antialias_strength <= 0.0) {
-        return;
-    }
-    for (int pass = 0; pass < post_process.antialias_passes; ++pass) {
-        apply_antialias_pass(image, scratch, post_process, cancel);
-        image.pixels.swap(scratch.pixels);
+    for (const PostProcessStage stage : post_process.order) {
+        switch (stage) {
+            case PostProcessStage::InvertRgb:
+            case PostProcessStage::InvertRed:
+            case PostProcessStage::InvertGreen:
+            case PostProcessStage::InvertBlue:
+            case PostProcessStage::InvertAlpha:
+                apply_channel_inversion(
+                    image, stage, post_process, cancel);
+                break;
+            case PostProcessStage::ChannelMap:
+                apply_channel_map(image, post_process.channel_map, cancel);
+                break;
+            case PostProcessStage::Antialias:
+                if (post_process.antialias_enabled
+                    && post_process.antialias_strength > 0.0) {
+                    for (int pass = 0;
+                         pass < post_process.antialias_passes; ++pass) {
+                        apply_antialias_pass(
+                            image, scratch, post_process, cancel);
+                        image.pixels.swap(scratch.pixels);
+                    }
+                }
+                break;
+            case PostProcessStage::Quantization:
+                apply_quantization(image, quantization, cancel);
+                break;
+        }
     }
 }
 
@@ -6935,8 +7098,8 @@ bool render_frame_at_timeline_sample_cancellable(
             current.pixels.swap(scratch.pixels);
         }
         apply_effect_stage(EffectSpace::Surface);
-        apply_post_process(current, scratch, render.post_process, cancel);
-        apply_quantization(current, render.quantization, cancel);
+        apply_post_process(current, scratch, render.post_process,
+                           render.quantization, cancel);
         if (detail::opengl_surface_acceleration_active()) {
             if (!detail::complete_frame_opengl(
                     current, scratch, cancel, error)) {

@@ -7,6 +7,8 @@
 #include <QDialog>
 
 class QComboBox;
+class QCheckBox;
+class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
 class QShowEvent;
@@ -39,7 +41,10 @@ private:
     QSpinBox* export_frame_workers_ = nullptr;
     QSpinBox* export_cpu_workers_ = nullptr;
     QSpinBox* gpu_frames_in_flight_ = nullptr;
-    QSpinBox* render_memory_budget_mib_ = nullptr;
+    QComboBox* render_memory_budget_mode_ = nullptr;
+    QDoubleSpinBox* render_memory_budget_value_ = nullptr;
+    QLabel* render_memory_budget_status_ = nullptr;
+    QCheckBox* pause_editor_preview_during_export_ = nullptr;
     QSpinBox* recent_project_limit_ = nullptr;
     QLabel* defaults_status_ = nullptr;
     NewProjectDefaultsAction defaults_action_ =

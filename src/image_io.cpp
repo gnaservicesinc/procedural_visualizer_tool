@@ -148,6 +148,7 @@ bool validate_image_for_export(const Image& image,
         return fail(error, "The image must contain exactly four float components per pixel.");
     }
 
+    const bool include_alpha = writes_alpha_channel(config);
     for (std::size_t pixel = 0; pixel < pixel_count; ++pixel) {
         const std::size_t offset = pixel * 4U;
         if (!std::isfinite(image.pixels[offset])
@@ -158,6 +159,11 @@ bool validate_image_for_export(const Image& image,
         const float alpha = image.pixels[offset + 3U];
         if (!std::isfinite(alpha) || alpha < 0.0F || alpha > 1.0F) {
             return fail(error, "The image contains alpha outside the finite [0, 1] range.");
+        }
+        if (!include_alpha && alpha < 1.0F) {
+            return fail(
+                error,
+                "Alpha output must be enabled because the rendered image contains transparency.");
         }
     }
 

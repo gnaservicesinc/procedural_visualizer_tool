@@ -502,6 +502,24 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
         add_nested(QStringLiteral("post.invert_alpha_mix"), QObject::tr("Invert alpha mix"),
                    QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
                    render.post_process.invert_alpha_mix, [](pvt::RenderData& r, double v) { r.post_process.invert_alpha_mix = v; });
+        add_nested(QStringLiteral("post.channel_map_enabled"), QObject::tr("Channel routing"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
+                   render.post_process.channel_map.enabled, [](pvt::RenderData& r, double v) { r.post_process.channel_map.enabled = v >= 0.5; });
+        add_nested(QStringLiteral("post.channel_map_mix"), QObject::tr("Channel routing mix"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Real, 0, 1,
+                   render.post_process.channel_map.mix, [](pvt::RenderData& r, double v) { r.post_process.channel_map.mix = v; });
+        add_nested(QStringLiteral("post.channel_map_red_source"), QObject::tr("Output red source"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Enumeration, 0, 5,
+                   static_cast<double>(render.post_process.channel_map.red_source), [](pvt::RenderData& r, double v) { r.post_process.channel_map.red_source = static_cast<pvt::ChannelSource>(std::llround(v)); });
+        add_nested(QStringLiteral("post.channel_map_green_source"), QObject::tr("Output green source"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Enumeration, 0, 5,
+                   static_cast<double>(render.post_process.channel_map.green_source), [](pvt::RenderData& r, double v) { r.post_process.channel_map.green_source = static_cast<pvt::ChannelSource>(std::llround(v)); });
+        add_nested(QStringLiteral("post.channel_map_blue_source"), QObject::tr("Output blue source"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Enumeration, 0, 5,
+                   static_cast<double>(render.post_process.channel_map.blue_source), [](pvt::RenderData& r, double v) { r.post_process.channel_map.blue_source = static_cast<pvt::ChannelSource>(std::llround(v)); });
+        add_nested(QStringLiteral("post.channel_map_alpha_source"), QObject::tr("Output alpha source"),
+                   QObject::tr("Post Effects"), LiveTargetKind::Enumeration, 0, 5,
+                   static_cast<double>(render.post_process.channel_map.alpha_source), [](pvt::RenderData& r, double v) { r.post_process.channel_map.alpha_source = static_cast<pvt::ChannelSource>(std::llround(v)); });
         add_nested(QStringLiteral("post.antialias"), QObject::tr("Edge antialias"),
                    QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
                    render.post_process.antialias_enabled, [](pvt::RenderData& r, double v) { r.post_process.antialias_enabled = v >= 0.5; });

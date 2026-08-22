@@ -272,6 +272,11 @@ bool is_setup_v18_key(std::string_view key) {
            || key == "post_process.invert_blue_mix";
 }
 
+bool is_setup_v19_key(std::string_view key) {
+    return starts_with(key, "post_process.channel_map.")
+           || starts_with(key, "post_process.order.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -293,7 +298,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 12U ? 14U
                     : layer_version == 13U ? 15U
                     : layer_version == 14U ? 16U
-                    : layer_version == 15U ? 17U : 18U;
+                    : layer_version == 15U ? 17U
+                    : layer_version == 16U ? 18U : 19U;
     return true;
 }
 
@@ -566,6 +572,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 18U && is_setup_v18_key(key)) {
+            continue;
+        }
+        if (setup_version < 19U && is_setup_v19_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

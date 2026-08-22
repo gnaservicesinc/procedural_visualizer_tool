@@ -1,23 +1,28 @@
 #include "application_settings_dialog.h"
 
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QPushButton>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QScrollArea>
 #include <QShowEvent>
 #include <QSpinBox>
+#include <QStandardItemModel>
 #include <QTabWidget>
 #include <QThread>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -25,6 +30,7 @@ constexpr int kMinimumUndoLimit = 0;
 constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
 constexpr int kMaximumRecentProjectLimit = (std::numeric_limits<int>::max)();
 constexpr std::size_t kMebibyte = std::size_t{1024U} * 1024U;
+constexpr std::size_t kGibibyte = kMebibyte * 1024U;
 
 int spin_box_maximum(std::size_t value) {
     return static_cast<int>((std::min)(
@@ -37,12 +43,41 @@ int spin_box_value(std::size_t value, int maximum) {
         value, static_cast<std::size_t>(maximum)));
 }
 
+QString memory_size_text(std::size_t bytes) {
+    const double gibibytes = static_cast<double>(bytes)
+                             / static_cast<double>(kGibibyte);
+    if (gibibytes >= 1.0) {
+        return QObject::tr("%1 GiB").arg(gibibytes, 0, 'f',
+                                          gibibytes < 10.0 ? 2 : 1);
+    }
+    const double mebibytes = static_cast<double>(bytes)
+                             / static_cast<double>(kMebibyte);
+    return QObject::tr("%1 MiB").arg(mebibytes, 0, 'f', 0);
+}
+
 QLabel* explanatory_label(const QString& text, QWidget* parent) {
     auto* label = new QLabel(text, parent);
     label->setWordWrap(true);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     return label;
 }
+
+class CompactDoubleSpinBox final : public QDoubleSpinBox {
+public:
+    using QDoubleSpinBox::QDoubleSpinBox;
+
+protected:
+    QString textFromValue(double value) const override {
+        QString text = locale().toString(value, 'f', decimals());
+        if (decimals() <= 0) return text;
+        const QString decimal = locale().decimalPoint();
+        if (!text.contains(decimal)) return text;
+        const QString zero = locale().zeroDigit();
+        while (text.endsWith(zero)) text.chop(zero.size());
+        if (text.endsWith(decimal)) text.chop(decimal.size());
+        return text;
+    }
+};
 
 } // namespace
 
@@ -281,23 +316,213 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     threading_form->addRow(tr("Metal frames in flight"),
                            gpu_frames_in_flight_);
 
-    const std::size_t maximum_memory_mib =
-        (std::numeric_limits<std::size_t>::max)() / kMebibyte;
-    const int maximum_memory = spin_box_maximum(maximum_memory_mib);
-    render_memory_budget_mib_ = new QSpinBox(threading_group);
-    render_memory_budget_mib_->setObjectName(
-        QStringLiteral("renderMemoryBudgetPreference"));
-    render_memory_budget_mib_->setRange(0, maximum_memory);
-    render_memory_budget_mib_->setSpecialValueText(tr("Auto (2 GiB)"));
-    render_memory_budget_mib_->setSuffix(tr(" MiB"));
-    render_memory_budget_mib_->setValue(spin_box_value(
-        performanceSettings.render_memory_budget_mib, maximum_memory));
-    render_memory_budget_mib_->setToolTip(tr(
+    const std::size_t physical_memory = total_physical_memory_bytes();
+    render_memory_budget_mode_ = new QComboBox(threading_group);
+    render_memory_budget_mode_->setObjectName(
+        QStringLiteral("renderMemoryBudgetModePreference"));
+    render_memory_budget_mode_->addItem(
+        tr("Automatic (recommended)"),
+        static_cast<int>(RenderMemoryBudgetMode::Automatic));
+    render_memory_budget_mode_->addItem(
+        tr("MiB"), static_cast<int>(RenderMemoryBudgetMode::Mebibytes));
+    render_memory_budget_mode_->addItem(
+        tr("GiB"), static_cast<int>(RenderMemoryBudgetMode::Gibibytes));
+    render_memory_budget_mode_->addItem(
+        physical_memory > 0U
+            ? tr("% of physical RAM")
+            : tr("% of physical RAM (currently unavailable)"),
+        static_cast<int>(RenderMemoryBudgetMode::PercentOfPhysicalMemory));
+    int memory_mode_index = render_memory_budget_mode_->findData(
+        static_cast<int>(performanceSettings.render_memory_budget_mode));
+    if (memory_mode_index < 0) memory_mode_index = 0;
+    render_memory_budget_mode_->setCurrentIndex(memory_mode_index);
+    if (physical_memory == 0U) {
+        const int percentage_index = render_memory_budget_mode_->findData(
+            static_cast<int>(
+                RenderMemoryBudgetMode::PercentOfPhysicalMemory));
+        if (auto* model = qobject_cast<QStandardItemModel*>(
+                render_memory_budget_mode_->model());
+            model != nullptr && percentage_index >= 0
+            && model->item(percentage_index) != nullptr) {
+            // Keep an existing portable percentage preference selected and
+            // round-trippable, but do not offer a conversion into a unit the
+            // current host cannot resolve.
+            model->item(percentage_index)->setEnabled(false);
+        }
+    }
+
+    render_memory_budget_value_ = new CompactDoubleSpinBox(threading_group);
+    render_memory_budget_value_->setObjectName(
+        QStringLiteral("renderMemoryBudgetValuePreference"));
+    render_memory_budget_value_->setAccelerated(true);
+    render_memory_budget_value_->setKeyboardTracking(false);
+    render_memory_budget_value_->setToolTip(tr(
         "Aggregate scheduling budget for project-layer working sets and parallel "
         "export frames. This is a concurrency cap, not a memory preallocation; "
         "a valid render can still run one worker when one frame exceeds it."));
-    threading_form->addRow(tr("Render memory budget"),
-                           render_memory_budget_mib_);
+    auto* memory_row = new QWidget(threading_group);
+    auto* memory_row_layout = new QHBoxLayout(memory_row);
+    memory_row_layout->setContentsMargins(0, 0, 0, 0);
+    memory_row_layout->addWidget(render_memory_budget_value_, 1);
+    memory_row_layout->addWidget(render_memory_budget_mode_);
+    threading_form->addRow(tr("Render memory budget"), memory_row);
+
+    render_memory_budget_status_ = explanatory_label(QString{}, threading_group);
+    render_memory_budget_status_->setObjectName(
+        QStringLiteral("renderMemoryBudgetStatus"));
+    threading_form->addRow(render_memory_budget_status_);
+
+    auto previous_memory_mode = std::make_shared<RenderMemoryBudgetMode>(
+        static_cast<RenderMemoryBudgetMode>(
+            render_memory_budget_mode_->currentData().toInt()));
+    const auto editor_bytes = [](RenderMemoryBudgetMode mode, double value) {
+        PerformanceSettings settings;
+        settings.render_memory_budget_mode = mode;
+        settings.render_memory_budget_value = value;
+        return resolved_render_memory_budget_bytes(settings);
+    };
+    const auto value_for_bytes = [physical_memory](RenderMemoryBudgetMode mode,
+                                                    std::size_t bytes) {
+        switch (mode) {
+            case RenderMemoryBudgetMode::Automatic: return 0.0;
+            case RenderMemoryBudgetMode::Mebibytes:
+                return static_cast<double>(bytes)
+                       / static_cast<double>(kMebibyte);
+            case RenderMemoryBudgetMode::Gibibytes:
+                return static_cast<double>(bytes)
+                       / static_cast<double>(kGibibyte);
+            case RenderMemoryBudgetMode::PercentOfPhysicalMemory:
+                return physical_memory == 0U ? 0.0
+                    : 100.0 * static_cast<double>(bytes)
+                        / static_cast<double>(physical_memory);
+        }
+        return 0.0;
+    };
+    const auto configure_memory_editor = [this, physical_memory,
+                                           previous_memory_mode,
+                                           editor_bytes, value_for_bytes](
+                                              bool convert_value) {
+        const auto mode = static_cast<RenderMemoryBudgetMode>(
+            render_memory_budget_mode_->currentData().toInt());
+        const std::size_t prior_bytes = convert_value
+            ? editor_bytes(*previous_memory_mode,
+                           render_memory_budget_value_->value()) : 0U;
+        const QSignalBlocker blocker(render_memory_budget_value_);
+        render_memory_budget_value_->setEnabled(
+            mode != RenderMemoryBudgetMode::Automatic);
+        render_memory_budget_value_->setSpecialValueText(QString{});
+        switch (mode) {
+            case RenderMemoryBudgetMode::Automatic:
+                render_memory_budget_value_->setDecimals(0);
+                render_memory_budget_value_->setRange(0.0, 0.0);
+                render_memory_budget_value_->setSuffix(QString{});
+                render_memory_budget_value_->setValue(0.0);
+                break;
+            case RenderMemoryBudgetMode::Mebibytes:
+                render_memory_budget_value_->setDecimals(0);
+                render_memory_budget_value_->setSingleStep(256.0);
+                render_memory_budget_value_->setRange(
+                    1.0, static_cast<double>(
+                        (std::numeric_limits<std::size_t>::max)() / kMebibyte));
+                render_memory_budget_value_->setSuffix(tr(" MiB"));
+                if (convert_value) {
+                    render_memory_budget_value_->setValue(
+                        value_for_bytes(mode, prior_bytes));
+                }
+                break;
+            case RenderMemoryBudgetMode::Gibibytes:
+                // Preserve the full legacy 1 MiB domain while switching units
+                // (1 MiB is exactly 0.0009765625 GiB).
+                render_memory_budget_value_->setDecimals(10);
+                render_memory_budget_value_->setSingleStep(0.25);
+                render_memory_budget_value_->setRange(
+                    1.0 / 1024.0, static_cast<double>(
+                        (std::numeric_limits<std::size_t>::max)() / kGibibyte));
+                render_memory_budget_value_->setSuffix(tr(" GiB"));
+                if (convert_value) {
+                    render_memory_budget_value_->setValue(
+                        value_for_bytes(mode, prior_bytes));
+                }
+                break;
+            case RenderMemoryBudgetMode::PercentOfPhysicalMemory: {
+                // Small authored byte limits must not jump merely because an
+                // artist changes their display unit on a high-memory host.
+                render_memory_budget_value_->setDecimals(12);
+                render_memory_budget_value_->setSingleStep(0.1);
+                const double maximum = physical_memory == 0U
+                    ? 100.0 * static_cast<double>(
+                          (std::numeric_limits<std::size_t>::max)())
+                    : 100.0 * static_cast<double>(
+                          (std::numeric_limits<std::size_t>::max)())
+                          / static_cast<double>(physical_memory);
+                const double minimum = physical_memory == 0U ? 0.0
+                    : 100.0 * static_cast<double>(kMebibyte)
+                          / static_cast<double>(physical_memory);
+                render_memory_budget_value_->setRange(minimum, maximum);
+                render_memory_budget_value_->setSuffix(tr(" %"));
+                if (convert_value) {
+                    render_memory_budget_value_->setValue(
+                        value_for_bytes(mode, prior_bytes));
+                }
+                break;
+            }
+        }
+        *previous_memory_mode = mode;
+    };
+    const auto update_memory_status = [this, physical_memory, editor_bytes] {
+        const auto mode = static_cast<RenderMemoryBudgetMode>(
+            render_memory_budget_mode_->currentData().toInt());
+        const std::size_t resolved = editor_bytes(
+            mode, render_memory_budget_value_->value());
+        QString text = mode == RenderMemoryBudgetMode::Automatic
+            ? tr("Automatic currently allows %1 for concurrent render working sets.")
+                  .arg(memory_size_text(resolved))
+            : tr("The current limit resolves to %1.")
+                  .arg(memory_size_text(resolved));
+        if (physical_memory > 0U) {
+            text += tr(" This system reports %1 of physical RAM.")
+                        .arg(memory_size_text(physical_memory));
+            if (resolved > physical_memory) {
+                text += tr(" Warning: the limit exceeds physical RAM and may cause heavy paging.");
+                render_memory_budget_status_->setStyleSheet(
+                    QStringLiteral("color: #b35a00;"));
+            } else {
+                render_memory_budget_status_->setStyleSheet(QString{});
+            }
+        } else {
+            text += tr(" Physical RAM could not be detected. A saved percentage is preserved, but resolves through Automatic until detection succeeds.");
+            render_memory_budget_status_->setStyleSheet(QString{});
+        }
+        render_memory_budget_status_->setText(text);
+    };
+    configure_memory_editor(false);
+    if (performanceSettings.render_memory_budget_mode
+        != RenderMemoryBudgetMode::Automatic) {
+        render_memory_budget_value_->setValue(
+            performanceSettings.render_memory_budget_value);
+    }
+    update_memory_status();
+    connect(render_memory_budget_mode_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [configure_memory_editor, update_memory_status](int) {
+                configure_memory_editor(true);
+                update_memory_status();
+            });
+    connect(render_memory_budget_value_,
+            qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            [update_memory_status](double) { update_memory_status(); });
+
+    pause_editor_preview_during_export_ = new QCheckBox(
+        tr("Pause editor preview while exporting"), threading_group);
+    pause_editor_preview_during_export_->setObjectName(
+        QStringLiteral("pauseEditorPreviewDuringExportPreference"));
+    pause_editor_preview_during_export_->setChecked(
+        performanceSettings.pause_editor_preview_during_export);
+    pause_editor_preview_during_export_->setToolTip(tr(
+        "Stops duplicate editor rendering and playback while a still, image "
+        "sequence, or movie export owns the CPU and GPU. The preview resumes "
+        "after export. Disable this only when monitoring edits is more important "
+        "than export throughput."));
+    threading_form->addRow(pause_editor_preview_during_export_);
 
     auto* reset_performance = new QPushButton(
         tr("Reset Performance Controls to Auto"), threading_group);
@@ -311,7 +536,12 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
         export_frame_workers_->setValue(0);
         export_cpu_workers_->setValue(0);
         gpu_frames_in_flight_->setValue(0);
-        render_memory_budget_mib_->setValue(0);
+        const int automatic_memory = render_memory_budget_mode_->findData(
+            static_cast<int>(RenderMemoryBudgetMode::Automatic));
+        if (automatic_memory >= 0) {
+            render_memory_budget_mode_->setCurrentIndex(automatic_memory);
+        }
+        pause_editor_preview_during_export_->setChecked(true);
     });
     threading_form->addRow(reset_performance);
 
@@ -392,8 +622,13 @@ PerformanceSettings ApplicationSettingsDialog::performanceSettings() const {
         static_cast<std::size_t>(export_cpu_workers_->value());
     settings.gpu_frames_in_flight =
         static_cast<std::size_t>(gpu_frames_in_flight_->value());
-    settings.render_memory_budget_mib =
-        static_cast<std::size_t>(render_memory_budget_mib_->value());
+    settings.render_memory_budget_mode =
+        static_cast<RenderMemoryBudgetMode>(
+            render_memory_budget_mode_->currentData().toInt());
+    settings.render_memory_budget_value =
+        render_memory_budget_value_->value();
+    settings.pause_editor_preview_during_export =
+        pause_editor_preview_during_export_->isChecked();
     return settings;
 }
 

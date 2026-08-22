@@ -117,7 +117,28 @@ void test_parameter_lfos() {
         animated, "post.invert_green_mix"));
     CHECK(pvt::parameter_lfo_target_supported(
         animated, "post.invert_blue_mix"));
+    CHECK(pvt::parameter_lfo_target_supported(
+        animated, "post.channel_map_mix"));
     CHECK(!pvt::parameter_lfo_target_supported(animated, "not/a/target"));
+
+    pvt::RenderConfig mapped = pvt::default_config();
+    mapped.post_process.channel_map.mix = 0.44;
+    pvt::ParameterLfo map_mix_lfo;
+    map_mix_lfo.target_path = "post.channel_map_mix";
+    map_mix_lfo.minimum = 0.1;
+    map_mix_lfo.maximum = 0.9;
+    map_mix_lfo.phase_degrees = -90.0;
+    mapped.parameter_lfos.push_back(map_mix_lfo);
+    const pvt::RenderConfig mapped_minimum =
+        pvt::detail::materialize_parameter_lfos(mapped, 0.0);
+    const pvt::RenderConfig mapped_maximum =
+        pvt::detail::materialize_parameter_lfos(mapped, 0.5);
+    CHECK(std::fabs(mapped_minimum.post_process.channel_map.mix - 0.1)
+          < 1.0e-12);
+    CHECK(std::fabs(mapped_maximum.post_process.channel_map.mix - 0.9)
+          < 1.0e-12);
+    CHECK(mapped.post_process.channel_map.mix == 0.44);
+    CHECK(mapped.parameter_lfos.size() == 1U);
 
     const auto maximum_difference = [](const pvt::Image& left,
                                        const pvt::Image& right) {
@@ -170,7 +191,7 @@ void test_parameter_lfos() {
 
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t18\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t19\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -189,6 +210,83 @@ void test_parameter_lfos() {
     pvt::Image rejected;
     CHECK(!pvt::render_frame(animated, 0, selected_cpu, rejected, nullptr,
                              &error));
+}
+
+void test_project_post_process_alpha_safety() {
+    pvt::ProjectConfig project = pvt::default_project();
+    project.output.write_alpha = false;
+    CHECK(pvt::validate(project).ok);
+
+    pvt::PostProcessConfig& finishing =
+        project.layers.front().render.post_process;
+    finishing.invert_alpha_enabled = true;
+    CHECK(!pvt::validate(project).ok);
+
+    // The default order lets a full One route restore opacity after inversion.
+    finishing.channel_map.enabled = true;
+    finishing.channel_map.alpha_source = pvt::ChannelSource::One;
+    CHECK(pvt::validate(project).ok);
+    const auto map_stage = std::find(
+        finishing.order.begin(), finishing.order.end(),
+        pvt::PostProcessStage::ChannelMap);
+    CHECK(map_stage != finishing.order.end());
+    if (map_stage != finishing.order.end()) {
+        finishing.order.erase(map_stage);
+        finishing.order.insert(
+            finishing.order.begin(), pvt::PostProcessStage::ChannelMap);
+    }
+    CHECK(!pvt::validate(project).ok);
+
+    // An LFO range, not only its authored fallback, participates in RGB
+    // export admission.
+    finishing = {};
+    finishing.channel_map.enabled = true;
+    finishing.channel_map.mix = 0.0;
+    finishing.channel_map.alpha_source = pvt::ChannelSource::Zero;
+    pvt::ParameterLfo map_mix;
+    map_mix.target_path = "post.channel_map_mix";
+    map_mix.minimum = 0.0;
+    map_mix.maximum = 1.0;
+    project.layers.front().render.parameter_lfos = {map_mix};
+    CHECK(!pvt::validate(project).ok);
+
+    finishing = {};
+    finishing.invert_alpha_enabled = true;
+    finishing.invert_alpha_mix = 0.0;
+    map_mix.target_path = "post.invert_alpha_mix";
+    project.layers.front().render.parameter_lfos = {map_mix};
+    CHECK(!pvt::validate(project).ok);
+
+    // A zero-alpha eraser is a no-op only when its complete finishing pipeline
+    // still guarantees zero coverage.
+    project = pvt::default_project();
+    project.output.write_alpha = false;
+    pvt::LayerConfig eraser = pvt::default_layer(1U);
+    eraser.blend_mode = pvt::BlendMode::Erase;
+    eraser.render.alpha.enabled = true;
+    eraser.render.alpha.minimum = 0.0;
+    eraser.render.alpha.maximum = 0.0;
+    project.layers.push_back(eraser);
+    CHECK(pvt::validate(project).ok);
+
+    pvt::PostProcessConfig& eraser_finishing =
+        project.layers.back().render.post_process;
+    eraser_finishing.invert_alpha_enabled = true;
+    CHECK(!pvt::validate(project).ok);
+    eraser_finishing.channel_map.enabled = true;
+    eraser_finishing.channel_map.alpha_source = pvt::ChannelSource::Zero;
+    CHECK(pvt::validate(project).ok);
+    const auto eraser_map_stage = std::find(
+        eraser_finishing.order.begin(), eraser_finishing.order.end(),
+        pvt::PostProcessStage::ChannelMap);
+    CHECK(eraser_map_stage != eraser_finishing.order.end());
+    if (eraser_map_stage != eraser_finishing.order.end()) {
+        eraser_finishing.order.erase(eraser_map_stage);
+        eraser_finishing.order.insert(
+            eraser_finishing.order.begin(),
+            pvt::PostProcessStage::ChannelMap);
+    }
+    CHECK(!pvt::validate(project).ok);
 }
 
 pvt::ClockConfig ready_music_clock(double duration_seconds = 1.0,
@@ -550,10 +648,137 @@ void test_post_process_effects(const fs::path& directory) {
     config.wall_reflection_enabled = false;
     config.quantization.enabled = false;
 
+    const std::vector<pvt::PostProcessStage> compatibility_order{
+        pvt::PostProcessStage::InvertRgb,
+        pvt::PostProcessStage::InvertRed,
+        pvt::PostProcessStage::InvertGreen,
+        pvt::PostProcessStage::InvertBlue,
+        pvt::PostProcessStage::InvertAlpha,
+        pvt::PostProcessStage::ChannelMap,
+        pvt::PostProcessStage::Antialias,
+        pvt::PostProcessStage::Quantization};
+    CHECK(config.post_process.order == compatibility_order);
+    for (const pvt::ChannelSource channel_source : {
+             pvt::ChannelSource::Red, pvt::ChannelSource::Green,
+             pvt::ChannelSource::Blue, pvt::ChannelSource::Alpha,
+             pvt::ChannelSource::Zero, pvt::ChannelSource::One}) {
+        CHECK(std::string(pvt::channel_source_name(channel_source))
+              != "Unknown");
+    }
+    for (const pvt::PostProcessStage stage : compatibility_order) {
+        CHECK(std::string(pvt::post_process_stage_name(stage)) != "Unknown");
+    }
+    CHECK(std::string(pvt::post_process_stage_name(
+                          pvt::PostProcessStage::ChannelMap))
+          == "Channel map");
+    CHECK(std::string(pvt::channel_source_name(
+                          static_cast<pvt::ChannelSource>(255U)))
+          == "Unknown");
+    CHECK(std::string(pvt::post_process_stage_name(
+                          static_cast<pvt::PostProcessStage>(255U)))
+          == "Unknown");
+
     std::string error;
     pvt::Image baseline;
     CHECK(pvt::render_frame_at_phase(config, 0.0, baseline, &error));
 
+    config.post_process.channel_map.enabled = true;
+    config.post_process.channel_map.red_source = pvt::ChannelSource::Blue;
+    config.post_process.channel_map.green_source = pvt::ChannelSource::Alpha;
+    config.post_process.channel_map.blue_source = pvt::ChannelSource::Red;
+    config.post_process.channel_map.alpha_source = pvt::ChannelSource::Green;
+    pvt::Image mapped;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, mapped, &error));
+    for (std::size_t offset = 0U;
+         offset + 3U < baseline.pixels.size(); offset += 4U) {
+        // The cycle reads every source from the unchanged stage input.
+        CHECK(mapped.pixels[offset] == baseline.pixels[offset + 2U]);
+        CHECK(mapped.pixels[offset + 1U] == baseline.pixels[offset + 3U]);
+        CHECK(mapped.pixels[offset + 2U] == baseline.pixels[offset]);
+        CHECK(mapped.pixels[offset + 3U] == baseline.pixels[offset + 1U]);
+    }
+
+    config.post_process.channel_map.red_source = pvt::ChannelSource::Zero;
+    config.post_process.channel_map.green_source = pvt::ChannelSource::One;
+    config.post_process.channel_map.blue_source = pvt::ChannelSource::Alpha;
+    config.post_process.channel_map.alpha_source = pvt::ChannelSource::One;
+    pvt::Image mapped_constants;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.0, mapped_constants, &error));
+    if (const float* left = mapped_constants.pixel(0, 0)) {
+        CHECK(left[0] == 0.0F);
+        CHECK(left[1] == 1.0F);
+        CHECK(left[2] == 1.0F);
+        CHECK(left[3] == 1.0F);
+    }
+    if (const float* right = mapped_constants.pixel(15, 0)) {
+        CHECK(right[0] == 0.0F);
+        CHECK(right[1] == 1.0F);
+        CHECK(right[2] == 0.0F);
+        CHECK(right[3] == 1.0F);
+    }
+
+    pvt::RenderConfig hdr_mapping = config;
+    hdr_mapping.starting_image.enabled = false;
+    hdr_mapping.palette.enabled = true;
+    hdr_mapping.palette.colors = {{
+        2.5, -0.5, 0.25, 1.0, "HDR route",
+        pvt::PaletteColorEncoding::Linear}};
+    hdr_mapping.post_process = {};
+    hdr_mapping.post_process.channel_map.enabled = true;
+    hdr_mapping.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Red;
+    pvt::Image hdr_alpha_high;
+    CHECK(pvt::render_frame_at_phase(
+        hdr_mapping, 0.0, hdr_alpha_high, &error));
+    if (const float* pixel = hdr_alpha_high.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[0] - 2.5F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[1] + 0.5F) < 1.0e-6F);
+        CHECK(pixel[3] == 1.0F);
+    }
+    hdr_mapping.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Green;
+    pvt::Image hdr_alpha_low;
+    CHECK(pvt::render_frame_at_phase(
+        hdr_mapping, 0.0, hdr_alpha_low, &error));
+    if (const float* pixel = hdr_alpha_low.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[0] - 2.5F) < 1.0e-6F);
+        CHECK(std::fabs(pixel[1] + 0.5F) < 1.0e-6F);
+        CHECK(pixel[3] == 0.0F);
+    }
+
+    config.post_process = {};
+    config.post_process.invert_red_enabled = true;
+    config.post_process.channel_map.enabled = true;
+    config.post_process.channel_map.green_source = pvt::ChannelSource::Red;
+    pvt::Image inversion_then_mapping;
+    CHECK(pvt::render_frame_at_phase(
+        config, 0.0, inversion_then_mapping, &error));
+    pvt::RenderConfig reordered = config;
+    const auto channel_map_stage = std::find(
+        reordered.post_process.order.begin(),
+        reordered.post_process.order.end(), pvt::PostProcessStage::ChannelMap);
+    CHECK(channel_map_stage != reordered.post_process.order.end());
+    if (channel_map_stage != reordered.post_process.order.end()) {
+        reordered.post_process.order.erase(channel_map_stage);
+        reordered.post_process.order.insert(
+            reordered.post_process.order.begin(),
+            pvt::PostProcessStage::ChannelMap);
+    }
+    CHECK(pvt::validate(reordered).ok);
+    pvt::Image mapping_then_inversion;
+    CHECK(pvt::render_frame_at_phase(
+        reordered, 0.0, mapping_then_inversion, &error));
+    if (const float* first = inversion_then_mapping.pixel(0, 0)) {
+        CHECK(first[0] == 0.0F);
+        CHECK(first[1] == 0.0F);
+    }
+    if (const float* second = mapping_then_inversion.pixel(0, 0)) {
+        CHECK(second[0] == 0.0F);
+        CHECK(second[1] == 1.0F);
+    }
+
+    config.post_process = {};
     config.post_process.invert_rgb_enabled = true;
     config.post_process.invert_alpha_enabled = true;
     pvt::Image inverted;
@@ -651,6 +876,23 @@ void test_post_process_effects(const fs::path& directory) {
     CHECK(!pvt::validate(invalid).ok);
     invalid = config;
     invalid.post_process.invert_blue_mix = 1.01;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.channel_map.mix = -0.01;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.channel_map.alpha_source =
+        static_cast<pvt::ChannelSource>(255U);
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.order.pop_back();
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.order[1] = invalid.post_process.order[0];
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.post_process.order[0] =
+        static_cast<pvt::PostProcessStage>(255U);
     CHECK(!pvt::validate(invalid).ok);
 }
 
@@ -768,7 +1010,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t18\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t19\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -3996,10 +4238,25 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.post_process.invert_blue_mix = 0.79;
     original.post_process.invert_alpha_enabled = true;
     original.post_process.invert_alpha_mix = 0.37;
+    original.post_process.channel_map.enabled = true;
+    original.post_process.channel_map.mix = 0.42;
+    original.post_process.channel_map.red_source = pvt::ChannelSource::Zero;
+    original.post_process.channel_map.green_source = pvt::ChannelSource::One;
+    original.post_process.channel_map.blue_source = pvt::ChannelSource::Alpha;
+    original.post_process.channel_map.alpha_source = pvt::ChannelSource::Blue;
     original.post_process.antialias_enabled = true;
     original.post_process.antialias_strength = 0.82;
     original.post_process.antialias_threshold = 0.14;
     original.post_process.antialias_passes = 3;
+    original.post_process.order = {
+        pvt::PostProcessStage::Quantization,
+        pvt::PostProcessStage::ChannelMap,
+        pvt::PostProcessStage::InvertAlpha,
+        pvt::PostProcessStage::InvertBlue,
+        pvt::PostProcessStage::InvertGreen,
+        pvt::PostProcessStage::InvertRed,
+        pvt::PostProcessStage::InvertRgb,
+        pvt::PostProcessStage::Antialias};
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
     original.surface.projection = pvt::SurfaceProjection::Perspective;
@@ -4270,10 +4527,21 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.post_process.invert_blue_mix == 0.79);
     CHECK(loaded.post_process.invert_alpha_enabled);
     CHECK(loaded.post_process.invert_alpha_mix == 0.37);
+    CHECK(loaded.post_process.channel_map.enabled);
+    CHECK(loaded.post_process.channel_map.mix == 0.42);
+    CHECK(loaded.post_process.channel_map.red_source
+          == pvt::ChannelSource::Zero);
+    CHECK(loaded.post_process.channel_map.green_source
+          == pvt::ChannelSource::One);
+    CHECK(loaded.post_process.channel_map.blue_source
+          == pvt::ChannelSource::Alpha);
+    CHECK(loaded.post_process.channel_map.alpha_source
+          == pvt::ChannelSource::Blue);
     CHECK(loaded.post_process.antialias_enabled);
     CHECK(loaded.post_process.antialias_strength == 0.82);
     CHECK(loaded.post_process.antialias_threshold == 0.14);
     CHECK(loaded.post_process.antialias_passes == 3);
+    CHECK(loaded.post_process.order == original.post_process.order);
 
     // New radial spirals serialize under their own token. The former
     // `subtractive` token migrates to the explicitly named square spiral so
@@ -4465,9 +4733,31 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t18\n", 0U) == 0U);
-    std::string version_seventeen(current_version_bytes.begin(),
-                                  current_version_bytes.end());
+              .rfind("PVT_SETUP\t19\n", 0U) == 0U);
+    std::string version_eighteen(current_version_bytes.begin(),
+                                 current_version_bytes.end());
+    version_eighteen.replace(0U, std::string("PVT_SETUP\t19").size(),
+                             "PVT_SETUP\t18");
+    erase_records_with_prefix(
+        version_eighteen, "post_process.channel_map.");
+    erase_records_with_prefix(version_eighteen, "post_process.order.");
+    pvt::RenderConfig loaded_version_eighteen;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_eighteen, loaded_version_eighteen, &error));
+    CHECK(!loaded_version_eighteen.post_process.channel_map.enabled);
+    CHECK(loaded_version_eighteen.post_process.channel_map.mix == 1.0);
+    CHECK(loaded_version_eighteen.post_process.channel_map.red_source
+          == pvt::ChannelSource::Red);
+    CHECK(loaded_version_eighteen.post_process.channel_map.green_source
+          == pvt::ChannelSource::Green);
+    CHECK(loaded_version_eighteen.post_process.channel_map.blue_source
+          == pvt::ChannelSource::Blue);
+    CHECK(loaded_version_eighteen.post_process.channel_map.alpha_source
+          == pvt::ChannelSource::Alpha);
+    CHECK(loaded_version_eighteen.post_process.order
+          == pvt::default_config().post_process.order);
+
+    std::string version_seventeen = version_eighteen;
     version_seventeen.replace(0U, std::string("PVT_SETUP\t18").size(),
                               "PVT_SETUP\t17");
     for (const char* key : {
@@ -5371,6 +5661,23 @@ void test_image_formats_and_dither(const fs::path& directory) {
     pvt::Image image;
     std::string error;
     CHECK(pvt::render_frame(config, 2, image, &error));
+    pvt::Image opaque_image = image;
+    for (std::size_t offset = 3U; offset < opaque_image.pixels.size();
+         offset += 4U) {
+        opaque_image.pixels[offset] = 1.0F;
+    }
+
+    // Image validation is the last defense against any future static
+    // transparency-analysis omission: RGB output never discards actual alpha.
+    config.alpha.enabled = false;
+    config.output.write_alpha = false;
+    const fs::path rejected_transparency =
+        directory / "rgb-would-discard-alpha.png";
+    CHECK(!pvt::write_image(rejected_transparency.string(), image, config,
+                            122U, &error));
+    CHECK(error.find("Alpha output") != std::string::npos);
+    CHECK(!fs::exists(rejected_transparency));
+    config.alpha.enabled = true;
 
     const fs::path protected_destination = directory / "protected-image.bin";
     {
@@ -5443,7 +5750,8 @@ void test_image_formats_and_dither(const fs::path& directory) {
         config.output.dither_enabled = true;
         config.alpha.enabled = false;
         const fs::path rgb = directory / ("rgb" + std::to_string(depth) + ".png");
-        CHECK(pvt::write_image(rgb.string(), image, config, 123U, &error));
+        CHECK(pvt::write_image(rgb.string(), opaque_image, config, 123U,
+                               &error));
         check_png_header(rgb, depth, 2);
 
         config.alpha.enabled = true;
@@ -5503,7 +5811,8 @@ void test_image_formats_and_dither(const fs::path& directory) {
     config.output.dither_enabled = true; // Must still be ignored for EXR.
     config.alpha.enabled = false;
     const fs::path rgb_exr = directory / "rgb.exr";
-    CHECK(pvt::write_image(rgb_exr.string(), image, config, 1U, &error));
+    CHECK(pvt::write_image(rgb_exr.string(), opaque_image, config, 1U,
+                           &error));
     auto channels = exr_channels(rgb_exr);
     CHECK(channels.size() == 3U);
     CHECK(std::all_of(channels.begin(), channels.end(),
@@ -5546,6 +5855,46 @@ void test_image_formats_and_dither(const fs::path& directory) {
     CHECK(pvt::write_image(transparent_png.string(), transparent_image,
                            transparent_edge, 12U, &error));
     check_png_header(transparent_png, 8, 6);
+
+    // Alpha-changing finishing stages have the same export-safety contract as
+    // transparent edges and motion. In-memory rendering remains available,
+    // but RGB-only writing must not silently discard the generated alpha.
+    auto transparent_finish = pvt::default_config();
+    make_small(transparent_finish);
+    transparent_finish.alpha.enabled = false;
+    transparent_finish.output.write_alpha = false;
+    transparent_finish.post_process.invert_alpha_enabled = true;
+    CHECK(pvt::render_frame(
+        transparent_finish, 0, transparent_image, &error));
+    const fs::path inverted_alpha_png =
+        directory / "transparent-inverted-alpha.png";
+    CHECK(!pvt::write_image(inverted_alpha_png.string(), transparent_image,
+                            transparent_finish, 15U, &error));
+    CHECK(error.find("Alpha output") != std::string::npos);
+    CHECK(!fs::exists(inverted_alpha_png));
+
+    transparent_finish.post_process.invert_alpha_enabled = false;
+    transparent_finish.post_process.channel_map.enabled = true;
+    transparent_finish.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Zero;
+    CHECK(pvt::render_frame(
+        transparent_finish, 0, transparent_image, &error));
+    const fs::path routed_alpha_png =
+        directory / "transparent-routed-alpha.png";
+    CHECK(!pvt::write_image(routed_alpha_png.string(), transparent_image,
+                            transparent_finish, 16U, &error));
+    CHECK(error.find("Alpha output") != std::string::npos);
+    CHECK(!fs::exists(routed_alpha_png));
+
+    transparent_finish.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::One;
+    const fs::path opaque_routed_alpha_png =
+        directory / "opaque-routed-alpha.png";
+    CHECK(pvt::render_frame(
+        transparent_finish, 0, transparent_image, &error));
+    CHECK(pvt::write_image(opaque_routed_alpha_png.string(), transparent_image,
+                           transparent_finish, 17U, &error));
+    check_png_header(opaque_routed_alpha_png, 8, 2);
 
     auto transparent_surface = pvt::default_config();
     make_small(transparent_surface);
@@ -5795,6 +6144,7 @@ int main(int argc, char** argv) {
 
     test_defaults_and_dynamic_collections();
     test_parameter_lfos();
+    test_project_post_process_alpha_safety();
     test_live_control_model_and_setup_codec();
     test_synchronized_clocks_and_music();
     test_layer_clock_mixing_and_generated_shaping();

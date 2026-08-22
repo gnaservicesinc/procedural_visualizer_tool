@@ -566,6 +566,123 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.003, 0.0003,
                 "post-process global/channel double inversion/straight-alpha antialias");
 
+    // A one-color linear palette makes the source channels exact and visibly
+    // out of range while spatial alpha still gives the later odd antialias
+    // pass real work. Verify the map in isolation first so CPU/GPU agreement
+    // cannot hide an overwrite-ordered implementation or missing alpha clamp.
+    pvt::RenderConfig channel_routing = parity_config();
+    channel_routing.width = 83;
+    channel_routing.height = 57;
+    channel_routing.block_size = 1;
+    channel_routing.waves.clear();
+    channel_routing.swings.clear();
+    channel_routing.effects.clear();
+    channel_routing.displacement_enabled = false;
+    channel_routing.lighting_enabled = false;
+    channel_routing.spiral_enabled = false;
+    channel_routing.wall_reflection_enabled = false;
+    channel_routing.transform = {};
+    channel_routing.palette.enabled = true;
+    channel_routing.palette.colors = {{
+        2.5, -0.5, 0.25, 0.6, "HDR channel route",
+        pvt::PaletteColorEncoding::Linear}};
+    channel_routing.alpha.use_source_alpha = true;
+    channel_routing.quantization.enabled = false;
+    channel_routing.post_process = {};
+    pvt::Image unmapped;
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, cpu_options,
+                                     unmapped, nullptr, &error));
+
+    channel_routing.post_process.channel_map.enabled = true;
+    channel_routing.post_process.channel_map.red_source =
+        pvt::ChannelSource::Green;
+    channel_routing.post_process.channel_map.green_source =
+        pvt::ChannelSource::Blue;
+    channel_routing.post_process.channel_map.blue_source =
+        pvt::ChannelSource::Alpha;
+    channel_routing.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Red;
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, gpu_options,
+                                     gpu, nullptr, &error));
+    bool simultaneous_map = cpu.pixels.size() == unmapped.pixels.size();
+    bool high_alpha_clamped = simultaneous_map;
+    if (simultaneous_map) {
+        for (std::size_t offset = 0U;
+             offset + 3U < cpu.pixels.size(); offset += 4U) {
+            simultaneous_map = simultaneous_map
+                && std::fabs(
+                       cpu.pixels[offset] - unmapped.pixels[offset + 1U])
+                       < 1.0e-6F
+                && std::fabs(cpu.pixels[offset + 1U]
+                             - unmapped.pixels[offset + 2U]) < 1.0e-6F
+                && std::fabs(cpu.pixels[offset + 2U]
+                             - unmapped.pixels[offset + 3U]) < 1.0e-6F;
+            high_alpha_clamped = high_alpha_clamped
+                                 && cpu.pixels[offset + 3U] == 1.0F;
+        }
+    }
+    CHECK(simultaneous_map);
+    CHECK(high_alpha_clamped);
+    check_close(cpu, gpu, 0.0001, 0.00001, 0.0001, 0.00001,
+                "simultaneous HDR RGBA channel routing/high alpha clamp");
+
+    channel_routing.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Green;
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, gpu_options,
+                                     gpu, nullptr, &error));
+    bool low_alpha_clamped = !cpu.pixels.empty();
+    for (std::size_t offset = 3U; offset < cpu.pixels.size(); offset += 4U) {
+        low_alpha_clamped = low_alpha_clamped
+                            && cpu.pixels[offset] == 0.0F;
+    }
+    CHECK(low_alpha_clamped);
+    check_close(cpu, gpu, 0.0001, 0.00001, 0.0001, 0.00001,
+                "HDR channel routing/low alpha clamp");
+
+    // Put quantization first and each inversion after an odd number of
+    // antialias passes. This exercises authored dispatch order and verifies
+    // that the final current/scratch buffer is carried into later stages.
+    channel_routing.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Red;
+    channel_routing.quantization.enabled = true;
+    channel_routing.quantization.mode = pvt::QuantizationMode::Rgb;
+    channel_routing.quantization.levels = 9;
+    channel_routing.quantization.mix = 1.0;
+    channel_routing.post_process.antialias_enabled = true;
+    channel_routing.post_process.antialias_strength = 0.71;
+    channel_routing.post_process.antialias_threshold = 0.0;
+    channel_routing.post_process.antialias_passes = 3;
+    channel_routing.post_process.invert_rgb_enabled = true;
+    channel_routing.post_process.invert_rgb_mix = 0.33;
+    channel_routing.post_process.invert_red_enabled = true;
+    channel_routing.post_process.invert_red_mix = 0.61;
+    channel_routing.post_process.invert_green_enabled = true;
+    channel_routing.post_process.invert_green_mix = 0.27;
+    channel_routing.post_process.invert_blue_enabled = true;
+    channel_routing.post_process.invert_blue_mix = 0.49;
+    channel_routing.post_process.invert_alpha_enabled = true;
+    channel_routing.post_process.invert_alpha_mix = 0.2;
+    channel_routing.post_process.order = {
+        pvt::PostProcessStage::Quantization,
+        pvt::PostProcessStage::ChannelMap,
+        pvt::PostProcessStage::Antialias,
+        pvt::PostProcessStage::InvertAlpha,
+        pvt::PostProcessStage::InvertBlue,
+        pvt::PostProcessStage::InvertGreen,
+        pvt::PostProcessStage::InvertRed,
+        pvt::PostProcessStage::InvertRgb};
+    CHECK(pvt::validate(channel_routing).ok);
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(channel_routing, 0.37, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.15, 0.015, 0.006, 0.0006,
+                "authored post order/HDR channel map/odd antialias passes");
+
     // Coordinate stages and glow exercise every shared-buffer direction and
     // retain straight-alpha coverage through the Metal blur pipeline.
     config = parity_config();

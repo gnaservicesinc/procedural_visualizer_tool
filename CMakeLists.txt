@@ -152,6 +152,7 @@ add_library(ProceduralVisualizerTool
     src/obj_surface.cpp
     src/obj_surface.h
     src/path_utf8.h
+    src/post_process_alpha.h
     src/source_image.cpp
     src/source_image.h
     src/windows_file_install.h
@@ -535,6 +536,8 @@ if(PVT_BUILD_QT_GUI)
         gui/audio_processing_dialog.h
         gui/application_settings_dialog.cpp
         gui/application_settings_dialog.h
+        gui/performance_settings.cpp
+        gui/performance_settings.h
         gui/device_sleep_guard.cpp
         gui/device_sleep_guard.h
         gui/main.cpp

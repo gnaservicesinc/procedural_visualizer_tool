@@ -34,6 +34,11 @@ struct FrameConstants {
     float4 post_channel_mixes; // red, green, blue, reserved
 };
 
+struct GpuChannelMap {
+    uint4 sources; // red, green, blue, alpha ChannelSource values
+    float4 values; // mix, reserved...
+};
+
 struct GpuWave {
     float4 geometry; // source x/y, effective amplitude, spatial frequency
     float4 phase;    // phase radians, direction, resolved tangent, unused
@@ -1974,35 +1979,71 @@ kernel void transform_image(constant FrameConstants& frame [[buffer(0)]],
 
 kernel void post_process_invert(
     constant FrameConstants& frame [[buffer(0)]],
-    device float4* image [[buffer(1)]],
+    constant uint& stage [[buffer(1)]],
+    device float4* image [[buffer(2)]],
     uint2 gid [[thread_position_in_grid]]) {
     const uint width = frame.dimensions_counts.x;
     if (gid.x >= width || gid.y >= frame.dimensions_counts.y) return;
     const uint offset = gid.y * width + gid.x;
     float4 color = image[offset];
-    if (frame.post_flags.x != 0u && frame.post_values.x > 0.0f) {
+    if (stage == 0u && frame.post_flags.x != 0u
+        && frame.post_values.x > 0.0f) {
         color.rgb = mix(color.rgb, 1.0f - color.rgb,
                         frame.post_values.x);
-    }
-    if (frame.post_channel_flags.x != 0u
+    } else if (stage == 1u && frame.post_channel_flags.x != 0u
         && frame.post_channel_mixes.x > 0.0f) {
         color.r = mix(color.r, 1.0f - color.r,
                       frame.post_channel_mixes.x);
-    }
-    if (frame.post_channel_flags.y != 0u
+    } else if (stage == 2u && frame.post_channel_flags.y != 0u
         && frame.post_channel_mixes.y > 0.0f) {
         color.g = mix(color.g, 1.0f - color.g,
                       frame.post_channel_mixes.y);
-    }
-    if (frame.post_channel_flags.z != 0u
+    } else if (stage == 3u && frame.post_channel_flags.z != 0u
         && frame.post_channel_mixes.z > 0.0f) {
         color.b = mix(color.b, 1.0f - color.b,
                       frame.post_channel_mixes.z);
-    }
-    if (frame.post_flags.y != 0u && frame.post_values.y > 0.0f) {
-        color.a = mix(color.a, 1.0f - color.a, frame.post_values.y);
+    } else if (stage == 4u && frame.post_flags.y != 0u
+               && frame.post_values.y > 0.0f) {
+        color.a = clamp_unit(
+            mix(color.a, 1.0f - color.a, frame.post_values.y));
     }
     image[offset] = color;
+}
+
+float post_channel_source(float4 input, uint source) {
+    switch (source) {
+        case 0u: return input.r;
+        case 1u: return input.g;
+        case 2u: return input.b;
+        case 3u: return input.a;
+        case 4u: return 0.0f;
+        case 5u: return 1.0f;
+        default: return 0.0f;
+    }
+}
+
+kernel void post_process_channel_map(
+    constant FrameConstants& frame [[buffer(0)]],
+    constant GpuChannelMap& channel_map [[buffer(1)]],
+    device float4* image [[buffer(2)]],
+    uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    if (gid.x >= width || gid.y >= frame.dimensions_counts.y) return;
+    const uint offset = gid.y * width + gid.x;
+    const float4 input = image[offset];
+    const float amount = channel_map.values.x;
+    float4 output;
+    // Every source is sampled from the immutable stage input so swaps and
+    // cycles are simultaneous. RGB remains unclamped working-precision HDR.
+    output.r = mix(input.r,
+                   post_channel_source(input, channel_map.sources.x), amount);
+    output.g = mix(input.g,
+                   post_channel_source(input, channel_map.sources.y), amount);
+    output.b = mix(input.b,
+                   post_channel_source(input, channel_map.sources.z), amount);
+    output.a = clamp_unit(mix(
+        input.a, post_channel_source(input, channel_map.sources.w), amount));
+    image[offset] = output;
 }
 
 float4 post_premultiply(float4 color) {

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **11.0.2**. The version is read from `VERSION` by every
+Current product version: **12.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,34 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 12.0.0 ordered finishing and host-aware workflow controls
+
+Post Effects is now an artist-orderable eight-stage finishing pipeline:
+combined RGB inversion, individual Red/Green/Blue/Alpha inversions,
+simultaneous RGBA channel routing, edge antialiasing, and quantization. Every
+output channel can read Red, Green, Blue, Alpha, Zero, or One from the same
+incoming pixel, which makes replacement, duplication, clearing, filling, and
+true swaps deterministic instead of depending on overwrite order. The routing
+mix is available to numeric LFOs, while routing enable/source choices are Live
+targets. CPU and Metal execute the saved order with matching float-RGBA
+semantics; setup format 19 and layer format 17 persist it, and older records
+load with the historical order and a disabled identity map.
+
+**Application Settings > Performance** now accepts render-memory budgets as
+Automatic, MiB, GiB, or a percentage of detected physical RAM, displays the
+resolved budget, and warns when a manual value exceeds installed memory. The
+host-adaptive Automatic policy reserves most RAM for the operating system and
+other applications. Export pauses editor-preview work by default so current-
+frame, sequence, and native-video jobs own the renderer; this remains an
+explicit machine-local preference and normal preview/playback resumes when the
+job ends.
+
+New documents open on the Project page with the project name focused and
+selected, including after **New Project**. Saved templates still generate fresh
+project/layer identities and empty history. The expanded public by-value
+`PostProcessConfig` advances the product major and shared-library SONAME
+together to 12.0.0/12; installed consumers must rebuild.
 
 ## 11.0.2 deterministic release validation
 
@@ -836,11 +864,13 @@ sudo apt install procedural-visualizer-tool
   (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
 - Independent feature toggles for displacement, slope lighting, spiral, and
   wall reflection.
-- Post-effects linear RGB inversion and alpha inversion with independent mixes,
-  premultiplied edge antialiasing with strength/threshold/pass controls, then
+- An artist-orderable eight-stage Post Effects pipeline: combined RGB and
+  individual R/G/B/A inversions, simultaneous RGBA channel routing,
+  premultiplied edge antialiasing with strength/threshold/pass controls, and
   RGB, luminance, or hue quantization from 2 through the signed-int UI/API
-  capacity with adjustable mix.
-  This final pipeline remains independent of the starting palette.
+  capacity with adjustable mix. Each mapped output can read R/G/B/A/Zero/One
+  from the same input pixel, so duplication and swaps are deterministic. This
+  final pipeline remains independent of the starting palette.
 - Plane (flat or PNG-displaced), closed ray-cast cylinder, sphere, ray-cast
   cube, and custom Wavefront OBJ mappings.
   Displacement Plane density follows the effective preview/Live/output
@@ -918,7 +948,9 @@ they persist across projects and relaunches and are never placed inside a
 portable project. The General page can also capture the complete current
 project as the template for future **New Project** commands or restore the
 built-in template. New documents receive fresh project/layer identities, so
-using a saved template never aliases histories or assets. The undo step setting
+using a saved template never aliases histories or assets. They open on the
+Project page with the project name focused and selected, encouraging an early
+semantic name before the first save. The undo step setting
 uses Qt's signed-int command capacity and supports Unlimited. Undo snapshots
 grow with available memory; if allocation fails, history is cleared safely while
 the document remains correctly dirty.
@@ -1343,8 +1375,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-17 remain importable;
-current explicit legacy output is setup format 18. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-18 remain importable;
+current explicit legacy output is setup format 19. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1370,7 +1402,10 @@ fill, lighting model, rear compositing, and OBJ normalization explicit. Older
 files receive visible compatibility values that reproduce their former
 presentation without carrying hidden behavior forward. Format 17 adds numeric
 parameter LFOs. Format 18 adds the independent red, green, and blue inversion
-stages; project layer records use the corresponding current layer format 16.
+stages. Format 19 adds simultaneous RGBA channel routing and the exact
+eight-stage post-processing order; project layer records use the corresponding
+current layer format 17. Older records receive the historical stage order and
+a disabled identity map.
 Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.

@@ -739,6 +739,40 @@ bool parse_move_command(const std::string& input, std::size_t count,
     return true;
 }
 
+void configure_post_process_order(RenderConfig& config) {
+    for (;;) {
+        std::cout << "\n-- Post-effect order --\n";
+        for (std::size_t index = 0U;
+             index < config.post_process.order.size(); ++index) {
+            std::cout << "  " << (index + 1U) << ") "
+                      << pvt::post_process_stage_name(
+                             config.post_process.order[index])
+                      << '\n';
+        }
+        std::string input;
+        if (!read_line("m FROM TO to move a stage, or b [b]: ", input)
+            || input.empty() || input == "b" || input == "B") {
+            return;
+        }
+        std::size_t from = 0U;
+        std::size_t to = 0U;
+        if (!parse_move_command(
+                input, config.post_process.order.size(), from, to)) {
+            std::cout << "Use m followed by two existing stage numbers.\n";
+            continue;
+        }
+        if (from == to) continue;
+        const pvt::PostProcessStage stage = config.post_process.order[from];
+        config.post_process.order.erase(
+            config.post_process.order.begin()
+            + static_cast<std::ptrdiff_t>(from));
+        config.post_process.order.insert(
+            config.post_process.order.begin()
+            + static_cast<std::ptrdiff_t>(to), stage);
+        g_prompt_changed = true;
+    }
+}
+
 void configure_waves(RenderConfig& config) {
     for (;;) {
         std::cout << "\n-- Waves (" << config.waves.size() << ") --\n";
@@ -1542,6 +1576,44 @@ void configure_color(RenderConfig& config) {
                         config.post_process.invert_alpha_enabled)
         || !prompt_real("Invert alpha mix",
                         config.post_process.invert_alpha_mix, 0.0, 1.0)
+        || !prompt_bool("RGBA channel mapping enabled",
+                        config.post_process.channel_map.enabled)
+        || !prompt_real("RGBA channel mapping mix",
+                        config.post_process.channel_map.mix, 0.0, 1.0)
+        || !prompt_enum(
+            "Red output source", config.post_process.channel_map.red_source,
+            {{pvt::ChannelSource::Red, "Red"},
+             {pvt::ChannelSource::Green, "Green"},
+             {pvt::ChannelSource::Blue, "Blue"},
+             {pvt::ChannelSource::Alpha, "Alpha"},
+             {pvt::ChannelSource::Zero, "Zero"},
+             {pvt::ChannelSource::One, "One"}})
+        || !prompt_enum(
+            "Green output source",
+            config.post_process.channel_map.green_source,
+            {{pvt::ChannelSource::Red, "Red"},
+             {pvt::ChannelSource::Green, "Green"},
+             {pvt::ChannelSource::Blue, "Blue"},
+             {pvt::ChannelSource::Alpha, "Alpha"},
+             {pvt::ChannelSource::Zero, "Zero"},
+             {pvt::ChannelSource::One, "One"}})
+        || !prompt_enum(
+            "Blue output source", config.post_process.channel_map.blue_source,
+            {{pvt::ChannelSource::Red, "Red"},
+             {pvt::ChannelSource::Green, "Green"},
+             {pvt::ChannelSource::Blue, "Blue"},
+             {pvt::ChannelSource::Alpha, "Alpha"},
+             {pvt::ChannelSource::Zero, "Zero"},
+             {pvt::ChannelSource::One, "One"}})
+        || !prompt_enum(
+            "Alpha output source",
+            config.post_process.channel_map.alpha_source,
+            {{pvt::ChannelSource::Red, "Red"},
+             {pvt::ChannelSource::Green, "Green"},
+             {pvt::ChannelSource::Blue, "Blue"},
+             {pvt::ChannelSource::Alpha, "Alpha"},
+             {pvt::ChannelSource::Zero, "Zero"},
+             {pvt::ChannelSource::One, "One"}})
         || !prompt_bool("Edge antialiasing enabled",
                         config.post_process.antialias_enabled)
         || !prompt_real("Edge antialiasing strength",
@@ -1560,6 +1632,7 @@ void configure_color(RenderConfig& config) {
         return;
     }
 
+    configure_post_process_order(config);
     configure_palette(config);
 }
 

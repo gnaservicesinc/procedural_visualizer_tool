@@ -12,6 +12,7 @@
 #include "../src/config_codec.h"
 #include "../src/displacement_surface.h"
 #include "../src/palette_io.h"
+#include "../src/post_process_alpha.h"
 #include "../src/project_bundle.h"
 #include "../src/source_image.h"
 
@@ -118,12 +119,7 @@ constexpr int kDefaultUndoLimit = 500;
 constexpr int kMinimumUndoLimit = 0;
 constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
 constexpr std::size_t kMebibyte = std::size_t{1024U} * 1024U;
-
-std::size_t maximum_memory_preference_mib() {
-    return (std::min)(
-        (std::numeric_limits<std::size_t>::max)() / kMebibyte,
-        static_cast<std::size_t>((std::numeric_limits<int>::max)()));
-}
+constexpr std::size_t kGibibyte = kMebibyte * 1024U;
 
 std::size_t read_size_preference(const QSettings& settings,
                                  const QString& key,
@@ -180,9 +176,42 @@ PerformanceSettings read_performance_settings(const QSettings& settings) {
     performance.gpu_frames_in_flight = read_size_preference(
         settings, QStringLiteral("performance/gpuFramesInFlight"),
         pvt::kMaximumGpuFramesInFlight);
-    performance.render_memory_budget_mib = read_size_preference(
-        settings, QStringLiteral("performance/renderMemoryBudgetMiB"),
-        maximum_memory_preference_mib());
+    const QString memory_mode_key =
+        QStringLiteral("performance/renderMemoryBudgetMode");
+    const QString memory_value_key =
+        QStringLiteral("performance/renderMemoryBudgetValue");
+    bool loaded_memory_preference = false;
+    if (settings.contains(memory_mode_key)
+        && settings.contains(memory_value_key)) {
+        const int mode = settings.value(memory_mode_key).toInt();
+        bool value_ok = false;
+        const double value = settings.value(memory_value_key).toDouble(&value_ok);
+        if (mode >= static_cast<int>(RenderMemoryBudgetMode::Automatic)
+            && mode <= static_cast<int>(
+                           RenderMemoryBudgetMode::PercentOfPhysicalMemory)
+            && value_ok && std::isfinite(value) && value >= 0.0) {
+            performance.render_memory_budget_mode =
+                static_cast<RenderMemoryBudgetMode>(mode);
+            performance.render_memory_budget_value = value;
+            loaded_memory_preference = true;
+        }
+    }
+    if (!loaded_memory_preference) {
+        // Migrate the original integer-MiB preference without changing the
+        // effective hard limit selected by an existing user.
+        const std::size_t legacy_mib = read_size_preference(
+            settings, QStringLiteral("performance/renderMemoryBudgetMiB"),
+            (std::numeric_limits<std::size_t>::max)() / kMebibyte);
+        if (legacy_mib > 0U) {
+            performance.render_memory_budget_mode =
+                RenderMemoryBudgetMode::Mebibytes;
+            performance.render_memory_budget_value =
+                static_cast<double>(legacy_mib);
+        }
+    }
+    performance.pause_editor_preview_during_export = settings.value(
+        QStringLiteral("performance/pauseEditorPreviewDuringExport"), true)
+                                                        .toBool();
     return performance;
 }
 
@@ -1129,10 +1158,6 @@ bool layer_visible_in_project(const pvt::ProjectConfig& project,
                               const pvt::LayerConfig& layer);
 
 bool configuration_requires_alpha(const pvt::RenderConfig& config) {
-    if (config.post_process.invert_alpha_enabled
-        && config.post_process.invert_alpha_mix > 0.0) {
-        return true;
-    }
     if (config.alpha.use_source_alpha) {
         if (config.starting_image.enabled) return true;
         if (config.palette.enabled
@@ -1196,7 +1221,7 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
             return true;
         }
     }
-    return std::any_of(config.effects.begin(), config.effects.end(), [](const auto& effect) {
+    if (std::any_of(config.effects.begin(), config.effects.end(), [](const auto& effect) {
         const bool active_blur = effect.type == pvt::EffectType::Blur
                                  && effect.radius_pixels > 0.0
                                  && effect.blur_maximum > 0.0;
@@ -1213,7 +1238,12 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
                && effect.type != pvt::EffectType::BlockScale
                && effect.type != pvt::EffectType::ParticleField
                && effect.edge_mode == pvt::EdgeMode::Alpha;
-    });
+    })) {
+        return true;
+    }
+    return pvt::detail::post_process_alpha_certainty(
+               config, pvt::detail::AlphaCertainty::One)
+           != pvt::detail::AlphaCertainty::One;
 }
 
 bool visible_stack_requires_alpha(
@@ -1247,7 +1277,10 @@ bool visible_stack_requires_alpha(
             const bool source_is_guaranteed_transparent =
                 materialized.alpha.enabled
                 && materialized.alpha.maximum == 0.0
-                && !particle_can_synthesize_coverage;
+                && !particle_can_synthesize_coverage
+                && pvt::detail::post_process_alpha_certainty(
+                       materialized, pvt::detail::AlphaCertainty::Zero)
+                       == pvt::detail::AlphaCertainty::Zero;
             if (!source_is_guaranteed_transparent) {
                 // Destination-out can remove coverage established by every
                 // lower layer. A later ordinary opaque layer may establish it.
@@ -2481,13 +2514,20 @@ MainWindow::MainWindow(QWidget* parent)
         render_backend_ = pvt::RenderBackend::Cpu;
     }
     setDriversExpanded(false);
-    setWorkflowStage(1);
+    setWorkflowStage(0);
     if (!custom_defaults_load_warning_.isEmpty()) {
         status_->setText(custom_defaults_load_warning_);
     }
     configure_readable_layouts(this);
     qApp->installEventFilter(this);
-    QTimer::singleShot(0, this, [this] { configure_readable_layouts(this); });
+    QTimer::singleShot(0, this, [this] {
+        configure_readable_layouts(this);
+        if (document_revision_ == 1U && current_project_path_.isEmpty()
+            && !project_io_active_ && project_name_ != nullptr) {
+            project_name_->setFocus(Qt::OtherFocusReason);
+            project_name_->selectAll();
+        }
+    });
     schedulePreview();
 }
 
@@ -2709,26 +2749,41 @@ void MainWindow::updateWorkflowSummaries() {
             tr("%1 categorized layer effects")
                 .arg(static_cast<qulonglong>(config_.effects.size())));
         QStringList active_post_effects;
-        if (config_.post_process.invert_rgb_enabled) {
-            active_post_effects.append(tr("all-RGB invert"));
-        }
-        if (config_.post_process.invert_red_enabled) {
-            active_post_effects.append(tr("red invert"));
-        }
-        if (config_.post_process.invert_green_enabled) {
-            active_post_effects.append(tr("green invert"));
-        }
-        if (config_.post_process.invert_blue_enabled) {
-            active_post_effects.append(tr("blue invert"));
-        }
-        if (config_.post_process.invert_alpha_enabled) {
-            active_post_effects.append(tr("alpha invert"));
-        }
-        if (config_.post_process.antialias_enabled) {
-            active_post_effects.append(tr("edge antialiasing"));
-        }
-        if (config_.quantization.enabled) {
-            active_post_effects.append(tr("quantization"));
+        for (const pvt::PostProcessStage stage : config_.post_process.order) {
+            switch (stage) {
+                case pvt::PostProcessStage::InvertRgb:
+                    if (config_.post_process.invert_rgb_enabled)
+                        active_post_effects.append(tr("all-RGB invert"));
+                    break;
+                case pvt::PostProcessStage::InvertRed:
+                    if (config_.post_process.invert_red_enabled)
+                        active_post_effects.append(tr("red invert"));
+                    break;
+                case pvt::PostProcessStage::InvertGreen:
+                    if (config_.post_process.invert_green_enabled)
+                        active_post_effects.append(tr("green invert"));
+                    break;
+                case pvt::PostProcessStage::InvertBlue:
+                    if (config_.post_process.invert_blue_enabled)
+                        active_post_effects.append(tr("blue invert"));
+                    break;
+                case pvt::PostProcessStage::InvertAlpha:
+                    if (config_.post_process.invert_alpha_enabled)
+                        active_post_effects.append(tr("alpha invert"));
+                    break;
+                case pvt::PostProcessStage::ChannelMap:
+                    if (config_.post_process.channel_map.enabled)
+                        active_post_effects.append(tr("channel routing"));
+                    break;
+                case pvt::PostProcessStage::Antialias:
+                    if (config_.post_process.antialias_enabled)
+                        active_post_effects.append(tr("edge antialiasing"));
+                    break;
+                case pvt::PostProcessStage::Quantization:
+                    if (config_.quantization.enabled)
+                        active_post_effects.append(tr("quantization"));
+                    break;
+            }
         }
         workflow_stage_buttons_[5]->setStatusTip(
             active_post_effects.isEmpty()
@@ -4115,7 +4170,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         tr("Combine local waves, seamless whole-layer movement, and reusable paths. Movement and distortion effect types are separated in Layer Effects instead of duplicated by mapping location."));
     add_stage_intro(
         finish_layout, tr("Post Effects"),
-        tr("Finish the active layer with channel inversion, alpha-aware edge antialiasing, and optional color quantization. They run in that order before compositing; export encoding and destination settings remain in Export."));
+        tr("Finish the active layer with channel inversion, simultaneous RGBA routing, alpha-aware edge antialiasing, and optional color quantization. Arrange the stages explicitly below; export encoding and destination settings remain in Export."));
 
     auto* rhythm_group = new QGroupBox(tr("Rhythm and color timing"));
     auto* rhythm = new QFormLayout(rhythm_group);
@@ -4742,12 +4797,58 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface->addRow(surface_plane_displacement_group_);
     surface_layout->addWidget(surface_group);
 
+    auto* post_process_order_group = new QGroupBox(
+        tr("Finishing pipeline order"));
+    post_process_order_group->setObjectName(
+        QStringLiteral("postProcessOrderGroup"));
+    post_process_order_group->setToolTip(tr(
+        "Every finishing stage appears exactly once. Disabled stages remain in "
+        "the list so enabling one later preserves the authored order."));
+    auto* post_process_order_layout = new QVBoxLayout(
+        post_process_order_group);
+    post_process_order_ = new QListWidget;
+    post_process_order_->setObjectName(QStringLiteral("postProcessOrder"));
+    post_process_order_->setSelectionMode(
+        QAbstractItemView::SingleSelection);
+    post_process_order_->setAlternatingRowColors(true);
+    post_process_order_->setToolTip(tr(
+        "Stages run from top to bottom on this layer before it is composited."));
+    auto* post_process_order_buttons = new QWidget;
+    auto* post_process_order_button_layout = new QHBoxLayout(
+        post_process_order_buttons);
+    post_process_order_button_layout->setContentsMargins(0, 0, 0, 0);
+    post_process_up_ = new QPushButton(tr("Move up"));
+    post_process_up_->setObjectName(QStringLiteral("postProcessMoveUp"));
+    post_process_down_ = new QPushButton(tr("Move down"));
+    post_process_down_->setObjectName(QStringLiteral("postProcessMoveDown"));
+    post_process_order_button_layout->addWidget(post_process_up_);
+    post_process_order_button_layout->addWidget(post_process_down_);
+    post_process_order_button_layout->addStretch(1);
+    auto* post_process_order_help = new QLabel(tr(
+        "Order is layer-local and affects CPU and GPU rendering identically. "
+        "Channel routing reads every source from the same incoming pixel, so "
+        "swaps never depend on output-row order."));
+    post_process_order_help->setWordWrap(true);
+    post_process_order_layout->addWidget(post_process_order_);
+    post_process_order_layout->addWidget(post_process_order_buttons);
+    post_process_order_layout->addWidget(post_process_order_help);
+    connect(post_process_up_, &QPushButton::clicked, this,
+            [this] { moveSelectedPostProcessStage(-1); });
+    connect(post_process_down_, &QPushButton::clicked, this,
+            [this] { moveSelectedPostProcessStage(1); });
+    connect(post_process_order_, &QListWidget::currentRowChanged, this,
+            [this](int row) {
+                post_process_up_->setEnabled(row > 0);
+                post_process_down_->setEnabled(
+                    row >= 0 && row + 1 < post_process_order_->count());
+            });
+    finish_layout->addWidget(post_process_order_group);
+
     auto* post_process_group = new QGroupBox(
-        tr("Inversion and edge antialiasing"));
+        tr("Inversion, channel routing, and edge antialiasing"));
     post_process_group->setObjectName(QStringLiteral("postProcessGroup"));
     post_process_group->setToolTip(tr(
-        "Layer-local finishing effects. Inversion runs first, followed by "
-        "alpha-aware edge antialiasing and then color quantization."));
+        "Layer-local finishing effects run in the order authored above."));
     auto* post_process = new QFormLayout(post_process_group);
     post_invert_rgb_enabled_ = new QCheckBox(tr("Invert all RGB channels"));
     post_invert_rgb_enabled_->setObjectName(
@@ -4760,14 +4861,16 @@ QWidget* MainWindow::createLayerSettingsPage() {
         QStringLiteral("postInvertColorMix"));
     post_invert_rgb_mix_->setToolTip(tr(
         "Crossfade from the original color at 0 to fully inverted color at 1. "
-        "This stage runs before the individual channel inversions."));
+        "The stage acts on the value entering its current position in the "
+        "authored order."));
     const auto make_channel_invert_check = [](const QString& label,
                                               const QString& object_name) {
         auto* editor = new QCheckBox(label);
         editor->setObjectName(object_name);
         editor->setToolTip(tr(
-            "Invert this linear-light channel after the all-RGB inversion. "
-            "Enabling both can intentionally invert the channel twice."));
+            "Invert this linear-light channel at its current position in the "
+            "authored order. Two enabled inversion stages can intentionally "
+            "invert the same channel twice."));
         return editor;
     };
     const auto make_channel_invert_mix = [](const QString& object_name) {
@@ -4800,6 +4903,41 @@ QWidget* MainWindow::createLayerSettingsPage() {
         QStringLiteral("postInvertAlphaMix"));
     post_invert_alpha_mix_->setToolTip(tr(
         "Crossfade from the original alpha at 0 to fully inverted alpha at 1."));
+    post_channel_map_enabled_ = new QCheckBox(
+        tr("Simultaneous RGBA channel routing"));
+    post_channel_map_enabled_->setObjectName(
+        QStringLiteral("postChannelMapEnabled"));
+    post_channel_map_enabled_->setToolTip(tr(
+        "Route, duplicate, swap, fill, or drop channels without cascading "
+        "writes between output channels."));
+    post_channel_map_mix_ = real_editor(0.0, 1.0, 4, 0.01);
+    post_channel_map_mix_->setObjectName(
+        QStringLiteral("postChannelMapMix"));
+    post_channel_map_mix_->setToolTip(tr(
+        "Crossfade from the incoming pixel at 0 to the routed pixel at 1."));
+    const auto make_channel_source = [](
+        const QString& object_name) {
+        auto* editor = new QComboBox;
+        editor->setObjectName(object_name);
+        add_enum_item(editor, tr("Red"), pvt::ChannelSource::Red);
+        add_enum_item(editor, tr("Green"), pvt::ChannelSource::Green);
+        add_enum_item(editor, tr("Blue"), pvt::ChannelSource::Blue);
+        add_enum_item(editor, tr("Alpha"), pvt::ChannelSource::Alpha);
+        add_enum_item(editor, tr("Zero (drop)"), pvt::ChannelSource::Zero);
+        add_enum_item(editor, tr("One (fill)"), pvt::ChannelSource::One);
+        editor->setToolTip(tr(
+            "Select the incoming channel or constant used for this output. "
+            "All four selections read the same incoming pixel."));
+        return editor;
+    };
+    post_channel_red_source_ = make_channel_source(
+        QStringLiteral("postChannelRedSource"));
+    post_channel_green_source_ = make_channel_source(
+        QStringLiteral("postChannelGreenSource"));
+    post_channel_blue_source_ = make_channel_source(
+        QStringLiteral("postChannelBlueSource"));
+    post_channel_alpha_source_ = make_channel_source(
+        QStringLiteral("postChannelAlphaSource"));
     post_antialias_enabled_ = new QCheckBox(tr("Edge antialiasing"));
     post_antialias_enabled_->setObjectName(
         QStringLiteral("postEdgeAntialiasing"));
@@ -4831,6 +4969,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_process->addRow(tr("Blue invert mix"), post_invert_blue_mix_);
     post_process->addRow(post_invert_alpha_enabled_);
     post_process->addRow(tr("Alpha invert mix"), post_invert_alpha_mix_);
+    post_process->addRow(post_channel_map_enabled_);
+    post_process->addRow(tr("Channel routing mix"), post_channel_map_mix_);
+    post_process->addRow(tr("Output red from"), post_channel_red_source_);
+    post_process->addRow(tr("Output green from"), post_channel_green_source_);
+    post_process->addRow(tr("Output blue from"), post_channel_blue_source_);
+    post_process->addRow(tr("Output alpha from"), post_channel_alpha_source_);
     post_process->addRow(post_antialias_enabled_);
     post_process->addRow(tr("Strength"), post_antialias_strength_);
     post_process->addRow(tr("Edge threshold"), post_antialias_threshold_);
@@ -6206,6 +6350,14 @@ QWidget* MainWindow::createTimeline() {
 
 void MainWindow::togglePlayback() {
     if (playback_timer_ == nullptr || play_button_ == nullptr) return;
+    if (export_active_
+        && performance_settings_.pause_editor_preview_during_export) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "Editor playback is paused until the export finishes."));
+        }
+        return;
+    }
     if (live_workspace_ != nullptr && live_workspace_->isLiveActive()) {
         stopPlayback();
         if (status_ != nullptr) {
@@ -7931,7 +8083,8 @@ void MainWindow::connectEditors() {
                          post_invert_rgb_mix_,
                          post_invert_red_mix_, post_invert_green_mix_,
                          post_invert_blue_mix_,
-                         post_invert_alpha_mix_, post_antialias_strength_,
+                         post_invert_alpha_mix_, post_channel_map_mix_,
+                         post_antialias_strength_,
                          post_antialias_threshold_, quantization_mix_, alpha_minimum_,
                          alpha_maximum_, alpha_frequency_, phrase_warp_, ghost_mix_, ghost_lag_,
                          alpha_phase_, motion_center_x_, motion_center_y_,
@@ -7950,7 +8103,8 @@ void MainWindow::connectEditors() {
                          surface_plane_displacement_enabled_,
                          post_invert_red_enabled_, post_invert_green_enabled_,
                          post_invert_blue_enabled_,
-                         post_invert_alpha_enabled_, post_antialias_enabled_,
+                         post_invert_alpha_enabled_, post_channel_map_enabled_,
+                         post_antialias_enabled_,
                          quantization_enabled_,
                          alpha_enabled_, dither_enabled_, write_alpha_, overwrite_,
                          transform_flip_horizontal_, transform_flip_vertical_,
@@ -7980,6 +8134,8 @@ void MainWindow::connectEditors() {
     for (auto* editor : {surface_mapping_, surface_projection_,
                          surface_sizing_, surface_outside_,
                          surface_rotation_order_,
+                         post_channel_red_source_, post_channel_green_source_,
+                         post_channel_blue_source_, post_channel_alpha_source_,
                          quantization_mode_, bit_depth_, dither_method_,
                          transform_mirror_, motion_path_, starting_image_fit_,
                          starting_image_palette_dither_method_, starting_color_mode_}) {
@@ -9889,9 +10045,19 @@ void MainWindow::saveUserSettings() {
         QVariant::fromValue<qulonglong>(
             performance_settings_.gpu_frames_in_flight));
     settings.setValue(
+        QStringLiteral("performance/renderMemoryBudgetMode"),
+        static_cast<int>(performance_settings_.render_memory_budget_mode));
+    settings.setValue(
+        QStringLiteral("performance/renderMemoryBudgetValue"),
+        performance_settings_.render_memory_budget_value);
+    settings.setValue(
         QStringLiteral("performance/renderMemoryBudgetMiB"),
         QVariant::fromValue<qulonglong>(
-            performance_settings_.render_memory_budget_mib));
+            resolved_render_memory_budget_bytes(performance_settings_)
+            / kMebibyte));
+    settings.setValue(
+        QStringLiteral("performance/pauseEditorPreviewDuringExport"),
+        performance_settings_.pause_editor_preview_during_export);
     settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
                       recent_project_limit_);
     if (audio_volume_ != nullptr) {
@@ -9927,8 +10093,10 @@ void MainWindow::showApplicationSettings() {
                != current_performance.preview_live_cpu_workers
         || requested_performance.gpu_frames_in_flight
                != current_performance.gpu_frames_in_flight
-        || requested_performance.render_memory_budget_mib
-               != current_performance.render_memory_budget_mib;
+        || requested_performance.render_memory_budget_mode
+               != current_performance.render_memory_budget_mode
+        || requested_performance.render_memory_budget_value
+               != current_performance.render_memory_budget_value;
     const bool recent_limit_changed = requested_recent_limit != current_recent_limit;
     if (!undo_limit_changed && !performance_changed && !recent_limit_changed
         && defaults_action
@@ -9994,9 +10162,19 @@ void MainWindow::showApplicationSettings() {
         QVariant::fromValue<qulonglong>(
             requested_performance.gpu_frames_in_flight));
     settings.setValue(
+        QStringLiteral("performance/renderMemoryBudgetMode"),
+        static_cast<int>(requested_performance.render_memory_budget_mode));
+    settings.setValue(
+        QStringLiteral("performance/renderMemoryBudgetValue"),
+        requested_performance.render_memory_budget_value);
+    settings.setValue(
         QStringLiteral("performance/renderMemoryBudgetMiB"),
         QVariant::fromValue<qulonglong>(
-            requested_performance.render_memory_budget_mib));
+            resolved_render_memory_budget_bytes(requested_performance)
+            / kMebibyte));
+    settings.setValue(
+        QStringLiteral("performance/pauseEditorPreviewDuringExport"),
+        requested_performance.pause_editor_preview_during_export);
     settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
                       requested_recent_limit);
     settings.sync();
@@ -10213,6 +10391,17 @@ void MainWindow::replaceWithNewProject() {
     if (live_workspace_ != nullptr) live_workspace_->resetRealtimeFrame();
     refreshVersionsPage();
     updateWindowTitle();
+    setWorkflowStage(0);
+    const std::uint64_t new_project_revision = document_revision_;
+    QTimer::singleShot(0, this, [this, new_project_revision] {
+        if (document_revision_ != new_project_revision
+            || !current_project_path_.isEmpty() || project_io_active_
+            || project_name_ == nullptr) {
+            return;
+        }
+        project_name_->setFocus(Qt::OtherFocusReason);
+        project_name_->selectAll();
+    });
     schedulePreview();
     status_->setText(warning.isEmpty()
                          ? (hasCustomNewProjectDefaults()
@@ -10758,12 +10947,22 @@ void MainWindow::updateExportAvailability() {
     if (live_mode_action_ != nullptr) {
         live_mode_action_->setEnabled(!export_active_ && transaction_idle);
     }
+    if (settings_action_ != nullptr) {
+        // Performance preferences affect renderer ownership. Keep the active
+        // export's admission and preview-suspension contract immutable until
+        // that transaction has finished.
+        settings_action_->setEnabled(!export_active_);
+    }
     if (play_button_ != nullptr) {
-        play_button_->setEnabled(!performance_live);
+        const bool paused_for_export = export_active_
+            && performance_settings_.pause_editor_preview_during_export;
+        play_button_->setEnabled(!performance_live && !paused_for_export);
         play_button_->setToolTip(
             performance_live
                 ? tr("Stop performance LIVE before starting editor playback.")
-                : QString{});
+                : (paused_for_export
+                       ? tr("Editor playback is paused until the export finishes.")
+                       : QString{}));
     }
 }
 
@@ -10773,6 +10972,40 @@ void MainWindow::finishExportUiState() {
     updateExportAvailability();
     if (cancel_export_action_ != nullptr) {
         cancel_export_action_->setEnabled(false);
+    }
+    resumeEditorPreviewAfterExport();
+}
+
+void MainWindow::suspendEditorPreviewForExport() {
+    if (!performance_settings_.pause_editor_preview_during_export
+        || export_preview_suspended_) {
+        return;
+    }
+    export_preview_suspended_ = true;
+    resume_editor_playback_after_export_ = playback_timer_ != nullptr
+                                            && playback_timer_->isActive();
+    stopPlayback();
+    if (preview_timer_ != nullptr) preview_timer_->stop();
+    preview_deferred_ = false;
+    ++preview_generation_;
+    if (preview_cancel_ != nullptr) {
+        preview_cancel_->store(true, std::memory_order_relaxed);
+    }
+    updateExportAvailability();
+}
+
+void MainWindow::resumeEditorPreviewAfterExport() {
+    if (!export_preview_suspended_) return;
+    export_preview_suspended_ = false;
+    const bool resume_playback = resume_editor_playback_after_export_;
+    resume_editor_playback_after_export_ = false;
+    if (close_after_export_) return;
+    if (resume_playback) {
+        if (playback_timer_ != nullptr && !playback_timer_->isActive()) {
+            togglePlayback();
+        }
+    } else {
+        schedulePreview();
     }
 }
 
@@ -11611,6 +11844,17 @@ void MainWindow::loadGlobalEditors() {
     post_invert_alpha_enabled_->setChecked(
         config_.post_process.invert_alpha_enabled);
     post_invert_alpha_mix_->setValue(config_.post_process.invert_alpha_mix);
+    post_channel_map_enabled_->setChecked(
+        config_.post_process.channel_map.enabled);
+    post_channel_map_mix_->setValue(config_.post_process.channel_map.mix);
+    select_enum(post_channel_red_source_,
+                config_.post_process.channel_map.red_source);
+    select_enum(post_channel_green_source_,
+                config_.post_process.channel_map.green_source);
+    select_enum(post_channel_blue_source_,
+                config_.post_process.channel_map.blue_source);
+    select_enum(post_channel_alpha_source_,
+                config_.post_process.channel_map.alpha_source);
     post_antialias_enabled_->setChecked(
         config_.post_process.antialias_enabled);
     post_antialias_strength_->setValue(
@@ -11620,6 +11864,7 @@ void MainWindow::loadGlobalEditors() {
     post_antialias_passes_->setValue(config_.post_process.antialias_passes);
     updateSurfaceEditorState();
     updatePostProcessEditorState();
+    refreshPostProcessOrder();
     quantization_enabled_->setChecked(config_.quantization.enabled);
     quantization_levels_->setValue(config_.quantization.levels);
     quantization_mix_->setValue(config_.quantization.mix);
@@ -11755,6 +12000,12 @@ void MainWindow::updatePostProcessEditorState() {
         || post_invert_blue_mix_ == nullptr
         || post_invert_alpha_enabled_ == nullptr
         || post_invert_alpha_mix_ == nullptr
+        || post_channel_map_enabled_ == nullptr
+        || post_channel_map_mix_ == nullptr
+        || post_channel_red_source_ == nullptr
+        || post_channel_green_source_ == nullptr
+        || post_channel_blue_source_ == nullptr
+        || post_channel_alpha_source_ == nullptr
         || post_antialias_enabled_ == nullptr
         || post_antialias_strength_ == nullptr
         || post_antialias_threshold_ == nullptr
@@ -11768,10 +12019,73 @@ void MainWindow::updatePostProcessEditorState() {
     post_invert_blue_mix_->setEnabled(post_invert_blue_enabled_->isChecked());
     post_invert_alpha_mix_->setEnabled(
         post_invert_alpha_enabled_->isChecked());
+    const bool channel_map = post_channel_map_enabled_->isChecked();
+    post_channel_map_mix_->setEnabled(channel_map);
+    post_channel_red_source_->setEnabled(channel_map);
+    post_channel_green_source_->setEnabled(channel_map);
+    post_channel_blue_source_->setEnabled(channel_map);
+    post_channel_alpha_source_->setEnabled(channel_map);
     const bool antialiasing = post_antialias_enabled_->isChecked();
     post_antialias_strength_->setEnabled(antialiasing);
     post_antialias_threshold_->setEnabled(antialiasing);
     post_antialias_passes_->setEnabled(antialiasing);
+}
+
+void MainWindow::refreshPostProcessOrder(int selectedRow) {
+    if (post_process_order_ == nullptr || post_process_up_ == nullptr
+        || post_process_down_ == nullptr) {
+        return;
+    }
+    if (selectedRow < 0) selectedRow = post_process_order_->currentRow();
+    if (selectedRow < 0 && !config_.post_process.order.empty()) {
+        selectedRow = 0;
+    }
+    const QSignalBlocker blocker(post_process_order_);
+    post_process_order_->clear();
+    for (std::size_t index = 0U;
+         index < config_.post_process.order.size(); ++index) {
+        const pvt::PostProcessStage stage = config_.post_process.order[index];
+        auto* item = new QListWidgetItem(
+            tr("%1. %2")
+                .arg(static_cast<qulonglong>(index + 1U))
+                .arg(QString::fromUtf8(pvt::post_process_stage_name(stage))),
+            post_process_order_);
+        item->setData(Qt::UserRole, static_cast<int>(stage));
+    }
+    if (post_process_order_->count() > 0) {
+        selectedRow = std::clamp(selectedRow, 0,
+                                 post_process_order_->count() - 1);
+        post_process_order_->setCurrentRow(selectedRow);
+    }
+    post_process_up_->setEnabled(selectedRow > 0);
+    post_process_down_->setEnabled(
+        selectedRow >= 0 && selectedRow + 1 < post_process_order_->count());
+}
+
+void MainWindow::moveSelectedPostProcessStage(int direction) {
+    if (populating_ || post_process_order_ == nullptr
+        || (direction != -1 && direction != 1)) {
+        return;
+    }
+    const int row = post_process_order_->currentRow();
+    const int destination = row + direction;
+    if (row < 0 || destination < 0
+        || destination >= static_cast<int>(config_.post_process.order.size())) {
+        return;
+    }
+    auto before = captureActiveState();
+    std::swap(config_.post_process.order[static_cast<std::size_t>(row)],
+              config_.post_process.order[
+                  static_cast<std::size_t>(destination)]);
+    syncActiveRender();
+    refreshPostProcessOrder(destination);
+    updateWorkflowSummaries();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    status_->setText(tr("Moved finishing stage to position %1.")
+                         .arg(destination + 1));
+    recordActiveStateChange(tr("Reorder finishing stages"),
+                            std::move(before));
 }
 
 void MainWindow::refreshPaletteEditor() {
@@ -13958,6 +14272,27 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             post_invert_alpha_enabled_->isChecked();
     } else if (changed_editor == post_invert_alpha_mix_) {
         config_.post_process.invert_alpha_mix = post_invert_alpha_mix_->value();
+    } else if (changed_editor == post_channel_map_enabled_) {
+        config_.post_process.channel_map.enabled =
+            post_channel_map_enabled_->isChecked();
+    } else if (changed_editor == post_channel_map_mix_) {
+        config_.post_process.channel_map.mix = post_channel_map_mix_->value();
+    } else if (changed_editor == post_channel_red_source_) {
+        config_.post_process.channel_map.red_source =
+            static_cast<pvt::ChannelSource>(
+                post_channel_red_source_->currentData().toInt());
+    } else if (changed_editor == post_channel_green_source_) {
+        config_.post_process.channel_map.green_source =
+            static_cast<pvt::ChannelSource>(
+                post_channel_green_source_->currentData().toInt());
+    } else if (changed_editor == post_channel_blue_source_) {
+        config_.post_process.channel_map.blue_source =
+            static_cast<pvt::ChannelSource>(
+                post_channel_blue_source_->currentData().toInt());
+    } else if (changed_editor == post_channel_alpha_source_) {
+        config_.post_process.channel_map.alpha_source =
+            static_cast<pvt::ChannelSource>(
+                post_channel_alpha_source_->currentData().toInt());
     } else if (changed_editor == post_antialias_enabled_) {
         config_.post_process.antialias_enabled =
             post_antialias_enabled_->isChecked();
@@ -14066,6 +14401,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         || changed_editor == post_invert_green_enabled_
         || changed_editor == post_invert_blue_enabled_
         || changed_editor == post_invert_alpha_enabled_
+        || changed_editor == post_channel_map_enabled_
         || changed_editor == post_antialias_enabled_
         || changed_editor == quantization_enabled_) {
         updateWorkflowSummaries();
@@ -15054,6 +15390,16 @@ void MainWindow::clearLayerMusicSource() {
 
 void MainWindow::schedulePreview() {
     ++preview_generation_;
+    if (export_active_
+        && performance_settings_.pause_editor_preview_during_export) {
+        if (preview_timer_ != nullptr) preview_timer_->stop();
+        preview_deferred_ = false;
+        if (preview_watcher_ != nullptr && preview_watcher_->isRunning()
+            && preview_cancel_ != nullptr) {
+            preview_cancel_->store(true, std::memory_order_relaxed);
+        }
+        return;
+    }
     // Realtime output owns the preview while active. Performance Live includes
     // transient routes and clocks; presentation output uses the exact editor
     // snapshot and timeline frame. A second editor render would only compete
@@ -15113,11 +15459,19 @@ pvt::FrameRenderOptions MainWindow::exportFrameRenderOptions() const {
 }
 
 std::size_t MainWindow::renderMemoryBudgetBytes() const {
-    if (performance_settings_.render_memory_budget_mib == 0U) return 0U;
-    return performance_settings_.render_memory_budget_mib * kMebibyte;
+    return resolved_render_memory_budget_bytes(performance_settings_);
 }
 
 void MainWindow::startPreview() {
+    if (export_active_
+        && performance_settings_.pause_editor_preview_during_export) {
+        if (preview_timer_ != nullptr) preview_timer_->stop();
+        preview_deferred_ = false;
+        if (preview_cancel_ != nullptr) {
+            preview_cancel_->store(true, std::memory_order_relaxed);
+        }
+        return;
+    }
     if (live_workspace_ != nullptr
         && live_workspace_->isRealtimeOutputActive()) {
         if (preview_timer_ != nullptr) preview_timer_->stop();
@@ -15280,6 +15634,7 @@ bool MainWindow::startCurrentFrameExport(const QString& path) {
         const pvt::FrameRenderOptions render_options = frameRenderOptions();
         const std::string output_path = path.toUtf8().toStdString();
         export_active_ = true;
+        suspendEditorPreviewForExport();
         if (export_action_ != nullptr) export_action_->setEnabled(false);
         if (video_export_action_ != nullptr) video_export_action_->setEnabled(false);
         if (current_frame_export_action_ != nullptr) {
@@ -15364,6 +15719,7 @@ bool MainWindow::startExport() {
             resolvedOutputDirectory(QString::fromStdString(project.output.output_directory))
                 .toStdString();
         export_active_ = true;
+        suspendEditorPreviewForExport();
         if (video_export_action_ != nullptr) video_export_action_->setEnabled(false);
         if (current_frame_export_action_ != nullptr) {
             current_frame_export_action_->setEnabled(false);
@@ -15566,6 +15922,7 @@ bool MainWindow::startVideoExport() {
 
     cancel_export_.store(false);
     export_active_ = true;
+    suspendEditorPreviewForExport();
     export_action_->setEnabled(false);
     if (current_frame_export_action_ != nullptr) {
         current_frame_export_action_->setEnabled(false);
@@ -16410,24 +16767,72 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // Completion must clear the guard before action availability is refreshed.
-    // This directly covers the signal-ordering regression that left both export
-    // commands disabled after the success dialog was dismissed.
+    // Export-time suspension owns the editor preview and restores the exact
+    // incoming playback state. Exercise both stopped and playing admission,
+    // including the global Space shortcut and disabled transport button.
+    const bool saved_pause_during_export =
+        performance_settings_.pause_editor_preview_during_export;
+    performance_settings_.pause_editor_preview_during_export = true;
+    stopPlayback();
     export_active_ = true;
     export_action_->setEnabled(false);
     current_frame_export_action_->setEnabled(false);
     video_export_action_->setEnabled(false);
     cancel_export_action_->setEnabled(true);
     export_progress_->show();
+    suspendEditorPreviewForExport();
+    const bool stopped_export_suspended = export_preview_suspended_
+        && !playback_timer_->isActive() && !play_button_->isEnabled();
+    workflow_stage_buttons_[0]->setFocus(Qt::OtherFocusReason);
+    QKeyEvent export_space_press(QEvent::KeyPress, Qt::Key_Space,
+                                 Qt::NoModifier, QStringLiteral(" "));
+    QKeyEvent export_space_release(QEvent::KeyRelease, Qt::Key_Space,
+                                   Qt::NoModifier, QStringLiteral(" "));
+    QCoreApplication::sendEvent(workflow_stage_buttons_[0],
+                                &export_space_press);
+    QCoreApplication::sendEvent(workflow_stage_buttons_[0],
+                                &export_space_release);
+    play_button_->click();
+    const bool stopped_export_guarded = !playback_timer_->isActive();
     finishExportUiState();
+    const bool stopped_export_restored = !export_preview_suspended_
+        && !playback_timer_->isActive() && play_button_->isEnabled();
+
+    togglePlayback();
+    const bool playback_started_for_export = playback_timer_->isActive();
+    export_active_ = true;
+    export_action_->setEnabled(false);
+    current_frame_export_action_->setEnabled(false);
+    video_export_action_->setEnabled(false);
+    cancel_export_action_->setEnabled(true);
+    export_progress_->show();
+    suspendEditorPreviewForExport();
+    const bool playing_export_suspended = export_preview_suspended_
+        && !playback_timer_->isActive() && !play_button_->isEnabled();
+    togglePlayback();
+    const bool playing_export_guarded = !playback_timer_->isActive();
+    finishExportUiState();
+    const bool playing_export_restored = !export_preview_suspended_
+        && playback_timer_->isActive() && play_button_->isEnabled();
+    stopPlayback();
+    performance_settings_.pause_editor_preview_during_export =
+        saved_pause_during_export;
+
+    // Completion must clear the guard before action availability is refreshed.
+    // This directly covers the signal-ordering regression that left export
+    // commands disabled after a successful render.
     const bool expected_video_enabled =
         !music_analysis_active_ && pvt::video::capabilities().available;
-    if (export_active_ || !export_action_->isEnabled()
+    if (!stopped_export_suspended || !stopped_export_guarded
+        || !stopped_export_restored || !playback_started_for_export
+        || !playing_export_suspended || !playing_export_guarded
+        || !playing_export_restored || export_active_
+        || !export_action_->isEnabled()
         || !current_frame_export_action_->isEnabled()
         || video_export_action_->isEnabled() != expected_video_enabled
         || cancel_export_action_->isEnabled() || !export_progress_->isHidden()) {
         if (error != nullptr) {
-            *error = tr("Export completion did not restore the export actions and clear the cancel state.");
+            *error = tr("Export suspension did not guard playback, restore its exact state, or re-enable export actions.");
         }
         return false;
     }
@@ -16456,6 +16861,63 @@ bool MainWindow::runSmokeChecks(QString* error) {
         : resolved_render_backend(expected_performance.backend);
     const pvt::FrameRenderOptions expected_frame_options =
         frameRenderOptions();
+    PerformanceSettings mebibyte_probe;
+    mebibyte_probe.render_memory_budget_mode =
+        RenderMemoryBudgetMode::Mebibytes;
+    mebibyte_probe.render_memory_budget_value = 1024.0;
+    PerformanceSettings gibibyte_probe;
+    gibibyte_probe.render_memory_budget_mode =
+        RenderMemoryBudgetMode::Gibibytes;
+    gibibyte_probe.render_memory_budget_value = 1.0;
+    PerformanceSettings overflow_probe = gibibyte_probe;
+    overflow_probe.render_memory_budget_value =
+        (std::numeric_limits<double>::max)();
+    const bool memory_resolution_valid =
+        resolved_render_memory_budget_bytes(mebibyte_probe) == kGibibyte
+        && resolved_render_memory_budget_bytes(gibibyte_probe) == kGibibyte
+        && resolved_render_memory_budget_bytes(overflow_probe)
+               == (std::numeric_limits<std::size_t>::max)()
+        && resolved_render_memory_budget_bytes(PerformanceSettings{}) > 0U;
+
+    bool memory_migration_valid = false;
+    QTemporaryDir preference_directory;
+    if (preference_directory.isValid()) {
+        QSettings migration_settings(
+            preference_directory.filePath(QStringLiteral("performance.ini")),
+            QSettings::IniFormat);
+        migration_settings.setValue(
+            QStringLiteral("performance/renderMemoryBudgetMiB"), 7);
+        PerformanceSettings migrated =
+            read_performance_settings(migration_settings);
+        const bool legacy_loaded =
+            migrated.render_memory_budget_mode
+                   == RenderMemoryBudgetMode::Mebibytes
+            && migrated.render_memory_budget_value == 7.0
+            && migrated.pause_editor_preview_during_export;
+        migration_settings.setValue(
+            QStringLiteral("performance/renderMemoryBudgetMode"),
+            static_cast<int>(RenderMemoryBudgetMode::Gibibytes));
+        migration_settings.setValue(
+            QStringLiteral("performance/renderMemoryBudgetValue"), 3.5);
+        migration_settings.setValue(
+            QStringLiteral("performance/pauseEditorPreviewDuringExport"),
+            false);
+        migrated = read_performance_settings(migration_settings);
+        const bool new_keys_win =
+            migrated.render_memory_budget_mode
+                   == RenderMemoryBudgetMode::Gibibytes
+            && migrated.render_memory_budget_value == 3.5
+            && !migrated.pause_editor_preview_during_export;
+        migration_settings.setValue(
+            QStringLiteral("performance/renderMemoryBudgetMode"), 999);
+        migrated = read_performance_settings(migration_settings);
+        const bool invalid_new_falls_back =
+            migrated.render_memory_budget_mode
+                   == RenderMemoryBudgetMode::Mebibytes
+            && migrated.render_memory_budget_value == 7.0;
+        memory_migration_valid = legacy_loaded && new_keys_win
+                                 && invalid_new_falls_back;
+    }
     if (undo_stack_ == nullptr || undo_stack_->undoLimit() != expected_undo_limit
         || performance_settings_ != expected_performance
         || render_backend_ != expected_backend
@@ -16465,7 +16927,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || expected_frame_options.maximum_gpu_frames_in_flight
                != expected_performance.gpu_frames_in_flight
         || expected_frame_options.cpu_memory_budget_bytes
-               != renderMemoryBudgetBytes()) {
+               != renderMemoryBudgetBytes()
+        || !memory_resolution_valid || !memory_migration_valid) {
         if (error != nullptr) {
             *error = tr("Application preferences were not restored from per-user settings.");
         }
@@ -16486,7 +16949,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         dialog_performance.export_frame_workers = 4U;
         dialog_performance.export_cpu_workers = 6U;
         dialog_performance.gpu_frames_in_flight = 5U;
-        dialog_performance.render_memory_budget_mib = 768U;
+        dialog_performance.render_memory_budget_mode =
+            RenderMemoryBudgetMode::Gibibytes;
+        dialog_performance.render_memory_budget_value = 32.0;
+        dialog_performance.pause_editor_preview_during_export = false;
         ApplicationSettingsDialog settings_dialog(
             expected_undo_limit, dialog_performance,
             recent_project_limit_,
@@ -16510,8 +16976,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("exportCpuWorkersPreference"));
         const auto* gpu_frames = settings_dialog.findChild<QSpinBox*>(
             QStringLiteral("gpuFramesInFlightPreference"));
-        const auto* memory_budget = settings_dialog.findChild<QSpinBox*>(
-            QStringLiteral("renderMemoryBudgetPreference"));
+        auto* memory_mode = settings_dialog.findChild<QComboBox*>(
+            QStringLiteral("renderMemoryBudgetModePreference"));
+        auto* memory_budget = settings_dialog.findChild<QDoubleSpinBox*>(
+            QStringLiteral("renderMemoryBudgetValuePreference"));
+        const auto* memory_status = settings_dialog.findChild<QLabel*>(
+            QStringLiteral("renderMemoryBudgetStatus"));
+        const auto* pause_preview = settings_dialog.findChild<QCheckBox*>(
+            QStringLiteral("pauseEditorPreviewDuringExportPreference"));
         auto* reset_performance = settings_dialog.findChild<QPushButton*>(
             QStringLiteral("resetPerformancePreferences"));
         const auto* precision_status = settings_dialog.findChild<QLabel*>(
@@ -16552,6 +17024,30 @@ bool MainWindow::runSmokeChecks(QString* error) {
                     <= settings_screen->availableGeometry().height() - 16);
         const bool supplied_performance_valid =
             settings_dialog.performanceSettings() == dialog_performance;
+        const bool supplied_memory_text_compact = memory_budget != nullptr
+            && !memory_budget->text().contains(QStringLiteral(".0000"));
+        bool memory_unit_conversion_preserved = false;
+        if (memory_mode != nullptr && memory_budget != nullptr) {
+            const int mebibytes = memory_mode->findData(
+                static_cast<int>(RenderMemoryBudgetMode::Mebibytes));
+            if (mebibytes >= 0) {
+                memory_mode->setCurrentIndex(mebibytes);
+                memory_budget->setValue(1.0);
+                const std::size_t before_unit_change =
+                    resolved_render_memory_budget_bytes(
+                        settings_dialog.performanceSettings());
+                const int gibibytes = memory_mode->findData(
+                    static_cast<int>(RenderMemoryBudgetMode::Gibibytes));
+                if (gibibytes >= 0) {
+                    memory_mode->setCurrentIndex(gibibytes);
+                    memory_unit_conversion_preserved =
+                        before_unit_change == kMebibyte
+                        && resolved_render_memory_budget_bytes(
+                               settings_dialog.performanceSettings())
+                               == before_unit_change;
+                }
+            }
+        }
         if (reset_performance != nullptr) reset_performance->click();
         const bool reset_performance_valid =
             settings_dialog.performanceSettings() == PerformanceSettings{};
@@ -16572,11 +17068,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || gpu_frames->isEnabled()
             || !gpu_frames->toolTip().contains(QStringLiteral("OpenGL"))
             || memory_budget == nullptr || memory_budget->value() != 0
+            || memory_mode == nullptr
+            || memory_mode->currentData().toInt()
+                   != static_cast<int>(RenderMemoryBudgetMode::Automatic)
+            || memory_status == nullptr || memory_status->text().isEmpty()
+            || pause_preview == nullptr || !pause_preview->isChecked()
             || reset_performance == nullptr
             || precision_status == nullptr
             || !precision_status->text().contains(QStringLiteral("float32"))
             || host_status == nullptr || host_status->text().isEmpty()
             || !supplied_performance_valid || !reset_performance_valid
+            || !supplied_memory_text_compact
+            || !memory_unit_conversion_preserved
             || lfo_action == nullptr || lfo_action->text() != tr("LFOs…")
             || save_defaults == nullptr || restore_defaults == nullptr
             || settings_scroll == nullptr || !settings_scroll->widgetResizable()
@@ -17423,10 +17926,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_invert_blue_mix_ == nullptr
         || post_invert_alpha_enabled_ == nullptr
         || post_invert_alpha_mix_ == nullptr
+        || post_channel_map_enabled_ == nullptr
+        || post_channel_map_mix_ == nullptr
+        || post_channel_red_source_ == nullptr
+        || post_channel_green_source_ == nullptr
+        || post_channel_blue_source_ == nullptr
+        || post_channel_alpha_source_ == nullptr
         || post_antialias_enabled_ == nullptr
         || post_antialias_strength_ == nullptr
         || post_antialias_threshold_ == nullptr
         || post_antialias_passes_ == nullptr
+        || post_process_order_ == nullptr
+        || post_process_up_ == nullptr || post_process_down_ == nullptr
         || post_invert_rgb_mix_->minimum() != 0.0
         || post_invert_rgb_mix_->maximum() != 1.0
         || post_invert_red_mix_->minimum() != 0.0
@@ -17437,6 +17948,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_invert_blue_mix_->maximum() != 1.0
         || post_invert_alpha_mix_->minimum() != 0.0
         || post_invert_alpha_mix_->maximum() != 1.0
+        || post_channel_map_mix_->minimum() != 0.0
+        || post_channel_map_mix_->maximum() != 1.0
+        || post_channel_red_source_->count() != 6
+        || post_channel_green_source_->count() != 6
+        || post_channel_blue_source_->count() != 6
+        || post_channel_alpha_source_->count() != 6
+        || post_process_order_->count()
+               != static_cast<int>(pvt::kPostProcessStageCount)
         || post_antialias_strength_->minimum() != 0.0
         || post_antialias_strength_->maximum() != 1.0
         || post_antialias_threshold_->minimum() != 0.0
@@ -17489,15 +18008,53 @@ bool MainWindow::runSmokeChecks(QString* error) {
                                     : nullptr;
     QWidget* const post_process_group =
         post_invert_rgb_enabled_->parentWidget();
+    QWidget* const post_process_order_group =
+        post_process_order_->parentWidget();
     QWidget* const quantization_group = quantization_enabled_->parentWidget();
-    if (finish_groups == nullptr || post_process_group == nullptr
+    if (finish_groups == nullptr || post_process_order_group == nullptr
+        || post_process_group == nullptr
         || quantization_group == nullptr
+        || finish_groups->indexOf(post_process_order_group) < 0
         || finish_groups->indexOf(post_process_group) < 0
         || finish_groups->indexOf(quantization_group) < 0
+        || finish_groups->indexOf(post_process_order_group)
+               >= finish_groups->indexOf(post_process_group)
         || finish_groups->indexOf(post_process_group)
                >= finish_groups->indexOf(quantization_group)) {
         if (error != nullptr) {
-            *error = tr("Post effects are not arranged in renderer order before quantization.");
+            *error = tr("The authored finishing order is not presented before its stage controls.");
+        }
+        return false;
+    }
+    for (int row = 0; row < post_process_order_->count(); ++row) {
+        if (post_process_order_->item(row)->data(Qt::UserRole).toInt()
+            != static_cast<int>(config_.post_process.order[
+                static_cast<std::size_t>(row)])) {
+            if (error != nullptr) {
+                *error = tr("The finishing-order editor disagrees with the active layer.");
+            }
+            return false;
+        }
+    }
+    const std::vector<pvt::PostProcessStage> order_before_move =
+        config_.post_process.order;
+    post_process_order_->setCurrentRow(1);
+    post_process_up_->click();
+    const bool order_moved = config_.post_process.order.size() >= 2U
+        && config_.post_process.order[0U] == order_before_move[1U]
+        && config_.post_process.order[1U] == order_before_move[0U]
+        && post_process_order_->currentRow() == 0
+        && !post_process_up_->isEnabled() && post_process_down_->isEnabled();
+    if (!order_moved || undo_stack_ == nullptr || !undo_stack_->canUndo()) {
+        if (error != nullptr) {
+            *error = tr("The finishing-order move controls did not update the active layer.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (config_.post_process.order != order_before_move) {
+        if (error != nullptr) {
+            *error = tr("A finishing-order move did not undo cleanly.");
         }
         return false;
     }
@@ -17510,12 +18067,14 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const QSignalBlocker green_blocker(post_invert_green_enabled_);
         const QSignalBlocker blue_blocker(post_invert_blue_enabled_);
         const QSignalBlocker alpha_blocker(post_invert_alpha_enabled_);
+        const QSignalBlocker channel_map_blocker(post_channel_map_enabled_);
         const QSignalBlocker antialias_blocker(post_antialias_enabled_);
         post_invert_rgb_enabled_->setChecked(false);
         post_invert_red_enabled_->setChecked(false);
         post_invert_green_enabled_->setChecked(false);
         post_invert_blue_enabled_->setChecked(false);
         post_invert_alpha_enabled_->setChecked(false);
+        post_channel_map_enabled_->setChecked(false);
         post_antialias_enabled_->setChecked(false);
         updatePostProcessEditorState();
         bypass_dependencies = !post_invert_rgb_mix_->isEnabled()
@@ -17523,6 +18082,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
                               && !post_invert_green_mix_->isEnabled()
                               && !post_invert_blue_mix_->isEnabled()
                               && !post_invert_alpha_mix_->isEnabled()
+                              && !post_channel_map_mix_->isEnabled()
+                              && !post_channel_red_source_->isEnabled()
+                              && !post_channel_green_source_->isEnabled()
+                              && !post_channel_blue_source_->isEnabled()
+                              && !post_channel_alpha_source_->isEnabled()
                               && !post_antialias_strength_->isEnabled()
                               && !post_antialias_threshold_->isEnabled()
                               && !post_antialias_passes_->isEnabled();
@@ -17531,6 +18095,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         post_invert_green_enabled_->setChecked(true);
         post_invert_blue_enabled_->setChecked(true);
         post_invert_alpha_enabled_->setChecked(true);
+        post_channel_map_enabled_->setChecked(true);
         post_antialias_enabled_->setChecked(true);
         updatePostProcessEditorState();
         active_dependencies = post_invert_rgb_mix_->isEnabled()
@@ -17538,6 +18103,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
                               && post_invert_green_mix_->isEnabled()
                               && post_invert_blue_mix_->isEnabled()
                               && post_invert_alpha_mix_->isEnabled()
+                              && post_channel_map_mix_->isEnabled()
+                              && post_channel_red_source_->isEnabled()
+                              && post_channel_green_source_->isEnabled()
+                              && post_channel_blue_source_->isEnabled()
+                              && post_channel_alpha_source_->isEnabled()
                               && post_antialias_strength_->isEnabled()
                               && post_antialias_threshold_->isEnabled()
                               && post_antialias_passes_->isEnabled();
@@ -17545,8 +18115,13 @@ bool MainWindow::runSmokeChecks(QString* error) {
     loadGlobalEditors();
     pvt::RenderConfig alpha_invert_probe = pvt::default_config();
     alpha_invert_probe.post_process.invert_alpha_enabled = true;
+    pvt::RenderConfig alpha_route_probe = pvt::default_config();
+    alpha_route_probe.post_process.channel_map.enabled = true;
+    alpha_route_probe.post_process.channel_map.alpha_source =
+        pvt::ChannelSource::Zero;
     if (!bypass_dependencies || !active_dependencies
-        || !configuration_requires_alpha(alpha_invert_probe)) {
+        || !configuration_requires_alpha(alpha_invert_probe)
+        || !configuration_requires_alpha(alpha_route_probe)) {
         if (error != nullptr) {
             *error = tr("Post-effect controls, dependencies, or alpha-output safety are not wired correctly.");
         }
@@ -17716,11 +18291,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
             && config_.live.enabled
             && config_.audio_reactive_defaults.enabled
             && clock_mode_->currentData().toInt() == kMicLiveClockSentinel
-            && undo_stack_->count() == mic_undo_before + 1
-            && undo_stack_->index() == mic_undo_index_before + 1;
+            && undo_stack_->index() == mic_undo_index_before + 1
+            && undo_stack_->count() == undo_stack_->index();
         if (!mic_sentinel_valid) {
             mic_sentinel_detail = tr(
-                "first Mic selection did not preserve the authored clock or create exactly one undo entry");
+                "first Mic selection failed (route=%1, mode=%2, live=%3, "
+                "audio=%4, editor=%5, undo count %6→%7, index %8→%9)")
+                .arg(project_route != nullptr)
+                .arg(static_cast<int>(config_.clock.mode))
+                .arg(config_.live.enabled)
+                .arg(config_.audio_reactive_defaults.enabled)
+                .arg(clock_mode_->currentData().toInt())
+                .arg(mic_undo_before)
+                .arg(undo_stack_->count())
+                .arg(mic_undo_index_before)
+                .arg(undo_stack_->index());
         } else {
             const std::string project_role = project_route->endpoint_uuid;
             const bool layer_enabled_before = config_.layer_clock.enabled;
@@ -19966,7 +20551,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    setWorkflowStage(4);
+    workflow_stage_buttons_[4]->setFocus(Qt::OtherFocusReason);
+    if (workflow_stage_index_ != 4 || focusWidget() == project_name_) {
+        if (error != nullptr) {
+            *error = tr("The New Project focus regression could not establish a non-Project starting state.");
+        }
+        return false;
+    }
     replaceWithNewProject();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
     if (!document_->versions.empty() || !current_project_path_.isEmpty()
         || hasUnsavedChanges() || undo_stack_->count() != 0
         || version_list_->count() != 0 || version_before_->count() != 0
@@ -19976,15 +20570,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !version_diff_->toPlainText().isEmpty()
         || !version_summary_->text().contains(tr("Not saved as a bundle yet"))
         || !version_summary_->text().contains(
-            QString::fromStdString(project_.uuid))) {
+            QString::fromStdString(project_.uuid))
+        || tabs_->currentWidget() != project_canvas_page_
+        || workflow_stage_index_ != 0 || focusWidget() != project_name_
+        || !project_name_->hasSelectedText()) {
         if (error != nullptr) {
             *error = tr("New Project retained stale version rows, selectors, actions, or bundle details.");
         }
         return false;
     }
-    // Leave screenshot-mode smoke runs in the same calm, first-launch state a
-    // user sees instead of exposing whichever stage an earlier assertion used.
-    setWorkflowStage(1);
+    // Leave screenshot-mode smoke runs in the same calm, name-first state a
+    // user sees after creating a project.
+    setWorkflowStage(0);
     setDriversExpanded(false);
     return true;
 }

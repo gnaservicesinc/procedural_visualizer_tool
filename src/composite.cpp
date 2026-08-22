@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
 #include "frame_renderer_internal.h"
+#include "post_process_alpha.h"
 
 #include <algorithm>
 #include <array>
@@ -743,9 +744,16 @@ bool eraser_source_is_guaranteed_transparent(const RenderData& render) {
     if (!render.alpha.enabled || render.alpha.maximum != 0.0) return false;
     // Procedural alpha is applied before effects. Every effect and mapping
     // preserves an all-zero alpha field except Particle Field, which authors
-    // new spark coverage independently of the source pixels.
-    return std::none_of(render.effects.begin(), render.effects.end(),
-                        effect_can_create_particle_coverage);
+    // new spark coverage independently of the source pixels. Finishing stages
+    // are then evaluated in their authored order because inversion or routing
+    // can create coverage, while a later full Zero route can clear it again.
+    if (std::any_of(render.effects.begin(), render.effects.end(),
+                    effect_can_create_particle_coverage)) {
+        return false;
+    }
+    return detail::post_process_alpha_certainty(
+               render, detail::AlphaCertainty::Zero)
+           == detail::AlphaCertainty::Zero;
 }
 
 bool render_data_can_create_transparency(const RenderData& render) {
@@ -794,8 +802,13 @@ bool render_data_can_create_transparency(const RenderData& render) {
             || motion_scale_has_work)) {
         return true;
     }
-    return std::any_of(render.effects.begin(), render.effects.end(),
-                       effect_can_create_transparency);
+    if (std::any_of(render.effects.begin(), render.effects.end(),
+                    effect_can_create_transparency)) {
+        return true;
+    }
+    return detail::post_process_alpha_certainty(
+               render, detail::AlphaCertainty::One)
+           != detail::AlphaCertainty::One;
 }
 
 bool validate_image(const Image& image, std::string_view label,

@@ -313,10 +313,25 @@ void test_layer_codec_backward_compatibility() {
     original.post_process.invert_blue_mix = 0.88;
     original.post_process.invert_alpha_enabled = true;
     original.post_process.invert_alpha_mix = 0.42;
+    original.post_process.channel_map.enabled = true;
+    original.post_process.channel_map.mix = 0.58;
+    original.post_process.channel_map.red_source = pvt::ChannelSource::Alpha;
+    original.post_process.channel_map.green_source = pvt::ChannelSource::Blue;
+    original.post_process.channel_map.blue_source = pvt::ChannelSource::Red;
+    original.post_process.channel_map.alpha_source = pvt::ChannelSource::Green;
     original.post_process.antialias_enabled = true;
     original.post_process.antialias_strength = 0.81;
     original.post_process.antialias_threshold = 0.11;
     original.post_process.antialias_passes = 2;
+    original.post_process.order = {
+        pvt::PostProcessStage::Quantization,
+        pvt::PostProcessStage::ChannelMap,
+        pvt::PostProcessStage::Antialias,
+        pvt::PostProcessStage::InvertAlpha,
+        pvt::PostProcessStage::InvertBlue,
+        pvt::PostProcessStage::InvertGreen,
+        pvt::PostProcessStage::InvertRed,
+        pvt::PostProcessStage::InvertRgb};
     original.surface.projection = pvt::SurfaceProjection::Perspective;
     original.surface.sizing = pvt::SurfaceSizing::Cover;
     original.surface.outside = pvt::SurfaceOutside::Source;
@@ -373,7 +388,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t16\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t17\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -451,6 +466,18 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.post_process.invert_blue_mix == 0.88);
     CHECK(current_round_trip.post_process.invert_alpha_enabled);
     CHECK(current_round_trip.post_process.invert_alpha_mix == 0.42);
+    CHECK(current_round_trip.post_process.channel_map.enabled);
+    CHECK(current_round_trip.post_process.channel_map.mix == 0.58);
+    CHECK(current_round_trip.post_process.channel_map.red_source
+          == pvt::ChannelSource::Alpha);
+    CHECK(current_round_trip.post_process.channel_map.green_source
+          == pvt::ChannelSource::Blue);
+    CHECK(current_round_trip.post_process.channel_map.blue_source
+          == pvt::ChannelSource::Red);
+    CHECK(current_round_trip.post_process.channel_map.alpha_source
+          == pvt::ChannelSource::Green);
+    CHECK(current_round_trip.post_process.order
+          == original.post_process.order);
     CHECK(current_round_trip.post_process.antialias_enabled);
     CHECK(current_round_trip.post_process.antialias_strength == 0.81);
     CHECK(current_round_trip.post_process.antialias_threshold == 0.11);
@@ -502,15 +529,46 @@ void test_layer_codec_backward_compatibility() {
             current_round_trip, loaded_lfo.target_path));
     }
 
-    // Layer v15/setup v17 predates per-channel inversion. It receives neutral
-    // disabled defaults while preserving the existing all-RGB inversion.
+    // Layer v16/setup v18 predates channel routing and authored finishing
+    // order. It receives the neutral identity map and historical stage order.
     std::istringstream current_v17_input(current_layer);
-    std::ostringstream version_fifteen_output;
+    std::ostringstream version_sixteen_output;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_v17_input, line)));
+    CHECK(line == "PVT_LAYER\t17");
+    version_sixteen_output << "PVT_LAYER\t16\n";
+    while (std::getline(current_v17_input, line)) {
+        const std::size_t tab = line.find('\t');
+        const std::string key = line.substr(0U, tab);
+        const bool v17_only = key.rfind("post_process.channel_map.", 0U) == 0U
+            || key.rfind("post_process.order.", 0U) == 0U;
+        if (!v17_only) version_sixteen_output << line << '\n';
+    }
+    const std::string version_sixteen = version_sixteen_output.str();
+    pvt::RenderData loaded_version_sixteen;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_sixteen, loaded_version_sixteen, &error, &motion_paths));
+    CHECK(!loaded_version_sixteen.post_process.channel_map.enabled);
+    CHECK(loaded_version_sixteen.post_process.channel_map.mix == 1.0);
+    CHECK(loaded_version_sixteen.post_process.channel_map.red_source
+          == pvt::ChannelSource::Red);
+    CHECK(loaded_version_sixteen.post_process.channel_map.green_source
+          == pvt::ChannelSource::Green);
+    CHECK(loaded_version_sixteen.post_process.channel_map.blue_source
+          == pvt::ChannelSource::Blue);
+    CHECK(loaded_version_sixteen.post_process.channel_map.alpha_source
+          == pvt::ChannelSource::Alpha);
+    CHECK(loaded_version_sixteen.post_process.order
+          == pvt::default_config().post_process.order);
+
+    // Layer v15/setup v17 predates per-channel inversion. It receives neutral
+    // disabled defaults while preserving the existing all-RGB inversion.
+    std::istringstream current_v16_input(version_sixteen);
+    std::ostringstream version_fifteen_output;
+    CHECK(static_cast<bool>(std::getline(current_v16_input, line)));
     CHECK(line == "PVT_LAYER\t16");
     version_fifteen_output << "PVT_LAYER\t15\n";
-    while (std::getline(current_v17_input, line)) {
+    while (std::getline(current_v16_input, line)) {
         const std::size_t tab = line.find('\t');
         const std::string key = line.substr(0U, tab);
         const bool v16_only = key == "post_process.invert_red_enabled"
@@ -1137,7 +1195,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t16");
+    CHECK(line == "PVT_LAYER\t17");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -1176,8 +1234,12 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
             || key == "post_process.invert_green_mix"
             || key == "post_process.invert_blue_enabled"
             || key == "post_process.invert_blue_mix";
+        const bool current_post_order_field =
+            key.rfind("post_process.channel_map.", 0U) == 0U
+            || key.rfind("post_process.order.", 0U) == 0U;
         if (!current_particle_field && !current_surface_field
-            && !current_lfo_field && !current_channel_invert_field) {
+            && !current_lfo_field && !current_channel_invert_field
+            && !current_post_order_field) {
             legacy_layer << line << '\n';
         }
     }

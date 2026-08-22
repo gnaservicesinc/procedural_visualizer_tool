@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 18;
+constexpr std::uint32_t kSetupFormatVersion = 19;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -248,6 +248,30 @@ enum class QuantizationMode : std::uint8_t {
     Luminance,
     Hue
 };
+
+// Channel mapping is evaluated simultaneously: every selected source is read
+// from the color entering the stage, never from an earlier mapped output.
+enum class ChannelSource : std::uint8_t {
+    Red = 0,
+    Green,
+    Blue,
+    Alpha,
+    Zero,
+    One
+};
+
+enum class PostProcessStage : std::uint8_t {
+    InvertRgb = 0,
+    InvertRed,
+    InvertGreen,
+    InvertBlue,
+    InvertAlpha,
+    ChannelMap,
+    Antialias,
+    Quantization
+};
+
+constexpr std::size_t kPostProcessStageCount = 8U;
 
 enum class MirrorMode : std::uint8_t {
     None = 0,
@@ -971,15 +995,27 @@ struct QuantizationConfig {
     QuantizationMode mode = QuantizationMode::Rgb;
 };
 
-// Bounded, layer-local finishing controls. These run after mapped-object
-// effects and before final color quantization. RGB is stored as straight-alpha
-// linear light throughout the renderer; the antialias pass temporarily
-// premultiplies its neighborhood so transparent edges cannot leak hidden RGB.
+struct ChannelMapConfig {
+    bool enabled = false;
+    double mix = 1.0;
+    ChannelSource red_source = ChannelSource::Red;
+    ChannelSource green_source = ChannelSource::Green;
+    ChannelSource blue_source = ChannelSource::Blue;
+    ChannelSource alpha_source = ChannelSource::Alpha;
+};
+
+// Layer-local finishing controls. The order is an exact permutation of all
+// PostProcessStage values. Its compatibility default reproduces the historical
+// pipeline: combined RGB inversion, individual R/G/B/A inversions, the neutral
+// channel-map stage, antialiasing, then quantization. RGB is straight-alpha
+// linear light throughout the renderer; antialiasing temporarily premultiplies
+// its neighborhood so transparent edges cannot leak hidden RGB.
 struct PostProcessConfig {
     bool invert_rgb_enabled = false;
     double invert_rgb_mix = 1.0;
-    // Per-channel inversions run after the combined RGB inversion. Enabling
-    // both at full mix deliberately applies two inversions to that channel.
+    // In the compatibility-default order, per-channel inversions follow the
+    // combined RGB inversion. At full mix, adjacent enabled stages therefore
+    // apply two inversions to that channel; an authored order may move either.
     bool invert_red_enabled = false;
     double invert_red_mix = 1.0;
     bool invert_green_enabled = false;
@@ -988,10 +1024,20 @@ struct PostProcessConfig {
     double invert_blue_mix = 1.0;
     bool invert_alpha_enabled = false;
     double invert_alpha_mix = 1.0;
+    ChannelMapConfig channel_map;
     bool antialias_enabled = false;
     double antialias_strength = 0.75;
     double antialias_threshold = 0.08;
     int antialias_passes = 1;
+    std::vector<PostProcessStage> order{
+        PostProcessStage::InvertRgb,
+        PostProcessStage::InvertRed,
+        PostProcessStage::InvertGreen,
+        PostProcessStage::InvertBlue,
+        PostProcessStage::InvertAlpha,
+        PostProcessStage::ChannelMap,
+        PostProcessStage::Antialias,
+        PostProcessStage::Quantization};
 };
 
 // Optional height-field geometry for the built-in Plane surface. The height
@@ -1623,6 +1669,8 @@ PVT_API const char* starting_image_fit_name(StartingImageFit value);
 PVT_API const char* starting_color_mode_name(StartingColorMode value);
 PVT_API const char* waveform_name(Waveform value);
 PVT_API const char* quantization_mode_name(QuantizationMode value);
+PVT_API const char* channel_source_name(ChannelSource value);
+PVT_API const char* post_process_stage_name(PostProcessStage value);
 PVT_API const char* mirror_mode_name(MirrorMode value);
 PVT_API const char* blend_mode_name(BlendMode value);
 PVT_API const char* alpha_mode_name(AlphaMode value);

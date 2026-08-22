@@ -173,6 +173,8 @@ private:
     void updateMusicSummary();
     void updateExportAvailability();
     void finishExportUiState();
+    void suspendEditorPreviewForExport();
+    void resumeEditorPreviewAfterExport();
     void updateTimelineReadout();
     void togglePlayback();
     void stopPlayback();
@@ -184,6 +186,8 @@ private:
     void updateWaveOutputState();
     void updateSurfaceEditorState();
     void updatePostProcessEditorState();
+    void refreshPostProcessOrder(int selectedRow = -1);
+    void moveSelectedPostProcessStage(int direction);
     void applyWaveEditor(const QObject* changedEditor);
     void applySwingEditor(const QObject* changedEditor);
     void applyEffectEditor(const QObject* changedEditor);
@@ -389,6 +393,8 @@ private:
     bool preview_deferred_ = false;
     bool integer_dither_preference_ = true;
     bool export_active_ = false;
+    bool export_preview_suspended_ = false;
+    bool resume_editor_playback_after_export_ = false;
     bool close_after_export_ = false;
     bool playback_preview_advanced_ = false;
     bool suppress_realtime_preview_resume_ = false;
@@ -837,10 +843,19 @@ private:
     QDoubleSpinBox* post_invert_blue_mix_ = nullptr;
     QCheckBox* post_invert_alpha_enabled_ = nullptr;
     QDoubleSpinBox* post_invert_alpha_mix_ = nullptr;
+    QCheckBox* post_channel_map_enabled_ = nullptr;
+    QDoubleSpinBox* post_channel_map_mix_ = nullptr;
+    QComboBox* post_channel_red_source_ = nullptr;
+    QComboBox* post_channel_green_source_ = nullptr;
+    QComboBox* post_channel_blue_source_ = nullptr;
+    QComboBox* post_channel_alpha_source_ = nullptr;
     QCheckBox* post_antialias_enabled_ = nullptr;
     QDoubleSpinBox* post_antialias_strength_ = nullptr;
     QDoubleSpinBox* post_antialias_threshold_ = nullptr;
     QSpinBox* post_antialias_passes_ = nullptr;
+    QListWidget* post_process_order_ = nullptr;
+    QPushButton* post_process_up_ = nullptr;
+    QPushButton* post_process_down_ = nullptr;
     QCheckBox* quantization_enabled_ = nullptr;
     QSpinBox* quantization_levels_ = nullptr;
     QDoubleSpinBox* quantization_mix_ = nullptr;

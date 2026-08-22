@@ -6,6 +6,43 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 12.0.0 ordered finishing and host-aware workflow controls
+
+Post Effects is now one explicit eight-stage finishing pipeline: combined RGB
+inversion, the four individual channel inversions, simultaneous RGBA channel
+routing, edge antialiasing, and quantization. Artists can reorder the complete
+pipeline in the Qt editor or interactive CLI. The order must remain an exact
+permutation, so stages are moved rather than duplicated or removed; disabled
+stages stay visible in the order and remain neutral. Channel routing selects
+Red, Green, Blue, Alpha, Zero, or One independently for every output channel
+and reads all four sources from the same incoming pixel. It can therefore
+replace, duplicate, clear, fill, or swap channels without ambiguous in-place
+overwrite behavior. Its mix is a numeric LFO target, while the enable and
+source selections are available to Live control.
+
+CPU and Metal execute that authored order with matching straight-alpha
+float-RGBA semantics. Validation rejects missing, duplicate, or unknown stages
+and invalid channel sources. Setup format 19 and layer format 17 persist both
+the exact order and routing configuration; setup 18 and layer 16 migrate to the
+historical order with a disabled identity map. The public by-value
+`PostProcessConfig` layout changes, so the product major and installed-library
+SONAME advance together to 12.0.0/12 and installed consumers must rebuild.
+
+The machine-local Performance page now expresses render memory as Automatic,
+MiB, GiB, or a percentage of detected physical RAM, shows the resolved byte
+budget, and warns when a manual budget exceeds installed RAM. Automatic uses a
+host-adaptive quarter of physical memory with a 512 MiB floor, capped at total
+RAM; hosts that cannot report RAM retain the conservative 2 GiB fallback. The
+choice remains in `QSettings`, never in an authored project. Export also pauses
+and cancels editor-preview work by default so sequence, current-frame, and
+native-video jobs own the render budget; the same page offers an explicit
+override and playback/preview resumes when export finishes.
+
+New documents now open on the Project page with the project-name field focused
+and selected. This name-first entry point applies both at launch and after
+**New Project**, while saved templates still receive fresh project/layer
+identities and an empty history.
+
 ## 11.0.2 deterministic release validation
 
 No-change Save smoke coverage now records the bundle version count and current
@@ -1340,10 +1377,12 @@ consumers do not inherit minizip requirements.
 | 48 | Export current frame | Complete | The GUI renders the current timeline frame at full canvas resolution through the selected backend and transactionally writes the configured 8/16-bit PNG or 32-bit FLOAT EXR quality, independent of preview scaling. |
 | 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
-| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local all-RGB, red, green, blue, and alpha inversion stages have independent mixes and deterministic double-inversion order; edge antialiasing works in premultiplied space with strength, threshold, and a positive signed-int pass count before quantization. CPU, Metal, persistence, GUI, numeric LFO/Live targets, and interactive CLI paths share neutral defaults and representation-bounded controls. |
+| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local all-RGB, red, green, blue, and alpha inversions, simultaneous RGBA routing, edge antialiasing, and quantization form an artist-orderable eight-stage finishing pipeline. Routing can select R/G/B/A/Zero/One independently for every output, its mix is LFO-capable, and CPU, Metal, persistence, GUI, Live targets, interactive CLI, migration, and parity coverage share the same neutral defaults and bounded controls. |
 | 52 | Pre-analysis audio processing and named clock streams | Complete; hardware qualification pending | Music and Live apply optional HP/LP plus graphical EQ before analysis, then expose stable named frequency-range analyses to project and active-layer clocks. Defaults are flat/full-band; validation, transactional reanalysis, setup-14 persistence, and causal/offline tests cover routing. |
 | 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, LIVE opens automatically in a visible companion window while the editor remains available, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
 | 54 | Edge/Twirl effects and particle shapes | Complete; release matrix pending | Linear-light Edge Detect, seamless Twirl, and five visibly distinct deterministic particle silhouettes share CPU/Metal, GUI, CLI, Live mapping, randomization, validation, migration, and persistence semantics. Custom PNG sprites remain deferred. |
+| 55 | Host-aware performance controls | Complete; release matrix pending | Machine-local Automatic/MiB/GiB/% RAM budgets show their resolved size and warn above installed memory. Automatic reserves headroom, unknown hosts retain a 2 GiB fallback, and export pauses editor-preview work by default with an explicit preference to keep it running. |
+| 56 | Name-first new projects | Complete; release matrix pending | Launch and **New Project** open the Project workspace with the project name focused and selected, while template-based documents still receive fresh identities and empty history. |
 
 ## Important implementation map
 
@@ -1367,8 +1406,9 @@ consumers do not inherit minizip requirements.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
   compression, dithering, collision preflight, ordered atomic installation,
   serialized progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v14 codec and split
-  per-layer/global bundle records with transactional legacy file I/O.
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v19 and layer v1-v17
+  codecs plus split per-layer/global bundle records with transactional legacy
+  file I/O and neutral migration defaults.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version
   metadata, semantic history operations, readable/direct-editable attachment storage,
   independent current-state copies, bounded ZIP/directory loading, and atomic
@@ -1386,8 +1426,12 @@ consumers do not inherit minizip requirements.
   clock, music, attachment, audio-response, and worker controls.
 - `gui/main_window.cpp`: Qt 6 project/layer/version client, global/local
   Synchronization UI, asynchronous analysis, undo/redo, saved-rename workflow,
-  spatial centers, palettes/transforms/motion, adaptive unclipped layouts, and
-  cancellable sequence/video export with synchronized audio mixing.
+  name-first new-document entry, spatial centers, palettes/transforms/motion,
+  ordered post finishing, adaptive unclipped layouts, and cancellable
+  sequence/video export with synchronized audio mixing and preview suspension.
+- `gui/performance_settings.cpp`: host RAM discovery and machine-local
+  Automatic/MiB/GiB/percentage render-memory resolution shared by preview and
+  export coordinators.
 - `tests/test_main.cpp`, `tests/project_composite_test.cpp`, and
   `tests/bundle_test.cpp`: core/seam/format/setup/I/O, layer/blend/project, and
   persistence/archive-safety coverage, including worker determinism, setup-v8
@@ -1420,9 +1464,10 @@ consumers do not inherit minizip requirements.
   Positive values are feathered circles measured against the shorter canvas
   edge; Glow's pixel blur radius is not reused as its influence radius.
 - The explicit pipeline is procedural base generation, optional starting-palette
-  selection, Texture effects, surface mapping, layer mirror/flips,
-  Mapped-object effects, post-effects RGB/alpha inversion and premultiplied
-  edge antialiasing, then explicit quantization. A later
+  selection, Texture effects, surface mapping, layer mirror/flips, and
+  Mapped-object effects, followed by the authored order of all eight finishing
+  stages: combined/per-channel inversion, simultaneous channel routing,
+  premultiplied edge antialiasing, and quantization. A later
   localized mapped effect can intentionally break earlier mirror symmetry;
   neither starting-palette selection nor transforms rewrite alpha.
 - A pre-product renderer revision called 4.0.1 intentionally reinterpreted the
