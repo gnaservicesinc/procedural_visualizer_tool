@@ -18248,7 +18248,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !show_project_in_browser_action_->isEnabled()
         || !windowTitle().contains(tr("PVT"))) {
         if (error != nullptr) {
-            *error = tr("The imported path and project name were not reflected in the window title.");
+            *error = tr("The imported path and project name were not reflected in the window title (expected prefix '%1'; actual title '%2'; browser action available %3).")
+                         .arg(imported_title_prefix, windowTitle())
+                         .arg(show_project_in_browser_action_ != nullptr
+                              && show_project_in_browser_action_->isEnabled());
         }
         return false;
     }
@@ -19572,22 +19575,56 @@ bool MainWindow::runSmokeChecks(QString* error) {
             const QString absolute_path = QFileInfo(path).absoluteFilePath();
             const QString title_prefix = QDir::toNativeSeparators(absolute_path)
                                          + QStringLiteral(" — ") + name;
-            if (!save_as_test_path_.isEmpty()
-                || project_.name != name.toStdString()
-                || document_ == nullptr
-                || document_->project.name != name.toStdString()
-                || current_project_path_ != path
-                || hasUnsavedChanges() || isWindowModified()
-                || show_project_in_browser_action_ == nullptr
-                || !show_project_in_browser_action_->isEnabled()
-                || windowFilePath() != absolute_path
-                || !windowTitle().startsWith(title_prefix)
-                || !windowTitle().contains(QStringLiteral(PVT_PROGRAM_VERSION))
-                || !loaded || reloaded.project.name != name.toStdString()) {
+            QStringList save_failures;
+            if (!save_as_test_path_.isEmpty()) {
+                save_failures.append(tr("test Save-As path was not consumed"));
+            }
+            if (project_.name != name.toStdString()) {
+                save_failures.append(tr("active name is '%1'")
+                                         .arg(QString::fromStdString(project_.name)));
+            }
+            if (document_ == nullptr) {
+                save_failures.append(tr("saved document is missing"));
+            } else if (document_->project.name != name.toStdString()) {
+                save_failures.append(tr("saved document name is '%1'")
+                                         .arg(QString::fromStdString(
+                                             document_->project.name)));
+            }
+            if (current_project_path_ != path) {
+                save_failures.append(tr("active path is '%1', expected '%2'")
+                                         .arg(current_project_path_, path));
+            }
+            if (hasUnsavedChanges()) save_failures.append(tr("project is dirty"));
+            if (isWindowModified()) save_failures.append(tr("window is modified"));
+            if (show_project_in_browser_action_ == nullptr
+                || !show_project_in_browser_action_->isEnabled()) {
+                save_failures.append(tr("file-browser action is unavailable"));
+            }
+            if (windowFilePath() != absolute_path) {
+                save_failures.append(tr("window file path is '%1', expected '%2'")
+                                         .arg(windowFilePath(), absolute_path));
+            }
+            if (!windowTitle().startsWith(title_prefix)) {
+                save_failures.append(tr("title is '%1', expected prefix '%2'")
+                                         .arg(windowTitle(), title_prefix));
+            }
+            if (!windowTitle().contains(
+                    QStringLiteral(PVT_PROGRAM_VERSION))) {
+                save_failures.append(tr("title does not contain the product version"));
+            }
+            if (!loaded) {
+                save_failures.append(tr("saved project could not reload: %1")
+                                         .arg(QString::fromStdString(reload_error)));
+            } else if (reloaded.project.name != name.toStdString()) {
+                save_failures.append(tr("reloaded name is '%1'")
+                                         .arg(QString::fromStdString(
+                                             reloaded.project.name)));
+            }
+            if (!save_failures.isEmpty()) {
                 if (error != nullptr) {
                     *error = tr("Save did not commit the project-name editor, persist that name, and leave the completed %1 project clean: %2")
                                  .arg(unpacked ? tr("folder") : tr("ZIP"),
-                                      QString::fromStdString(reload_error));
+                                      save_failures.join(QStringLiteral("; ")));
                 }
                 return false;
             }
@@ -19608,8 +19645,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 || status_ == nullptr
                 || !status_->text().contains(tr("No changes"))) {
                 if (error != nullptr) {
-                    *error = tr("A verified no-change Save left the %1 project marked as unsaved.")
-                                 .arg(unpacked ? tr("folder") : tr("ZIP"));
+                    *error = tr("A verified no-change Save left the %1 project in the wrong state (dirty %2; window modified %3; status '%4').")
+                                 .arg(unpacked ? tr("folder") : tr("ZIP"))
+                                 .arg(hasUnsavedChanges())
+                                 .arg(isWindowModified())
+                                 .arg(status_ != nullptr ? status_->text()
+                                                        : tr("missing"));
                 }
                 return false;
             }

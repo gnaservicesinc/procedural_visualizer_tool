@@ -11,6 +11,8 @@
 #include <QTabWidget>
 #include <QTimer>
 
+#include <cstdio>
+
 namespace {
 
 void apply_studio_theme(QApplication& application) {
@@ -159,6 +161,14 @@ int main(int argc, char** argv) {
     if (arguments.contains(QStringLiteral("--smoke-test"))) {
         QString smoke_error;
         if (!window.runSmokeChecks(&smoke_error)) {
+            // Qt routes GUI-application diagnostics to the Windows debugger,
+            // which leaves native CI logs blank. Write the failure through
+            // the inherited standard-error handle as well so CTest and
+            // packaged smoke checks retain the actionable assertion.
+            const QByteArray utf8_error = smoke_error.toUtf8();
+            std::fputs(utf8_error.constData(), stderr);
+            std::fputc('\n', stderr);
+            std::fflush(stderr);
             qCritical().noquote() << smoke_error;
             return 1;
         }
