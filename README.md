@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **13.0.0**. The version is read from `VERSION` by every
+Current product version: **13.0.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,16 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 13.0.1 cross-platform release fix
+
+Cube edge hits now resolve nearly tied face coordinates with the same bounded
+float-raster tolerance and X/Y/Z precedence on CPU and OpenGL. This prevents
+Mesa from selecting a different UV and environment-lighting normal at the
+single-pixel face boundary while preserving the strict parity limit everywhere
+else. The Metal backend test also includes its direct standard-library
+dependency so both Windows architectures compile it without relying on a
+transitive header.
 
 ## Environment lighting and loop-safe mesh construction
 

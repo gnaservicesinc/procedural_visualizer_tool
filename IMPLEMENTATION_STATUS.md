@@ -6,6 +6,16 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 13.0.1 cross-platform release fix
+
+CPU and OpenGL Cube face classification now share a 16-float-epsilon edge
+tolerance with deterministic X/Y/Z precedence. It is applied only when two
+absolute hit coordinates are effectively tied at a geometric cube edge, so
+Mesa cannot choose a different face UV/environment normal from the CPU while
+ordinary face ownership remains unchanged. The Metal parity test now directly
+includes `<array>`, fixing MSVC builds that correctly reject the former
+transitive dependency.
+
 ## Environment lighting and mesh construction
 
 `SurfaceConfig::environment_map` owns an optional managed PNG/OpenEXR source,

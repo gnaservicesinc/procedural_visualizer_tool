@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>

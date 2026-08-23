@@ -470,10 +470,12 @@ vec4 compositeStraightOver(vec4 front, vec4 back) {
 
 vec3 cubeNormal(vec3 point) {
     vec3 absolute = abs(point);
-    if (absolute.x >= absolute.y && absolute.x >= absolute.z) {
+    float maximum = max(absolute.x, max(absolute.y, absolute.z));
+    float edgeTolerance = 16.0 * 1.1920929e-7 * max(1.0, maximum);
+    if (absolute.x + edgeTolerance >= maximum) {
         return vec3(point.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0);
     }
-    if (absolute.y >= absolute.x && absolute.y >= absolute.z) {
+    if (absolute.y + edgeTolerance >= maximum) {
         return vec3(0.0, point.y >= 0.0 ? 1.0 : -1.0, 0.0);
     }
     return vec3(0.0, 0.0, point.z >= 0.0 ? 1.0 : -1.0);

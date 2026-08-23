@@ -333,12 +333,18 @@ int main(int argc, char** argv) {
                                 &environment_error));
         CHECK(pvt::render_frame(config, 5, gpu, strict, nullptr,
                                 &environment_error));
+        std::size_t maximum_index = 0U;
         const double difference = maximum_straight_alpha_difference(
-            reference, strict);
+            reference, strict, &maximum_index);
         if (difference > 0.0065) {
+            const std::size_t pixel = maximum_index / 4U;
             std::cerr << pvt::surface_mapping_name(mapping)
                       << " environment CPU/GPU max difference "
-                      << difference << '\n';
+                      << difference << " at ("
+                      << pixel % static_cast<std::size_t>(reference.width)
+                      << ", "
+                      << pixel / static_cast<std::size_t>(reference.width)
+                      << ") channel " << maximum_index % 4U << '\n';
         }
         CHECK(difference <= 0.0065);
     }
