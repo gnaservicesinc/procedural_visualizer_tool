@@ -86,6 +86,8 @@ namespace {
 // after the existing combined RGB inversion.
 // Version 19 adds simultaneous RGBA channel mapping and an authored exact
 // permutation of all post-process stages, including quantization.
+// Version 20 adds the native loop-safe Water refraction effect type plus
+// environment-map lighting and loop-safe mesh-construction surface records.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -97,8 +99,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 19U,
-              "config_io.cpp implements setup format version 19");
+static_assert(kSetupFormatVersion == 20U,
+              "config_io.cpp implements setup format version 20");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -311,6 +313,11 @@ bool setup_v18_record(std::string_view key) {
 bool setup_v19_record(std::string_view key) {
     return starts_with(key, "post_process.channel_map.")
            || starts_with(key, "post_process.order.");
+}
+
+bool setup_v20_record(std::string_view key) {
+    return starts_with(key, "surface.environment_map.")
+           || starts_with(key, "surface.mesh_construction.");
 }
 
 void clear_error(std::string* error) {
@@ -884,7 +891,8 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 11U>
     {"lens_distortion", EffectType::LensDistortion},
 }};
 
-constexpr std::array<std::pair<std::string_view, EffectType>, 13U> kEffectTypes{{
+constexpr std::array<std::pair<std::string_view, EffectType>, 13U>
+    kEffectTypesV19{{
     {"endless_zoom", EffectType::EndlessZoom},
     {"ripple", EffectType::Ripple},
     {"shake", EffectType::Shake},
@@ -898,6 +906,23 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 13U> kEffectTypes{
     {"lens_distortion", EffectType::LensDistortion},
     {"edge_detect", EffectType::EdgeDetect},
     {"twirl", EffectType::Twirl},
+}};
+
+constexpr std::array<std::pair<std::string_view, EffectType>, 14U> kEffectTypes{{
+    {"endless_zoom", EffectType::EndlessZoom},
+    {"ripple", EffectType::Ripple},
+    {"shake", EffectType::Shake},
+    {"flag_wave", EffectType::FlagWave},
+    {"glow", EffectType::Glow},
+    {"block_scale", EffectType::BlockScale},
+    {"particle_field", EffectType::ParticleField},
+    {"blur", EffectType::Blur},
+    {"glitch", EffectType::Glitch},
+    {"starburst", EffectType::Starburst},
+    {"lens_distortion", EffectType::LensDistortion},
+    {"edge_detect", EffectType::EdgeDetect},
+    {"twirl", EffectType::Twirl},
+    {"water", EffectType::Water},
 }};
 
 constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
@@ -1027,6 +1052,28 @@ constexpr std::array<std::pair<std::string_view, SurfaceRotationOrder>, 6U>
         {"yzx", SurfaceRotationOrder::YZX},
         {"zxy", SurfaceRotationOrder::ZXY},
         {"zyx", SurfaceRotationOrder::ZYX},
+    }};
+
+constexpr std::array<std::pair<std::string_view, EnvironmentMapEncoding>, 3U>
+    kEnvironmentMapEncodings{{
+        {"auto", EnvironmentMapEncoding::Auto},
+        {"srgb", EnvironmentMapEncoding::Srgb},
+        {"linear", EnvironmentMapEncoding::Linear},
+    }};
+
+constexpr std::array<std::pair<std::string_view, MeshConstructionMode>, 4U>
+    kMeshConstructionModes{{
+        {"none", MeshConstructionMode::None},
+        {"explode", MeshConstructionMode::Explode},
+        {"deconstruct", MeshConstructionMode::Deconstruct},
+        {"reconstruct", MeshConstructionMode::Reconstruct},
+    }};
+
+constexpr std::array<std::pair<std::string_view, MeshFragmentation>, 3U>
+    kMeshFragmentations{{
+        {"automatic", MeshFragmentation::Automatic},
+        {"connected_components", MeshFragmentation::ConnectedComponents},
+        {"triangle_clusters", MeshFragmentation::TriangleClusters},
     }};
 
 constexpr std::array<std::pair<std::string_view, StartingImageFit>, 4U>
@@ -1804,6 +1851,13 @@ bool validate_persistence_bounds(const RenderConfig& config,
         return fail(error,
                     "Cannot save configuration: custom OBJ attachment metadata is invalid.");
     }
+    if (!is_lowercase_sha256(config.surface.environment_map.sha256)
+        || config.surface.environment_map.basename.size()
+               > kMaximumAttachmentBasenameBytes) {
+        return fail(
+            error,
+            "Cannot save configuration: environment-map attachment metadata is invalid.");
+    }
     if (!is_lowercase_sha256(config.starting_image.sha256)
         || config.starting_image.basename.size()
                > kMaximumAttachmentBasenameBytes) {
@@ -2238,6 +2292,43 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("surface.plane_displacement.path", plane.path);
     builder.add_string("surface.plane_displacement.sha256", plane.sha256);
     builder.add_string("surface.plane_displacement.basename", plane.basename);
+    const EnvironmentMapConfig& environment =
+        config.surface.environment_map;
+    builder.add_bool("surface.environment_map.enabled", environment.enabled);
+    builder.add_enum("surface.environment_map.encoding", environment.encoding,
+                     kEnvironmentMapEncodings);
+    builder.add_double("surface.environment_map.rotation_degrees",
+                       environment.rotation_degrees);
+    builder.add_double("surface.environment_map.exposure_stops",
+                       environment.exposure_stops);
+    builder.add_double("surface.environment_map.intensity",
+                       environment.intensity);
+    builder.add_double("surface.environment_map.mix", environment.mix);
+    builder.add_string("surface.environment_map.path", environment.path);
+    builder.add_string("surface.environment_map.sha256", environment.sha256);
+    builder.add_string("surface.environment_map.basename",
+                       environment.basename);
+    const MeshConstructionConfig& construction =
+        config.surface.mesh_construction;
+    builder.add_enum("surface.mesh_construction.mode", construction.mode,
+                     kMeshConstructionModes);
+    builder.add_enum("surface.mesh_construction.fragmentation",
+                     construction.fragmentation, kMeshFragmentations);
+    builder.add_integer("surface.mesh_construction.target_fragments",
+                        construction.target_fragments);
+    builder.add_integer("surface.mesh_construction.cycles_per_loop",
+                        construction.cycles_per_loop);
+    builder.add_double("surface.mesh_construction.phase_degrees",
+                       construction.phase_degrees);
+    builder.add_double("surface.mesh_construction.distance",
+                       construction.distance);
+    builder.add_double("surface.mesh_construction.rotation_degrees",
+                       construction.rotation_degrees);
+    builder.add_double("surface.mesh_construction.minimum_scale",
+                       construction.minimum_scale);
+    builder.add_double("surface.mesh_construction.stagger",
+                       construction.stagger);
+    builder.add_integer("surface.mesh_construction.seed", construction.seed);
 
     builder.add_bool("source_image.enabled", config.starting_image.enabled);
     builder.add_enum("source_image.fit", config.starting_image.fit,
@@ -3358,9 +3449,14 @@ bool deserialize_setup(Records& records,
             || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)) {
             return false;
         }
-        if (setup_version >= 14U) {
+        if (setup_version >= 20U) {
             if (!consume_enum(records, indexed_key("effects", index, "type"),
                               effect.type, kEffectTypes, error)) {
+                return false;
+            }
+        } else if (setup_version >= 14U) {
+            if (!consume_enum(records, indexed_key("effects", index, "type"),
+                              effect.type, kEffectTypesV19, error)) {
                 return false;
             }
         } else if (setup_version >= 11U) {
@@ -3835,6 +3931,68 @@ bool deserialize_setup(Records& records,
                 record_error(
                     "Invalid plane-displacement attachment metadata at setup key",
                     "surface.plane_displacement.sha256"));
+        }
+    }
+    if (setup_version >= 20U) {
+        EnvironmentMapConfig& environment = surface.environment_map;
+        if (!consume_bool(records, "surface.environment_map.enabled",
+                          environment.enabled, error)
+            || !consume_enum(records, "surface.environment_map.encoding",
+                             environment.encoding, kEnvironmentMapEncodings,
+                             error)
+            || !consume_double(
+                records, "surface.environment_map.rotation_degrees",
+                environment.rotation_degrees, error)
+            || !consume_double(
+                records, "surface.environment_map.exposure_stops",
+                environment.exposure_stops, error)
+            || !consume_double(records, "surface.environment_map.intensity",
+                               environment.intensity, error)
+            || !consume_double(records, "surface.environment_map.mix",
+                               environment.mix, error)
+            || !consume_string(records, "surface.environment_map.path",
+                               environment.path, error)
+            || !consume_bounded_string(
+                records, "surface.environment_map.sha256", kSha256HexBytes,
+                environment.sha256, error)
+            || !consume_bounded_string(
+                records, "surface.environment_map.basename",
+                kMaximumAttachmentBasenameBytes, environment.basename, error)
+            || !is_lowercase_sha256(environment.sha256)) {
+            return fail(
+                error,
+                record_error(
+                    "Invalid environment-map attachment metadata at setup key",
+                    "surface.environment_map.sha256"));
+        }
+        MeshConstructionConfig& construction = surface.mesh_construction;
+        if (!consume_enum(records, "surface.mesh_construction.mode",
+                          construction.mode, kMeshConstructionModes, error)
+            || !consume_enum(
+                records, "surface.mesh_construction.fragmentation",
+                construction.fragmentation, kMeshFragmentations, error)
+            || !consume_integer(
+                records, "surface.mesh_construction.target_fragments",
+                construction.target_fragments, error)
+            || !consume_integer(
+                records, "surface.mesh_construction.cycles_per_loop",
+                construction.cycles_per_loop, error)
+            || !consume_double(
+                records, "surface.mesh_construction.phase_degrees",
+                construction.phase_degrees, error)
+            || !consume_double(records, "surface.mesh_construction.distance",
+                               construction.distance, error)
+            || !consume_double(
+                records, "surface.mesh_construction.rotation_degrees",
+                construction.rotation_degrees, error)
+            || !consume_double(
+                records, "surface.mesh_construction.minimum_scale",
+                construction.minimum_scale, error)
+            || !consume_double(records, "surface.mesh_construction.stagger",
+                               construction.stagger, error)
+            || !consume_integer(records, "surface.mesh_construction.seed",
+                                construction.seed, error)) {
+            return false;
         }
     }
 
@@ -4316,7 +4474,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 16U && setup_v16_record(key))
              || (setup_version < 17U && setup_v17_record(key))
              || (setup_version < 18U && setup_v18_record(key))
-             || (setup_version < 19U && setup_v19_record(key)));
+             || (setup_version < 19U && setup_v19_record(key))
+             || (setup_version < 20U && setup_v20_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

@@ -1,6 +1,7 @@
 #include "frame_renderer_internal.h"
 
 #include "displacement_surface.h"
+#include "environment_map.h"
 #include "metal_kernels_source.h"
 #include "obj_surface.h"
 #include "source_image.h"
@@ -102,6 +103,8 @@ struct alignas(16) GpuSurface {
     Float4 position_camera;
     Float4 optical_lighting;
     Float4 light;
+    UInt4 environment; // width, height, enabled, reserved
+    Float4 environment_values; // rotation turns, radiance scale, mix, reserved
 };
 
 struct alignas(16) GpuSourceImage {
@@ -152,7 +155,7 @@ static_assert(sizeof(GpuChannelMap) == 32U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
 static_assert(sizeof(GpuEffect) == 96U);
-static_assert(sizeof(GpuSurface) == 112U);
+static_assert(sizeof(GpuSurface) == 144U);
 static_assert(sizeof(GpuSourceImage) == 32U);
 static_assert(sizeof(GpuMotion) == 32U);
 static_assert(sizeof(GpuParticlePoint) == 32U);
@@ -1082,9 +1085,10 @@ ParticleData make_particles(const RenderConfig& config,
 }
 
 GpuSurface make_surface(const RenderConfig& config,
-                        const PreparedFrame& prepared) {
+                        const PreparedFrame& prepared,
+                        const PreparedEnvironmentMap* environment) {
     constexpr double kPi = 3.141592653589793238462643383279502884;
-    GpuSurface result;
+    GpuSurface result{};
     const SurfaceConfig& surface = config.surface;
     result.kind = {
         static_cast<std::uint32_t>(surface.mapping),
@@ -1127,6 +1131,15 @@ GpuSurface make_surface(const RenderConfig& config,
         static_cast<float>(surface.light_direction_x),
         static_cast<float>(surface.light_direction_y),
         static_cast<float>(surface.light_direction_z), 0.0F};
+    if (environment != nullptr && *environment) {
+        result.environment = {
+            static_cast<std::uint32_t>(environment->image->width),
+            static_cast<std::uint32_t>(environment->image->height), 1U, 0U};
+        result.environment_values = {
+            static_cast<float>(environment->rotation_turns),
+            static_cast<float>(environment->radiance_scale),
+            static_cast<float>(environment->mix), 0.0F};
+    }
     return result;
 }
 
@@ -1342,6 +1355,30 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     MetalContext& context = metal_context();
     if (!context.ready()) return fail(error, context.status());
 
+    const bool cpu_raster_surface = surface_has_work(config.surface)
+        && (config.surface.mapping == SurfaceMapping::CustomObj
+            || (config.surface.mapping == SurfaceMapping::Plane
+                && config.surface.plane_displacement.enabled));
+    PreparedEnvironmentMap prepared_environment;
+    const bool environment_work = surface_has_work(config.surface)
+        && !cpu_raster_surface && config.surface.environment_map.enabled
+        && config.surface.lighting > 0.0
+        && config.surface.environment_map.mix > 0.0;
+    if (environment_work
+        && !prepare_environment_map(config.surface.environment_map,
+                                    prepared_environment, cancel, error)) {
+        return false;
+    }
+    std::size_t environment_image_bytes = 0U;
+    if (prepared_environment) {
+        if (prepared_environment.image->pixels.size()
+            > (std::numeric_limits<std::size_t>::max)() / sizeof(float)) {
+            return fail(error, "The Metal environment-map buffer overflowed.");
+        }
+        environment_image_bytes =
+            prepared_environment.image->pixels.size() * sizeof(float);
+    }
+
     std::shared_ptr<const Image> starting_image;
     std::shared_ptr<Image> preprocessed_starting_image;
     bool source_preprocessed = false;
@@ -1410,6 +1447,12 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                     "The Metal working buffers and starting image overflowed.");
     }
     std::size_t working_bytes = frame_working_bytes + starting_image_bytes;
+    if (!checked_size_add(working_bytes, environment_image_bytes,
+                          working_bytes)) {
+        return fail(
+            error,
+            "The Metal working buffers and environment map overflowed.");
+    }
     if (!checked_size_add(working_bytes, particle_working_bytes,
                           working_bytes)) {
         return fail(error,
@@ -1429,7 +1472,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                                          : static_cast<std::size_t>(recommended_budget);
     if (memory_budget != 0U && working_bytes > memory_budget) {
         return fail(error,
-                    "This Metal frame's working buffers, source image, and particle acceleration data would exceed the bounded GPU working-set budget.");
+                    "This Metal frame's working buffers, source/environment images, and particle acceleration data would exceed the bounded GPU working-set budget.");
     }
     AdmissionPermit permit(options.maximum_gpu_frames_in_flight,
                            working_bytes, memory_budget, cancel);
@@ -1452,11 +1495,17 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         starting_image_buffer = make_input_buffer(
             context.device(), starting_image->pixels);
     }
+    MetalPtr<MTL::Buffer> environment_image_buffer;
+    if (prepared_environment) {
+        environment_image_buffer = make_input_buffer(
+            context.device(), prepared_environment.image->pixels);
+    }
     auto first = make_frame_buffer(context.device(), frame_bytes);
     auto second = make_frame_buffer(context.device(), frame_bytes);
     auto auxiliary = make_frame_buffer(context.device(), frame_bytes);
     if (!wave_buffer || !swing_buffer || !palette_buffer
         || (starting_image && !starting_image_buffer)
+        || (prepared_environment && !environment_image_buffer)
         || !first || !second || !auxiliary) {
         return fail(error,
                     "Metal could not allocate its bounded shared frame buffers.");
@@ -1682,10 +1731,6 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }
-    const bool cpu_raster_surface = surface_has_work(config.surface)
-        && (config.surface.mapping == SurfaceMapping::CustomObj
-            || (config.surface.mapping == SurfaceMapping::Plane
-                && config.surface.plane_displacement.enabled));
     if (cpu_raster_surface) {
         // Mesh visibility is an ordered raster operation. Complete the GPU
         // texture stages, rasterize only this dependency-heavy surface on the
@@ -1715,7 +1760,9 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                         "Metal could not resume after mesh-surface rasterization.");
         }
     } else if (surface_has_work(config.surface)) {
-        const GpuSurface surface = make_surface(config, prepared);
+        const PreparedEnvironmentMap* environment = prepared_environment
+            ? &prepared_environment : nullptr;
+        const GpuSurface surface = make_surface(config, prepared, environment);
         encode_grid(command_buffer, context.pipeline(Pipeline::Surface),
                     pixel_grid,
                     [&](MTL::ComputeCommandEncoder* encoder) {
@@ -1723,6 +1770,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                         encoder->setBytes(&surface, sizeof(surface), 1U);
                         encoder->setBuffer(current, 0U, 2U);
                         encoder->setBuffer(scratch, 0U, 3U);
+                        encoder->setBuffer(
+                            environment_image_buffer
+                                ? environment_image_buffer.get() : current,
+                            0U, 4U);
                     });
         std::swap(current, scratch);
     }

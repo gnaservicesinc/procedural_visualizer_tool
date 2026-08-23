@@ -68,6 +68,14 @@ pvt::EffectConfig* find_effect(pvt::LayerConfig& layer, std::uint64_t id) {
     return found == layer.render.effects.end() ? nullptr : &*found;
 }
 
+bool mesh_construction_available(const pvt::SurfaceConfig& surface) {
+    return surface.mapping == pvt::SurfaceMapping::CustomObj
+           || (surface.mapping == pvt::SurfaceMapping::Plane
+               && surface.plane_displacement.enabled
+               && (!surface.plane_displacement.path.empty()
+                   || !surface.plane_displacement.sha256.empty()));
+}
+
 QString layer_section(const pvt::LayerConfig& layer, const QString& suffix) {
     return QObject::tr("%1 — %2")
         .arg(QString::fromStdString(layer.name), suffix);
@@ -692,6 +700,171 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Surface"), LiveTargetKind::Real, 0,
                    kMaximumRenderParameter,
                    render.surface.light_diffuse, [](pvt::RenderData& r, double v) { r.surface.light_diffuse = v; });
+        if (!render.surface.environment_map.path.empty()
+            || !render.surface.environment_map.sha256.empty()) {
+            add_nested(
+                QStringLiteral("surface.environment.enabled"),
+                QObject::tr("Environment-map lighting"),
+                QObject::tr("Surface"), LiveTargetKind::Boolean, 0, 1,
+                render.surface.environment_map.enabled,
+                [](pvt::RenderData& r, double v) {
+                    const bool enabled = v >= 0.5;
+                    if (!enabled || !r.surface.environment_map.path.empty()
+                        || !r.surface.environment_map.sha256.empty()) {
+                        r.surface.environment_map.enabled = enabled;
+                        if (enabled) r.surface.enabled = true;
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.environment.encoding"),
+                QObject::tr("Environment-map encoding"),
+                QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 2,
+                static_cast<double>(render.surface.environment_map.encoding),
+                [](pvt::RenderData& r, double v) {
+                    r.surface.environment_map.encoding =
+                        static_cast<pvt::EnvironmentMapEncoding>(
+                            std::llround(v));
+                });
+            add_nested(
+                QStringLiteral("surface.environment.rotation"),
+                QObject::tr("Environment rotation"),
+                QObject::tr("Surface"), LiveTargetKind::Real,
+                -kMaximumRenderParameter, kMaximumRenderParameter,
+                render.surface.environment_map.rotation_degrees,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.environment_map.rotation_degrees = v;
+                });
+            add_nested(
+                QStringLiteral("surface.environment.exposure"),
+                QObject::tr("Environment exposure"),
+                QObject::tr("Surface"), LiveTargetKind::Real,
+                -kMaximumRenderParameter, kMaximumRenderParameter,
+                render.surface.environment_map.exposure_stops,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.environment_map.exposure_stops = v;
+                });
+            add_nested(
+                QStringLiteral("surface.environment.intensity"),
+                QObject::tr("Environment intensity"),
+                QObject::tr("Surface"), LiveTargetKind::Real, 0,
+                kMaximumRenderParameter,
+                render.surface.environment_map.intensity,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.environment_map.intensity = v;
+                });
+            add_nested(
+                QStringLiteral("surface.environment.mix"),
+                QObject::tr("Direct / environment mix"),
+                QObject::tr("Surface"), LiveTargetKind::Real, 0, 1,
+                render.surface.environment_map.mix,
+                [](pvt::RenderData& r, double v) {
+                    r.surface.environment_map.mix = v;
+                });
+        }
+        if (mesh_construction_available(render.surface)) {
+            add_nested(
+                QStringLiteral("surface.mesh_construction.mode"),
+                QObject::tr("Mesh construction mode"),
+                QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 3,
+                static_cast<double>(render.surface.mesh_construction.mode),
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.mode =
+                            static_cast<pvt::MeshConstructionMode>(
+                                std::llround(v));
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.fragmentation"),
+                QObject::tr("Mesh fragmentation"),
+                QObject::tr("Surface"), LiveTargetKind::Enumeration, 0, 2,
+                static_cast<double>(
+                    render.surface.mesh_construction.fragmentation),
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.fragmentation =
+                            static_cast<pvt::MeshFragmentation>(
+                                std::llround(v));
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.target_fragments"),
+                QObject::tr("Target mesh fragments"),
+                QObject::tr("Surface"), LiveTargetKind::Integer, 1,
+                static_cast<double>(pvt::kMaximumMeshFragments),
+                render.surface.mesh_construction.target_fragments,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.target_fragments =
+                            static_cast<int>(std::llround(v));
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.cycles"),
+                QObject::tr("Mesh construction cycles"),
+                QObject::tr("Surface"), LiveTargetKind::Integer,
+                kMinimumIntegerParameter, kMaximumIntegerParameter,
+                render.surface.mesh_construction.cycles_per_loop,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.cycles_per_loop =
+                            static_cast<int>(std::llround(v));
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.phase"),
+                QObject::tr("Mesh construction phase"),
+                QObject::tr("Surface"), LiveTargetKind::Real,
+                -kMaximumRenderParameter, kMaximumRenderParameter,
+                render.surface.mesh_construction.phase_degrees,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.phase_degrees = v;
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.distance"),
+                QObject::tr("Mesh fragment distance"),
+                QObject::tr("Surface"), LiveTargetKind::Real, 0,
+                kMaximumRenderParameter,
+                render.surface.mesh_construction.distance,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.distance = v;
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.rotation"),
+                QObject::tr("Mesh fragment rotation"),
+                QObject::tr("Surface"), LiveTargetKind::Real,
+                -kMaximumRenderParameter, kMaximumRenderParameter,
+                render.surface.mesh_construction.rotation_degrees,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.rotation_degrees = v;
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.minimum_scale"),
+                QObject::tr("Minimum mesh-fragment scale"),
+                QObject::tr("Surface"), LiveTargetKind::Real, 0, 1,
+                render.surface.mesh_construction.minimum_scale,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.minimum_scale = v;
+                    }
+                });
+            add_nested(
+                QStringLiteral("surface.mesh_construction.stagger"),
+                QObject::tr("Mesh-fragment stagger"),
+                QObject::tr("Surface"), LiveTargetKind::Real, 0, 1,
+                render.surface.mesh_construction.stagger,
+                [](pvt::RenderData& r, double v) {
+                    if (mesh_construction_available(r.surface)) {
+                        r.surface.mesh_construction.stagger = v;
+                    }
+                });
+        }
         add_nested(QStringLiteral("surface.composite_backfaces"), QObject::tr("Surface rear compositing"),
                    QObject::tr("Surface"), LiveTargetKind::Boolean, 0, 1,
                    render.surface.composite_backfaces, [](pvt::RenderData& r, double v) { r.surface.composite_backfaces = v >= 0.5; });
@@ -920,8 +1093,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             const bool glitch = effect.type == pvt::EffectType::Glitch;
             const bool starburst = effect.type == pvt::EffectType::Starburst;
             const bool lens = effect.type == pvt::EffectType::LensDistortion;
+            const bool water = effect.type == pvt::EffectType::Water;
             const bool normalized_intensity =
-                block_scale || glitch || starburst || lens;
+                block_scale || glitch || starburst || lens || water;
             const double frequency_minimum = block_scale
                 ? std::max(kMinimumPositiveUiValue, effect.magnitude)
                 : (particles || glitch || starburst ? 1.0
@@ -930,10 +1104,11 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                 ? kMaximumIntegerParameter : kMaximumRenderParameter;
             const double secondary_minimum = block_scale || particles
                                                      || glitch || starburst
+                                                     || water
                 ? 0.0 : (lens ? -1.0 : -kMaximumRenderParameter);
             const double secondary_maximum = block_scale
                 ? kMaximumIntegerParameter
-                : (particles || glitch || starburst || lens
+                : (particles || glitch || starburst || lens || water
                        ? 1.0 : kMaximumRenderParameter);
             const auto add_effect = [&](const QString& key, const QString& label,
                                         LiveTargetKind kind, double minimum,
@@ -950,15 +1125,15 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                        });
             };
             add_effect(QStringLiteral("enabled"), QObject::tr("Enabled"), LiveTargetKind::Boolean, 0, 1, effect.enabled, [](pvt::EffectConfig& e, double v) { e.enabled = v >= 0.5; });
-            add_effect(QStringLiteral("type"), QObject::tr("Effect type"), LiveTargetKind::Enumeration, 0, 12, static_cast<double>(effect.type), [](pvt::EffectConfig& e, double v) { e.type = static_cast<pvt::EffectType>(std::llround(v)); });
+            add_effect(QStringLiteral("type"), QObject::tr("Effect type"), LiveTargetKind::Enumeration, 0, static_cast<double>(pvt::EffectType::Water), static_cast<double>(effect.type), [](pvt::EffectConfig& e, double v) { e.type = static_cast<pvt::EffectType>(std::llround(v)); });
             add_effect(QStringLiteral("space"), QObject::tr("Effect space"), LiveTargetKind::Enumeration, 0, 1, static_cast<double>(effect.space), [](pvt::EffectConfig& e, double v) { e.space = static_cast<pvt::EffectSpace>(std::llround(v)); });
             add_effect(QStringLiteral("synchronized"), QObject::tr("Use master clock"), LiveTargetKind::Boolean, 0, 1, effect.synchronized, [](pvt::EffectConfig& e, double v) { e.synchronized = v >= 0.5; });
             add_effect(QStringLiteral("edge_mode"), QObject::tr("Edge mode"), LiveTargetKind::Enumeration, 0, 3, static_cast<double>(effect.edge_mode), [](pvt::EffectConfig& e, double v) { e.edge_mode = static_cast<pvt::EdgeMode>(std::llround(v)); });
             add_effect(QStringLiteral("audio_response"), QObject::tr("Audio response"), LiveTargetKind::Enumeration, 0, 12, static_cast<double>(effect.audio_response), [](pvt::EffectConfig& e, double v) { e.audio_response = static_cast<pvt::AudioResponseMode>(std::llround(v)); });
             add_effect(QStringLiteral("intensity"), QObject::tr("Intensity"), LiveTargetKind::Real, 0, normalized_intensity ? 1.0 : kMaximumRenderParameter, effect.intensity, [](pvt::EffectConfig& e, double v) { e.intensity = v; });
-            add_effect(QStringLiteral("magnitude"), QObject::tr("Magnitude"), LiveTargetKind::Real, block_scale ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { e.magnitude = v; });
-            add_effect(QStringLiteral("frequency"), particles ? QObject::tr("Particle count") : QObject::tr("Frequency"), particles ? LiveTargetKind::Integer : LiveTargetKind::Real, frequency_minimum, frequency_maximum, effect.frequency, [particles](pvt::EffectConfig& e, double v) { e.frequency = particles ? std::round(v) : v; });
-            add_effect(QStringLiteral("secondary"), QObject::tr("Secondary"), LiveTargetKind::Real, secondary_minimum, secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { e.secondary = v; });
+            add_effect(QStringLiteral("magnitude"), water ? QObject::tr("Peak refraction") : QObject::tr("Magnitude"), LiveTargetKind::Real, block_scale ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { e.magnitude = v; });
+            add_effect(QStringLiteral("frequency"), particles ? QObject::tr("Particle count") : (water ? QObject::tr("Wave density") : QObject::tr("Frequency")), particles ? LiveTargetKind::Integer : LiveTargetKind::Real, frequency_minimum, frequency_maximum, effect.frequency, [particles](pvt::EffectConfig& e, double v) { e.frequency = particles ? std::round(v) : v; });
+            add_effect(QStringLiteral("secondary"), water ? QObject::tr("Cross-wave complexity") : QObject::tr("Secondary"), LiveTargetKind::Real, secondary_minimum, secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { e.secondary = v; });
             add_effect(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_x, [](pvt::EffectConfig& e, double v) { e.center_x = v; });
             add_effect(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_y, [](pvt::EffectConfig& e, double v) { e.center_y = v; });
             add_effect(QStringLiteral("angle"), QObject::tr("Angle"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.angle_degrees, [](pvt::EffectConfig& e, double v) { e.angle_degrees = v; });

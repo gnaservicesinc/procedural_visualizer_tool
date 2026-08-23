@@ -511,6 +511,9 @@ bool finalize_mesh(ObjMesh& mesh,
         0.5 * (minimum.y + maximum.y),
         0.5 * (minimum.z + maximum.z)};
     mesh.normalization_scale = 2.0 / longest;
+    if (!rebuild_obj_mesh_components(mesh, error)) {
+        return false;
+    }
     if (mesh.estimated_bytes() > limits.maximum_mesh_bytes) {
         return fail(error, "OBJ expanded mesh exceeds the configured memory limit.");
     }
@@ -519,6 +522,76 @@ bool finalize_mesh(ObjMesh& mesh,
 
 } // namespace
 
+bool rebuild_obj_mesh_components(ObjMesh& mesh, std::string* error) {
+    clear_error(error);
+    try {
+        const std::size_t triangle_count = mesh.triangles.size();
+        const std::size_t missing = (std::numeric_limits<std::size_t>::max)();
+        std::vector<std::size_t> parent(triangle_count);
+        std::vector<std::size_t> first_triangle(mesh.positions.size(), missing);
+        for (std::size_t triangle = 0U; triangle < triangle_count; ++triangle) {
+            parent[triangle] = triangle;
+        }
+        const auto root_of = [&parent](std::size_t value) {
+            std::size_t root = value;
+            while (parent[root] != root) root = parent[root];
+            while (parent[value] != value) {
+                const std::size_t next = parent[value];
+                parent[value] = root;
+                value = next;
+            }
+            return root;
+        };
+        for (std::size_t triangle = 0U; triangle < triangle_count; ++triangle) {
+            for (const ObjCorner& corner : mesh.triangles[triangle].corners) {
+                if (corner.position >= mesh.positions.size()) {
+                    return fail(error,
+                                "Mesh topology references an unavailable position.");
+                }
+                std::size_t& first = first_triangle[corner.position];
+                if (first == missing) {
+                    first = triangle;
+                    continue;
+                }
+                const std::size_t first_root = root_of(first);
+                const std::size_t triangle_root = root_of(triangle);
+                if (first_root != triangle_root) {
+                    // Always retain the earlier root. This makes the topology
+                    // labels independent of union heuristics and allocation
+                    // addresses while keeping trees shallow after compression.
+                    const std::size_t retained = std::min(first_root,
+                                                          triangle_root);
+                    const std::size_t joined = std::max(first_root,
+                                                       triangle_root);
+                    parent[joined] = retained;
+                    first = retained;
+                }
+            }
+        }
+
+        std::vector<std::size_t> root_labels(triangle_count, missing);
+        std::vector<std::size_t> labels(triangle_count, 0U);
+        std::size_t component_count = 0U;
+        for (std::size_t triangle = 0U; triangle < triangle_count; ++triangle) {
+            const std::size_t root = root_of(triangle);
+            if (root_labels[root] == missing) {
+                root_labels[root] = component_count++;
+            }
+            labels[triangle] = root_labels[root];
+        }
+        mesh.triangle_components.swap(labels);
+        mesh.connected_component_count = component_count;
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to build deterministic mesh components.");
+    } catch (const std::exception& exception) {
+        return fail(error,
+                    std::string("Could not build mesh components: ")
+                        + exception.what());
+    }
+}
+
 std::size_t ObjMesh::estimated_bytes() const noexcept {
     std::size_t total = sizeof(*this);
     std::size_t bytes = 0U;
@@ -526,7 +599,8 @@ std::size_t ObjMesh::estimated_bytes() const noexcept {
              std::pair<std::size_t, std::size_t>{positions.capacity(), sizeof(ObjVec3)},
              {texcoords.capacity(), sizeof(ObjVec2)},
              {normals.capacity(), sizeof(ObjVec3)},
-             {triangles.capacity(), sizeof(ObjTriangle)}}) {
+             {triangles.capacity(), sizeof(ObjTriangle)},
+             {triangle_components.capacity(), sizeof(std::size_t)}}) {
         if (!checked_multiply(item.first, item.second, bytes)
             || !checked_add(total, bytes, total)) {
             return std::numeric_limits<std::size_t>::max();

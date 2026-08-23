@@ -256,6 +256,132 @@ int main(int argc, char** argv) {
         CHECK(difference <= tolerance);
     }
 
+    const std::filesystem::path environment_map =
+        std::filesystem::temp_directory_path()
+        / ("pvt-opengl-environment-"
+           + std::to_string(
+               std::chrono::steady_clock::now().time_since_epoch().count())
+           + ".exr");
+    pvt::Image environment_image;
+    environment_image.width = 32;
+    environment_image.height = 16;
+    environment_image.pixels.resize(32U * 16U * 4U, 1.0F);
+    for (int y = 0; y < environment_image.height; ++y) {
+        for (int x = 0; x < environment_image.width; ++x) {
+            const std::size_t offset =
+                (static_cast<std::size_t>(y) * 32U
+                 + static_cast<std::size_t>(x)) * 4U;
+            constexpr double tau = 6.28318530717958647692;
+            constexpr double pi = 3.14159265358979323846;
+            const double longitude = tau
+                * (static_cast<double>(x) + 0.5)
+                / static_cast<double>(environment_image.width);
+            const double latitude = pi
+                * (static_cast<double>(y) + 0.5)
+                / static_cast<double>(environment_image.height);
+            // A directional but seam-continuous map avoids making tiny
+            // CPU/GPU longitude-rounding differences look like radiance
+            // discontinuities at U=0.
+            environment_image.pixels[offset] =
+                static_cast<float>(0.75 + 0.2 * std::cos(longitude));
+            environment_image.pixels[offset + 1U] =
+                static_cast<float>(0.8 + 0.15 * std::sin(longitude));
+            environment_image.pixels[offset + 2U] =
+                static_cast<float>(0.65 + 0.1 * std::cos(latitude));
+        }
+    }
+    pvt::RenderConfig environment_output = pvt::default_config();
+    environment_output.width = environment_image.width;
+    environment_output.height = environment_image.height;
+    environment_output.block_size = 1;
+    environment_output.output.bit_depth = 32;
+    environment_output.output.write_alpha = false;
+    environment_output.output.overwrite_existing = true;
+    std::string environment_error;
+    const bool wrote_environment_map = pvt::write_image(
+        environment_map.string(), environment_image, environment_output, 0U,
+        &environment_error);
+    if (!wrote_environment_map) {
+        std::cerr << "OpenGL environment EXR fixture: "
+                  << environment_error << '\n';
+    }
+    CHECK(wrote_environment_map);
+
+    for (const pvt::SurfaceMapping mapping : accelerated_mappings) {
+        pvt::RenderConfig config = analytic_config(mapping);
+        config.width = 64;
+        config.height = 48;
+        config.surface.rotation_x_degrees = 0.0;
+        config.surface.rotation_y_degrees = 0.0;
+        config.surface.rotation_y_turns_per_loop = 0;
+        config.surface.rotation_z_degrees = 0.0;
+        config.surface.outside = pvt::SurfaceOutside::Source;
+        config.surface.composite_backfaces = false;
+        config.starting_colors.include_alpha = false;
+        config.alpha.use_source_alpha = false;
+        config.surface.environment_map.enabled = true;
+        config.surface.environment_map.encoding =
+            pvt::EnvironmentMapEncoding::Linear;
+        config.surface.environment_map.path = environment_map.string();
+        config.surface.environment_map.rotation_degrees = 63.0;
+        config.surface.environment_map.exposure_stops = 0.35;
+        config.surface.environment_map.intensity = 1.2;
+        config.surface.environment_map.mix = 0.72;
+        pvt::Image reference;
+        pvt::Image strict;
+        CHECK(pvt::render_frame(config, 5, cpu, reference, nullptr,
+                                &environment_error));
+        CHECK(pvt::render_frame(config, 5, gpu, strict, nullptr,
+                                &environment_error));
+        const double difference = maximum_straight_alpha_difference(
+            reference, strict);
+        if (difference > 0.0065) {
+            std::cerr << pvt::surface_mapping_name(mapping)
+                      << " environment CPU/GPU max difference "
+                      << difference << '\n';
+        }
+        CHECK(difference <= 0.0065);
+    }
+
+    pvt::RenderConfig missing_environment =
+        analytic_config(pvt::SurfaceMapping::Plane);
+    missing_environment.surface.environment_map.enabled = true;
+    missing_environment.surface.environment_map.path =
+        environment_map.string() + ".missing";
+    missing_environment.surface.environment_map.mix = 1.0;
+    pvt::Image environment_sentinel;
+    environment_sentinel.width = 1;
+    environment_sentinel.height = 1;
+    environment_sentinel.pixels = {0.25F, 0.5F, 0.75F, 1.0F};
+    CHECK(!pvt::render_frame(missing_environment, 5, gpu,
+                             environment_sentinel, nullptr,
+                             &environment_error));
+    CHECK(environment_sentinel.width == 1
+          && environment_sentinel.height == 1
+          && environment_sentinel.pixels
+                 == std::vector<float>({0.25F, 0.5F, 0.75F, 1.0F}));
+
+    pvt::RenderConfig saturated_environment =
+        analytic_config(pvt::SurfaceMapping::Plane);
+    saturated_environment.surface.outside = pvt::SurfaceOutside::Source;
+    saturated_environment.surface.environment_map.enabled = true;
+    saturated_environment.surface.environment_map.encoding =
+        pvt::EnvironmentMapEncoding::Linear;
+    saturated_environment.surface.environment_map.path =
+        environment_map.string();
+    saturated_environment.surface.environment_map.exposure_stops = 1000000.0;
+    saturated_environment.surface.environment_map.intensity = 1000000.0;
+    saturated_environment.surface.environment_map.mix = 1.0;
+    saturated_environment.surface.lighting = 1000000.0;
+    pvt::Image saturated;
+    CHECK(pvt::render_frame(saturated_environment, 5, gpu, saturated, nullptr,
+                            &environment_error));
+    CHECK(std::all_of(saturated.pixels.begin(), saturated.pixels.end(),
+                      [](float value) { return std::isfinite(value); }));
+    std::error_code environment_remove_error;
+    std::filesystem::remove(environment_map, environment_remove_error);
+    CHECK(!environment_remove_error);
+
     const std::filesystem::path height_map =
         std::filesystem::temp_directory_path()
         / ("pvt-opengl-displacement-"
@@ -358,6 +484,66 @@ int main(int argc, char** argv) {
     CHECK(maximum_difference(neutral_reference, neutral_hybrid) <= 0.0035);
     CHECK(maximum_difference(neutral_reference, neutral_gpu) <= 0.0035);
 
+    // ChannelLoops deliberately takes the reference source lane, so any
+    // strict-GPU difference below comes from the ordered Water shader and the
+    // final GPU completion pass rather than the generated-source shader.
+    pvt::RenderConfig water_config = neutral;
+    water_config.width = 61;
+    water_config.height = 47;
+    water_config.block_size = 1;
+    water_config.starting_colors.mode =
+        pvt::StartingColorMode::ChannelLoops;
+    water_config.starting_colors.include_alpha = true;
+    water_config.alpha.enabled = true;
+    water_config.alpha.minimum = 0.18;
+    water_config.alpha.maximum = 0.91;
+    water_config.alpha.spatial_frequency = 2.3;
+    water_config.output.write_alpha = true;
+    water_config.effects.clear();
+    auto water = pvt::default_effect(pvt::EffectType::Water);
+    water.id = pvt::allocate_id(water_config);
+    water.enabled = true;
+    water.intensity = 0.83;
+    water.magnitude = 0.055;
+    water.frequency = 7.25;
+    water.secondary = 0.78;
+    water.center_x = 0.16;
+    water.center_y = 0.31;
+    water.angle_degrees = 37.0;
+    water.area_radius = 0.64;
+    water.cycles_per_loop = -3;
+    water.phase_degrees = 19.0;
+    water.edge_mode = pvt::EdgeMode::Alpha;
+    water_config.effects.push_back(water);
+    pvt::RenderConfig no_water = water_config;
+    no_water.effects.clear();
+    pvt::Image no_water_reference;
+    CHECK(pvt::render_frame_at_phase(no_water, 0.37, cpu,
+                                     no_water_reference, nullptr, &error));
+    for (const pvt::EffectSpace space : {
+             pvt::EffectSpace::Texture, pvt::EffectSpace::Surface}) {
+        water_config.effects.front().space = space;
+        pvt::Image water_reference;
+        pvt::Image water_strict;
+        pvt::Image water_start;
+        pvt::Image water_end;
+        CHECK(pvt::render_frame_at_phase(water_config, 0.37, cpu,
+                                         water_reference, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(water_config, 0.37, gpu,
+                                         water_strict, nullptr, &error));
+        CHECK(maximum_straight_alpha_difference(
+                  no_water_reference, water_reference)
+              > 0.001);
+        CHECK(maximum_straight_alpha_difference(
+                  water_reference, water_strict)
+              <= 0.0035);
+        CHECK(pvt::render_frame_at_phase(water_config, 0.0, gpu,
+                                         water_start, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(water_config, 1.0, gpu,
+                                         water_end, nullptr, &error));
+        CHECK(maximum_difference(water_start, water_end) <= 1.0e-7);
+    }
+
     pvt::RenderConfig unsupported_source = neutral;
     unsupported_source.starting_colors.mode =
         pvt::StartingColorMode::ChannelLoops;
@@ -376,7 +562,7 @@ int main(int argc, char** argv) {
         std::cerr << failures << " OpenGL surface backend test(s) failed.\n";
         return EXIT_FAILURE;
     }
-    std::cout << "OpenGL generated-source/surface acceleration and GPU "
+    std::cout << "OpenGL generated-source/surface/Water acceleration and GPU "
                  "no-whole-frame-retry policy passed on "
               << capabilities.opengl_surface_device_name << ".\n";
     return EXIT_SUCCESS;

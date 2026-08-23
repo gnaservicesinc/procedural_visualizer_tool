@@ -6,6 +6,59 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## Environment lighting and mesh construction
+
+`SurfaceConfig::environment_map` owns an optional managed PNG/OpenEXR source,
+explicit Auto/sRGB/Linear transfer interpretation, longitude rotation,
+exposure, intensity, and direct/environment mix. The shared Y-up
+equirectangular contract uses five deterministic diffuse samples with wrapped U
+and clamped V, ignores alpha, clamps negative radiance, and saturates finite HDR
+results. Decoding and the shared LRU are bounded to 512 MiB of decoded float
+RGBA. Bundle attachment identity is
+`layer.<uuid>.surface.environment`; agreement checks, materialization,
+independent-copy remapping, stale-source recovery, semantic fingerprints, and
+orphan cleanup all include it.
+
+`SurfaceConfig::mesh_construction` animates Custom OBJ and displaced-Plane
+triangles using stable connected-component labels or deterministic spatial
+clusters, capped at `kMaximumMeshFragments`. Explode, Deconstruct, and
+Reconstruct use seeded object-space translation, axis rotation, uniform scale,
+and optional fragment staggering. Signed integer cycle counts and authored
+phase preserve exact closure; zero cycles hold a deterministic static pose.
+Mesh cache accounting includes topology labels and central validation includes
+the transient fragment-plan allocation. Metal already treats mesh visibility as
+an ordered shared raster dependency; OpenGL disables only its specialized
+single-transform mesh shader for active construction, then resumes GPU frame
+ownership and completion.
+
+## Native Water refraction
+
+`EffectType::Water` is a native ordered coordinate effect, not an external
+shader payload. It blends the incoming straight-alpha float RGBA sample with a
+three-wave analytic refraction field. Magnitude is a fraction of the shorter
+edge; frequency controls spatial density; secondary is bounded cross-wave
+complexity; angle rotates the field; the existing center, local-area, edge,
+clock, path, audio-response, and numeric-LFO systems remain composable. Integer
+temporal multipliers (-1, +2, and -3) make the field exactly periodic at a full
+authored phase turn.
+
+CPU, Metal, and the Qt-hosted OpenGL 3.3 backend implement the same field and
+manual edge-aware bilinear sampling. An admitted OpenGL frame runs Water as a
+true dependency-ordered shader pass; dispatch, context, compile, link,
+framebuffer, or readback errors abort that frame directly, with no disguised
+CPU retry. CLI add/edit choices now include the previously omitted Edge Detect
+and Twirl types as well as Water. The GUI catalog/editor/randomizer and Live
+registry expose Water with normalized mix/complexity bounds.
+
+Persistence advances to setup format 20 and layer format 18. Water is appended
+after every prior effect token, while setup 19/layer 17 decoding uses the
+previous vocabulary, preserving all older meanings. `EffectConfig` itself is
+unchanged by Water.
+
+The public by-value `SurfaceConfig` layout grows for environment lighting and
+mesh construction, so this round advances the product major and shared-library
+SONAME together to 13.0.0/13. Installed consumers must rebuild.
+
 ## 12.0.0 ordered finishing and host-aware workflow controls
 
 Post Effects is now one explicit eight-stage finishing pipeline: combined RGB
@@ -1406,7 +1459,7 @@ consumers do not inherit minizip requirements.
 - `src/image_io.cpp`: PNG/EXR encoding, bounded frame-worker scheduling, PNG
   compression, dithering, collision preflight, ordered atomic installation,
   serialized progress, and cancellation checks.
-- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v19 and layer v1-v17
+- `src/config_io.cpp` / `src/config_codec.cpp`: setup v1-v20 and layer v1-v18
   codecs plus split per-layer/global bundle records with transactional legacy
   file I/O and neutral migration defaults.
 - `src/project_bundle.cpp` / `src/bundle_archive.cpp`: checksummed project/version

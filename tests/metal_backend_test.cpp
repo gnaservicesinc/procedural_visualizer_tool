@@ -430,7 +430,8 @@ void test_backend_contract() {
         pvt::EffectType::Starburst,
         pvt::EffectType::LensDistortion,
         pvt::EffectType::EdgeDetect,
-        pvt::EffectType::Twirl};
+        pvt::EffectType::Twirl,
+        pvt::EffectType::Water};
     for (const pvt::EffectType type : effect_types) {
         pvt::RenderConfig single_effect = parity_config();
         single_effect.effects.clear();
@@ -466,7 +467,8 @@ void test_backend_contract() {
         // Exercise both effect stages across the set, not only texture-space
         // kernels. Their compute code is shared but buffer ordering is not.
         if (type == pvt::EffectType::FlagWave
-            || type == pvt::EffectType::BlockScale) {
+            || type == pvt::EffectType::BlockScale
+            || type == pvt::EffectType::Water) {
             effect.space = pvt::EffectSpace::Surface;
         }
         single_effect.effects.push_back(effect);
@@ -478,6 +480,138 @@ void test_backend_contract() {
                                   + pvt::effect_type_name(type);
         check_close(cpu, gpu, 0.20, 0.018, 0.035, 0.002,
                     label.c_str());
+    }
+
+    // Water has its own ordered kernel. Check raw straight RGBA (including
+    // hidden RGB at Alpha edges) and exact project-loop closure directly,
+    // rather than relying only on the representative all-effects sweep.
+    pvt::RenderConfig focused_water = parity_config();
+    focused_water.width = 61;
+    focused_water.height = 47;
+    focused_water.block_size = 1;
+    focused_water.quantization.enabled = false;
+    focused_water.transform = {};
+    focused_water.effects.clear();
+    pvt::EffectConfig water = pvt::default_effect(pvt::EffectType::Water);
+    water.id = pvt::allocate_id(focused_water);
+    water.enabled = true;
+    water.intensity = 0.83;
+    water.magnitude = 0.055;
+    water.frequency = 7.25;
+    water.secondary = 0.78;
+    water.center_x = 0.16;
+    water.center_y = 0.31;
+    water.angle_degrees = 37.0;
+    water.area_radius = 0.64;
+    water.cycles_per_loop = -3;
+    water.phase_degrees = 19.0;
+    water.edge_mode = pvt::EdgeMode::Alpha;
+    focused_water.effects.push_back(water);
+    for (const pvt::EffectSpace space : {
+             pvt::EffectSpace::Texture, pvt::EffectSpace::Surface}) {
+        focused_water.effects.front().space = space;
+        pvt::Image water_cpu;
+        pvt::Image water_gpu;
+        pvt::Image water_start;
+        pvt::Image water_end;
+        CHECK(pvt::render_frame_at_phase(focused_water, 0.37, cpu_options,
+                                         water_cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(focused_water, 0.37, gpu_options,
+                                         water_gpu, nullptr, &error));
+        check_close(water_cpu, water_gpu, 0.004, 0.0002, 0.004, 0.0002,
+                    space == pvt::EffectSpace::Texture
+                        ? "Water Texture raw RGBA"
+                        : "Water Surface raw RGBA");
+        CHECK(pvt::render_frame_at_phase(focused_water, 0.0, gpu_options,
+                                         water_start, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(focused_water, 1.0, gpu_options,
+                                         water_end, nullptr, &error));
+        const Difference seam = difference(water_start, water_end);
+        CHECK(seam.maximum_rgb <= 1.0e-7);
+        CHECK(seam.maximum_alpha <= 1.0e-7);
+    }
+
+    // The public scalar bound can produce finite displacements beyond signed
+    // integer range on an ordinary canvas. A constant source makes the
+    // expected edge semantics unambiguous while exercising safe coordinate
+    // reduction for Reflect and early edge resolution for all other modes.
+    pvt::RenderConfig extreme_water = pvt::default_config();
+    extreme_water.width = 257;
+    extreme_water.height = 257;
+    extreme_water.block_size = 1;
+    extreme_water.output.write_alpha = true;
+    extreme_water.starting_colors.include_alpha = true;
+    extreme_water.alpha.use_source_alpha = true;
+    extreme_water.palette = pvt::default_palette(900U);
+    extreme_water.palette.enabled = true;
+    extreme_water.palette.columns = 1U;
+    for (pvt::PaletteColor& color : extreme_water.palette.colors) {
+        color.red = 0.25;
+        color.green = 0.5;
+        color.blue = 0.75;
+        color.alpha = 0.375;
+        color.encoding = pvt::PaletteColorEncoding::Linear;
+    }
+    extreme_water.waves.clear();
+    extreme_water.swings.clear();
+    extreme_water.effects.clear();
+    pvt::EffectConfig extreme = pvt::default_effect(pvt::EffectType::Water);
+    extreme.id = pvt::allocate_id(extreme_water);
+    extreme.enabled = true;
+    extreme.intensity = 1.0;
+    extreme.magnitude = pvt::maximum_render_parameter_magnitude();
+    extreme.frequency = 5.0;
+    extreme.secondary = 0.73;
+    extreme.center_x = 0.37;
+    extreme.center_y = 0.61;
+    extreme.angle_degrees = -29.0;
+    extreme.area_radius = 0.0;
+    extreme_water.effects.push_back(extreme);
+    const std::size_t extreme_pixel_count =
+        static_cast<std::size_t>(extreme_water.width)
+        * static_cast<std::size_t>(extreme_water.height);
+    for (const pvt::EdgeMode mode : {
+             pvt::EdgeMode::Reflect, pvt::EdgeMode::Black,
+             pvt::EdgeMode::White, pvt::EdgeMode::Alpha}) {
+        extreme_water.effects.front().edge_mode = mode;
+        pvt::Image extreme_gpu;
+        CHECK(pvt::validate(extreme_water).ok);
+        CHECK(pvt::render_frame_at_phase(extreme_water, 0.37, gpu_options,
+                                         extreme_gpu, nullptr, &error));
+        CHECK(std::all_of(extreme_gpu.pixels.begin(), extreme_gpu.pixels.end(),
+                          [](float value) { return std::isfinite(value); }));
+        if (mode == pvt::EdgeMode::Reflect) {
+            // Every reflected lookup of a constant source remains that source.
+            for (std::size_t offset = 0U; offset < extreme_gpu.pixels.size();
+                 offset += 4U) {
+                CHECK(std::fabs(extreme_gpu.pixels[offset] - 0.25F) < 2.0e-5F);
+                CHECK(std::fabs(extreme_gpu.pixels[offset + 1U] - 0.5F)
+                      < 2.0e-5F);
+                CHECK(std::fabs(extreme_gpu.pixels[offset + 2U] - 0.75F)
+                      < 2.0e-5F);
+                CHECK(std::fabs(extreme_gpu.pixels[offset + 3U] - 0.375F)
+                      < 2.0e-5F);
+            }
+            continue;
+        }
+        std::size_t edge_pixels = 0U;
+        const std::array<float, 4U> expected =
+            mode == pvt::EdgeMode::Black
+                ? std::array<float, 4U>{{0.0F, 0.0F, 0.0F, 1.0F}}
+                : mode == pvt::EdgeMode::White
+                    ? std::array<float, 4U>{{1.0F, 1.0F, 1.0F, 1.0F}}
+                    : std::array<float, 4U>{{0.0F, 0.0F, 0.0F, 0.0F}};
+        for (std::size_t offset = 0U; offset < extreme_gpu.pixels.size();
+             offset += 4U) {
+            bool matches = true;
+            for (std::size_t channel = 0U; channel < 4U; ++channel) {
+                matches = matches
+                    && std::fabs(extreme_gpu.pixels[offset + channel]
+                                 - expected[channel]) < 1.0e-6F;
+            }
+            edge_pixels += matches ? 1U : 0U;
+        }
+        CHECK(edge_pixels > extreme_pixel_count * 3U / 4U);
     }
 
     // Particle silhouettes share the tiled particle kernel but take distinct
@@ -752,6 +886,53 @@ void test_backend_contract() {
         check_close(cpu, gpu, 0.24, 0.018, 0.06, 0.0025,
                     surface.second);
     }
+
+    // Environment-map lighting is decoded once on the host and sampled by
+    // the analytic Metal kernel with the same fixed five-tap approximation as
+    // the CPU reference.
+    config.surface.environment_map.enabled = true;
+    config.surface.environment_map.encoding =
+        pvt::EnvironmentMapEncoding::Srgb;
+    config.surface.environment_map.path = PVT_TEST_SOURCE_DIR "/icon/icon.png";
+    config.surface.environment_map.rotation_degrees = 71.0;
+    config.surface.environment_map.exposure_stops = 0.4;
+    config.surface.environment_map.intensity = 1.3;
+    config.surface.environment_map.mix = 0.68;
+    for (const auto& surface : surfaces) {
+        config.surface.mapping = surface.first;
+        CHECK(pvt::render_frame(config, 4, cpu_options, cpu, nullptr, &error));
+        CHECK(pvt::render_frame(config, 4, gpu_options, gpu, nullptr, &error));
+        const std::string label = std::string(surface.second)
+                                  + " environment map";
+        check_close(cpu, gpu, 0.24, 0.02, 0.06, 0.0025,
+                    label.c_str());
+    }
+
+    pvt::RenderConfig missing_environment = config;
+    missing_environment.surface.mapping = pvt::SurfaceMapping::Plane;
+    missing_environment.surface.environment_map.path =
+        PVT_TEST_SOURCE_DIR "/icon/missing-environment.exr";
+    pvt::Image environment_sentinel = cpu;
+    CHECK(!pvt::render_frame(missing_environment, 4, gpu_options,
+                             environment_sentinel, nullptr, &error));
+    CHECK(environment_sentinel.pixels == cpu.pixels);
+
+    pvt::RenderConfig saturated_environment = config;
+    saturated_environment.surface.mapping = pvt::SurfaceMapping::Plane;
+    saturated_environment.surface.environment_map.exposure_stops = 1000000.0;
+    saturated_environment.surface.environment_map.intensity = 1000000.0;
+    saturated_environment.surface.environment_map.mix = 1.0;
+    saturated_environment.surface.lighting = 1000000.0;
+    CHECK(pvt::render_frame(saturated_environment, 4, cpu_options, cpu,
+                            nullptr, &error));
+    CHECK(pvt::render_frame(saturated_environment, 4, gpu_options, gpu,
+                            nullptr, &error));
+    CHECK(std::all_of(cpu.pixels.begin(), cpu.pixels.end(),
+                      [](float value) { return std::isfinite(value); }));
+    CHECK(std::all_of(gpu.pixels.begin(), gpu.pixels.end(),
+                      [](float value) { return std::isfinite(value); }));
+
+    config.surface.environment_map = {};
 
     config.surface.mapping = pvt::SurfaceMapping::CustomObj;
     config.surface.obj_path =

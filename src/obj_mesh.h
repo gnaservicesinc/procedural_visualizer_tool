@@ -45,6 +45,12 @@ struct ObjMesh {
     std::vector<ObjVec2> texcoords;
     std::vector<ObjVec3> normals;
     std::vector<ObjTriangle> triangles;
+    // Stable, source-order labels for triangles connected through at least one
+    // referenced position. Generated and imported meshes populate this once
+    // before becoming immutable so animation planning never rebuilds topology
+    // for every frame.
+    std::vector<std::size_t> triangle_components;
+    std::size_t connected_component_count = 0U;
 
     // Bounds include referenced positions only. The renderer can transform
     // (position - normalization_center) * normalization_scale to fit the
@@ -56,6 +62,11 @@ struct ObjMesh {
 
     std::size_t estimated_bytes() const noexcept;
 };
+
+// Rebuilds triangle_components transactionally from the current triangle
+// topology. Components are labelled in first-triangle order, independent of
+// hash-table iteration or thread scheduling.
+bool rebuild_obj_mesh_components(ObjMesh& mesh, std::string* error = nullptr);
 
 struct ObjLoadLimits {
     // ObjCorner uses UINT32_MAX as its missing-index sentinel, so an OBJ may

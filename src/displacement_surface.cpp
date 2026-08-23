@@ -250,6 +250,11 @@ bool build_mesh(const Image& height_image,
         // every time the map extrema change. The plane's longest 2D axis alone
         // establishes its stable fit in the renderer and exported OBJ.
         mesh->normalization_scale = 1.0 / std::max(1.0, half_width);
+        // The regular grid is connected by construction. Populate its immutable
+        // topology metadata directly instead of allocating a temporary union-
+        // find several times larger than a high-resolution plane.
+        mesh->triangle_components.assign(triangle_count, 0U);
+        mesh->connected_component_count = triangle_count == 0U ? 0U : 1U;
         destination = std::move(mesh);
         clear_error(error);
         return true;
@@ -300,13 +305,17 @@ bool displacement_mesh_requirements(int render_width,
     }
     std::size_t vertex_bytes = 0U;
     std::size_t triangle_bytes = 0U;
+    std::size_t component_bytes = 0U;
     std::size_t per_vertex = 0U;
     if (!checked_add(sizeof(ObjVec3), sizeof(ObjVec2), per_vertex)
         || !checked_add(per_vertex, sizeof(ObjVec3), per_vertex)
         || !checked_multiply(vertex_count, per_vertex, vertex_bytes)
         || !checked_multiply(triangle_count, sizeof(ObjTriangle),
                              triangle_bytes)
-        || !checked_add(vertex_bytes, triangle_bytes, estimated_bytes)) {
+        || !checked_multiply(triangle_count, sizeof(std::size_t),
+                             component_bytes)
+        || !checked_add(vertex_bytes, triangle_bytes, estimated_bytes)
+        || !checked_add(estimated_bytes, component_bytes, estimated_bytes)) {
         return fail(error,
                     "The displacement-plane mesh allocation exceeds addressable memory.");
     }

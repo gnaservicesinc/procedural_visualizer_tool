@@ -273,6 +273,10 @@ bool render_generated_base_opengl(const RenderConfig& config,
                                   Image& destination,
                                   const std::atomic_bool* cancel,
                                   std::string* error);
+bool apply_water_effect_opengl(const Image& source, Image& destination,
+                               const EffectConfig& effect, double phase,
+                               const std::atomic_bool* cancel,
+                               std::string* error);
 bool apply_surface_mapping_opengl(const Image& source, Image& destination,
                                   const SurfaceConfig& surface,
                                   double loop_phase,

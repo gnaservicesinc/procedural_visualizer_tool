@@ -2500,6 +2500,18 @@ bool load_snapshot(const detail::BundleFileSet& files,
                     error,
                     "Plane-displacement configuration and its embedded height-map attachment disagree.");
             }
+            const EnvironmentMapConfig& environment = surface.environment_map;
+            const ProjectAttachment* environment_source = attachment_for(
+                environment_map_attachment_id(layer.uuid));
+            if (environment.sha256.empty() != (environment_source == nullptr)
+                || (environment_source != nullptr
+                    && (environment_source->sha256 != environment.sha256
+                        || environment_source->basename
+                               != environment.basename))) {
+                return fail(
+                    error,
+                    "Environment-map configuration and its embedded attachment disagree.");
+            }
             const StartingImageConfig& source = layer.render.starting_image;
             const ProjectAttachment* image =
                 attachment_for(starting_image_attachment_id(layer.uuid));
@@ -2674,6 +2686,11 @@ bool load_snapshot(const detail::BundleFileSet& files,
                 surface.plane_displacement.sha256 = height->sha256;
                 surface.plane_displacement.basename = height->basename;
             }
+            if (const ProjectAttachment* environment = attachment_for(
+                    environment_map_attachment_id(layer.uuid))) {
+                surface.environment_map.sha256 = environment->sha256;
+                surface.environment_map.basename = environment->basename;
+            }
             StartingImageConfig& source = layer.render.starting_image;
             if (const ProjectAttachment* image = attachment_for(
                     starting_image_attachment_id(layer.uuid))) {
@@ -2815,6 +2832,23 @@ bool materialize_snapshot_attachments(
                     "Plane-displacement height-map attachment disappeared during materialization.");
             }
             displacement.path = found->local_path;
+        }
+        EnvironmentMapConfig& environment =
+            layer.render.surface.environment_map;
+        if (!environment.sha256.empty()) {
+            const std::string reference_id =
+                environment_map_attachment_id(layer.uuid);
+            const auto found = std::find_if(
+                attachments.begin(), attachments.end(),
+                [&reference_id](const ProjectAttachment& attachment) {
+                    return attachment.reference_id == reference_id;
+                });
+            if (found == attachments.end()) {
+                return fail(
+                    error,
+                    "Environment-map attachment disappeared during materialization.");
+            }
+            environment.path = found->local_path;
         }
         if (!layer.render.starting_image.sha256.empty()) {
             const std::string reference_id =
@@ -3732,6 +3766,10 @@ std::string plane_displacement_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".surface.height";
 }
 
+std::string environment_map_attachment_id(const std::string& layer_uuid) {
+    return "layer." + layer_uuid + ".surface.environment";
+}
+
 std::string starting_image_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".source.image";
 }
@@ -3859,6 +3897,8 @@ bool make_independent_project_copy(const ProjectConfig& project,
                                       || !layer.render.surface.obj_sha256.empty()
                                       || !layer.render.surface
                                               .plane_displacement.sha256.empty()
+                                      || !layer.render.surface.environment_map
+                                              .sha256.empty()
                                       || !layer.render.layer_clock.clock.music
                                               .source_sha256.empty();
                            });
@@ -4009,6 +4049,11 @@ bool make_independent_project_copy(const ProjectDocument& source,
             if (layer.render.surface.plane_displacement.enabled) {
                 layer.render.surface.plane_displacement.enabled = false;
             }
+            layer.render.surface.environment_map.sha256.clear();
+            layer.render.surface.environment_map.basename.clear();
+            if (layer.render.surface.environment_map.enabled) {
+                layer.render.surface.environment_map.enabled = false;
+            }
             layer.render.starting_image.sha256.clear();
             layer.render.starting_image.basename.clear();
             if (layer.render.starting_image.enabled) {
@@ -4044,6 +4089,12 @@ bool make_independent_project_copy(const ProjectDocument& source,
             const std::string new_height_id =
                 plane_displacement_attachment_id(
                     candidate.project.layers[index].uuid);
+            const std::string old_environment_id =
+                environment_map_attachment_id(
+                    source.project.layers[index].uuid);
+            const std::string new_environment_id =
+                environment_map_attachment_id(
+                    candidate.project.layers[index].uuid);
             const std::string old_music_id =
                 layer_music_attachment_id(source.project.layers[index].uuid);
             const std::string new_music_id =
@@ -4057,6 +4108,8 @@ bool make_independent_project_copy(const ProjectDocument& source,
                     attachment.reference_id = new_id;
                 } else if (attachment.reference_id == old_height_id) {
                     attachment.reference_id = new_height_id;
+                } else if (attachment.reference_id == old_environment_id) {
+                    attachment.reference_id = new_environment_id;
                 } else if (attachment.reference_id == old_music_id) {
                     attachment.reference_id = new_music_id;
                 } else if (attachment.reference_id == old_image_id) {
@@ -4437,6 +4490,13 @@ bool semantic_fields(const ProjectConfig& project,
             layer.render.surface.plane_displacement.sha256;
         fields[render_prefix + "surface.plane_displacement.basename"] =
             layer.render.surface.plane_displacement.basename;
+        fields[render_prefix + "surface.environment_map.path"] =
+            layer.render.surface.environment_map.sha256.empty()
+                ? layer.render.surface.environment_map.path : std::string{};
+        fields[render_prefix + "surface.environment_map.sha256"] =
+            layer.render.surface.environment_map.sha256;
+        fields[render_prefix + "surface.environment_map.basename"] =
+            layer.render.surface.environment_map.basename;
         fields[render_prefix + "palette.name"] = layer.render.palette.name;
         for (std::size_t color = 0U;
              color < layer.render.palette.colors.size(); ++color) {
@@ -4618,6 +4678,81 @@ bool sync_project_attachment_references(ProjectDocument& document,
                        && expected_height_references.find(
                               attachment.reference_id)
                               == expected_height_references.end();
+            }),
+        document.attachments.end());
+
+    std::set<std::string> expected_environment_references;
+    for (LayerConfig& layer : document.project.layers) {
+        EnvironmentMapConfig& environment =
+            layer.render.surface.environment_map;
+        const std::string reference_id =
+            environment_map_attachment_id(layer.uuid);
+        expected_environment_references.insert(reference_id);
+        auto existing = std::find_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&reference_id](const ProjectAttachment& attachment) {
+                return attachment.reference_id == reference_id;
+            });
+        if (environment.path.empty()) {
+            if (!environment.sha256.empty()
+                && existing != document.attachments.end()
+                && existing->sha256 == environment.sha256
+                && existing->basename == environment.basename
+                && !existing->local_path.empty()) {
+                environment.path = existing->local_path;
+                continue;
+            }
+            environment.sha256.clear();
+            environment.basename.clear();
+            if (!detach_project_file(document, reference_id, error)) {
+                return false;
+            }
+            continue;
+        }
+        if (existing != document.attachments.end()
+            && existing->sha256 == environment.sha256
+            && existing->basename == environment.basename
+            && !existing->local_path.empty()
+            && equivalent_path(environment.path, existing->local_path)) {
+            continue;
+        }
+        std::error_code status_error;
+        const fs::file_status source_status = fs::symlink_status(
+            detail::path_from_utf8(environment.path), status_error);
+        if ((status_error || !fs::is_regular_file(source_status)
+             || fs::is_symlink(source_status)
+             || attachment_path_is_reparse_point(
+                 detail::path_from_utf8(environment.path)))
+            && existing != document.attachments.end()
+            && existing->sha256 == environment.sha256
+            && existing->basename == environment.basename
+            && !existing->local_path.empty()) {
+            environment.path = existing->local_path;
+            continue;
+        }
+        ProjectAttachment attached;
+        if (!attach_project_file(document, reference_id, environment.path,
+                                 &attached, error)) {
+            return false;
+        }
+        environment.sha256 = attached.sha256;
+        environment.basename = attached.basename;
+        environment.path = attached.local_path;
+    }
+    document.attachments.erase(
+        std::remove_if(
+            document.attachments.begin(), document.attachments.end(),
+            [&expected_environment_references](
+                const ProjectAttachment& attachment) {
+                constexpr std::string_view suffix = ".surface.environment";
+                return attachment.reference_id.rfind("layer.", 0U) == 0U
+                       && attachment.reference_id.size() > suffix.size()
+                       && attachment.reference_id.compare(
+                              attachment.reference_id.size() - suffix.size(),
+                              suffix.size(), suffix) == 0
+                       && expected_environment_references.find(
+                              attachment.reference_id)
+                              == expected_environment_references.end();
             }),
         document.attachments.end());
 

@@ -4,6 +4,8 @@ using namespace metal;
 
 constant float kPi = 3.14159265358979323846f;
 constant float kTau = 6.28318530717958647692f;
+constant float kFiniteHdrMaximum = 3.4028234663852886e38f;
+constant float kInvSqrtTwo = 0.70710678118654752440f;
 constant float kBlurWeights[9] = {
     0.02763055f, 0.06628225f, 0.12383154f, 0.18017382f,
     0.20416369f, 0.18017382f, 0.12383154f, 0.06628225f,
@@ -66,6 +68,8 @@ struct GpuSurface {
     float4 position_camera; // canvas X/Y percent, object Z, camera distance
     float4 optical_lighting; // focal length, lighting, ambient, diffuse
     float4 light; // authored world-space light XYZ, reserved
+    uint4 environment; // width, height, enabled, reserved
+    float4 environment_values; // rotation turns, radiance scale, mix, reserved
 };
 
 struct GpuSourceImage {
@@ -724,6 +728,14 @@ int reflected_index(int index, int size) {
     return index;
 }
 
+float reduce_reflected_coordinate(float coordinate, uint extent) {
+    if (extent <= 1u) return 0.0f;
+    const float period = 2.0f * float(extent - 1u);
+    float reduced = fmod(coordinate, period);
+    if (reduced < 0.0f) reduced += period;
+    return reduced;
+}
+
 float4 edge_color(uint mode) {
     if (mode == 1u) return float4(0.0f, 0.0f, 0.0f, 1.0f);
     if (mode == 2u) return float4(1.0f);
@@ -742,7 +754,18 @@ float4 sample_texel(const device float4* image, int x, int y,
 
 float4 sample_bilinear(const device float4* image, float x, float y,
                        uint width, uint height, uint edge_mode) {
-    if (!isfinite(x) || !isfinite(y)) return edge_color(edge_mode);
+    if (!isfinite(x) || !isfinite(y) || width == 0u || height == 0u) {
+        return edge_color(edge_mode);
+    }
+    if (edge_mode == 3u) {
+        x = reduce_reflected_coordinate(x, width);
+        y = reduce_reflected_coordinate(y, height);
+    } else if (x <= -1.0f || y <= -1.0f
+               || x >= float(width) || y >= float(height)) {
+        // Every bilinear tap is outside. Resolve the authored edge color
+        // before converting a potentially huge finite float to an integer.
+        return edge_color(edge_mode);
+    }
     const int x0 = int(floor(x));
     const int y0 = int(floor(y));
     const float tx = x - float(x0);
@@ -768,7 +791,7 @@ float4 sample_bilinear(const device float4* image, float x, float y,
         }
         result.a += samples[index].a * weights[index];
     }
-    if (edge_mode == 0u && rgb_weight > 1.0e-7f) {
+    if (edge_mode == 0u && rgb_weight > 0.0f) {
         result.rgb /= rgb_weight;
     }
     result.a = clamp_unit(result.a);
@@ -930,6 +953,7 @@ float4 sample_bilinear_wrapped_x(const device float4* image, float x, float y,
     }
     float wrapped_x = fmod(x, float(width));
     if (wrapped_x < 0.0f) wrapped_x += float(width);
+    y = reduce_reflected_coordinate(y, height);
     const int x0 = int(floor(wrapped_x));
     const int x1 = (x0 + 1) % int(width);
     const int y0 = int(floor(y));
@@ -1005,13 +1029,103 @@ float3 orient_normal(float3 normal, float3 ray_direction) {
     return dot(normal, ray_direction) > 0.0f ? -normal : normal;
 }
 
+int environment_wrap_index(int value, uint extent) {
+    const int signed_extent = int(extent);
+    const int wrapped = value % signed_extent;
+    return wrapped < 0 ? wrapped + signed_extent : wrapped;
+}
+
+float finite_environment_channel(float value) {
+    if (!(value > 0.0f)) return 0.0f;
+    return isfinite(value) ? min(value, kFiniteHdrMaximum)
+                           : kFiniteHdrMaximum;
+}
+
+float3 environment_texel(const device float4* image, int x, int y,
+                         uint width, uint height) {
+    x = environment_wrap_index(x, width);
+    y = clamp(y, 0, int(height) - 1);
+    const float3 value = image[uint(y) * width + uint(x)].rgb;
+    return float3(finite_environment_channel(value.x),
+                  finite_environment_channel(value.y),
+                  finite_environment_channel(value.z));
+}
+
+float3 sample_environment_direction(const device float4* image,
+                                    constant GpuSurface& surface,
+                                    float3 direction) {
+    const uint width = surface.environment.x;
+    const uint height = surface.environment.y;
+    const float longitude = atan2(direction.x, direction.z);
+    const float u = fract(0.5f + longitude / kTau
+                          + surface.environment_values.x);
+    const float v = clamp(
+        0.5f - asin(clamp(direction.y, -1.0f, 1.0f)) / kPi,
+        0.0f, 1.0f);
+    const float x = u * float(width) - 0.5f;
+    const float y = v * float(height) - 0.5f;
+    const int x0 = int(floor(x));
+    const int y0 = int(floor(y));
+    const float tx = x - floor(x);
+    const float ty = clamp(y - floor(y), 0.0f, 1.0f);
+    const float3 top = mix(
+        environment_texel(image, x0, y0, width, height),
+        environment_texel(image, x0 + 1, y0, width, height), tx);
+    const float3 bottom = mix(
+        environment_texel(image, x0, y0 + 1, width, height),
+        environment_texel(image, x0 + 1, y0 + 1, width, height), tx);
+    return mix(top, bottom, ty);
+}
+
+float3 sample_environment_diffuse(const device float4* image,
+                                  constant GpuSurface& surface,
+                                  float3 authored_normal) {
+    const float3 normal = normalize(authored_normal);
+    const float3 reference = fabs(normal.y) < 0.999f
+        ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+    const float3 tangent = normalize(cross(reference, normal));
+    const float3 bitangent = cross(normal, tangent);
+    const float3 directions[5] = {
+        normal,
+        normalize(normal * kInvSqrtTwo + tangent * kInvSqrtTwo),
+        normalize(normal * kInvSqrtTwo - tangent * kInvSqrtTwo),
+        normalize(normal * kInvSqrtTwo + bitangent * kInvSqrtTwo),
+        normalize(normal * kInvSqrtTwo - bitangent * kInvSqrtTwo)};
+    const float weights[5] = {
+        1.0f / 3.0f, 1.0f / 6.0f, 1.0f / 6.0f,
+        1.0f / 6.0f, 1.0f / 6.0f};
+    float3 radiance = float3(0.0f);
+    for (uint index = 0u; index < 5u; ++index) {
+        radiance += sample_environment_direction(
+            image, surface, directions[index]) * weights[index];
+    }
+    return clamp(radiance * surface.environment_values.y,
+                 float3(0.0f), float3(kFiniteHdrMaximum));
+}
+
 float4 shade_surface_explicit(float4 color, float3 normal,
                               constant GpuSurface& surface,
+                              const device float4* environment_image,
                               float lighting) {
     const float3 light = normalize(surface.light.xyz);
     const float diffuse = max(0.0f, dot(normalize(normal), light));
     const float lit = surface.optical_lighting.z
                       + surface.optical_lighting.w * diffuse;
+    if (surface.environment.z != 0u
+        && surface.environment_values.z > 0.0f) {
+        const float3 environment_lit = sample_environment_diffuse(
+            environment_image, surface, normal);
+        const float3 blended = mix(float3(lit), environment_lit,
+                                   surface.environment_values.z);
+        const float3 multiplier = clamp(
+            float3(1.0f) + lighting * (blended - float3(1.0f)),
+            float3(0.0f),
+            float3(kFiniteHdrMaximum));
+        color.rgb = clamp(color.rgb * multiplier,
+                          float3(-kFiniteHdrMaximum),
+                          float3(kFiniteHdrMaximum));
+        return color;
+    }
     color.rgb *= max(0.0f, 1.0f + lighting * (lit - 1.0f));
     return color;
 }
@@ -1203,6 +1317,8 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
                             constant GpuSurface& surface [[buffer(1)]],
                             const device float4* source [[buffer(2)]],
                             device float4* output [[buffer(3)]],
+                            const device float4* environment_image
+                                [[buffer(4)]],
                             uint2 gid [[thread_position_in_grid]]) {
     const uint width = frame.dimensions_counts.x;
     const uint height = frame.dimensions_counts.y;
@@ -1265,7 +1381,7 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
             object_normal, object_scale, angles, surface.flags.y);
         world_normal = orient_normal(world_normal, world_direction);
         return shade_surface_explicit(
-            sampled, world_normal, surface,
+            sampled, world_normal, surface, environment_image,
             surface.optical_lighting.y * curvature);
     };
 
@@ -1593,6 +1709,58 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
             center_y + sine * dx + cosine * dy,
             width, height, effect.kind.z);
         sampled = mix(source[gid.y * width + gid.x], distorted,
+                      clamp_unit(intensity * area));
+    } else if (effect.kind.x == 13u) {
+        // Integer temporal harmonics (-1, +2, -3) make the composite normal
+        // field close exactly whenever the authored effect phase completes a
+        // whole turn.
+        constexpr float first_x = 0.9841833239736953f;
+        constexpr float first_y = 0.17715299831526515f;
+        constexpr float second_x = -0.37665008293387275f;
+        constexpr float second_y = 0.9263556093779034f;
+        constexpr float third_x = 0.7480746383750735f;
+        constexpr float third_y = 0.663614598558533f;
+        constexpr float second_phase = 2.0943951023931953f;
+        constexpr float third_phase = 4.1887902047863905f;
+        const float relative_x = x - center_x;
+        const float relative_y = y - center_y;
+        const float along = (relative_x * axis_x + relative_y * axis_y)
+                            / frame.phases.w;
+        const float across = (relative_x * perpendicular_x
+                              + relative_y * perpendicular_y)
+                             / frame.phases.w;
+        const float spatial_phase = kTau * effect.primary.w;
+        const float first = spatial_phase
+                                * (first_x * along + first_y * across)
+                            - effect.primary.x;
+        const float second = spatial_phase
+                                 * (second_x * along + second_y * across)
+                             + 2.0f * effect.primary.x + second_phase;
+        const float third = spatial_phase
+                                * (third_x * along + third_y * across)
+                            - 3.0f * effect.primary.x + third_phase;
+        const float complexity = clamp_unit(effect.placement.x);
+        const float normalization = 1.0f + 0.87f * complexity;
+        const float first_slope = cos(first);
+        const float second_slope = 0.55f * complexity * cos(second);
+        const float third_slope = 0.32f * complexity * cos(third);
+        const float local_x = (first_x * first_slope
+                               + second_x * second_slope
+                               + third_x * third_slope)
+                              / normalization;
+        const float local_y = (first_y * first_slope
+                               + second_y * second_slope
+                               + third_y * third_slope)
+                              / normalization;
+        const float slope_x = axis_x * local_x
+                              + perpendicular_x * local_y;
+        const float slope_y = axis_y * local_x
+                              + perpendicular_y * local_y;
+        const float4 refracted = sample_bilinear(
+            source, x - base_displacement * slope_x * area,
+            y - base_displacement * slope_y * area,
+            width, height, effect.kind.z);
+        sampled = mix(source[gid.y * width + gid.x], refracted,
                       clamp_unit(intensity * area));
     } else {
         sampled = source[gid.y * width + gid.x];

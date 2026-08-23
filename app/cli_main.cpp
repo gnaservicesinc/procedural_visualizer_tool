@@ -850,7 +850,10 @@ EffectType choose_effect_type() {
                  {EffectType::Blur, "Blur"},
                  {EffectType::Glitch, "Glitch"},
                  {EffectType::Starburst, "Starburst"},
-                 {EffectType::LensDistortion, "Lens distortion"}});
+                 {EffectType::LensDistortion, "Lens distortion"},
+                 {EffectType::EdgeDetect, "Edge detect"},
+                 {EffectType::Twirl, "Twirl"},
+                 {EffectType::Water, "Water"}});
     return type;
 }
 
@@ -1092,6 +1095,19 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                                   0.25, 1000.0)
                    && prompt_real("Direction/depth (-1 to +1)",
                                   effect.secondary, -1.0, 1.0)
+                   && configure_edge_mode(effect.edge_mode);
+        case EffectType::Water:
+            return prompt_real("Source/refraction mix", effect.intensity,
+                               0.0, 1.0)
+                   && prompt_real(
+                       "Peak refraction (fraction of short edge)",
+                       effect.magnitude, 0.0, 10.0)
+                   && prompt_real("Wave density", effect.frequency,
+                                  0.0, 1000.0)
+                   && prompt_real("Cross-wave complexity", effect.secondary,
+                                  0.0, 1.0)
+                   && prompt_real("Wave angle (degrees)",
+                                  effect.angle_degrees, -36000.0, 36000.0)
                    && configure_edge_mode(effect.edge_mode);
     }
     return true;
@@ -1877,6 +1893,159 @@ void configure_surface(RenderConfig& config,
                    displacement.pixels_per_node, 1,
                    (std::numeric_limits<int>::max)());
     }
+
+    auto& environment = config.surface.environment_map;
+    std::cout << "\n-- Environment-map lighting --\n";
+    if (!prompt_enum(
+            "Environment-map encoding", environment.encoding,
+            {{pvt::EnvironmentMapEncoding::Auto,
+              "Auto (PNG metadata / linear OpenEXR)"},
+             {pvt::EnvironmentMapEncoding::Srgb, "sRGB"},
+             {pvt::EnvironmentMapEncoding::Linear, "Linear light"}})) {
+        return;
+    }
+    bool clear_environment = false;
+    if ((!environment.path.empty() || !environment.sha256.empty())
+        && !prompt_bool("Clear embedded environment map", clear_environment)) {
+        return;
+    }
+    if (clear_environment) {
+        ProjectDocument candidate = document;
+        std::string detach_error;
+        if (!pvt::detach_project_file(
+                candidate, pvt::environment_map_attachment_id(layer_uuid),
+                &detach_error)) {
+            std::cout << "Could not clear the environment map: "
+                      << detach_error << '\n';
+            return;
+        }
+        document = std::move(candidate);
+        environment.enabled = false;
+        environment.path.clear();
+        environment.sha256.clear();
+        environment.basename.clear();
+        g_prompt_changed = true;
+    } else {
+        const std::string previous_path = environment.path;
+        const bool changed_before_path_prompt = g_prompt_changed;
+        if (!prompt_text("Environment-map PNG/OpenEXR path", environment.path,
+                         kMaximumPathBytes)) {
+            return;
+        }
+        if (environment.path != previous_path) {
+            std::string source_error;
+            if (!pvt::detail::validate_environment_map_source(
+                    environment.path, environment.encoding, &source_error)) {
+                std::cout
+                    << "Could not decode that environment map; the previous map remains: "
+                    << source_error << '\n';
+                environment.path = previous_path;
+                g_prompt_changed = changed_before_path_prompt;
+                return;
+            }
+            ProjectDocument candidate = document;
+            pvt::ProjectAttachment attached;
+            std::string attachment_error;
+            if (!pvt::attach_project_file(
+                    candidate,
+                    pvt::environment_map_attachment_id(layer_uuid),
+                    environment.path, &attached, &attachment_error)) {
+                std::cout
+                    << "Could not embed that environment map; the previous map remains: "
+                    << attachment_error << '\n';
+                environment.path = previous_path;
+                g_prompt_changed = changed_before_path_prompt;
+                return;
+            }
+            document = std::move(candidate);
+            environment.path = attached.local_path;
+            environment.sha256 = attached.sha256;
+            environment.basename = attached.basename;
+        }
+    }
+    if (!prompt_bool("Use environment-map lighting", environment.enabled)) {
+        return;
+    }
+    if (environment.enabled && environment.path.empty()
+        && environment.sha256.empty()) {
+        std::cout << "Choose a PNG or OpenEXR environment map before enabling it.\n";
+        environment.enabled = false;
+        g_prompt_changed = true;
+    } else if (environment.enabled && !config.surface.enabled) {
+        config.surface.enabled = true;
+        g_prompt_changed = true;
+        std::cout << "Surface mapping enabled for environment-map lighting.\n";
+    }
+    if (!prompt_real("Environment rotation (degrees)",
+                     environment.rotation_degrees,
+                     -pvt::maximum_render_parameter_magnitude(),
+                     pvt::maximum_render_parameter_magnitude())
+        || !prompt_real("Environment exposure (stops)",
+                        environment.exposure_stops,
+                        -pvt::maximum_render_parameter_magnitude(),
+                        pvt::maximum_render_parameter_magnitude())
+        || !prompt_real("Environment intensity", environment.intensity, 0.0,
+                        pvt::maximum_render_parameter_magnitude())
+        || !prompt_real("Direct/environment lighting mix", environment.mix,
+                        0.0, 1.0)) {
+        return;
+    }
+
+    const bool construction_available =
+        config.surface.mapping == pvt::SurfaceMapping::CustomObj
+        || (config.surface.mapping == pvt::SurfaceMapping::Plane
+            && config.surface.plane_displacement.enabled
+            && (!config.surface.plane_displacement.path.empty()
+                || !config.surface.plane_displacement.sha256.empty()));
+    std::cout << "\n-- Loop-safe mesh construction --\n";
+    if (construction_available) {
+        auto& construction = config.surface.mesh_construction;
+        if (!prompt_enum(
+                "Construction mode", construction.mode,
+                {{pvt::MeshConstructionMode::None, "None"},
+                 {pvt::MeshConstructionMode::Explode, "Explode"},
+                 {pvt::MeshConstructionMode::Deconstruct, "Deconstruct"},
+                 {pvt::MeshConstructionMode::Reconstruct, "Reconstruct"}})) {
+            return;
+        }
+        if (construction.mode != pvt::MeshConstructionMode::None
+            && (!prompt_enum(
+                    "Fragmentation", construction.fragmentation,
+                    {{pvt::MeshFragmentation::Automatic, "Auto"},
+                     {pvt::MeshFragmentation::ConnectedComponents,
+                      "Connected components"},
+                     {pvt::MeshFragmentation::TriangleClusters,
+                      "Triangle clusters"}})
+                || !prompt_int(
+                    "Target fragments", construction.target_fragments, 1,
+                    static_cast<int>(pvt::kMaximumMeshFragments))
+                || !prompt_int("Construction cycles per loop",
+                               construction.cycles_per_loop,
+                               (std::numeric_limits<int>::min)(),
+                               (std::numeric_limits<int>::max)())
+                || !prompt_real("Construction starting phase (degrees)",
+                                construction.phase_degrees,
+                                -pvt::maximum_render_parameter_magnitude(),
+                                pvt::maximum_render_parameter_magnitude())
+                || !prompt_real("Fragment travel distance",
+                                construction.distance, 0.0,
+                                pvt::maximum_render_parameter_magnitude())
+                || !prompt_real("Fragment rotation (degrees)",
+                                construction.rotation_degrees,
+                                -pvt::maximum_render_parameter_magnitude(),
+                                pvt::maximum_render_parameter_magnitude())
+                || !prompt_real("Minimum fragment scale",
+                                construction.minimum_scale, 0.0, 1.0)
+                || !prompt_real("Fragment stagger", construction.stagger,
+                                0.0, 1.0)
+                || !prompt_uint64("Construction deterministic seed",
+                                  construction.seed))) {
+            return;
+        }
+    } else {
+        std::cout
+            << "Construction controls are available for a Custom OBJ or an enabled displaced Plane. Authored construction settings were preserved.\n";
+    }
     std::cout << "\n-- Explicit surface projection and transform --\n";
     if (!prompt_enum("Projection", config.surface.projection,
                      {{pvt::SurfaceProjection::Orthographic, "Orthographic"},
@@ -2299,6 +2468,20 @@ void configure_project_and_layers(CliState& state) {
                 copy.render.surface.plane_displacement.sha256 = attached.sha256;
                 copy.render.surface.plane_displacement.basename = attached.basename;
             }
+            if (!copy.render.surface.environment_map.sha256.empty()) {
+                pvt::ProjectAttachment attached;
+                if (!duplicate_attachment(
+                        pvt::environment_map_attachment_id(
+                            project.layers[first_index].uuid),
+                        pvt::environment_map_attachment_id(copy.uuid),
+                        attached)) {
+                    std::cout << "The embedded environment map is unavailable.\n";
+                    continue;
+                }
+                copy.render.surface.environment_map.path = attached.local_path;
+                copy.render.surface.environment_map.sha256 = attached.sha256;
+                copy.render.surface.environment_map.basename = attached.basename;
+            }
             if (!copy.render.layer_clock.clock.music.source_sha256.empty()) {
                 pvt::ProjectAttachment attached;
                 if (!duplicate_attachment(
@@ -2355,6 +2538,8 @@ void configure_project_and_layers(CliState& state) {
                      pvt::surface_obj_attachment_id(
                          project.layers[first_index].uuid),
                      pvt::plane_displacement_attachment_id(
+                         project.layers[first_index].uuid),
+                     pvt::environment_map_attachment_id(
                          project.layers[first_index].uuid),
                      pvt::starting_image_attachment_id(
                          project.layers[first_index].uuid),

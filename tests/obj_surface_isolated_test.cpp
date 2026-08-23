@@ -68,7 +68,9 @@ bool apply_classic_obj_surface(const pvt::Image& source,
                                double lighting,
                                double loop_phase,
                                std::string* error,
-                               const std::atomic_bool* cancel = nullptr) {
+                               const std::atomic_bool* cancel = nullptr,
+                               const pvt::MeshConstructionConfig* construction =
+                                   nullptr) {
     pvt::SurfaceConfig surface;
     surface.enabled = true;
     surface.mapping = pvt::SurfaceMapping::CustomObj;
@@ -82,6 +84,9 @@ bool apply_classic_obj_surface(const pvt::Image& source,
     surface.focal_length = 2.5;
     surface.curvature = curvature;
     surface.lighting = lighting;
+    if (construction != nullptr) {
+        surface.mesh_construction = *construction;
+    }
     return pvt::detail::apply_obj_surface_mapping(
         source, destination, path, surface, loop_phase, error, cancel);
 }
@@ -241,6 +246,110 @@ int main(int argc, char** argv) {
                                       2, -31.0, 1.0, 0.2, tau, &error)
         || seam_start.pixels != seam_end.pixels) {
         return fail(6, "OBJ rotation does not close exactly at the loop seam");
+    }
+
+    // Construction animation uses the single-shell cube's deterministic
+    // triangle-cluster fallback. Every mode must close exactly even across
+    // multiple authored cycles; assembled states bypass fragment arithmetic so
+    // they are bit-identical to the unanimated mesh.
+    pvt::Image construction_baseline;
+    if (!apply_classic_obj_surface(opaque, construction_baseline, cube,
+                                   0, -31.0, 1.0, 0.2, 0.0, &error)) {
+        return fail(16, "construction baseline render failed: " + error);
+    }
+    pvt::MeshConstructionConfig construction;
+    construction.fragmentation = pvt::MeshFragmentation::Automatic;
+    construction.target_fragments = 8;
+    construction.cycles_per_loop = 3;
+    construction.distance = 0.35;
+    construction.rotation_degrees = 70.0;
+    construction.minimum_scale = 0.6;
+    construction.stagger = 0.65;
+    construction.seed = 1947U;
+    constexpr double construction_peak = tau / 6.0;
+    for (const pvt::MeshConstructionMode mode : {
+             pvt::MeshConstructionMode::Explode,
+             pvt::MeshConstructionMode::Deconstruct,
+             pvt::MeshConstructionMode::Reconstruct}) {
+        construction.mode = mode;
+        pvt::Image start;
+        pvt::Image end;
+        pvt::Image peak;
+        if (!apply_classic_obj_surface(
+                opaque, start, cube, 0, -31.0, 1.0, 0.2, 0.0, &error,
+                nullptr, &construction)
+            || !apply_classic_obj_surface(
+                opaque, end, cube, 0, -31.0, 1.0, 0.2, tau, &error,
+                nullptr, &construction)
+            || !apply_classic_obj_surface(
+                opaque, peak, cube, 0, -31.0, 1.0, 0.2,
+                construction_peak, &error, nullptr, &construction)
+            || start.pixels != end.pixels) {
+            return fail(17, "mesh construction did not close exactly: " + error);
+        }
+        if (mode == pvt::MeshConstructionMode::Reconstruct) {
+            if (start.pixels == construction_baseline.pixels
+                || peak.pixels != construction_baseline.pixels) {
+                return fail(18,
+                            "reconstruct seam/midpoint states are incorrect");
+            }
+        } else if (start.pixels != construction_baseline.pixels
+                   || peak.pixels == construction_baseline.pixels) {
+            return fail(19,
+                        "explode/deconstruct seam/midpoint states are incorrect");
+        }
+    }
+
+    construction.mode = pvt::MeshConstructionMode::Explode;
+    construction.seed = 31U;
+    pvt::Image seeded_first;
+    pvt::Image seeded_repeat;
+    pvt::Image seeded_other;
+    if (!apply_classic_obj_surface(
+            opaque, seeded_first, cube, 0, -31.0, 1.0, 0.2,
+            construction_peak, &error, nullptr, &construction)
+        || !apply_classic_obj_surface(
+            opaque, seeded_repeat, cube, 0, -31.0, 1.0, 0.2,
+            construction_peak, &error, nullptr, &construction)) {
+        return fail(20, "seeded construction render failed: " + error);
+    }
+    construction.seed = 32U;
+    if (!apply_classic_obj_surface(
+            opaque, seeded_other, cube, 0, -31.0, 1.0, 0.2,
+            construction_peak, &error, nullptr, &construction)
+        || seeded_first.pixels != seeded_repeat.pixels
+        || seeded_first.pixels == seeded_other.pixels) {
+        return fail(21, "mesh construction seed is not stable and meaningful");
+    }
+
+    construction.mode = pvt::MeshConstructionMode::Deconstruct;
+    construction.cycles_per_loop = -2;
+    construction.phase_degrees = 23.0;
+    pvt::Image reverse_start;
+    pvt::Image reverse_end;
+    if (!apply_classic_obj_surface(
+            opaque, reverse_start, cube, 0, -31.0, 1.0, 0.2, 0.0,
+            &error, nullptr, &construction)
+        || !apply_classic_obj_surface(
+            opaque, reverse_end, cube, 0, -31.0, 1.0, 0.2, tau,
+            &error, nullptr, &construction)
+        || reverse_start.pixels != reverse_end.pixels) {
+        return fail(22, "negative construction cycles did not close exactly");
+    }
+
+    construction.cycles_per_loop = 0;
+    construction.phase_degrees = 90.0;
+    pvt::Image static_start;
+    pvt::Image static_later;
+    if (!apply_classic_obj_surface(
+            opaque, static_start, cube, 0, -31.0, 1.0, 0.2, 0.0,
+            &error, nullptr, &construction)
+        || !apply_classic_obj_surface(
+            opaque, static_later, cube, 0, -31.0, 1.0, 0.2, 1.2345,
+            &error, nullptr, &construction)
+        || static_start.pixels != static_later.pixels
+        || static_start.pixels == construction_baseline.pixels) {
+        return fail(23, "zero-cycle construction was not a valid static state");
     }
 
     // Failure is transactional.

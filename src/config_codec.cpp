@@ -277,6 +277,11 @@ bool is_setup_v19_key(std::string_view key) {
            || starts_with(key, "post_process.order.");
 }
 
+bool is_setup_v20_key(std::string_view key) {
+    return starts_with(key, "surface.environment_map.")
+           || starts_with(key, "surface.mesh_construction.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -299,7 +304,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 13U ? 15U
                     : layer_version == 14U ? 16U
                     : layer_version == 15U ? 17U
-                    : layer_version == 16U ? 18U : 19U;
+                    : layer_version == 16U ? 18U
+                    : layer_version == 17U ? 19U : 20U;
     return true;
 }
 
@@ -577,6 +583,9 @@ bool synthesize_setup(const std::string& partial,
         if (setup_version < 19U && is_setup_v19_key(key)) {
             continue;
         }
+        if (setup_version < 20U && is_setup_v20_key(key)) {
+            continue;
+        }
         if (is_render_key(key) != partial_is_render) {
             destination.append(line);
             destination.push_back('\n');
@@ -720,6 +729,11 @@ bool serialize_layer_config(const RenderData& render,
                  .plane_displacement.sha256.empty()) {
             project.layers.front().render.surface
                 .plane_displacement.path.clear();
+        }
+        if (!project.layers.front().render.surface
+                 .environment_map.sha256.empty()) {
+            project.layers.front().render.surface
+                .environment_map.path.clear();
         }
         if (!project.layers.front().render.starting_image.sha256.empty()) {
             project.layers.front().render.starting_image.path.clear();

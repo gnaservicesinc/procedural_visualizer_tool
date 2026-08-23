@@ -58,6 +58,15 @@ bool render_generated_base_opengl(const RenderConfig&,
     return false;
 }
 
+bool apply_water_effect_opengl(const Image&, Image&, const EffectConfig&,
+                               double, const std::atomic_bool*,
+                               std::string* error) {
+    if (error != nullptr) {
+        *error = "The OpenGL Water effect backend is not compiled.";
+    }
+    return false;
+}
+
 bool apply_surface_mapping_opengl(const Image&, Image&,
                                   const SurfaceConfig&, double,
                                   const std::atomic_bool*, std::string* error) {

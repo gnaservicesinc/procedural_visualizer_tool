@@ -191,7 +191,7 @@ void test_parameter_lfos() {
 
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t19\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t20\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -1010,7 +1010,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t19\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t20\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -2792,7 +2792,8 @@ void test_new_procedural_effects() {
              pvt::EffectType::Starburst,
              pvt::EffectType::LensDistortion,
              pvt::EffectType::EdgeDetect,
-             pvt::EffectType::Twirl}) {
+             pvt::EffectType::Twirl,
+             pvt::EffectType::Water}) {
         pvt::RenderConfig config = base;
         pvt::EffectConfig effect = pvt::default_effect(type);
         effect.id = UINT64_C(0x1234567800000000)
@@ -2823,6 +2824,22 @@ void test_new_procedural_effects() {
             CHECK(first.pixels[offset + 3U] <= 1.0F);
         }
     }
+
+    pvt::RenderConfig water_validation = base;
+    auto water = pvt::default_effect(pvt::EffectType::Water);
+    water.id = pvt::allocate_id(water_validation);
+    water.enabled = true;
+    water.intensity = 1.0;
+    water.secondary = 1.0;
+    water_validation.effects.push_back(water);
+    CHECK(pvt::validate(water_validation).ok);
+    water_validation.effects.front().intensity = 1.0001;
+    CHECK(!pvt::validate(water_validation).ok);
+    water_validation.effects.front().intensity = 1.0;
+    water_validation.effects.front().secondary = -0.0001;
+    CHECK(!pvt::validate(water_validation).ok);
+    water_validation.effects.front().secondary = 1.0001;
+    CHECK(!pvt::validate(water_validation).ok);
 }
 
 void test_determinism_and_seam_continuity() {
@@ -2854,7 +2871,7 @@ void test_determinism_and_seam_continuity() {
     CHECK(before.pixels == after.pixels);
 
     // Every effect type closes its loop with either synchronization mode.
-    const std::array<pvt::EffectType, 13U> effect_types{{
+    const std::array<pvt::EffectType, 14U> effect_types{{
         pvt::EffectType::EndlessZoom,
         pvt::EffectType::Ripple,
         pvt::EffectType::Shake,
@@ -2868,6 +2885,7 @@ void test_determinism_and_seam_continuity() {
         pvt::EffectType::LensDistortion,
         pvt::EffectType::EdgeDetect,
         pvt::EffectType::Twirl,
+        pvt::EffectType::Water,
     }};
     for (const pvt::EffectType type : effect_types) {
         for (const bool synchronized : {false, true}) {
@@ -3141,6 +3159,197 @@ void test_direction_alpha_and_surfaces(const fs::path& source_root) {
         CHECK(std::abs(radial.pixels[offset + 1U] - radial.pixels[offset + 2U])
               < 1.0e-6F);
     }
+}
+
+void test_environment_map_lighting(const fs::path& directory,
+                                   const fs::path& source_root) {
+    const fs::path constant_map = directory / "environment-constant.png";
+    std::vector<unsigned char> constant_pixels(4U * 2U * 4U, 255U);
+    for (std::size_t offset = 0U; offset < constant_pixels.size();
+         offset += 4U) {
+        constant_pixels[offset] = 64U;
+        constant_pixels[offset + 1U] = 128U;
+        constant_pixels[offset + 2U] = 192U;
+    }
+    CHECK(write_test_png(constant_map, 4U, 2U, constant_pixels));
+
+    pvt::RenderConfig config = pvt::default_config();
+    config.width = 48;
+    config.height = 32;
+    config.block_size = 1;
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::Plane;
+    config.surface.outside = pvt::SurfaceOutside::Source;
+    config.surface.curvature = 1.0;
+    config.surface.lighting = 1.0;
+    config.surface.light_ambient = 1.0;
+    config.surface.light_diffuse = 0.0;
+    config.surface.environment_map.enabled = true;
+    config.surface.environment_map.encoding =
+        pvt::EnvironmentMapEncoding::Linear;
+    config.surface.environment_map.path = constant_map.string();
+    config.surface.environment_map.mix = 0.0;
+
+    pvt::FrameRenderOptions cpu;
+    cpu.backend = pvt::RenderBackend::Cpu;
+    std::string error;
+    pvt::Image authored;
+    CHECK(pvt::render_frame(config, 0, cpu, authored, nullptr, &error));
+    pvt::RenderConfig disabled = config;
+    disabled.surface.environment_map.enabled = false;
+    disabled.surface.environment_map.path.clear();
+    pvt::Image disabled_result;
+    CHECK(pvt::render_frame(disabled, 0, cpu, disabled_result, nullptr,
+                            &error));
+    CHECK(authored.pixels == disabled_result.pixels);
+
+    config.surface.environment_map.mix = 1.0;
+    pvt::Image environment_lit;
+    CHECK(pvt::render_frame(config, 0, cpu, environment_lit, nullptr,
+                            &error));
+    const std::array<double, 3U> expected{{
+        64.0 / 255.0, 128.0 / 255.0, 192.0 / 255.0}};
+    CHECK(environment_lit.pixels.size() == authored.pixels.size());
+    if (environment_lit.pixels.size() == authored.pixels.size()) {
+        for (std::size_t offset = 0U; offset < authored.pixels.size();
+             offset += 4U) {
+            for (std::size_t channel = 0U; channel < 3U; ++channel) {
+                CHECK(std::fabs(
+                          static_cast<double>(environment_lit.pixels[
+                              offset + channel])
+                          - static_cast<double>(authored.pixels[
+                              offset + channel]) * expected[channel])
+                      < 2.0e-5);
+            }
+            CHECK(environment_lit.pixels[offset + 3U]
+                  == authored.pixels[offset + 3U]);
+        }
+    }
+
+    const fs::path directional_map =
+        directory / "environment-directional.png";
+    std::vector<unsigned char> directional_pixels(8U * 4U * 4U, 255U);
+    for (std::size_t y = 0U; y < 4U; ++y) {
+        for (std::size_t x = 0U; x < 8U; ++x) {
+            const std::size_t offset = (y * 8U + x) * 4U;
+            directional_pixels[offset] = x == 0U ? 255U
+                : x == 4U ? 96U : 12U;
+            directional_pixels[offset + 1U] =
+                (x == 2U || x == 3U) ? 224U : 20U;
+            directional_pixels[offset + 2U] =
+                static_cast<unsigned char>(32U + y * 52U);
+        }
+    }
+    CHECK(write_test_png(directional_map, 8U, 4U, directional_pixels));
+    config.surface.environment_map.path = directional_map.string();
+    config.surface.environment_map.rotation_degrees = 0.0;
+    pvt::Image unrotated;
+    CHECK(pvt::render_frame(config, 0, cpu, unrotated, nullptr, &error));
+    config.surface.environment_map.rotation_degrees = 180.0;
+    pvt::Image rotated;
+    CHECK(pvt::render_frame(config, 0, cpu, rotated, nullptr, &error));
+    const double environment_rotation_difference =
+        mean_absolute_difference(unrotated, rotated);
+    if (environment_rotation_difference <= 0.001) {
+        std::cerr << "environment rotation mean difference "
+                  << environment_rotation_difference << '\n';
+    }
+    CHECK(environment_rotation_difference > 0.001);
+
+    // Imported and generated meshes share the same environment-map lighting
+    // implementation as the analytic surfaces. Exercise both public dispatch
+    // paths so a mesh-only regression cannot hide behind primitive coverage.
+    pvt::RenderConfig custom_obj = config;
+    custom_obj.surface.mapping = pvt::SurfaceMapping::CustomObj;
+    custom_obj.surface.outside = pvt::SurfaceOutside::Transparent;
+    custom_obj.surface.obj_path =
+        (source_root / "tests" / "assets" / "obj" / "closed_cube.obj")
+            .string();
+    custom_obj.surface.environment_map.rotation_degrees = 0.0;
+    pvt::Image custom_environment;
+    CHECK(pvt::render_frame(custom_obj, 0, cpu, custom_environment, nullptr,
+                            &error));
+    pvt::RenderConfig custom_authored = custom_obj;
+    custom_authored.surface.environment_map.enabled = false;
+    custom_authored.surface.environment_map.path.clear();
+    pvt::Image custom_without_environment;
+    CHECK(pvt::render_frame(custom_authored, 0, cpu,
+                            custom_without_environment, nullptr, &error));
+    CHECK(mean_absolute_difference(custom_environment,
+                                   custom_without_environment) > 0.0001);
+
+    pvt::RenderConfig displaced = config;
+    displaced.surface.outside = pvt::SurfaceOutside::Transparent;
+    displaced.surface.environment_map.rotation_degrees = 0.0;
+    displaced.surface.plane_displacement.enabled = true;
+    displaced.surface.plane_displacement.path = constant_map.string();
+    displaced.surface.plane_displacement.pixels_per_node = 4;
+    pvt::Image displaced_environment;
+    CHECK(pvt::render_frame(displaced, 0, cpu, displaced_environment, nullptr,
+                            &error));
+    displaced.surface.environment_map.enabled = false;
+    displaced.surface.environment_map.path.clear();
+    pvt::Image displaced_without_environment;
+    CHECK(pvt::render_frame(displaced, 0, cpu, displaced_without_environment,
+                            nullptr, &error));
+    CHECK(mean_absolute_difference(displaced_environment,
+                                   displaced_without_environment) > 0.0001);
+
+    // Construction state is preserved even when the selected surface does
+    // not use a raster mesh. It must remain a valid, exact visual no-op so
+    // switching temporarily to an analytic primitive cannot trap editor state.
+    pvt::RenderConfig inactive_construction = pvt::default_config();
+    inactive_construction.width = 40;
+    inactive_construction.height = 32;
+    inactive_construction.block_size = 1;
+    inactive_construction.surface.enabled = true;
+    inactive_construction.surface.mapping = pvt::SurfaceMapping::Sphere;
+    inactive_construction.surface.outside = pvt::SurfaceOutside::Source;
+    inactive_construction.surface.mesh_construction.mode =
+        pvt::MeshConstructionMode::Explode;
+    inactive_construction.surface.mesh_construction.fragmentation =
+        pvt::MeshFragmentation::TriangleClusters;
+    CHECK(pvt::validate(inactive_construction).ok);
+    pvt::Image inactive_result;
+    CHECK(pvt::render_frame(inactive_construction, 0, cpu, inactive_result,
+                            nullptr, &error));
+    inactive_construction.surface.mesh_construction.mode =
+        pvt::MeshConstructionMode::None;
+    pvt::Image neutral_construction_result;
+    CHECK(pvt::render_frame(inactive_construction, 0, cpu,
+                            neutral_construction_result, nullptr, &error));
+    CHECK(inactive_result.pixels == neutral_construction_result.pixels);
+
+    pvt::RenderConfig invalid = config;
+    invalid.surface.environment_map.encoding =
+        static_cast<pvt::EnvironmentMapEncoding>(255U);
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.surface.environment_map.mix = 1.01;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.surface.environment_map.intensity = -0.01;
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.surface.environment_map.path.clear();
+    CHECK(!pvt::validate(invalid).ok);
+    invalid = config;
+    invalid.surface.light_direction_x = 0.0;
+    invalid.surface.light_direction_y = 0.0;
+    invalid.surface.light_direction_z = 0.0;
+    invalid.surface.environment_map.mix = 1.0;
+    CHECK(pvt::validate(invalid).ok);
+    invalid.surface.environment_map.mix = 0.5;
+    CHECK(!pvt::validate(invalid).ok);
+
+    pvt::RenderConfig missing = config;
+    missing.surface.environment_map.path =
+        (directory / "missing-environment.exr").string();
+    pvt::Image unchanged = authored;
+    CHECK(!pvt::render_frame(missing, 0, cpu, unchanged, nullptr, &error));
+    CHECK(unchanged.pixels == authored.pixels);
+    CHECK(std::string(pvt::environment_map_encoding_name(
+              pvt::EnvironmentMapEncoding::Srgb)) == "sRGB");
 }
 
 void test_configurable_blur_effects() {
@@ -3829,7 +4038,7 @@ void test_palettes_transforms_and_spatial_stages() {
                                    swing_disabled_effect) > 0.0001);
 }
 
-void test_validation_limits() {
+void test_validation_limits(const fs::path& source_root) {
     auto config = pvt::default_config();
     CHECK(pvt::validate(config).ok);
     CHECK(pvt::kMaximumWaves
@@ -4123,12 +4332,51 @@ void test_validation_limits() {
     CHECK(no_obj_memory_result.ok);
     config.surface.enabled = true;
     config.surface.mapping = pvt::SurfaceMapping::CustomObj;
-    config.surface.obj_path = "mesh.obj";
+    config.surface.obj_path =
+        (source_root / "tests" / "assets" / "obj" / "closed_cube.obj")
+            .string();
     config.alpha.enabled = true;
     const auto obj_memory_result = pvt::validate(config);
     CHECK(obj_memory_result.ok);
     CHECK(obj_memory_result.estimated_peak_bytes
           > no_obj_memory_result.estimated_peak_bytes);
+    config.surface.mesh_construction.mode =
+        pvt::MeshConstructionMode::Reconstruct;
+    config.surface.mesh_construction.fragmentation =
+        pvt::MeshFragmentation::TriangleClusters;
+    config.surface.mesh_construction.target_fragments = 73;
+    const auto constructed_obj_memory_result = pvt::validate(config);
+    CHECK(constructed_obj_memory_result.ok);
+    CHECK(constructed_obj_memory_result.estimated_peak_bytes
+          > obj_memory_result.estimated_peak_bytes);
+
+    // Construction settings remain authored but inactive on analytic
+    // primitives; merely switching away from a mesh must not make the project
+    // invalid or reserve fragment-plan memory.
+    config.surface.mapping = pvt::SurfaceMapping::Sphere;
+    const auto preserved_analytic_result = pvt::validate(config);
+    CHECK(preserved_analytic_result.ok);
+    config.surface.mesh_construction.mode = pvt::MeshConstructionMode::None;
+    const auto plain_analytic_result = pvt::validate(config);
+    CHECK(plain_analytic_result.ok);
+    CHECK(preserved_analytic_result.estimated_peak_bytes
+          == plain_analytic_result.estimated_peak_bytes);
+
+    // Admission intentionally does not parse missing imported assets. The
+    // render owns that transactional error and must preserve its destination.
+    config.surface.mapping = pvt::SurfaceMapping::CustomObj;
+    config.surface.obj_path =
+        (source_root / "tests" / "assets" / "obj" / "missing.obj").string();
+    CHECK(pvt::validate(config).ok);
+    pvt::Image missing_obj_sentinel;
+    missing_obj_sentinel.width = 1;
+    missing_obj_sentinel.height = 1;
+    missing_obj_sentinel.pixels = {0.2F, 0.4F, 0.6F, 0.8F};
+    CHECK(!pvt::render_frame(config, 0, missing_obj_sentinel, &render_error));
+    CHECK(missing_obj_sentinel.width == 1
+          && missing_obj_sentinel.height == 1
+          && missing_obj_sentinel.pixels
+                 == std::vector<float>({0.2F, 0.4F, 0.6F, 0.8F}));
 
     config = pvt::default_config();
     config.waves[0].direction = std::numeric_limits<double>::quiet_NaN();
@@ -4297,6 +4545,16 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         "height maps/test height.png";
     original.surface.plane_displacement.sha256 = std::string(64U, 'b');
     original.surface.plane_displacement.basename = "test height.png";
+    original.surface.environment_map.enabled = true;
+    original.surface.environment_map.encoding =
+        pvt::EnvironmentMapEncoding::Linear;
+    original.surface.environment_map.rotation_degrees = -37.5;
+    original.surface.environment_map.exposure_stops = 1.25;
+    original.surface.environment_map.intensity = 0.72;
+    original.surface.environment_map.mix = 0.64;
+    original.surface.environment_map.path = "lighting/studio.exr";
+    original.surface.environment_map.sha256 = std::string(64U, 'c');
+    original.surface.environment_map.basename = "studio.exr";
     original.palette = pvt::default_palette(2U);
     original.palette.enabled = false;
     original.palette.columns = 7U;
@@ -4390,7 +4648,12 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const fs::path first = directory / "first.pvt";
     const fs::path second = directory / "second.pvt";
     std::string error;
-    CHECK(pvt::save_setup(original, first.string(), &error));
+    const bool saved_original = pvt::save_setup(
+        original, first.string(), &error);
+    if (!saved_original) {
+        std::cerr << "setup round-trip save: " << error << '\n';
+    }
+    CHECK(saved_original);
 #if defined(_WIN32)
     DWORD setup_attributes = GetFileAttributesW(first.c_str());
     CHECK(setup_attributes != INVALID_FILE_ATTRIBUTES);
@@ -4474,6 +4737,18 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
           == original.surface.plane_displacement.sha256);
     CHECK(loaded.surface.plane_displacement.basename
           == original.surface.plane_displacement.basename);
+    CHECK(loaded.surface.environment_map.enabled);
+    CHECK(loaded.surface.environment_map.encoding
+          == pvt::EnvironmentMapEncoding::Linear);
+    CHECK(loaded.surface.environment_map.rotation_degrees == -37.5);
+    CHECK(loaded.surface.environment_map.exposure_stops == 1.25);
+    CHECK(loaded.surface.environment_map.intensity == 0.72);
+    CHECK(loaded.surface.environment_map.mix == 0.64);
+    CHECK(loaded.surface.environment_map.path
+          == original.surface.environment_map.path);
+    CHECK(loaded.surface.environment_map.sha256
+          == original.surface.environment_map.sha256);
+    CHECK(loaded.surface.environment_map.basename == "studio.exr");
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
@@ -4653,6 +4928,50 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
 
+    pvt::RenderConfig mesh_construction_setup = pvt::default_config();
+    mesh_construction_setup.surface.enabled = true;
+    mesh_construction_setup.surface.mapping =
+        pvt::SurfaceMapping::CustomObj;
+    mesh_construction_setup.surface.outside = pvt::SurfaceOutside::Source;
+    mesh_construction_setup.surface.obj_path = "mesh.obj";
+    mesh_construction_setup.surface.mesh_construction.mode =
+        pvt::MeshConstructionMode::Reconstruct;
+    mesh_construction_setup.surface.mesh_construction.fragmentation =
+        pvt::MeshFragmentation::TriangleClusters;
+    mesh_construction_setup.surface.mesh_construction.target_fragments = 73;
+    mesh_construction_setup.surface.mesh_construction.cycles_per_loop = -2;
+    mesh_construction_setup.surface.mesh_construction.phase_degrees = -41.5;
+    mesh_construction_setup.surface.mesh_construction.distance = 0.88;
+    mesh_construction_setup.surface.mesh_construction.rotation_degrees = -123.0;
+    mesh_construction_setup.surface.mesh_construction.minimum_scale = 0.61;
+    mesh_construction_setup.surface.mesh_construction.stagger = 0.37;
+    mesh_construction_setup.surface.mesh_construction.seed =
+        UINT64_C(0xfedcba9876543210);
+    std::string serialized_mesh_construction;
+    CHECK(pvt::detail::serialize_setup_config(
+        mesh_construction_setup, serialized_mesh_construction, &error));
+    pvt::RenderConfig loaded_mesh_construction;
+    CHECK(pvt::detail::deserialize_setup_config(
+        serialized_mesh_construction, loaded_mesh_construction, &error));
+    CHECK(loaded_mesh_construction.surface.mesh_construction.mode
+          == pvt::MeshConstructionMode::Reconstruct);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.fragmentation
+          == pvt::MeshFragmentation::TriangleClusters);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.target_fragments
+          == 73);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.cycles_per_loop
+          == -2);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.phase_degrees
+          == -41.5);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.distance == 0.88);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.rotation_degrees
+          == -123.0);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.minimum_scale
+          == 0.61);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.stagger == 0.37);
+    CHECK(loaded_mesh_construction.surface.mesh_construction.seed
+          == UINT64_C(0xfedcba9876543210));
+
     pvt::RenderConfig procedural_effect_setup = pvt::default_config();
     procedural_effect_setup.effects.clear();
     for (const pvt::EffectType type : {
@@ -4660,7 +4979,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
              pvt::EffectType::Starburst,
              pvt::EffectType::LensDistortion,
              pvt::EffectType::EdgeDetect,
-             pvt::EffectType::Twirl}) {
+             pvt::EffectType::Twirl,
+             pvt::EffectType::Water}) {
         auto effect = pvt::default_effect(type);
         effect.id = pvt::allocate_id(procedural_effect_setup);
         effect.enabled = true;
@@ -4672,8 +4992,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     pvt::RenderConfig loaded_procedural_effects;
     CHECK(pvt::detail::deserialize_setup_config(
         procedural_effect_text, loaded_procedural_effects, &error));
-    CHECK(loaded_procedural_effects.effects.size() == 5U);
-    if (loaded_procedural_effects.effects.size() == 5U) {
+    CHECK(loaded_procedural_effects.effects.size() == 6U);
+    if (loaded_procedural_effects.effects.size() == 6U) {
         CHECK(loaded_procedural_effects.effects[0].type
               == pvt::EffectType::Glitch);
         CHECK(loaded_procedural_effects.effects[1].type
@@ -4684,6 +5004,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
               == pvt::EffectType::EdgeDetect);
         CHECK(loaded_procedural_effects.effects[4].type
               == pvt::EffectType::Twirl);
+        CHECK(loaded_procedural_effects.effects[5].type
+              == pvt::EffectType::Water);
     }
 
     // Each compatibility fixture removes the records introduced by the newer
@@ -4733,9 +5055,40 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t19\n", 0U) == 0U);
-    std::string version_eighteen(current_version_bytes.begin(),
+              .rfind("PVT_SETUP\t20\n", 0U) == 0U);
+    std::string version_nineteen(current_version_bytes.begin(),
                                  current_version_bytes.end());
+    version_nineteen.replace(0U, std::string("PVT_SETUP\t20").size(),
+                             "PVT_SETUP\t19");
+    erase_records_with_prefix(version_nineteen,
+                              "surface.environment_map.");
+    erase_records_with_prefix(version_nineteen,
+                              "surface.mesh_construction.");
+    pvt::RenderConfig loaded_version_nineteen;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_nineteen, loaded_version_nineteen, &error));
+    CHECK(!loaded_version_nineteen.surface.environment_map.enabled);
+    CHECK(loaded_version_nineteen.surface.environment_map.encoding
+          == pvt::EnvironmentMapEncoding::Auto);
+    CHECK(loaded_version_nineteen.surface.environment_map.mix == 0.5);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.mode
+          == pvt::MeshConstructionMode::None);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.fragmentation
+          == pvt::MeshFragmentation::Automatic);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.target_fragments
+          == 64);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.cycles_per_loop
+          == 1);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.phase_degrees
+          == 0.0);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.distance == 0.65);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.rotation_degrees
+          == 45.0);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.minimum_scale
+          == 0.85);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.stagger == 0.5);
+    CHECK(loaded_version_nineteen.surface.mesh_construction.seed == 0U);
+    std::string version_eighteen = version_nineteen;
     version_eighteen.replace(0U, std::string("PVT_SETUP\t19").size(),
                              "PVT_SETUP\t18");
     erase_records_with_prefix(
@@ -6156,13 +6509,14 @@ int main(int argc, char** argv) {
     test_determinism_and_seam_continuity();
     test_new_procedural_effects();
     test_direction_alpha_and_surfaces(source_root);
+    test_environment_map_lighting(test_directory, source_root);
     test_configurable_blur_effects();
     test_partial_alpha_glow_composition();
     test_particle_straight_alpha_emission();
     test_defined_particle_controls_and_silhouettes();
     test_block_scale_and_default_glow_visibility();
     test_palettes_transforms_and_spatial_stages();
-    test_validation_limits();
+    test_validation_limits(source_root);
     test_setup_round_trip_and_transaction(test_directory);
     test_maximum_music_analysis_setup(test_directory);
     test_image_formats_and_dither(test_directory);

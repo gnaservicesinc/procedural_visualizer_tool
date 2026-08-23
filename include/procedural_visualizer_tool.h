@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 19;
+constexpr std::uint32_t kSetupFormatVersion = 20;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -50,6 +50,9 @@ constexpr std::size_t kMaximumPaletteColors = kMaximumUiItems;
 constexpr std::size_t kMaximumMotionPaths = kMaximumUiItems;
 constexpr std::size_t kMaximumMotionPathNodes = kMaximumUiItems;
 constexpr std::size_t kMaximumParameterLfos = kMaximumUiItems;
+// Fragment transforms are evaluated per triangle during mesh rasterization.
+// This is a deliberate workload bound rather than an artistic policy limit.
+constexpr std::size_t kMaximumMeshFragments = 65536;
 constexpr std::size_t kBuiltInPaletteCount = 6;
 // The text codec, CLI, and Qt editors ultimately expose signed-int counts.
 // Their bounds replace the former small product-policy ceilings.
@@ -107,7 +110,8 @@ enum class EffectType : std::uint8_t {
     Starburst,
     LensDistortion,
     EdgeDetect,
-    Twirl
+    Twirl,
+    Water
 };
 
 enum class ParticleShape : std::uint8_t {
@@ -190,6 +194,19 @@ enum class SurfaceRotationOrder : std::uint8_t {
     YZX,
     ZXY,
     ZYX
+};
+
+enum class MeshConstructionMode : std::uint8_t {
+    None = 0,
+    Explode,
+    Deconstruct,
+    Reconstruct
+};
+
+enum class MeshFragmentation : std::uint8_t {
+    Automatic = 0,
+    ConnectedComponents,
+    TriangleClusters
 };
 
 enum class StartingImageFit : std::uint8_t {
@@ -788,6 +805,12 @@ struct SwingConfig {
 //              frequency (radial falloff exponent), secondary (-1..1
 //              direction/depth), center/local area, edge mode. The signed
 //              sine-phase twist is exactly neutral at the loop seam.
+// Water:        intensity (source/refraction mix), magnitude (peak refraction
+//              as a fraction of the short edge), frequency (spatial wave
+//              density), secondary (cross-wave complexity from 0..1), center,
+//              angle, and edge mode. Three fixed directional wave fields use
+//              integer temporal harmonics, so every authored clock closes at
+//              the project loop boundary.
 // Glow:        intensity, secondary (pulse depth), radius_pixels, threshold,
 //              soft_knee. Glow expands alpha coverage using straight-alpha
 //              compositing.
@@ -1057,6 +1080,42 @@ struct PlaneDisplacementConfig {
     std::string basename;
 };
 
+// Environment maps use a Y-up equirectangular layout. Auto honors PNG color
+// metadata and treats OpenEXR as linear light; the explicit modes override that
+// choice for authored assets whose transfer characteristics are known.
+enum class EnvironmentMapEncoding : std::uint8_t {
+    Auto,
+    Srgb,
+    Linear,
+};
+
+struct EnvironmentMapConfig {
+    bool enabled = false;
+    EnvironmentMapEncoding encoding = EnvironmentMapEncoding::Auto;
+    double rotation_degrees = 0.0;
+    double exposure_stops = 0.0;
+    double intensity = 1.0;
+    // Blends authored ambient/directional lighting at 0 with environment
+    // diffuse lighting at 1 without changing either authored source.
+    double mix = 0.5;
+    std::string path;
+    std::string sha256;
+    std::string basename;
+};
+
+struct MeshConstructionConfig {
+    MeshConstructionMode mode = MeshConstructionMode::None;
+    MeshFragmentation fragmentation = MeshFragmentation::Automatic;
+    int target_fragments = 64;
+    int cycles_per_loop = 1;
+    double phase_degrees = 0.0;
+    double distance = 0.65;
+    double rotation_degrees = 45.0;
+    double minimum_scale = 0.85;
+    double stagger = 0.5;
+    std::uint64_t seed = 0U;
+};
+
 struct SurfaceConfig {
     bool enabled = false;
     SurfaceMapping mapping = SurfaceMapping::Plane;
@@ -1108,6 +1167,8 @@ struct SurfaceConfig {
     std::string obj_sha256;
     std::string obj_basename;
     PlaneDisplacementConfig plane_displacement;
+    EnvironmentMapConfig environment_map;
+    MeshConstructionConfig mesh_construction;
 };
 
 // An embedded starting image replaces procedural spatial generation. When a
@@ -1665,6 +1726,10 @@ PVT_API const char* surface_projection_name(SurfaceProjection value);
 PVT_API const char* surface_sizing_name(SurfaceSizing value);
 PVT_API const char* surface_outside_name(SurfaceOutside value);
 PVT_API const char* surface_rotation_order_name(SurfaceRotationOrder value);
+PVT_API const char* environment_map_encoding_name(
+    EnvironmentMapEncoding value);
+PVT_API const char* mesh_construction_mode_name(MeshConstructionMode value);
+PVT_API const char* mesh_fragmentation_name(MeshFragmentation value);
 PVT_API const char* starting_image_fit_name(StartingImageFit value);
 PVT_API const char* starting_color_mode_name(StartingColorMode value);
 PVT_API const char* waveform_name(Waveform value);

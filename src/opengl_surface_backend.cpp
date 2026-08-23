@@ -1,6 +1,7 @@
 #include "frame_renderer_internal.h"
 
 #include "displacement_surface.h"
+#include "environment_map.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,6 +40,171 @@ void main() {
                          (gl_VertexID == 2) ? 3.0 : -1.0);
     unusedUv = position * 0.5 + 0.5;
     gl_Position = vec4(position, 0.0, 1.0);
+}
+)PVT_GLSL";
+
+constexpr const char* kWaterFragmentShader = R"PVT_GLSL(#version 330 core
+uniform sampler2D sourceImage;
+uniform ivec2 imageSize;
+uniform int edgeMode;
+uniform float phase;
+uniform float intensity;
+uniform float magnitude;
+uniform float frequency;
+uniform float complexity;
+uniform vec2 center;
+uniform float angle;
+uniform float areaRadius;
+out vec4 outputColor;
+
+const float TAU = 6.28318530717958647692;
+
+float clamp01(float value) {
+    return clamp(value, 0.0, 1.0);
+}
+
+float smoothUnit(float value) {
+    value = clamp01(value);
+    return value * value * (3.0 - 2.0 * value);
+}
+
+int reflectedIndex(int index, int size) {
+    if (size <= 1) return 0;
+    int period = 2 * (size - 1);
+    int value = index % period;
+    if (value < 0) value += period;
+    if (value >= size) value = period - value;
+    return value;
+}
+
+float reduceReflectedCoordinate(float coordinate, int extent) {
+    if (extent <= 1) return 0.0;
+    float period = 2.0 * float(extent - 1);
+    float reduced = mod(coordinate, period);
+    return reduced < 0.0 ? reduced + period : reduced;
+}
+
+bool insideImage(ivec2 coordinate) {
+    return coordinate.x >= 0 && coordinate.x < imageSize.x
+           && coordinate.y >= 0 && coordinate.y < imageSize.y;
+}
+
+vec4 edgeColor() {
+    if (edgeMode == 1) return vec4(0.0, 0.0, 0.0, 1.0);
+    if (edgeMode == 2) return vec4(1.0);
+    return vec4(0.0);
+}
+
+vec4 sampleTexel(ivec2 coordinate) {
+    if (insideImage(coordinate)) {
+        return texelFetch(sourceImage, coordinate, 0);
+    }
+    if (edgeMode != 3) return edgeColor();
+    return texelFetch(sourceImage,
+                      ivec2(reflectedIndex(coordinate.x, imageSize.x),
+                            reflectedIndex(coordinate.y, imageSize.y)), 0);
+}
+
+vec4 sampleBilinear(vec2 coordinate) {
+    if (any(isnan(coordinate)) || any(isinf(coordinate))) {
+        return edgeColor();
+    }
+    if (edgeMode == 3) {
+        coordinate.x = reduceReflectedCoordinate(coordinate.x, imageSize.x);
+        coordinate.y = reduceReflectedCoordinate(coordinate.y, imageSize.y);
+    } else if (coordinate.x <= -1.0 || coordinate.y <= -1.0
+               || coordinate.x >= float(imageSize.x)
+               || coordinate.y >= float(imageSize.y)) {
+        return edgeColor();
+    }
+    ivec2 first = ivec2(floor(coordinate));
+    vec2 amount = coordinate - vec2(first);
+    ivec2 coordinates[4] = ivec2[4](
+        first, first + ivec2(1, 0),
+        first + ivec2(0, 1), first + ivec2(1, 1));
+    float weights[4] = float[4](
+        (1.0 - amount.x) * (1.0 - amount.y),
+        amount.x * (1.0 - amount.y),
+        (1.0 - amount.x) * amount.y,
+        amount.x * amount.y);
+    vec4 result = vec4(0.0);
+    float rgbWeight = 0.0;
+    for (int index = 0; index < 4; ++index) {
+        vec4 sampled = sampleTexel(coordinates[index]);
+        if (edgeMode != 0 || insideImage(coordinates[index])) {
+            result.rgb += sampled.rgb * weights[index];
+            rgbWeight += weights[index];
+        }
+        result.a += sampled.a * weights[index];
+    }
+    if (edgeMode == 0 && rgbWeight > 0.0) {
+        result.rgb /= rgbWeight;
+    }
+    result.a = clamp01(result.a);
+    return result;
+}
+
+float circularInfluence(float x, float y) {
+    if (areaRadius <= 1.0e-7) return 1.0;
+    float shortSide = float(min(imageSize.x, imageSize.y));
+    vec2 selectedCenter = center * vec2(imageSize - ivec2(1));
+    float distance = length(vec2(x, y) - selectedCenter) / shortSide;
+    float featherStart = areaRadius * 0.8;
+    if (distance <= featherStart) return 1.0;
+    if (distance >= areaRadius) return 0.0;
+    return 1.0 - smoothUnit(
+        (distance - featherStart)
+        / max(1.0e-7, areaRadius - featherStart));
+}
+
+void main() {
+    int xIndex = int(gl_FragCoord.x);
+    int yIndex = imageSize.y - 1 - int(gl_FragCoord.y);
+    float x = float(xIndex);
+    float y = float(yIndex);
+    vec4 original = texelFetch(sourceImage, ivec2(xIndex, yIndex), 0);
+    float shortSide = float(min(imageSize.x, imageSize.y));
+    vec2 selectedCenter = center * vec2(imageSize - ivec2(1));
+    float axisX = cos(angle);
+    float axisY = sin(angle);
+    float perpendicularX = -axisY;
+    float perpendicularY = axisX;
+    vec2 relative = vec2(x, y) - selectedCenter;
+    float along = dot(relative, vec2(axisX, axisY)) / shortSide;
+    float across = dot(relative, vec2(perpendicularX, perpendicularY))
+                   / shortSide;
+
+    const vec2 firstDirection = vec2(
+        0.9841833239736953, 0.17715299831526515);
+    const vec2 secondDirection = vec2(
+        -0.37665008293387275, 0.9263556093779034);
+    const vec2 thirdDirection = vec2(
+        0.7480746383750735, 0.663614598558533);
+    float spatialPhase = TAU * frequency;
+    float first = spatialPhase
+                      * dot(firstDirection, vec2(along, across))
+                  - phase;
+    float second = spatialPhase
+                       * dot(secondDirection, vec2(along, across))
+                   + 2.0 * phase + 2.0943951023931953;
+    float third = spatialPhase
+                      * dot(thirdDirection, vec2(along, across))
+                  - 3.0 * phase + 4.1887902047863905;
+    float boundedComplexity = clamp01(complexity);
+    float normalization = 1.0 + 0.87 * boundedComplexity;
+    vec2 localSlope =
+        (firstDirection * cos(first)
+         + secondDirection * (0.55 * boundedComplexity * cos(second))
+         + thirdDirection * (0.32 * boundedComplexity * cos(third)))
+        / normalization;
+    vec2 slope = vec2(
+        axisX * localSlope.x + perpendicularX * localSlope.y,
+        axisY * localSlope.x + perpendicularY * localSlope.y);
+    float area = circularInfluence(x, y);
+    vec4 refracted = sampleBilinear(
+        vec2(x, y) - magnitude * shortSide * slope * area);
+    outputColor = mix(original, refracted, clamp01(max(0.0, intensity) * area));
+    outputColor.a = clamp01(outputColor.a);
 }
 )PVT_GLSL";
 
@@ -61,10 +228,18 @@ uniform float lighting;
 uniform vec3 lightDirection;
 uniform float lightAmbient;
 uniform float lightDiffuse;
+uniform sampler2D environmentImage;
+uniform ivec2 environmentSize;
+uniform int environmentEnabled;
+uniform float environmentRotation;
+uniform float environmentRadianceScale;
+uniform float environmentMix;
 out vec4 outputColor;
 
 const float PI = 3.14159265358979323846;
 const float TAU = 6.28318530717958647692;
+const float FINITE_HDR_MAX = 3.402823466e38;
+const float INV_SQRT_TWO = 0.70710678118654752440;
 
 struct Hit {
     float distance;
@@ -90,11 +265,23 @@ int reflectedIndex(int index, int size) {
     return value;
 }
 
+float reduceReflectedCoordinate(float coordinate, int extent) {
+    if (extent <= 1) return 0.0;
+    float period = 2.0 * float(extent - 1);
+    float reduced = mod(coordinate, period);
+    return reduced < 0.0 ? reduced + period : reduced;
+}
+
 vec4 loadPixel(int x, int y) {
     return texelFetch(sourceImage, ivec2(x, y), 0);
 }
 
 vec4 sampleReflect(vec2 coordinate) {
+    if (any(isnan(coordinate)) || any(isinf(coordinate))) {
+        return vec4(0.0);
+    }
+    coordinate.x = reduceReflectedCoordinate(coordinate.x, imageSize.x);
+    coordinate.y = reduceReflectedCoordinate(coordinate.y, imageSize.y);
     ivec2 first = ivec2(floor(coordinate));
     vec2 amount = coordinate - vec2(first);
     vec4 top = mix(
@@ -113,9 +300,13 @@ vec4 sampleReflect(vec2 coordinate) {
 }
 
 vec4 sampleWrappedX(vec2 coordinate) {
+    if (any(isnan(coordinate)) || any(isinf(coordinate))) {
+        return vec4(0.0);
+    }
     float width = float(imageSize.x);
     float wrappedX = mod(coordinate.x, width);
     if (wrappedX < 0.0) wrappedX += width;
+    coordinate.y = reduceReflectedCoordinate(coordinate.y, imageSize.y);
     int x0 = int(floor(wrappedX));
     int x1 = (x0 + 1) % imageSize.x;
     int y0 = int(floor(coordinate.y));
@@ -183,10 +374,81 @@ vec3 faceForwardToRay(vec3 normal, vec3 rayDirection) {
         ? -normal : normal;
 }
 
+int environmentWrapIndex(int value, int size) {
+    int wrapped = value % size;
+    return wrapped < 0 ? wrapped + size : wrapped;
+}
+
+float finiteEnvironmentChannel(float value) {
+    if (!(value > 0.0)) return 0.0;
+    return (isnan(value) || isinf(value))
+        ? FINITE_HDR_MAX : min(value, FINITE_HDR_MAX);
+}
+
+vec3 environmentTexel(ivec2 coordinate) {
+    coordinate.x = environmentWrapIndex(coordinate.x, environmentSize.x);
+    coordinate.y = clamp(coordinate.y, 0, environmentSize.y - 1);
+    vec3 value = texelFetch(environmentImage, coordinate, 0).rgb;
+    return vec3(finiteEnvironmentChannel(value.x),
+                finiteEnvironmentChannel(value.y),
+                finiteEnvironmentChannel(value.z));
+}
+
+vec3 sampleEnvironmentDirection(vec3 direction) {
+    float longitude = atan(direction.x, direction.z);
+    float u = fract(0.5 + longitude / TAU + environmentRotation);
+    float v = clamp(0.5 - asin(clamp(direction.y, -1.0, 1.0)) / PI,
+                    0.0, 1.0);
+    vec2 coordinate = vec2(
+        u * float(environmentSize.x) - 0.5,
+        v * float(environmentSize.y) - 0.5);
+    ivec2 first = ivec2(floor(coordinate));
+    vec2 amount = clamp(coordinate - floor(coordinate),
+                        vec2(0.0), vec2(1.0));
+    vec3 top = mix(environmentTexel(first),
+                   environmentTexel(first + ivec2(1, 0)), amount.x);
+    vec3 bottom = mix(environmentTexel(first + ivec2(0, 1)),
+                      environmentTexel(first + ivec2(1, 1)), amount.x);
+    return mix(top, bottom, amount.y);
+}
+
+vec3 sampleEnvironmentDiffuse(vec3 authoredNormal) {
+    vec3 normal = normalize(authoredNormal);
+    vec3 reference = abs(normal.y) < 0.999
+        ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(reference, normal));
+    vec3 bitangent = cross(normal, tangent);
+    vec3 directions[5] = vec3[5](
+        normal,
+        normalize(normal * INV_SQRT_TWO + tangent * INV_SQRT_TWO),
+        normalize(normal * INV_SQRT_TWO - tangent * INV_SQRT_TWO),
+        normalize(normal * INV_SQRT_TWO + bitangent * INV_SQRT_TWO),
+        normalize(normal * INV_SQRT_TWO - bitangent * INV_SQRT_TWO));
+    float weights[5] = float[5](
+        1.0 / 3.0, 1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0);
+    vec3 radiance = vec3(0.0);
+    for (int index = 0; index < 5; ++index) {
+        radiance += sampleEnvironmentDirection(directions[index])
+                    * weights[index];
+    }
+    return clamp(radiance * environmentRadianceScale,
+                 vec3(0.0), vec3(FINITE_HDR_MAX));
+}
+
 vec4 shadeSurface(vec4 color, vec3 normal, float amount) {
     vec3 light = normalize(lightDirection);
     float diffuse = max(0.0, dot(normalize(normal), light));
     float lit = lightAmbient + lightDiffuse * diffuse;
+    if (environmentEnabled != 0 && environmentMix > 0.0) {
+        vec3 environmentLit = sampleEnvironmentDiffuse(normal);
+        vec3 blended = mix(vec3(lit), environmentLit, environmentMix);
+        vec3 multiplier = clamp(
+            vec3(1.0) + amount * (blended - vec3(1.0)), vec3(0.0),
+            vec3(FINITE_HDR_MAX));
+        color.rgb = clamp(color.rgb * multiplier,
+                          vec3(-FINITE_HDR_MAX), vec3(FINITE_HDR_MAX));
+        return color;
+    }
     float multiplier = max(0.0, 1.0 + amount * (lit - 1.0));
     color.rgb *= multiplier;
     return color;
@@ -1051,15 +1313,26 @@ public:
                 displacement_mesh, cancel, error)) {
             return false;
         }
+        PreparedEnvironmentMap prepared_environment;
+        if (!displacement_mesh && surface.environment_map.enabled
+            && surface.lighting > 0.0
+            && surface.environment_map.mix > 0.0
+            && !prepare_environment_map(surface.environment_map,
+                                        prepared_environment, cancel,
+                                        error)) {
+            return false;
+        }
         std::lock_guard<std::mutex> guard(mutex_);
         ensure_initialized_locked();
         if (!ready_) return fail(error, status_);
 
         bool rendered = false;
+        Image candidate;
         std::string render_error;
         const auto work = [&] {
-            rendered = render_on_gpu_thread(source, destination, surface,
+            rendered = render_on_gpu_thread(source, candidate, surface,
                                             loop_phase, displacement_mesh,
+                                            prepared_environment,
                                             &render_error);
         };
         if (QThread::currentThread() == render_thread_) {
@@ -1076,6 +1349,49 @@ public:
                         "OpenGL surface rendering was cancelled; destination "
                         "was unchanged.");
         }
+        destination = std::move(candidate);
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
+    bool render_water(const Image& source, Image& destination,
+                      const EffectConfig& effect, double phase,
+                      const std::atomic_bool* cancel, std::string* error) {
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "OpenGL Water rendering was cancelled; destination "
+                        "was unchanged.");
+        }
+        if (effect.type != EffectType::Water) {
+            return fail(error,
+                        "OpenGL Water rendering received a non-Water effect.");
+        }
+        std::lock_guard<std::mutex> guard(mutex_);
+        ensure_initialized_locked();
+        if (!ready_) return fail(error, status_);
+
+        bool rendered = false;
+        Image candidate;
+        std::string render_error;
+        const auto work = [&] {
+            rendered = render_water_on_gpu_thread(
+                source, candidate, effect, phase, &render_error);
+        };
+        if (QThread::currentThread() == render_thread_) {
+            work();
+        } else if (!QMetaObject::invokeMethod(
+                       worker_, work, Qt::BlockingQueuedConnection)) {
+            return fail(error,
+                        "OpenGL could not dispatch Water work to its bounded "
+                        "render thread.");
+        }
+        if (!rendered) return fail(error, std::move(render_error));
+        if (cancelled(cancel)) {
+            return fail(error,
+                        "OpenGL Water rendering was cancelled; destination "
+                        "was unchanged.");
+        }
+        destination = std::move(candidate);
         if (error != nullptr) error->clear();
         return true;
     }
@@ -1100,10 +1416,11 @@ public:
         if (!ready_) return fail(error, status_);
 
         bool rendered = false;
+        Image candidate;
         std::string render_error;
         const auto work = [&] {
             rendered = render_generated_base_on_gpu_thread(
-                config, prepared, destination, &render_error);
+                config, prepared, candidate, &render_error);
         };
         if (QThread::currentThread() == render_thread_) {
             work();
@@ -1119,6 +1436,7 @@ public:
                         "OpenGL generated-source rendering was cancelled; "
                         "destination was unchanged.");
         }
+        destination = std::move(candidate);
         if (error != nullptr) error->clear();
         return true;
     }
@@ -1143,6 +1461,14 @@ public:
                         if (program_ != 0U) {
                             gl->glDeleteProgram(program_);
                             program_ = 0U;
+                        }
+                        if (water_vertex_array_ != 0U) {
+                            gl->glDeleteVertexArrays(1, &water_vertex_array_);
+                            water_vertex_array_ = 0U;
+                        }
+                        if (water_program_ != 0U) {
+                            gl->glDeleteProgram(water_program_);
+                            water_program_ = 0U;
                         }
                         if (base_vertex_array_ != 0U) {
                             gl->glDeleteVertexArrays(1, &base_vertex_array_);
@@ -1374,7 +1700,15 @@ private:
     }
 
     bool ensure_program(QOpenGLExtraFunctions* gl, std::string* error) {
-        if (program_ != 0U) return true;
+        if (program_ != 0U && vertex_array_ != 0U) return true;
+        if (vertex_array_ != 0U) {
+            gl->glDeleteVertexArrays(1, &vertex_array_);
+            vertex_array_ = 0U;
+        }
+        if (program_ != 0U) {
+            gl->glDeleteProgram(program_);
+            program_ = 0U;
+        }
         GLuint vertex = 0U;
         GLuint fragment = 0U;
         if (!compile_shader(gl, GL_VERTEX_SHADER, kVertexShader, vertex, error)
@@ -1410,12 +1744,82 @@ private:
             return fail(error, message);
         }
         gl->glGenVertexArrays(1, &vertex_array_);
-        return vertex_array_ != 0U
-                   || fail(error, "OpenGL could not create a vertex array.");
+        if (vertex_array_ == 0U) {
+            gl->glDeleteProgram(program_);
+            program_ = 0U;
+            return fail(error, "OpenGL could not create a vertex array.");
+        }
+        return true;
+    }
+
+    bool ensure_water_program(QOpenGLExtraFunctions* gl,
+                              std::string* error) {
+        if (water_program_ != 0U && water_vertex_array_ != 0U) return true;
+        if (water_vertex_array_ != 0U) {
+            gl->glDeleteVertexArrays(1, &water_vertex_array_);
+            water_vertex_array_ = 0U;
+        }
+        if (water_program_ != 0U) {
+            gl->glDeleteProgram(water_program_);
+            water_program_ = 0U;
+        }
+        GLuint vertex = 0U;
+        GLuint fragment = 0U;
+        if (!compile_shader(gl, GL_VERTEX_SHADER, kVertexShader, vertex, error)
+            || !compile_shader(gl, GL_FRAGMENT_SHADER, kWaterFragmentShader,
+                               fragment, error)) {
+            if (vertex != 0U) gl->glDeleteShader(vertex);
+            if (fragment != 0U) gl->glDeleteShader(fragment);
+            return false;
+        }
+        water_program_ = gl->glCreateProgram();
+        if (water_program_ == 0U) {
+            gl->glDeleteShader(vertex);
+            gl->glDeleteShader(fragment);
+            return fail(error,
+                        "OpenGL could not create the Water shader program.");
+        }
+        gl->glAttachShader(water_program_, vertex);
+        gl->glAttachShader(water_program_, fragment);
+        gl->glLinkProgram(water_program_);
+        gl->glDeleteShader(vertex);
+        gl->glDeleteShader(fragment);
+        GLint linked = GL_FALSE;
+        gl->glGetProgramiv(water_program_, GL_LINK_STATUS, &linked);
+        if (linked != GL_TRUE) {
+            GLint length = 0;
+            gl->glGetProgramiv(water_program_, GL_INFO_LOG_LENGTH, &length);
+            std::vector<char> log(
+                static_cast<std::size_t>((std::max)(1, length)));
+            gl->glGetProgramInfoLog(water_program_, length, nullptr,
+                                    log.data());
+            const std::string message =
+                std::string("OpenGL Water shader linking failed: ")
+                + log.data();
+            gl->glDeleteProgram(water_program_);
+            water_program_ = 0U;
+            return fail(error, message);
+        }
+        gl->glGenVertexArrays(1, &water_vertex_array_);
+        if (water_vertex_array_ == 0U) {
+            gl->glDeleteProgram(water_program_);
+            water_program_ = 0U;
+            return fail(error,
+                        "OpenGL could not create the Water vertex array.");
+        }
+        return true;
     }
 
     bool ensure_base_program(QOpenGLExtraFunctions* gl, std::string* error) {
-        if (base_program_ != 0U) return true;
+        if (base_program_ != 0U && base_vertex_array_ != 0U) return true;
+        if (base_vertex_array_ != 0U) {
+            gl->glDeleteVertexArrays(1, &base_vertex_array_);
+            base_vertex_array_ = 0U;
+        }
+        if (base_program_ != 0U) {
+            gl->glDeleteProgram(base_program_);
+            base_program_ = 0U;
+        }
         GLuint vertex = 0U;
         GLuint fragment = 0U;
         if (!compile_shader(gl, GL_VERTEX_SHADER, kVertexShader, vertex, error)
@@ -1455,14 +1859,28 @@ private:
             return fail(error, message);
         }
         gl->glGenVertexArrays(1, &base_vertex_array_);
-        return base_vertex_array_ != 0U
-                   || fail(error,
-                           "OpenGL could not create the generated-source "
-                           "vertex array.");
+        if (base_vertex_array_ == 0U) {
+            gl->glDeleteProgram(base_program_);
+            base_program_ = 0U;
+            return fail(error,
+                        "OpenGL could not create the generated-source "
+                        "vertex array.");
+        }
+        return true;
     }
 
     bool ensure_mesh_program(QOpenGLExtraFunctions* gl, std::string* error) {
-        if (mesh_program_ != 0U) return true;
+        if (mesh_program_ != 0U && mesh_vertex_array_ != 0U) return true;
+        if (mesh_vertex_array_ != 0U) {
+            gl->glDeleteVertexArrays(1, &mesh_vertex_array_);
+            mesh_vertex_array_ = 0U;
+        }
+        if (mesh_program_ != 0U) {
+            gl->glDeleteProgram(mesh_program_);
+            mesh_program_ = 0U;
+        }
+        cached_mesh_.reset();
+        mesh_index_count_ = 0;
         GLuint vertex = 0U;
         GLuint geometry = 0U;
         GLuint fragment = 0U;
@@ -1509,9 +1927,13 @@ private:
             return fail(error, message);
         }
         gl->glGenVertexArrays(1, &mesh_vertex_array_);
-        return mesh_vertex_array_ != 0U
-                   || fail(error,
-                           "OpenGL could not create a displacement-mesh vertex array.");
+        if (mesh_vertex_array_ == 0U) {
+            gl->glDeleteProgram(mesh_program_);
+            mesh_program_ = 0U;
+            return fail(error,
+                        "OpenGL could not create a displacement-mesh vertex array.");
+        }
+        return true;
     }
 
     bool ensure_mesh_buffers(QOpenGLExtraFunctions* gl,
@@ -1928,6 +2350,153 @@ private:
         return true;
     }
 
+    bool render_water_on_gpu_thread(const Image& source,
+                                    Image& destination,
+                                    const EffectConfig& effect,
+                                    double phase,
+                                    std::string* error) {
+        std::size_t pixel_count = 0U;
+        const bool dimensions_fit = source.width > 0 && source.height > 0
+            && static_cast<std::size_t>(source.width)
+                   <= (std::numeric_limits<std::size_t>::max)()
+                          / static_cast<std::size_t>(source.height)
+            && (pixel_count = static_cast<std::size_t>(source.width)
+                                  * static_cast<std::size_t>(source.height))
+                   <= (std::numeric_limits<std::size_t>::max)() / 4U;
+        if (!dimensions_fit || source.pixels.size() != pixel_count * 4U) {
+            return fail(error,
+                        "OpenGL Water received inconsistent source image "
+                        "metadata.");
+        }
+        if (!context_->makeCurrent(surface_)) {
+            return fail(error,
+                        "OpenGL could not make its render context current for "
+                        "Water.");
+        }
+        QOpenGLExtraFunctions* gl = context_->extraFunctions();
+        gl->initializeOpenGLFunctions();
+        while (gl->glGetError() != GL_NO_ERROR) {
+            // Discard initialization diagnostics before this transactional pass.
+        }
+        if (!ensure_water_program(gl, error)) {
+            context_->doneCurrent();
+            return false;
+        }
+
+        GLuint source_texture = 0U;
+        GLuint destination_texture = 0U;
+        GLuint framebuffer = 0U;
+        const auto cleanup = [&] {
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+            if (framebuffer != 0U) gl->glDeleteFramebuffers(1, &framebuffer);
+            if (destination_texture != 0U) {
+                gl->glDeleteTextures(1, &destination_texture);
+            }
+            if (source_texture != 0U) gl->glDeleteTextures(1, &source_texture);
+        };
+
+        gl->glGenTextures(1, &source_texture);
+        gl->glBindTexture(GL_TEXTURE_2D, source_texture);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, source.width,
+                         source.height, 0, GL_RGBA, GL_FLOAT,
+                         source.pixels.data());
+
+        gl->glGenTextures(1, &destination_texture);
+        gl->glBindTexture(GL_TEXTURE_2D, destination_texture);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, source.width,
+                         source.height, 0, GL_RGBA, GL_FLOAT, nullptr);
+
+        gl->glGenFramebuffers(1, &framebuffer);
+        gl->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, destination_texture, 0);
+        if (gl->glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            != GL_FRAMEBUFFER_COMPLETE) {
+            cleanup();
+            context_->doneCurrent();
+            return fail(error,
+                        "OpenGL could not create a complete float-RGBA Water "
+                        "framebuffer.");
+        }
+
+        gl->glViewport(0, 0, source.width, source.height);
+        gl->glDisable(GL_BLEND);
+        gl->glDisable(GL_DEPTH_TEST);
+        gl->glUseProgram(water_program_);
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glBindTexture(GL_TEXTURE_2D, source_texture);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(water_program_, "sourceImage"), 0);
+        gl->glUniform2i(gl->glGetUniformLocation(water_program_, "imageSize"),
+                        source.width, source.height);
+        gl->glUniform1i(gl->glGetUniformLocation(water_program_, "edgeMode"),
+                        static_cast<int>(effect.edge_mode));
+        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "phase"),
+                        static_cast<float>(phase));
+        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "intensity"),
+                        static_cast<float>(effect.intensity));
+        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "magnitude"),
+                        static_cast<float>(effect.magnitude));
+        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "frequency"),
+                        static_cast<float>(effect.frequency));
+        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "complexity"),
+                        static_cast<float>(effect.secondary));
+        gl->glUniform2f(gl->glGetUniformLocation(water_program_, "center"),
+                        static_cast<float>(effect.center_x),
+                        static_cast<float>(effect.center_y));
+        constexpr double pi = 3.141592653589793238462643383279502884;
+        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "angle"),
+                        static_cast<float>(effect.angle_degrees * pi / 180.0));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(water_program_, "areaRadius"),
+            static_cast<float>(effect.area_radius));
+        gl->glBindVertexArray(water_vertex_array_);
+        gl->glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        std::vector<float> pixels;
+        try {
+            pixels.resize(pixel_count * 4U);
+        } catch (const std::bad_alloc&) {
+            cleanup();
+            context_->doneCurrent();
+            return fail(
+                error,
+                "OpenGL could not allocate the bounded Water readback buffer; destination was unchanged.");
+        }
+        gl->glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        gl->glReadPixels(0, 0, source.width, source.height, GL_RGBA, GL_FLOAT,
+                         pixels.data());
+        const GLenum render_status = gl->glGetError();
+        cleanup();
+        context_->doneCurrent();
+        if (render_status != GL_NO_ERROR) {
+            return fail(error, "OpenGL Water rendering failed with error "
+                                   + std::to_string(render_status) + ".");
+        }
+
+        const std::size_t row_values =
+            static_cast<std::size_t>(source.width) * 4U;
+        for (int top = 0, bottom = source.height - 1; top < bottom;
+             ++top, --bottom) {
+            float* first = pixels.data()
+                           + static_cast<std::size_t>(top) * row_values;
+            float* second = pixels.data()
+                            + static_cast<std::size_t>(bottom) * row_values;
+            std::swap_ranges(first, first + row_values, second);
+        }
+        destination.width = source.width;
+        destination.height = source.height;
+        destination.pixels.swap(pixels);
+        return true;
+    }
+
     bool render_generated_base_on_gpu_thread(
         const RenderConfig& config, const PreparedFrame& prepared,
         Image& destination, std::string* error) {
@@ -2190,6 +2759,7 @@ private:
     bool render_on_gpu_thread(const Image& source, Image& destination,
                               const SurfaceConfig& surface, double loop_phase,
                               const std::shared_ptr<const ObjMesh>& displacement_mesh,
+                              const PreparedEnvironmentMap& environment,
                               std::string* error) {
         std::size_t expected_values = 0U;
         const bool dimensions_fit = source.width > 0 && source.height > 0
@@ -2224,8 +2794,20 @@ private:
             context_->doneCurrent();
             return false;
         }
+        if (environment) {
+            GLint maximum_texture_size = 0;
+            gl->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum_texture_size);
+            if (environment.image->width > maximum_texture_size
+                || environment.image->height > maximum_texture_size) {
+                context_->doneCurrent();
+                return fail(
+                    error,
+                    "The environment map exceeds this OpenGL device's maximum texture size.");
+            }
+        }
 
         GLuint source_texture = 0U;
+        GLuint environment_texture = 0U;
         GLuint destination_texture = 0U;
         GLuint framebuffer = 0U;
         gl->glGenTextures(1, &source_texture);
@@ -2236,6 +2818,24 @@ private:
         gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, source.width,
                          source.height, 0, GL_RGBA, GL_FLOAT,
                          source.pixels.data());
+
+        if (environment) {
+            gl->glActiveTexture(GL_TEXTURE1);
+            gl->glGenTextures(1, &environment_texture);
+            gl->glBindTexture(GL_TEXTURE_2D, environment_texture);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                GL_CLAMP_TO_EDGE);
+            gl->glTexImage2D(
+                GL_TEXTURE_2D, 0, GL_RGBA32F, environment.image->width,
+                environment.image->height, 0, GL_RGBA, GL_FLOAT,
+                environment.image->pixels.data());
+            gl->glActiveTexture(GL_TEXTURE0);
+        }
 
         gl->glGenTextures(1, &destination_texture);
         gl->glBindTexture(GL_TEXTURE_2D, destination_texture);
@@ -2253,6 +2853,9 @@ private:
         if (framebuffer_status != GL_FRAMEBUFFER_COMPLETE) {
             gl->glDeleteFramebuffers(1, &framebuffer);
             gl->glDeleteTextures(1, &destination_texture);
+            if (environment_texture != 0U) {
+                gl->glDeleteTextures(1, &environment_texture);
+            }
             gl->glDeleteTextures(1, &source_texture);
             context_->doneCurrent();
             return fail(error,
@@ -2321,20 +2924,61 @@ private:
                         static_cast<float>(surface.light_ambient));
         gl->glUniform1f(gl->glGetUniformLocation(program_, "lightDiffuse"),
                         static_cast<float>(surface.light_diffuse));
+        gl->glActiveTexture(GL_TEXTURE1);
+        gl->glBindTexture(
+            GL_TEXTURE_2D,
+            environment_texture != 0U ? environment_texture : source_texture);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(program_, "environmentImage"), 1);
+        gl->glUniform2i(
+            gl->glGetUniformLocation(program_, "environmentSize"),
+            environment ? environment.image->width : source.width,
+            environment ? environment.image->height : source.height);
+        gl->glUniform1i(
+            gl->glGetUniformLocation(program_, "environmentEnabled"),
+            environment ? 1 : 0);
+        gl->glUniform1f(
+            gl->glGetUniformLocation(program_, "environmentRotation"),
+            static_cast<float>(environment.rotation_turns));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(program_, "environmentRadianceScale"),
+            static_cast<float>(environment.radiance_scale));
+        gl->glUniform1f(
+            gl->glGetUniformLocation(program_, "environmentMix"),
+            static_cast<float>(environment.mix));
+        gl->glActiveTexture(GL_TEXTURE0);
         gl->glBindVertexArray(vertex_array_);
         gl->glDrawArrays(GL_TRIANGLES, 0, 3);
 
-        destination.width = source.width;
-        destination.height = source.height;
-        destination.pixels.resize(source.pixels.size());
+        Image candidate;
+        candidate.width = source.width;
+        candidate.height = source.height;
+        try {
+            candidate.pixels.resize(source.pixels.size());
+        } catch (const std::bad_alloc&) {
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+            gl->glDeleteFramebuffers(1, &framebuffer);
+            gl->glDeleteTextures(1, &destination_texture);
+            if (environment_texture != 0U) {
+                gl->glDeleteTextures(1, &environment_texture);
+            }
+            gl->glDeleteTextures(1, &source_texture);
+            context_->doneCurrent();
+            return fail(
+                error,
+                "OpenGL could not allocate the bounded surface readback buffer; destination was unchanged.");
+        }
         gl->glPixelStorei(GL_PACK_ALIGNMENT, 1);
         gl->glReadPixels(0, 0, source.width, source.height, GL_RGBA, GL_FLOAT,
-                         destination.pixels.data());
+                         candidate.pixels.data());
         const GLenum render_status = gl->glGetError();
 
         gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
         gl->glDeleteFramebuffers(1, &framebuffer);
         gl->glDeleteTextures(1, &destination_texture);
+        if (environment_texture != 0U) {
+            gl->glDeleteTextures(1, &environment_texture);
+        }
         gl->glDeleteTextures(1, &source_texture);
         context_->doneCurrent();
         if (render_status != GL_NO_ERROR) {
@@ -2346,12 +2990,13 @@ private:
             static_cast<std::size_t>(source.width) * 4U;
         for (int top = 0, bottom = source.height - 1; top < bottom;
              ++top, --bottom) {
-            float* first = destination.pixels.data()
+            float* first = candidate.pixels.data()
                            + static_cast<std::size_t>(top) * row_values;
-            float* second = destination.pixels.data()
+            float* second = candidate.pixels.data()
                             + static_cast<std::size_t>(bottom) * row_values;
             std::swap_ranges(first, first + row_values, second);
         }
+        destination = std::move(candidate);
         return true;
     }
 
@@ -2367,6 +3012,8 @@ private:
     QObject* worker_ = nullptr;
     GLuint program_ = 0U;
     GLuint vertex_array_ = 0U;
+    GLuint water_program_ = 0U;
+    GLuint water_vertex_array_ = 0U;
     GLuint base_program_ = 0U;
     GLuint base_vertex_array_ = 0U;
     GLuint mesh_program_ = 0U;
@@ -2397,12 +3044,22 @@ OpenGLSurfaceService& service() {
 }
 
 bool surface_has_supported_work(const SurfaceConfig& surface) {
+    // Per-fragment transforms currently live in the shared reference mesh
+    // rasterizer. Keep OpenGL ownership/completion, but do not send an animated
+    // displacement mesh through the specialized single-transform GL pass.
     if (!surface.enabled || surface.mapping == SurfaceMapping::CustomObj) {
         return false;
     }
     if (surface.mapping == SurfaceMapping::Plane) {
         if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
-            return true;
+            if (surface.mesh_construction.mode
+                != MeshConstructionMode::None) {
+                return false;
+            }
+            const bool environment_lighting =
+                surface.environment_map.enabled && surface.lighting > 0.0
+                && surface.environment_map.mix > 0.0;
+            return !environment_lighting;
         }
         return surface.projection != SurfaceProjection::Orthographic
                || surface.sizing != SurfaceSizing::Contain
@@ -2480,6 +3137,14 @@ bool render_generated_base_opengl(const RenderConfig& config,
                                   std::string* error) {
     return service().render_generated_base(config, prepared, destination,
                                            cancel, error);
+}
+
+bool apply_water_effect_opengl(const Image& source, Image& destination,
+                               const EffectConfig& effect, double phase,
+                               const std::atomic_bool* cancel,
+                               std::string* error) {
+    return service().render_water(source, destination, effect, phase, cancel,
+                                  error);
 }
 
 bool apply_surface_mapping_opengl(const Image& source, Image& destination,

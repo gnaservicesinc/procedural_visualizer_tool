@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
 #include "displacement_surface.h"
+#include "environment_map.h"
 #include "frame_renderer_internal.h"
 #include "obj_surface.h"
 #include "post_process_alpha.h"
@@ -76,6 +77,14 @@ bool checked_multiply(std::size_t left, std::size_t right, std::size_t& result) 
         return false;
     }
     result = left * right;
+    return true;
+}
+
+bool checked_add(std::size_t left, std::size_t right, std::size_t& result) {
+    if (right > (std::numeric_limits<std::size_t>::max)() - left) {
+        return false;
+    }
+    result = left + right;
     return true;
 }
 
@@ -192,6 +201,7 @@ bool valid_enum(EffectType value) {
         case EffectType::LensDistortion:
         case EffectType::EdgeDetect:
         case EffectType::Twirl:
+        case EffectType::Water:
             return true;
     }
     return false;
@@ -277,6 +287,37 @@ bool valid_enum(PaletteColorEncoding value) {
     switch (value) {
         case PaletteColorEncoding::Srgb:
         case PaletteColorEncoding::Linear:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(EnvironmentMapEncoding value) {
+    switch (value) {
+        case EnvironmentMapEncoding::Auto:
+        case EnvironmentMapEncoding::Srgb:
+        case EnvironmentMapEncoding::Linear:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(MeshConstructionMode value) {
+    switch (value) {
+        case MeshConstructionMode::None:
+        case MeshConstructionMode::Explode:
+        case MeshConstructionMode::Deconstruct:
+        case MeshConstructionMode::Reconstruct:
+            return true;
+    }
+    return false;
+}
+
+bool valid_enum(MeshFragmentation value) {
+    switch (value) {
+        case MeshFragmentation::Automatic:
+        case MeshFragmentation::ConnectedComponents:
+        case MeshFragmentation::TriangleClusters:
             return true;
     }
     return false;
@@ -1358,6 +1399,7 @@ bool effect_has_render_work(const EffectConfig& effect) {
         case EffectType::Glitch:
         case EffectType::Starburst:
         case EffectType::EdgeDetect:
+        case EffectType::Water:
             return effect.magnitude > 0.0;
         case EffectType::LensDistortion:
         case EffectType::Twirl:
@@ -1783,11 +1825,16 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
             const bool normalized = found->type == EffectType::BlockScale
                 || found->type == EffectType::Glitch
                 || found->type == EffectType::Starburst
-                || found->type == EffectType::LensDistortion;
+                || found->type == EffectType::LensDistortion
+                || found->type == EffectType::Water;
             if (property == "intensity") found->intensity = finite(0.0, normalized ? 1.0 : magnitude);
             else if (property == "magnitude") found->magnitude = finite(found->type == EffectType::BlockScale ? 0.000001 : 0.0, magnitude);
             else if (property == "frequency") found->frequency = particles ? std::round(finite(1.0, static_cast<double>((std::numeric_limits<int>::max)()))) : finite(0.0, magnitude);
-            else if (property == "secondary") found->secondary = finite(-magnitude, magnitude);
+            else if (property == "secondary") {
+                found->secondary = found->type == EffectType::Water
+                                       ? finite(0.0, 1.0)
+                                       : finite(-magnitude, magnitude);
+            }
             else if (property == "center_x") found->center_x = finite(-magnitude, magnitude);
             else if (property == "center_y") found->center_y = finite(-magnitude, magnitude);
             else if (property == "angle") found->angle_degrees = finite(-magnitude, magnitude);
@@ -2100,7 +2147,7 @@ Color sample_bilinear(const Image& image, double x, double y, EdgeMode mode) {
         }
         result.a += samples[index].a * weights[index];
     }
-    if (mode == EdgeMode::Alpha && rgb_weight > 1.0e-12) {
+    if (mode == EdgeMode::Alpha && rgb_weight > 0.0) {
         result.r /= rgb_weight;
         result.g /= rgb_weight;
         result.b /= rgb_weight;
@@ -2278,6 +2325,7 @@ const char* effect_type_name(EffectType value) {
         case EffectType::LensDistortion: return "Lens distortion";
         case EffectType::EdgeDetect: return "Edge detect";
         case EffectType::Twirl: return "Twirl";
+        case EffectType::Water: return "Water";
     }
     return "Unknown";
 }
@@ -2348,6 +2396,35 @@ const char* palette_color_encoding_name(PaletteColorEncoding value) {
     switch (value) {
         case PaletteColorEncoding::Srgb: return "sRGB";
         case PaletteColorEncoding::Linear: return "Linear";
+    }
+    return "Unknown";
+}
+
+const char* environment_map_encoding_name(EnvironmentMapEncoding value) {
+    switch (value) {
+        case EnvironmentMapEncoding::Auto: return "Auto";
+        case EnvironmentMapEncoding::Srgb: return "sRGB";
+        case EnvironmentMapEncoding::Linear: return "Linear";
+    }
+    return "Unknown";
+}
+
+const char* mesh_construction_mode_name(MeshConstructionMode value) {
+    switch (value) {
+        case MeshConstructionMode::None: return "None";
+        case MeshConstructionMode::Explode: return "Explode";
+        case MeshConstructionMode::Deconstruct: return "Deconstruct";
+        case MeshConstructionMode::Reconstruct: return "Reconstruct";
+    }
+    return "Unknown";
+}
+
+const char* mesh_fragmentation_name(MeshFragmentation value) {
+    switch (value) {
+        case MeshFragmentation::Automatic: return "Automatic";
+        case MeshFragmentation::ConnectedComponents:
+            return "Connected components";
+        case MeshFragmentation::TriangleClusters: return "Triangle clusters";
     }
     return "Unknown";
 }
@@ -2664,6 +2741,13 @@ EffectConfig default_effect(EffectType type) {
             effect.magnitude = 0.35; // maximum turns
             effect.frequency = 1.8; // center falloff exponent
             effect.secondary = 1.0; // direction/depth
+            break;
+        case EffectType::Water:
+            effect.intensity = 0.75;
+            effect.magnitude = 0.018; // peak short-edge refraction
+            effect.frequency = 5.0; // spatial wave density
+            effect.secondary = 0.55; // cross-wave complexity
+            effect.angle_degrees = 20.0;
             break;
     }
     return effect;
@@ -3444,6 +3528,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 + " requires a mix from 0 to 1, a radial exponent of at "
                   "least 0.25, and direction/depth from -1 to 1.");
         }
+        if (effect.type == EffectType::Water
+            && (effect.intensity > 1.0
+                || effect.secondary < 0.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Water effect " + std::to_string(index + 1U)
+                + " requires a source/refraction mix and cross-wave "
+                  "complexity from 0 to 1.");
+        }
         if (effect.type == EffectType::Blur
             && effect.blur_type == BlurType::Gaussian
             && effect.blur_samples % 2 == 0) {
@@ -3677,6 +3769,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         seen_post_process_stages[index] = true;
     }
     const SurfaceConfig& surface = config.surface;
+    const EnvironmentMapConfig& environment = surface.environment_map;
+    const MeshConstructionConfig& construction = surface.mesh_construction;
     const double light_length_squared =
         surface.light_direction_x * surface.light_direction_x
         + surface.light_direction_y * surface.light_direction_y
@@ -3686,6 +3780,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !valid_enum(surface.sizing)
         || !valid_enum(surface.outside)
         || !valid_enum(surface.rotation_order)
+        || !valid_enum(environment.encoding)
         || !finite_render_parameter(surface.rotation_x_degrees)
         || !finite_render_parameter(surface.rotation_y_degrees)
         || !finite_render_parameter(surface.rotation_z_degrees)
@@ -3706,9 +3801,40 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !nonnegative_render_parameter(surface.light_ambient)
         || !nonnegative_render_parameter(surface.light_diffuse)
         || (surface.lighting > 0.0
+            && (!environment.enabled || environment.mix < 1.0)
             && (!std::isfinite(light_length_squared)
                 || light_length_squared <= 1.0e-24))) {
         return invalid_result("Surface mapping values are out of range.");
+    }
+    if (!finite_render_parameter(environment.rotation_degrees)
+        || !finite_render_parameter(environment.exposure_stops)
+        || !nonnegative_render_parameter(environment.intensity)
+        || !finite_in_range(environment.mix, 0.0, 1.0)
+        || (!environment.path.empty()
+            && !valid_path_text(environment.path, kMaximumPathBytes, false))
+        || (environment.sha256.empty() != environment.basename.empty())
+        || (!environment.sha256.empty()
+            && (!valid_lower_hex_digest(environment.sha256)
+                || environment.basename.size()
+                       > kMaximumAttachmentBasenameBytes
+                || !valid_music_basename(environment.basename)))
+        || (environment.enabled && environment.path.empty()
+            && environment.sha256.empty())) {
+        return invalid_result(
+            "Environment-map lighting values or attachment metadata are invalid.");
+    }
+    if (!valid_enum(construction.mode)
+        || !valid_enum(construction.fragmentation)
+        || construction.target_fragments < 1
+        || static_cast<std::size_t>(construction.target_fragments)
+               > kMaximumMeshFragments
+        || !finite_render_parameter(construction.phase_degrees)
+        || !nonnegative_render_parameter(construction.distance)
+        || !finite_render_parameter(construction.rotation_degrees)
+        || !finite_in_range(construction.minimum_scale, 0.0, 1.0)
+        || !finite_in_range(construction.stagger, 0.0, 1.0)) {
+        return invalid_result(
+            "Mesh-construction values are outside their safe render bounds.");
     }
     if ((!config.surface.obj_path.empty()
          && !valid_path_text(config.surface.obj_path, kMaximumPathBytes, false))
@@ -3876,6 +4002,84 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         // automatically use a smaller nearest-fragment buffer at render time.
         peak_bytes += obj_working_bytes;
     }
+    const bool has_mesh_construction = uses_raster_mesh
+        && construction.mode != MeshConstructionMode::None;
+    if (has_mesh_construction) {
+        // Per-fragment transforms, centers, ordering, ranks, and stable-sort
+        // scratch are all transient. The authored target is a hard public
+        // bound, so reserve its complete fragment state even when a particular
+        // mesh ultimately produces fewer fragments.
+        constexpr std::size_t kConstructionBytesPerFragment = 160U;
+        std::size_t fragment_bytes = 0U;
+        const std::size_t fragment_count = static_cast<std::size_t>(
+            construction.target_fragments);
+        if (!checked_multiply(fragment_count,
+                              kConstructionBytesPerFragment,
+                              fragment_bytes)
+            || !checked_add(peak_bytes, fragment_bytes, peak_bytes)) {
+            return invalid_result(
+                "The mesh-construction peak memory estimate overflowed.");
+        }
+    }
+    const auto add_construction_topology_bytes =
+        [&](std::size_t triangle_count, std::size_t component_count,
+            bool topology_available) {
+            const bool use_components = topology_available
+                && (construction.fragmentation
+                        == MeshFragmentation::ConnectedComponents
+                    || (construction.fragmentation
+                            == MeshFragmentation::Automatic
+                        && component_count > 1U));
+            std::size_t topology_bytes = 0U;
+            if (use_components) {
+                // Component centers/counts/labels, stable ordering scratch,
+                // and the final per-triangle label vector overlap in two
+                // different peaks; admit the larger one.
+                std::size_t clustering_peak = 0U;
+                std::size_t retained_components = 0U;
+                std::size_t triangle_labels = 0U;
+                if (!checked_multiply(component_count, 52U,
+                                      clustering_peak)
+                    || !checked_multiply(component_count, 36U,
+                                         retained_components)
+                    || !checked_multiply(triangle_count,
+                                         sizeof(std::uint32_t),
+                                         triangle_labels)
+                    || !checked_add(retained_components, triangle_labels,
+                                    retained_components)) {
+                    return false;
+                }
+                topology_bytes = std::max(clustering_peak,
+                                          retained_components);
+            } else if (!checked_multiply(triangle_count, 44U,
+                                         topology_bytes)) {
+                // Spatial clustering retains triangle centroids, labels, and
+                // ordering plus conservative stable-sort scratch.
+                return false;
+            }
+            return checked_add(peak_bytes, topology_bytes, peak_bytes);
+        };
+    if (has_mesh_construction
+        && config.surface.mapping == SurfaceMapping::CustomObj
+        && !config.surface.obj_path.empty()) {
+        // Successful imported-mesh renders necessarily parse this asset. Load
+        // it once before worker admission so its exact triangle/component
+        // counts participate in the per-frame estimate; the immutable cache is
+        // shared by the admitted workers. A missing/corrupt path is left to the
+        // existing transactional render error and never reaches plan creation.
+        std::shared_ptr<const detail::ObjMesh> mesh;
+        std::string ignored_mesh_error;
+        if (detail::load_obj_mesh_cached(config.surface.obj_path, mesh,
+                                         &ignored_mesh_error)
+            && mesh
+            && !add_construction_topology_bytes(
+                mesh->triangles.size(), mesh->connected_component_count,
+                mesh->triangle_components.size() == mesh->triangles.size()
+                    && mesh->connected_component_count > 0U)) {
+            return invalid_result(
+                "The imported mesh-construction peak memory estimate overflowed.");
+        }
+    }
     if (surface_has_render_work(config.surface)
         && config.surface.mapping == SurfaceMapping::Plane
         && config.surface.plane_displacement.enabled) {
@@ -3895,6 +4099,21 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 "The displacement-plane peak memory estimate overflowed.");
         }
         peak_bytes += mesh_bytes;
+        if (has_mesh_construction) {
+            std::size_t cell_count = 0U;
+            std::size_t triangle_count = 0U;
+            if (!checked_multiply(columns - 1U, rows - 1U, cell_count)
+                || !checked_multiply(cell_count, 2U, triangle_count)) {
+                return invalid_result(
+                    "The mesh-construction topology estimate overflowed.");
+            }
+            if (!add_construction_topology_bytes(
+                    triangle_count, triangle_count == 0U ? 0U : 1U,
+                    triangle_count > 0U)) {
+                return invalid_result(
+                    "The mesh-construction peak memory estimate overflowed.");
+            }
+        }
     }
 
     ValidationResult result;
@@ -5061,6 +5280,72 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                         clamp_value(intensity * area, 0.0, 1.0));
                     break;
                 }
+                case EffectType::Water: {
+                    // A compact analytic normal field gives Water a fluid,
+                    // directional refraction rather than Ripple's radial
+                    // displacement. Every temporal multiplier is an integer,
+                    // so advancing `phase` by a whole turn closes all three
+                    // component waves at the same project-loop boundary.
+                    constexpr double first_x = 0.9841833239736953;
+                    constexpr double first_y = 0.17715299831526515;
+                    constexpr double second_x = -0.37665008293387275;
+                    constexpr double second_y = 0.9263556093779034;
+                    constexpr double third_x = 0.7480746383750735;
+                    constexpr double third_y = 0.663614598558533;
+                    constexpr double second_phase = 2.0943951023931953;
+                    constexpr double third_phase = 4.1887902047863905;
+                    const double relative_x = x - center_x;
+                    const double relative_y = y - center_y;
+                    const double along = (relative_x * axis_x
+                                          + relative_y * axis_y)
+                                         / short_side;
+                    const double across = (relative_x * perpendicular_x
+                                           + relative_y * perpendicular_y)
+                                          / short_side;
+                    const double spatial_phase = kTau * effect.frequency;
+                    const double first = spatial_phase
+                                             * (first_x * along
+                                                + first_y * across)
+                                         - phase;
+                    const double second = spatial_phase
+                                              * (second_x * along
+                                                 + second_y * across)
+                                          + 2.0 * phase + second_phase;
+                    const double third = spatial_phase
+                                             * (third_x * along
+                                                + third_y * across)
+                                         - 3.0 * phase + third_phase;
+                    const double complexity = clamp_value(
+                        effect.secondary, 0.0, 1.0);
+                    const double normalization = 1.0 + 0.87 * complexity;
+                    const double first_slope = std::cos(first);
+                    const double second_slope =
+                        0.55 * complexity * std::cos(second);
+                    const double third_slope =
+                        0.32 * complexity * std::cos(third);
+                    const double local_x =
+                        (first_x * first_slope
+                         + second_x * second_slope
+                         + third_x * third_slope)
+                        / normalization;
+                    const double local_y =
+                        (first_y * first_slope
+                         + second_y * second_slope
+                         + third_y * third_slope)
+                        / normalization;
+                    const double slope_x = axis_x * local_x
+                                           + perpendicular_x * local_y;
+                    const double slope_y = axis_y * local_x
+                                           + perpendicular_y * local_y;
+                    const Color refracted = sample_bilinear(
+                        source, x - base_displacement * slope_x * area,
+                        y - base_displacement * slope_y * area,
+                        effect.edge_mode);
+                    sampled = blend_straight_alpha(
+                        load_color(source, x, y), refracted,
+                        clamp_value(intensity * area, 0.0, 1.0));
+                    break;
+                }
                 case EffectType::Glow:
                 case EffectType::BlockScale:
                 case EffectType::ParticleField:
@@ -5808,14 +6093,34 @@ Vec3 surface_world_normal(Vec3 normal, const SurfaceConfig& surface,
                                     surface.rotation_order));
 }
 
-Color shade_surface(Color color, Vec3 normal, const SurfaceConfig& surface,
-                    double lighting) {
+Color shade_surface(
+    Color color, Vec3 normal, const SurfaceConfig& surface, double lighting,
+    const detail::PreparedEnvironmentMap* environment) {
     const Vec3 light = normalize({surface.light_direction_x,
                                   surface.light_direction_y,
                                   surface.light_direction_z});
     const double diffuse = std::max(0.0, dot(normalize(normal), light));
     const double lit = surface.light_ambient
                        + surface.light_diffuse * diffuse;
+    if (environment != nullptr && *environment && environment->mix > 0.0) {
+        const detail::EnvironmentMapRgb sampled =
+            detail::sample_environment_map_diffuse(
+                *environment, normal.x, normal.y, normal.z);
+        const auto multiplier = [&](double environment_lit) {
+            const double blended = mix_value(
+                lit, environment_lit, environment->mix);
+            return std::max(0.0, 1.0 + lighting * (blended - 1.0));
+        };
+        constexpr double maximum = static_cast<double>(
+            (std::numeric_limits<float>::max)());
+        const auto saturated = [&](double value, double amount) {
+            return clamp_value(value * amount, -maximum, maximum);
+        };
+        color.r = saturated(color.r, multiplier(sampled.red));
+        color.g = saturated(color.g, multiplier(sampled.green));
+        color.b = saturated(color.b, multiplier(sampled.blue));
+        return color;
+    }
     const double multiplier = std::max(0.0, 1.0 + lighting * (lit - 1.0));
     color.r *= multiplier;
     color.g *= multiplier;
@@ -6025,6 +6330,17 @@ bool apply_surface_mapping(const Image& source, Image& destination,
         throw_if_cancelled(cancel);
         return rendered;
     }
+    detail::PreparedEnvironmentMap prepared_environment;
+    const detail::PreparedEnvironmentMap* environment = nullptr;
+    if (surface.environment_map.enabled && surface.lighting > 0.0
+        && surface.environment_map.mix > 0.0) {
+        if (!detail::prepare_environment_map(
+                surface.environment_map, prepared_environment, cancel,
+                error)) {
+            return false;
+        }
+        environment = &prepared_environment;
+    }
     ensure_image(destination, source.width, source.height);
     throw_if_cancelled(cancel);
     const double curvature = clamp_value(surface.curvature, 0.0, 1.0);
@@ -6149,7 +6465,8 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                     object_normal, surface, angles);
                 world_normal = face_forward(world_normal, world_direction);
                 return shade_surface(sampled, world_normal, surface,
-                                     surface.lighting * curvature);
+                                     surface.lighting * curvature,
+                                     environment);
             };
 
             switch (surface.mapping) {
@@ -7017,7 +7334,7 @@ bool render_frame_at_timeline_sample_cancellable(
                                 timeline.music, current, cancel);
         }
 
-        const auto apply_effect_stage = [&](EffectSpace stage) {
+        const auto apply_effect_stage = [&](EffectSpace stage) -> bool {
             for (const EffectConfig& authored_effect : render.effects) {
                 throw_if_cancelled(cancel);
                 if (authored_effect.space != stage) {
@@ -7055,17 +7372,25 @@ bool render_frame_at_timeline_sample_cancellable(
                 } else if (effect.type == EffectType::ParticleField) {
                     apply_particle_field(current, scratch, effect, phase, cancel);
                     current.pixels.swap(scratch.pixels);
+                } else if (effect.type == EffectType::Water
+                           && detail::opengl_surface_acceleration_active()) {
+                    if (!detail::apply_water_effect_opengl(
+                            current, scratch, effect, phase, cancel, error)) {
+                        return false;
+                    }
+                    current.pixels.swap(scratch.pixels);
                 } else {
                     apply_coordinate_effect(current, scratch, effect, phase, cancel);
                     current.pixels.swap(scratch.pixels);
                 }
             }
+            return true;
         };
 
         // Effects retain their relative order inside each explicit stage.
         // Texture effects alter the image painted onto a surface; mapped-object
         // effects run later and therefore move/deform the complete silhouette.
-        apply_effect_stage(EffectSpace::Texture);
+        if (!apply_effect_stage(EffectSpace::Texture)) return false;
 
         // Curvature zero is the neutral setting for 3D surface mappings. The
         // surface's visibility mask and lighting must not crop or shade the
@@ -7097,7 +7422,7 @@ bool render_frame_at_timeline_sample_cancellable(
                                loop_phase, cancel);
             current.pixels.swap(scratch.pixels);
         }
-        apply_effect_stage(EffectSpace::Surface);
+        if (!apply_effect_stage(EffectSpace::Surface)) return false;
         apply_post_process(current, scratch, render.post_process,
                            render.quantization, cancel);
         if (detail::opengl_surface_acceleration_active()) {

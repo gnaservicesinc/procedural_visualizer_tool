@@ -364,6 +364,27 @@ void test_layer_codec_backward_compatibility() {
     original.surface.plane_displacement.midpoint = 0.43;
     original.surface.plane_displacement.pixels_per_node = 6;
     original.surface.plane_displacement.path = "height-map.png";
+    original.surface.environment_map.enabled = true;
+    original.surface.environment_map.encoding =
+        pvt::EnvironmentMapEncoding::Srgb;
+    original.surface.environment_map.rotation_degrees = 52.0;
+    original.surface.environment_map.exposure_stops = -0.75;
+    original.surface.environment_map.intensity = 1.6;
+    original.surface.environment_map.mix = 0.38;
+    original.surface.environment_map.path = "studio-map.png";
+    original.surface.mesh_construction.mode =
+        pvt::MeshConstructionMode::Reconstruct;
+    original.surface.mesh_construction.fragmentation =
+        pvt::MeshFragmentation::TriangleClusters;
+    original.surface.mesh_construction.target_fragments = 73;
+    original.surface.mesh_construction.cycles_per_loop = -2;
+    original.surface.mesh_construction.phase_degrees = -41.5;
+    original.surface.mesh_construction.distance = 0.88;
+    original.surface.mesh_construction.rotation_degrees = -123.0;
+    original.surface.mesh_construction.minimum_scale = 0.61;
+    original.surface.mesh_construction.stagger = 0.37;
+    original.surface.mesh_construction.seed =
+        UINT64_C(0xfedcba9876543210);
     pvt::ParameterLfo amplitude_lfo;
     amplitude_lfo.target_path =
         "wave/" + std::to_string(original.waves.front().id) + "/amplitude";
@@ -388,7 +409,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t17\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t18\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -516,6 +537,29 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.surface.plane_displacement.pixels_per_node == 6);
     CHECK(current_round_trip.surface.plane_displacement.path
           == "height-map.png");
+    CHECK(current_round_trip.surface.environment_map.enabled);
+    CHECK(current_round_trip.surface.environment_map.encoding
+          == pvt::EnvironmentMapEncoding::Srgb);
+    CHECK(current_round_trip.surface.environment_map.rotation_degrees == 52.0);
+    CHECK(current_round_trip.surface.environment_map.exposure_stops == -0.75);
+    CHECK(current_round_trip.surface.environment_map.intensity == 1.6);
+    CHECK(current_round_trip.surface.environment_map.mix == 0.38);
+    CHECK(current_round_trip.surface.environment_map.path
+          == "studio-map.png");
+    CHECK(current_round_trip.surface.mesh_construction.mode
+          == pvt::MeshConstructionMode::Reconstruct);
+    CHECK(current_round_trip.surface.mesh_construction.fragmentation
+          == pvt::MeshFragmentation::TriangleClusters);
+    CHECK(current_round_trip.surface.mesh_construction.target_fragments == 73);
+    CHECK(current_round_trip.surface.mesh_construction.cycles_per_loop == -2);
+    CHECK(current_round_trip.surface.mesh_construction.phase_degrees == -41.5);
+    CHECK(current_round_trip.surface.mesh_construction.distance == 0.88);
+    CHECK(current_round_trip.surface.mesh_construction.rotation_degrees
+          == -123.0);
+    CHECK(current_round_trip.surface.mesh_construction.minimum_scale == 0.61);
+    CHECK(current_round_trip.surface.mesh_construction.stagger == 0.37);
+    CHECK(current_round_trip.surface.mesh_construction.seed
+          == UINT64_C(0xfedcba9876543210));
     CHECK(current_round_trip.parameter_lfos.size() == 1U);
     if (current_round_trip.parameter_lfos.size() == 1U) {
         const auto& loaded_lfo = current_round_trip.parameter_lfos.front();
@@ -529,9 +573,58 @@ void test_layer_codec_backward_compatibility() {
             current_round_trip, loaded_lfo.target_path));
     }
 
+    // Layer v17/setup v19 predates Water and the setup-v20 surface records.
+    // Remove those records rather than only relabeling an impossible file.
+    std::istringstream current_v18_input(current_layer);
+    std::ostringstream version_seventeen_output;
+    std::string version_line;
+    CHECK(static_cast<bool>(std::getline(current_v18_input, version_line)));
+    CHECK(version_line == "PVT_LAYER\t18");
+    version_seventeen_output << "PVT_LAYER\t17\n";
+    while (std::getline(current_v18_input, version_line)) {
+        const std::size_t tab = version_line.find('\t');
+        const std::string key = version_line.substr(0U, tab);
+        const bool v18_only =
+            key.rfind("surface.environment_map.", 0U) == 0U
+            || key.rfind("surface.mesh_construction.", 0U) == 0U;
+        if (!v18_only) version_seventeen_output << version_line << '\n';
+    }
+    const std::string version_seventeen = version_seventeen_output.str();
+    pvt::RenderData loaded_version_seventeen;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_seventeen, loaded_version_seventeen, &error, &motion_paths));
+    CHECK(loaded_version_seventeen.effects.front().type
+          == original.effects.front().type);
+    CHECK(!loaded_version_seventeen.surface.environment_map.enabled);
+    CHECK(loaded_version_seventeen.surface.mesh_construction.mode
+          == pvt::MeshConstructionMode::None);
+    CHECK(loaded_version_seventeen.surface.mesh_construction.fragmentation
+          == pvt::MeshFragmentation::Automatic);
+    CHECK(loaded_version_seventeen.surface.mesh_construction.target_fragments
+          == 64);
+
+    pvt::RenderData water_layer = pvt::default_layer().render;
+    water_layer.effects.clear();
+    auto water = pvt::default_effect(pvt::EffectType::Water);
+    water.id = pvt::allocate_id(water_layer);
+    water.enabled = true;
+    water_layer.effects.push_back(water);
+    std::string serialized_water_layer;
+    CHECK(pvt::detail::serialize_layer_config(
+        water_layer, serialized_water_layer, &error, &motion_paths));
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t18\n", 0U) == 0U);
+    pvt::RenderData loaded_water_layer;
+    CHECK(pvt::detail::deserialize_layer_config(
+        serialized_water_layer, loaded_water_layer, &error, &motion_paths));
+    CHECK(loaded_water_layer.effects.size() == 1U);
+    if (loaded_water_layer.effects.size() == 1U) {
+        CHECK(loaded_water_layer.effects.front().type
+              == pvt::EffectType::Water);
+    }
+
     // Layer v16/setup v18 predates channel routing and authored finishing
     // order. It receives the neutral identity map and historical stage order.
-    std::istringstream current_v17_input(current_layer);
+    std::istringstream current_v17_input(version_seventeen);
     std::ostringstream version_sixteen_output;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_v17_input, line)));
@@ -1195,7 +1288,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t17");
+    CHECK(line == "PVT_LAYER\t18");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -2756,14 +2849,18 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         std::string("\x89PNG\r\n\x1a\n", 8U) + "portable-image-fixture";
     const std::string height_bytes =
         std::string("\x89PNG\r\n\x1a\n", 8U) + "portable-height-fixture";
+    const std::string environment_bytes =
+        std::string("\x89PNG\r\n\x1a\n", 8U) + "portable-environment-fixture";
     const fs::path audio_source = directory / "source-track.wav";
     const fs::path obj_source = directory / "source-mesh.obj";
     const fs::path image_source = directory / "source-image.png";
     const fs::path height_source = directory / "source-height.png";
+    const fs::path environment_source = directory / "source-environment.png";
     CHECK(write_bytes(audio_source, audio_bytes));
     CHECK(write_bytes(obj_source, obj_bytes));
     CHECK(write_bytes(image_source, image_bytes));
     CHECK(write_bytes(height_source, height_bytes));
+    CHECK(write_bytes(environment_source, environment_bytes));
 
     pvt::ProjectDocument document = pvt::default_project_document();
     document.project.name = "Embedded Assets";
@@ -2773,6 +2870,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     pvt::ProjectAttachment obj_attachment;
     pvt::ProjectAttachment image_attachment;
     pvt::ProjectAttachment height_attachment;
+    pvt::ProjectAttachment environment_attachment;
     CHECK(pvt::attach_project_file(
         document, pvt::kMusicSourceAttachmentId, as_utf8(audio_source),
         &music_attachment, &error));
@@ -2796,6 +2894,11 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         pvt::plane_displacement_attachment_id(
             document.project.layers.front().uuid),
         as_utf8(height_source), &height_attachment, &error));
+    CHECK(pvt::attach_project_file(
+        document,
+        pvt::environment_map_attachment_id(
+            document.project.layers.front().uuid),
+        as_utf8(environment_source), &environment_attachment, &error));
     // A second logical reference with the same bytes and original filename
     // reuses the same readable bundle entry.
     CHECK(pvt::attach_project_file(
@@ -2835,6 +2938,10 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     surface.plane_displacement.path = height_attachment.local_path;
     surface.plane_displacement.sha256 = height_attachment.sha256;
     surface.plane_displacement.basename = height_attachment.basename;
+    surface.environment_map.enabled = true;
+    surface.environment_map.path = environment_attachment.local_path;
+    surface.environment_map.sha256 = environment_attachment.sha256;
+    surface.environment_map.basename = environment_attachment.basename;
     auto& starting_image =
         document.project.layers.front().render.starting_image;
     starting_image.enabled = true;
@@ -2854,6 +2961,9 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(fs::remove(image_source, filesystem_error) && !filesystem_error);
     filesystem_error.clear();
     CHECK(fs::remove(height_source, filesystem_error) && !filesystem_error);
+    filesystem_error.clear();
+    CHECK(fs::remove(environment_source, filesystem_error)
+          && !filesystem_error);
 
     const fs::path bundle = directory / portable_root(document.project.name);
     pvt::BundleSaveReport report;
@@ -2866,11 +2976,13 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     pvt::detail::BundleFileSet directory_files;
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 4U);
+    CHECK(asset_entry_count(directory_files) == 5U);
     CHECK(directory_files.files.count(readable_asset_path(music_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(obj_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(image_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(height_attachment)) == 1U);
+    CHECK(directory_files.files.count(
+              readable_asset_path(environment_attachment)) == 1U);
     CHECK(read_bytes(bundle / "0" / "metadata.txt").rfind(
               "PVT_VERSION\t5\n", 0U) == 0U);
     CHECK(music_analysis_entry_count(directory_files) == 1U);
@@ -3021,7 +3133,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
 
     pvt::ProjectDocument loaded;
     CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
-    CHECK(loaded.attachments.size() == 6U);
+    CHECK(loaded.attachments.size() == 7U);
     CHECK(read_bytes(pvt::detail::path_from_utf8(
               pvt::project_attachment_path(loaded,
                                            pvt::kMusicSourceAttachmentId)))
@@ -3044,6 +3156,13 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
               .plane_displacement.sha256
           == height_attachment.sha256);
     CHECK(read_bytes(pvt::detail::path_from_utf8(
+              loaded.project.layers.front().render.surface
+                  .environment_map.path))
+          == environment_bytes);
+    CHECK(loaded.project.layers.front().render.surface.environment_map.enabled);
+    CHECK(loaded.project.layers.front().render.surface.environment_map.sha256
+          == environment_attachment.sha256);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
               pvt::project_attachment_path(
                   loaded, pvt::starting_image_attachment_id(
                               loaded.project.layers.front().uuid))))
@@ -3059,7 +3178,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 1U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 4U);
+    CHECK(asset_entry_count(directory_files) == 5U);
     CHECK(music_analysis_entry_count(directory_files) == 1U);
     CHECK(fs::exists(bundle / ".DS_Store")
           && fs::exists(bundle / "0" / ".DS_Store"));
@@ -3081,7 +3200,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 2U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 4U);
+    CHECK(asset_entry_count(directory_files) == 5U);
     CHECK(static_cast<std::size_t>(std::count_if(
               directory_files.files.begin(), directory_files.files.end(),
               [&renamed_attachment](const auto& entry) {
@@ -3107,7 +3226,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(report.created_version && report.version == 3U);
     CHECK(pvt::detail::read_bundle_file_set(
         as_utf8(bundle), directory_files, &error));
-    CHECK(asset_entry_count(directory_files) == 5U);
+    CHECK(asset_entry_count(directory_files) == 6U);
     CHECK(directory_files.files.count(readable_asset_path(music_attachment)) == 1U);
     CHECK(directory_files.files.count(readable_asset_path(changed_attachment)) == 1U);
 
@@ -3121,7 +3240,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::save_project_document(independent, as_utf8(zip), &report, &error));
     pvt::detail::BundleFileSet zip_files;
     CHECK(pvt::detail::read_bundle_file_set(as_utf8(zip), zip_files, &error));
-    CHECK(zip_files.from_zip && asset_entry_count(zip_files) == 5U);
+    CHECK(zip_files.from_zip && asset_entry_count(zip_files) == 6U);
     pvt::ProjectDocument zip_loaded;
     CHECK(pvt::load_project_document(as_utf8(zip), zip_loaded, &error));
     CHECK(read_bytes(pvt::detail::path_from_utf8(
@@ -3135,6 +3254,10 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
               zip_loaded.project.layers.front().render.surface
                   .plane_displacement.path))
           == height_bytes);
+    CHECK(read_bytes(pvt::detail::path_from_utf8(
+              zip_loaded.project.layers.front().render.surface
+                  .environment_map.path))
+          == environment_bytes);
 
     // Version-2 bare-digest payloads remain loadable and the next changed Save
     // writes a readable current-format snapshot without rewriting legacy history.

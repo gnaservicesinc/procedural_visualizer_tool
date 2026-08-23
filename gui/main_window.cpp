@@ -750,6 +750,7 @@ int effect_ui_category(pvt::EffectType type) {
         case pvt::EffectType::FlagWave:
         case pvt::EffectType::LensDistortion:
         case pvt::EffectType::Twirl:
+        case pvt::EffectType::Water:
             return MovementEffects;
         case pvt::EffectType::Glow:
         case pvt::EffectType::Starburst:
@@ -790,6 +791,7 @@ void populate_effect_types(QComboBox* combo, int category) {
             add(pvt::EffectType::FlagWave);
             add(pvt::EffectType::LensDistortion);
             add(pvt::EffectType::Twirl);
+            add(pvt::EffectType::Water);
             break;
         case LightAndEnergyEffects:
             add(pvt::EffectType::Glow);
@@ -2032,6 +2034,15 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.secondary = random_chance(random, 0.5) ? -1.0 : 1.0;
             effect.center_x = random_real(random, 0.3, 0.7);
             effect.center_y = random_real(random, 0.3, 0.7);
+            break;
+        case pvt::EffectType::Water:
+            effect.intensity = random_real(random, 0.35, 0.95);
+            effect.magnitude = random_real(random, 0.006, 0.045);
+            effect.frequency = random_real(random, 1.5, 9.0);
+            effect.secondary = random_real(random, 0.15, 0.9);
+            effect.center_x = random_real(random, 0.2, 0.8);
+            effect.center_y = random_real(random, 0.2, 0.8);
+            effect.angle_degrees = random_real(random, -180.0, 180.0);
             break;
     }
 }
@@ -4920,6 +4931,69 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_appearance->addWidget(surface_light_diffuse_, 3, 3);
     surface->addRow(surface_appearance_group);
 
+    surface_environment_group_ = new QGroupBox(
+        tr("Environment-map lighting"));
+    surface_environment_group_->setObjectName(
+        QStringLiteral("surfaceEnvironmentMapGroup"));
+    auto* environment = new QFormLayout(surface_environment_group_);
+    surface_environment_enabled_ = new QCheckBox(
+        tr("Use the environment map for surface lighting"));
+    surface_environment_enabled_->setObjectName(
+        QStringLiteral("surfaceEnvironmentMapEnabled"));
+    auto* environment_path_row = new QWidget;
+    auto* environment_path_layout = new QHBoxLayout(environment_path_row);
+    environment_path_layout->setContentsMargins(0, 0, 0, 0);
+    surface_environment_path_ = new QLineEdit;
+    surface_environment_path_->setObjectName(
+        QStringLiteral("surfaceEnvironmentMapPath"));
+    surface_environment_path_->setReadOnly(true);
+    surface_environment_path_->setPlaceholderText(
+        tr("Choose an equirectangular PNG or OpenEXR map"));
+    surface_environment_browse_ = new QPushButton(tr("Choose…"));
+    surface_environment_browse_->setObjectName(
+        QStringLiteral("surfaceEnvironmentMapBrowse"));
+    surface_environment_clear_ = new QPushButton(tr("Clear"));
+    surface_environment_clear_->setObjectName(
+        QStringLiteral("surfaceEnvironmentMapClear"));
+    environment_path_layout->addWidget(surface_environment_path_, 1);
+    environment_path_layout->addWidget(surface_environment_browse_);
+    environment_path_layout->addWidget(surface_environment_clear_);
+    surface_environment_encoding_ = new QComboBox;
+    surface_environment_encoding_->setObjectName(
+        QStringLiteral("surfaceEnvironmentMapEncoding"));
+    add_enum_item(surface_environment_encoding_,
+                  tr("Auto (PNG metadata / linear OpenEXR)"),
+                  pvt::EnvironmentMapEncoding::Auto);
+    add_enum_item(surface_environment_encoding_, tr("sRGB"),
+                  pvt::EnvironmentMapEncoding::Srgb);
+    add_enum_item(surface_environment_encoding_, tr("Linear light"),
+                  pvt::EnvironmentMapEncoding::Linear);
+    surface_environment_rotation_ = real_editor(
+        -kMaximumRenderParameter, kMaximumRenderParameter, 3, 1.0);
+    surface_environment_rotation_->setSuffix(QChar(0x00b0));
+    surface_environment_exposure_ = real_editor(
+        -kMaximumRenderParameter, kMaximumRenderParameter, 3, 0.25);
+    surface_environment_exposure_->setSuffix(tr(" stops"));
+    surface_environment_intensity_ = real_editor(
+        0.0, kMaximumRenderParameter, 4, 0.05);
+    surface_environment_mix_ = real_editor(0.0, 1.0, 4, 0.01);
+    auto* environment_help = new QLabel(tr(
+        "Uses a Y-up equirectangular map. Rotation moves the lighting around "
+        "the surface; exposure and intensity scale it. The mix runs from the "
+        "authored ambient/directional lights at 0 to environment diffuse light "
+        "at 1, with Lighting amount above controlling the overall result."));
+    environment_help->setWordWrap(true);
+    environment->addRow(surface_environment_enabled_);
+    environment->addRow(tr("Environment map"), environment_path_row);
+    environment->addRow(tr("Color encoding"), surface_environment_encoding_);
+    environment->addRow(tr("Rotation"), surface_environment_rotation_);
+    environment->addRow(tr("Exposure"), surface_environment_exposure_);
+    environment->addRow(tr("Intensity"), surface_environment_intensity_);
+    environment->addRow(tr("Direct / environment mix"),
+                        surface_environment_mix_);
+    environment->addRow(environment_help);
+    surface->addRow(surface_environment_group_);
+
     auto* surface_help = new QLabel(tr(
         "No camera angle, rotation, scale, fit, or light is inferred from the "
         "selected surface. New Plane mappings start as a pixel-aligned neutral "
@@ -4993,6 +5067,84 @@ QWidget* MainWindow::createLayerSettingsPage() {
     plane_displacement->addRow(surface_plane_displacement_export_);
     plane_displacement->addRow(displacement_help);
     surface->addRow(surface_plane_displacement_group_);
+
+    surface_mesh_construction_group_ = new QGroupBox(
+        tr("Loop-safe mesh construction"));
+    surface_mesh_construction_group_->setObjectName(
+        QStringLiteral("surfaceMeshConstructionGroup"));
+    auto* mesh_construction = new QFormLayout(
+        surface_mesh_construction_group_);
+    surface_mesh_construction_mode_ = new QComboBox;
+    surface_mesh_construction_mode_->setObjectName(
+        QStringLiteral("surfaceMeshConstructionMode"));
+    add_enum_item(surface_mesh_construction_mode_, tr("None"),
+                  pvt::MeshConstructionMode::None);
+    add_enum_item(surface_mesh_construction_mode_, tr("Explode"),
+                  pvt::MeshConstructionMode::Explode);
+    add_enum_item(surface_mesh_construction_mode_, tr("Deconstruct"),
+                  pvt::MeshConstructionMode::Deconstruct);
+    add_enum_item(surface_mesh_construction_mode_, tr("Reconstruct"),
+                  pvt::MeshConstructionMode::Reconstruct);
+    surface_mesh_fragmentation_ = new QComboBox;
+    surface_mesh_fragmentation_->setObjectName(
+        QStringLiteral("surfaceMeshFragmentation"));
+    add_enum_item(surface_mesh_fragmentation_, tr("Auto"),
+                  pvt::MeshFragmentation::Automatic);
+    add_enum_item(surface_mesh_fragmentation_, tr("Connected components"),
+                  pvt::MeshFragmentation::ConnectedComponents);
+    add_enum_item(surface_mesh_fragmentation_, tr("Triangle clusters"),
+                  pvt::MeshFragmentation::TriangleClusters);
+    surface_mesh_target_fragments_ = integer_editor(
+        1, static_cast<int>(pvt::kMaximumMeshFragments));
+    surface_mesh_target_fragments_->setObjectName(
+        QStringLiteral("surfaceMeshTargetFragments"));
+    surface_mesh_cycles_ = integer_editor(kMinimumIntegerParameter,
+                                          kMaximumIntegerParameter);
+    surface_mesh_cycles_->setObjectName(
+        QStringLiteral("surfaceMeshCycles"));
+    surface_mesh_phase_ = real_editor(-kMaximumRenderParameter,
+                                      kMaximumRenderParameter, 3, 1.0);
+    surface_mesh_phase_->setSuffix(QChar(0x00b0));
+    surface_mesh_distance_ = real_editor(0.0, kMaximumRenderParameter,
+                                         4, 0.05);
+    surface_mesh_rotation_ = real_editor(-kMaximumRenderParameter,
+                                         kMaximumRenderParameter, 3, 1.0);
+    surface_mesh_rotation_->setSuffix(QChar(0x00b0));
+    surface_mesh_minimum_scale_ = real_editor(0.0, 1.0, 4, 0.01);
+    surface_mesh_stagger_ = real_editor(0.0, 1.0, 4, 0.01);
+    surface_mesh_seed_ = new QLineEdit;
+    surface_mesh_seed_->setObjectName(QStringLiteral("surfaceMeshSeed"));
+    surface_mesh_seed_->setMaxLength(20);
+    surface_mesh_seed_->setPlaceholderText(tr("Unsigned 64-bit seed"));
+    surface_mesh_random_seed_ = new QPushButton(tr("Randomize"));
+    surface_mesh_random_seed_->setObjectName(
+        QStringLiteral("surfaceMeshRandomSeed"));
+    auto* mesh_seed_row = new QWidget;
+    auto* mesh_seed_layout = new QHBoxLayout(mesh_seed_row);
+    mesh_seed_layout->setContentsMargins(0, 0, 0, 0);
+    mesh_seed_layout->addWidget(surface_mesh_seed_, 1);
+    mesh_seed_layout->addWidget(surface_mesh_random_seed_);
+    auto* construction_help = new QLabel(tr(
+        "Available for Custom OBJ surfaces and enabled displaced Planes. "
+        "Signed whole cycles—including 0—close exactly at the loop seam. "
+        "Switching to another surface temporarily disables these controls "
+        "without erasing their authored values."));
+    construction_help->setWordWrap(true);
+    mesh_construction->addRow(tr("Mode"), surface_mesh_construction_mode_);
+    mesh_construction->addRow(tr("Fragmentation"),
+                              surface_mesh_fragmentation_);
+    mesh_construction->addRow(tr("Target fragments"),
+                              surface_mesh_target_fragments_);
+    mesh_construction->addRow(tr("Cycles per loop"), surface_mesh_cycles_);
+    mesh_construction->addRow(tr("Starting phase"), surface_mesh_phase_);
+    mesh_construction->addRow(tr("Travel distance"), surface_mesh_distance_);
+    mesh_construction->addRow(tr("Fragment rotation"), surface_mesh_rotation_);
+    mesh_construction->addRow(tr("Minimum scale"),
+                              surface_mesh_minimum_scale_);
+    mesh_construction->addRow(tr("Stagger"), surface_mesh_stagger_);
+    mesh_construction->addRow(tr("Seed"), mesh_seed_row);
+    mesh_construction->addRow(construction_help);
+    surface->addRow(surface_mesh_construction_group_);
     surface_layout->addWidget(surface_group);
 
     auto* post_process_order_group = new QGroupBox(
@@ -5443,6 +5595,34 @@ QWidget* MainWindow::createLayerSettingsPage() {
             this, [this] { (void)setPlaneDisplacementSource({}); });
     connect(surface_plane_displacement_export_, &QPushButton::clicked,
             this, &MainWindow::exportPlaneDisplacementObj);
+    connect(surface_environment_browse_, &QPushButton::clicked,
+            this, [this] {
+        QString preferred;
+        const auto& environment = config_.surface.environment_map;
+        if (!environment.path.empty()) {
+            preferred = QFileInfo(
+                QString::fromStdString(environment.path)).absolutePath();
+        }
+        const QString selected = QFileDialog::getOpenFileName(
+            this, tr("Choose environment map"),
+            usableDialogDirectory(preferred),
+            tr("PNG / OpenEXR environment maps (*.png *.exr);;All files (*)"));
+        if (!selected.isEmpty()) {
+            rememberDialogLocation(selected);
+            if (!environment.sha256.empty()
+                && QMessageBox::question(
+                       this, tr("Replace embedded environment map?"),
+                       tr("Replace the active layer's environment map with %1?")
+                           .arg(QFileInfo(selected).fileName()),
+                       QMessageBox::Yes | QMessageBox::No,
+                       QMessageBox::Yes) != QMessageBox::Yes) {
+                return;
+            }
+            (void)setEnvironmentMapSource(selected);
+        }
+    });
+    connect(surface_environment_clear_, &QPushButton::clicked,
+            this, [this] { (void)setEnvironmentMapSource({}); });
     connect(starting_image_browse_, &QPushButton::clicked, this, [this] {
         std::vector<const pvt::LayerConfig*> reusable;
         QStringList labels;
@@ -8301,6 +8481,8 @@ void MainWindow::connectEditors() {
                          surface_rotation_y_turns_,
                          surface_rotation_z_turns_,
                          surface_plane_displacement_ratio_,
+                         surface_mesh_target_fragments_,
+                         surface_mesh_cycles_,
                          post_antialias_passes_,
                          quantization_levels_, alpha_cycles_, first_frame_,
                          filename_digits_, png_compression_, motion_cycles_x_,
@@ -8323,6 +8505,13 @@ void MainWindow::connectEditors() {
                          surface_focal_length_, surface_light_x_,
                          surface_light_y_, surface_light_z_,
                          surface_light_ambient_, surface_light_diffuse_,
+                         surface_environment_rotation_,
+                         surface_environment_exposure_,
+                         surface_environment_intensity_,
+                         surface_environment_mix_,
+                         surface_mesh_phase_, surface_mesh_distance_,
+                         surface_mesh_rotation_,
+                         surface_mesh_minimum_scale_, surface_mesh_stagger_,
                          post_invert_rgb_mix_,
                          post_invert_red_mix_, post_invert_green_mix_,
                          post_invert_blue_mix_,
@@ -8344,6 +8533,7 @@ void MainWindow::connectEditors() {
     for (auto* editor : {displacement_enabled_, lighting_enabled_, spiral_enabled_,
                          wall_enabled_, surface_enabled_, post_invert_rgb_enabled_,
                          surface_plane_displacement_enabled_,
+                         surface_environment_enabled_,
                          post_invert_red_enabled_, post_invert_green_enabled_,
                          post_invert_blue_enabled_,
                          post_invert_alpha_enabled_, post_channel_map_enabled_,
@@ -8370,6 +8560,13 @@ void MainWindow::connectEditors() {
             QString::number(QRandomGenerator::system()->generate64()));
         applyGlobalEditor(domain_warp_seed_);
     });
+    connect(surface_mesh_seed_, &QLineEdit::editingFinished, this,
+            [this] { applyGlobalEditor(surface_mesh_seed_); });
+    connect(surface_mesh_random_seed_, &QPushButton::clicked, this, [this] {
+        surface_mesh_seed_->setText(
+            QString::number(QRandomGenerator::system()->generate64()));
+        applyGlobalEditor(surface_mesh_seed_);
+    });
     connect(motion_paths_edit_, &QPushButton::clicked, this,
             &MainWindow::showMotionPathEditor);
     connect(starting_image_enabled_, &QCheckBox::toggled, this,
@@ -8377,6 +8574,9 @@ void MainWindow::connectEditors() {
     for (auto* editor : {surface_mapping_, surface_projection_,
                          surface_sizing_, surface_outside_,
                          surface_rotation_order_,
+                         surface_environment_encoding_,
+                         surface_mesh_construction_mode_,
+                         surface_mesh_fragmentation_,
                          post_channel_red_source_, post_channel_green_source_,
                          post_channel_blue_source_, post_channel_alpha_source_,
                          quantization_mode_, bit_depth_, dither_method_,
@@ -9023,6 +9223,18 @@ bool MainWindow::stageNewLayerFromDefaults(
             displacement.sha256 = attached.sha256;
             displacement.basename = attached.basename;
         }
+        if (!layer.render.surface.environment_map.sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::environment_map_attachment_id(source_uuid),
+                    pvt::environment_map_attachment_id(layer.uuid),
+                    attached)) {
+                return false;
+            }
+            auto& environment = layer.render.surface.environment_map;
+            environment.path = attached.local_path;
+            environment.sha256 = attached.sha256;
+            environment.basename = attached.basename;
+        }
         if (!layer.render.starting_image.sha256.empty()) {
             if (!transfer_attachment(
                     pvt::starting_image_attachment_id(source_uuid),
@@ -9128,11 +9340,14 @@ void MainWindow::duplicateLayer() {
     const bool copy_obj = !layer.render.surface.obj_sha256.empty();
     const bool copy_height =
         !layer.render.surface.plane_displacement.sha256.empty();
+    const bool copy_environment =
+        !layer.render.surface.environment_map.sha256.empty();
     const bool copy_music =
         !layer.render.layer_clock.clock.music.source_sha256.empty();
     const bool copy_image = !layer.render.starting_image.sha256.empty();
     std::unique_ptr<pvt::ProjectDocument> staged_document;
-    if (copy_obj || copy_height || copy_music || copy_image) {
+    if (copy_obj || copy_height || copy_environment || copy_music
+        || copy_image) {
         if (document_ == nullptr) {
             QMessageBox::critical(this, tr("Could not duplicate layer"),
                                   tr("The project attachment registry is unavailable."));
@@ -9207,6 +9422,34 @@ void MainWindow::duplicateLayer() {
         displacement.path = duplicate_attachment.local_path;
         displacement.sha256 = duplicate_attachment.sha256;
         displacement.basename = duplicate_attachment.basename;
+    }
+    if (copy_environment) {
+        const pvt::ProjectAttachment* source_attachment =
+            pvt::find_project_attachment(
+                *staged_document,
+                pvt::environment_map_attachment_id(source->uuid));
+        if (source_attachment == nullptr
+            || source_attachment->local_path.empty()) {
+            QMessageBox::critical(
+                this, tr("Could not duplicate layer"),
+                tr("The embedded environment map is unavailable."));
+            return;
+        }
+        pvt::ProjectAttachment duplicate_attachment;
+        std::string attachment_error;
+        if (!pvt::attach_project_file(
+                *staged_document,
+                pvt::environment_map_attachment_id(layer.uuid),
+                source_attachment->local_path, &duplicate_attachment,
+                &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not duplicate layer"),
+                                  QString::fromStdString(attachment_error));
+            return;
+        }
+        auto& environment = layer.render.surface.environment_map;
+        environment.path = duplicate_attachment.local_path;
+        environment.sha256 = duplicate_attachment.sha256;
+        environment.basename = duplicate_attachment.basename;
     }
     if (copy_music) {
         const pvt::ProjectAttachment* source_attachment =
@@ -9317,6 +9560,7 @@ void MainWindow::removeLayer() {
         for (const std::string& reference_id : {
                  pvt::surface_obj_attachment_id(layer->uuid),
                  pvt::plane_displacement_attachment_id(layer->uuid),
+                 pvt::environment_map_attachment_id(layer->uuid),
                  pvt::starting_image_attachment_id(layer->uuid),
                  pvt::layer_music_attachment_id(layer->uuid)}) {
             std::string detach_error;
@@ -9774,6 +10018,97 @@ bool MainWindow::setPlaneDisplacementSource(const QString& source_path) {
             ? tr("Cleared the active layer's plane-displacement height map.")
             : tr("Embedded %1 and rebuilt the active layer's displacement plane.")
                   .arg(QString::fromStdString(displacement.basename)));
+    return true;
+}
+
+bool MainWindow::setEnvironmentMapSource(const QString& source_path) {
+    if (populating_ || activeLayer() == nullptr) return false;
+    const QString suffix = QFileInfo(source_path).suffix();
+    if (!source_path.isEmpty()
+        && suffix.compare(QStringLiteral("png"), Qt::CaseInsensitive) != 0
+        && suffix.compare(QStringLiteral("exr"), Qt::CaseInsensitive) != 0) {
+        QMessageBox::warning(
+            this, tr("Unsupported environment map"),
+            tr("Environment-map lighting accepts PNG and HALF/FLOAT OpenEXR images."));
+        return false;
+    }
+    if (document_ == nullptr) {
+        document_ = std::make_unique<pvt::ProjectDocument>(
+            pvt::default_project_document());
+        document_->project = project_;
+    }
+
+    auto before = captureActiveState();
+    auto& environment = config_.surface.environment_map;
+    const std::string reference_id =
+        pvt::environment_map_attachment_id(active_layer_uuid_);
+    std::string attachment_error;
+    if (source_path.isEmpty()) {
+        if (!pvt::detach_project_file(
+                *document_, reference_id, &attachment_error)) {
+            QMessageBox::critical(
+                this, tr("Could not clear environment map"),
+                QString::fromStdString(attachment_error));
+            return false;
+        }
+        environment.enabled = false;
+        environment.path.clear();
+        environment.sha256.clear();
+        environment.basename.clear();
+    } else {
+        const QString resolved = QDir::isAbsolutePath(source_path)
+            ? QDir::cleanPath(source_path)
+            : QDir::cleanPath(
+                  QDir(startup_working_directory_).absoluteFilePath(
+                      source_path));
+        if (!pvt::detail::validate_environment_map_source(
+                resolved.toStdString(), environment.encoding,
+                &attachment_error)) {
+            QMessageBox::critical(
+                this, tr("Could not decode environment map"),
+                QString::fromStdString(attachment_error));
+            return false;
+        }
+        pvt::ProjectAttachment attached;
+        if (!pvt::attach_project_file(
+                *document_, reference_id, resolved.toStdString(), &attached,
+                &attachment_error)) {
+            QMessageBox::critical(
+                this, tr("Could not embed environment map"),
+                QString::fromStdString(attachment_error));
+            return false;
+        }
+        environment.enabled = true;
+        environment.path = attached.local_path;
+        environment.sha256 = attached.sha256;
+        environment.basename = attached.basename;
+        config_.surface.enabled = true;
+    }
+
+    syncActiveRender();
+    syncProjectGlobals();
+    document_->project = project_;
+    document_->dirty = true;
+    {
+        const QSignalBlocker use_blocker(surface_environment_enabled_);
+        const QSignalBlocker surface_blocker(surface_enabled_);
+        surface_environment_enabled_->setChecked(environment.enabled);
+        surface_environment_path_->setText(
+            QString::fromStdString(environment.basename));
+        surface_enabled_->setChecked(config_.surface.enabled);
+    }
+    preview_->setConfiguration(config_);
+    updateSurfaceEditorState();
+    schedulePreview();
+    recordActiveStateChange(
+        source_path.isEmpty() ? tr("Clear environment map")
+                              : tr("Embed environment map"),
+        std::move(before));
+    status_->setText(
+        source_path.isEmpty()
+            ? tr("Cleared the active layer's environment map.")
+            : tr("Embedded %1 for the active layer's environment lighting.")
+                  .arg(QString::fromStdString(environment.basename)));
     return true;
 }
 
@@ -11728,6 +12063,7 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_lens = type == pvt::EffectType::LensDistortion;
     const bool is_edge_detect = type == pvt::EffectType::EdgeDetect;
     const bool is_twirl = type == pvt::EffectType::Twirl;
+    const bool is_water = type == pvt::EffectType::Water;
     const bool coordinate_effect = !is_glow && !is_block_scale && !is_particles && !is_blur;
     const bool has_center = !is_block_scale;
     const auto blur_type = static_cast<pvt::BlurType>(
@@ -11746,6 +12082,7 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_center_y_, has_center);
     effect_form_->setRowVisible(effect_angle_, is_shake || is_flag
                                                    || is_starburst || is_particles
+                                                   || is_water
                                                    || (is_blur && blur_type == pvt::BlurType::Directional));
     effect_form_->setRowVisible(effect_radius_, is_glow || is_particles || is_blur);
     effect_form_->setRowVisible(effect_threshold_, is_glow || is_particles);
@@ -11808,6 +12145,15 @@ void MainWindow::updateEffectEditorVisibility() {
             1.0, static_cast<double>((std::numeric_limits<int>::max)()));
         effect_frequency_->setDecimals(0);
         effect_frequency_->setSingleStep(1.0);
+        effect_secondary_->setRange(0.0, 1.0);
+        effect_secondary_->setDecimals(4);
+        effect_secondary_->setSingleStep(0.01);
+    } else if (is_water) {
+        effect_intensity_->setRange(0.0, 1.0);
+        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
+        effect_frequency_->setRange(0.0, kMaximumRenderParameter);
+        effect_frequency_->setDecimals(4);
+        effect_frequency_->setSingleStep(0.05);
         effect_secondary_->setRange(0.0, 1.0);
         effect_secondary_->setDecimals(4);
         effect_secondary_->setSingleStep(0.01);
@@ -11976,6 +12322,29 @@ void MainWindow::updateEffectEditorVisibility() {
             tr("Maximum rotation near the center, measured in turns."));
         effect_secondary_->setToolTip(
             tr("Negative values reverse direction; zero is neutral."));
+    } else if (is_water) {
+        set_form_label(effect_form_, effect_intensity_, tr("Refraction mix"));
+        set_form_label(effect_form_, effect_magnitude_,
+                       tr("Peak refraction (short-edge fraction)"));
+        set_form_label(effect_form_, effect_frequency_, tr("Wave density"));
+        set_form_label(effect_form_, effect_secondary_,
+                       tr("Cross-wave complexity"));
+        set_form_label(effect_form_, effect_angle_,
+                       tr("Wave angle (degrees)"));
+        set_form_label(effect_form_, effect_center_x_,
+                       tr("Area center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_,
+                       tr("Area center Y (0–1)"));
+        effect_intensity_->setToolTip(
+            tr("Blends the incoming image with the refracted water sample."));
+        effect_magnitude_->setToolTip(
+            tr("Peak displacement as a fraction of the shorter image edge."));
+        effect_frequency_->setToolTip(
+            tr("Spatial density of the three directional wave components."));
+        effect_secondary_->setToolTip(
+            tr("Adds cross-wave detail while preserving the exact project loop."));
+        effect_angle_->setToolTip(
+            tr("Rotates the analytic wave field without changing its loop."));
     } else {
         set_form_label(effect_form_, effect_intensity_, tr("Spark brightness"));
         set_form_label(effect_form_, effect_magnitude_, tr("Travel per loop"));
@@ -12288,6 +12657,27 @@ void MainWindow::loadGlobalEditors() {
         plane_displacement.midpoint);
     surface_plane_displacement_ratio_->setValue(
         plane_displacement.pixels_per_node);
+    const auto& environment = config_.surface.environment_map;
+    surface_environment_enabled_->setChecked(environment.enabled);
+    surface_environment_path_->setText(
+        QString::fromStdString(environment.basename));
+    select_enum(surface_environment_encoding_, environment.encoding);
+    surface_environment_rotation_->setValue(environment.rotation_degrees);
+    surface_environment_exposure_->setValue(environment.exposure_stops);
+    surface_environment_intensity_->setValue(environment.intensity);
+    surface_environment_mix_->setValue(environment.mix);
+    const auto& construction = config_.surface.mesh_construction;
+    select_enum(surface_mesh_construction_mode_, construction.mode);
+    select_enum(surface_mesh_fragmentation_, construction.fragmentation);
+    surface_mesh_target_fragments_->setValue(construction.target_fragments);
+    surface_mesh_cycles_->setValue(construction.cycles_per_loop);
+    surface_mesh_phase_->setValue(construction.phase_degrees);
+    surface_mesh_distance_->setValue(construction.distance);
+    surface_mesh_rotation_->setValue(construction.rotation_degrees);
+    surface_mesh_minimum_scale_->setValue(construction.minimum_scale);
+    surface_mesh_stagger_->setValue(construction.stagger);
+    surface_mesh_seed_->setText(QString::number(
+        static_cast<qulonglong>(construction.seed)));
     transform_flip_horizontal_->setChecked(config_.transform.flip_horizontal);
     transform_flip_vertical_->setChecked(config_.transform.flip_vertical);
     select_enum(transform_mirror_, config_.transform.mirror);
@@ -12438,7 +12828,9 @@ void MainWindow::updateWaveOutputState() {
 void MainWindow::updateSurfaceEditorState() {
     if (surface_mapping_ == nullptr || surface_rotation_order_ == nullptr
         || surface_obj_row_ == nullptr
-        || surface_plane_displacement_group_ == nullptr) {
+        || surface_plane_displacement_group_ == nullptr
+        || surface_environment_group_ == nullptr
+        || surface_mesh_construction_group_ == nullptr) {
         return;
     }
     const auto mapping = static_cast<pvt::SurfaceMapping>(
@@ -12471,6 +12863,44 @@ void MainWindow::updateSurfaceEditorState() {
                   .arg(QString::fromStdString(
                       config_.surface.plane_displacement.basename))
             : tr("Choose remains available while displacement use is off."));
+    const bool has_environment_map =
+        !config_.surface.environment_map.path.empty()
+        || !config_.surface.environment_map.sha256.empty();
+    surface_environment_clear_->setEnabled(has_environment_map);
+    surface_environment_enabled_->setEnabled(has_environment_map);
+    surface_environment_path_->setToolTip(
+        has_environment_map
+            ? tr("Embedded project asset: %1")
+                  .arg(QString::fromStdString(
+                      config_.surface.environment_map.basename))
+            : tr("Choose a PNG or OpenEXR environment map to enable lighting."));
+    const bool construction_available =
+        custom_obj
+        || (plane && config_.surface.plane_displacement.enabled
+            && has_height_map);
+    surface_mesh_construction_group_->setEnabled(construction_available);
+    surface_mesh_construction_group_->setToolTip(
+        construction_available
+            ? tr("Fragment animation is evaluated on this mesh surface and closes at the project loop seam.")
+            : tr("Choose a Custom OBJ or enable a displaced Plane. Existing construction settings are preserved while unavailable."));
+    const auto construction_mode = static_cast<pvt::MeshConstructionMode>(
+        surface_mesh_construction_mode_->currentData().toInt());
+    const bool construction_active = construction_available
+                                     && construction_mode
+                                            != pvt::MeshConstructionMode::None;
+    for (QWidget* editor : {
+             static_cast<QWidget*>(surface_mesh_fragmentation_),
+             static_cast<QWidget*>(surface_mesh_target_fragments_),
+             static_cast<QWidget*>(surface_mesh_cycles_),
+             static_cast<QWidget*>(surface_mesh_phase_),
+             static_cast<QWidget*>(surface_mesh_distance_),
+             static_cast<QWidget*>(surface_mesh_rotation_),
+             static_cast<QWidget*>(surface_mesh_minimum_scale_),
+             static_cast<QWidget*>(surface_mesh_stagger_),
+             static_cast<QWidget*>(surface_mesh_seed_),
+             static_cast<QWidget*>(surface_mesh_random_seed_)}) {
+        editor->setEnabled(construction_active);
+    }
     surface_curvature_->setToolTip(
         plane && has_height_map
             ? tr("Crossfade from the original flat image at 0 to the fully projected displacement mesh at 1.")
@@ -14827,6 +15257,97 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_plane_displacement_ratio_) {
         config_.surface.plane_displacement.pixels_per_node =
             surface_plane_displacement_ratio_->value();
+    } else if (changed_editor == surface_environment_enabled_) {
+        if (surface_environment_enabled_->isChecked()
+            && config_.surface.environment_map.path.empty()
+            && config_.surface.environment_map.sha256.empty()) {
+            const QSignalBlocker blocker(surface_environment_enabled_);
+            surface_environment_enabled_->setChecked(false);
+            status_->setText(tr(
+                "Choose a PNG or OpenEXR environment map before enabling it."));
+            return;
+        }
+        config_.surface.environment_map.enabled =
+            surface_environment_enabled_->isChecked();
+        if (config_.surface.environment_map.enabled) {
+            config_.surface.enabled = true;
+            const QSignalBlocker blocker(surface_enabled_);
+            surface_enabled_->setChecked(true);
+        }
+    } else if (changed_editor == surface_environment_encoding_) {
+        config_.surface.environment_map.encoding =
+            static_cast<pvt::EnvironmentMapEncoding>(
+                surface_environment_encoding_->currentData().toInt());
+    } else if (changed_editor == surface_environment_rotation_) {
+        config_.surface.environment_map.rotation_degrees =
+            surface_environment_rotation_->value();
+    } else if (changed_editor == surface_environment_exposure_) {
+        config_.surface.environment_map.exposure_stops =
+            surface_environment_exposure_->value();
+    } else if (changed_editor == surface_environment_intensity_) {
+        config_.surface.environment_map.intensity =
+            surface_environment_intensity_->value();
+    } else if (changed_editor == surface_environment_mix_) {
+        config_.surface.environment_map.mix =
+            surface_environment_mix_->value();
+    } else if (changed_editor == surface_mesh_construction_mode_) {
+        const bool construction_available =
+            config_.surface.mapping == pvt::SurfaceMapping::CustomObj
+            || (config_.surface.mapping == pvt::SurfaceMapping::Plane
+                && config_.surface.plane_displacement.enabled
+                && (!config_.surface.plane_displacement.path.empty()
+                    || !config_.surface.plane_displacement.sha256.empty()));
+        if (!construction_available) {
+            const QSignalBlocker blocker(surface_mesh_construction_mode_);
+            select_enum(surface_mesh_construction_mode_,
+                        config_.surface.mesh_construction.mode);
+            status_->setText(tr(
+                "Mesh construction requires a Custom OBJ or an enabled displaced Plane."));
+            return;
+        }
+        config_.surface.mesh_construction.mode =
+            static_cast<pvt::MeshConstructionMode>(
+                surface_mesh_construction_mode_->currentData().toInt());
+    } else if (changed_editor == surface_mesh_fragmentation_) {
+        config_.surface.mesh_construction.fragmentation =
+            static_cast<pvt::MeshFragmentation>(
+                surface_mesh_fragmentation_->currentData().toInt());
+    } else if (changed_editor == surface_mesh_target_fragments_) {
+        config_.surface.mesh_construction.target_fragments =
+            surface_mesh_target_fragments_->value();
+    } else if (changed_editor == surface_mesh_cycles_) {
+        config_.surface.mesh_construction.cycles_per_loop =
+            surface_mesh_cycles_->value();
+    } else if (changed_editor == surface_mesh_phase_) {
+        config_.surface.mesh_construction.phase_degrees =
+            surface_mesh_phase_->value();
+    } else if (changed_editor == surface_mesh_distance_) {
+        config_.surface.mesh_construction.distance =
+            surface_mesh_distance_->value();
+    } else if (changed_editor == surface_mesh_rotation_) {
+        config_.surface.mesh_construction.rotation_degrees =
+            surface_mesh_rotation_->value();
+    } else if (changed_editor == surface_mesh_minimum_scale_) {
+        config_.surface.mesh_construction.minimum_scale =
+            surface_mesh_minimum_scale_->value();
+    } else if (changed_editor == surface_mesh_stagger_) {
+        config_.surface.mesh_construction.stagger =
+            surface_mesh_stagger_->value();
+    } else if (changed_editor == surface_mesh_seed_) {
+        bool valid_seed = false;
+        const quint64 seed = surface_mesh_seed_->text().trimmed().toULongLong(
+            &valid_seed, 10);
+        if (!valid_seed) {
+            const QSignalBlocker blocker(surface_mesh_seed_);
+            surface_mesh_seed_->setText(QString::number(
+                static_cast<qulonglong>(
+                    config_.surface.mesh_construction.seed)));
+            status_->setText(tr(
+                "Mesh-construction seed must be an unsigned 64-bit integer."));
+            return;
+        }
+        config_.surface.mesh_construction.seed =
+            static_cast<std::uint64_t>(seed);
     } else if (changed_editor == surface_rotation_x_turns_) {
         config_.surface.rotation_x_turns_per_loop =
             surface_rotation_x_turns_->value();
@@ -15289,14 +15810,14 @@ void MainWindow::randomizeStackComposition() {
             config_.swings.front().enabled = true;
         }
 
-        std::array<pvt::EffectType, 13> effect_types = {
+        std::array<pvt::EffectType, 14> effect_types = {
             pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
             pvt::EffectType::Glow, pvt::EffectType::BlockScale,
             pvt::EffectType::ParticleField, pvt::EffectType::Blur,
             pvt::EffectType::Glitch, pvt::EffectType::Starburst,
             pvt::EffectType::LensDistortion, pvt::EffectType::EdgeDetect,
-            pvt::EffectType::Twirl};
+            pvt::EffectType::Twirl, pvt::EffectType::Water};
         constexpr int kMaximumRandomEffects = 6;
         const int effect_count = random_integer(
             random, 1, kMaximumRandomEffects);
@@ -17812,9 +18333,31 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || surface_plane_displacement_maximum_ == nullptr
         || surface_plane_displacement_midpoint_ == nullptr
         || surface_plane_displacement_ratio_ == nullptr
-        || surface_plane_displacement_export_ == nullptr) {
+        || surface_plane_displacement_export_ == nullptr
+        || surface_environment_group_ == nullptr
+        || surface_environment_enabled_ == nullptr
+        || surface_environment_path_ == nullptr
+        || surface_environment_browse_ == nullptr
+        || surface_environment_clear_ == nullptr
+        || surface_environment_encoding_ == nullptr
+        || surface_environment_rotation_ == nullptr
+        || surface_environment_exposure_ == nullptr
+        || surface_environment_intensity_ == nullptr
+        || surface_environment_mix_ == nullptr
+        || surface_mesh_construction_group_ == nullptr
+        || surface_mesh_construction_mode_ == nullptr
+        || surface_mesh_fragmentation_ == nullptr
+        || surface_mesh_target_fragments_ == nullptr
+        || surface_mesh_cycles_ == nullptr
+        || surface_mesh_phase_ == nullptr
+        || surface_mesh_distance_ == nullptr
+        || surface_mesh_rotation_ == nullptr
+        || surface_mesh_minimum_scale_ == nullptr
+        || surface_mesh_stagger_ == nullptr
+        || surface_mesh_seed_ == nullptr
+        || surface_mesh_random_seed_ == nullptr) {
         if (error != nullptr) {
-            *error = tr("The Plane displacement editor is incomplete.");
+            *error = tr("The surface asset or mesh-construction editor is incomplete.");
         }
         return false;
     }
@@ -17828,17 +18371,28 @@ bool MainWindow::runSmokeChecks(QString* error) {
             && surface_plane_displacement_group_->isAncestorOf(
                 surface_plane_displacement_browse_)
             && surface_plane_displacement_browse_->isEnabled()
-            && surface_obj_row_->isHidden();
+            && surface_obj_row_->isHidden()
+            && !surface_mesh_construction_group_->isEnabled();
         select_enum(surface_mapping_, pvt::SurfaceMapping::CustomObj);
         updateSurfaceEditorState();
         const bool custom_obj_exclusive =
             surface_plane_displacement_group_->isHidden()
-            && !surface_obj_row_->isHidden();
+            && !surface_obj_row_->isHidden()
+            && surface_mesh_construction_group_->isEnabled()
+            && surface_mesh_construction_mode_->isEnabled();
         surface_mapping_->setCurrentIndex(original_mapping);
         updateSurfaceEditorState();
         if (!plane_editor_reachable || !custom_obj_exclusive) {
             if (error != nullptr) {
                 *error = tr("Plane displacement is unreachable while off or overlaps the Custom OBJ source editor.");
+            }
+            return false;
+        }
+        if (!surface_environment_browse_->isEnabled()
+            || surface_environment_clear_->isEnabled()
+            || surface_environment_enabled_->isEnabled()) {
+            if (error != nullptr) {
+                *error = tr("Environment-map controls are not discoverable while empty or permit an invalid enabled state.");
             }
             return false;
         }
@@ -17850,6 +18404,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         live_surface.mapping = pvt::SurfaceMapping::Plane;
         live_surface.plane_displacement.enabled = true;
         live_surface.plane_displacement.path = "embedded-height.png";
+        live_surface.environment_map.path = "embedded-environment.exr";
+        live_surface.mesh_construction.mode =
+            pvt::MeshConstructionMode::Explode;
         const QString prefix = QStringLiteral("layer/%1/surface.")
                                    .arg(QString::fromStdString(
                                        live_probe.layers.front().uuid));
@@ -17872,23 +18429,56 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const auto rotation_order = target(QStringLiteral("rotation_order"));
         const auto projection = target(QStringLiteral("projection"));
         const auto sizing = target(QStringLiteral("sizing"));
+        const auto environment_enabled = target(
+            QStringLiteral("environment.enabled"));
+        const auto environment_exposure = target(
+            QStringLiteral("environment.exposure"));
+        const auto environment_mix = target(
+            QStringLiteral("environment.mix"));
+        const auto construction_mode = target(
+            QStringLiteral("mesh_construction.mode"));
+        const auto construction_cycles = target(
+            QStringLiteral("mesh_construction.cycles"));
+        const auto construction_stagger = target(
+            QStringLiteral("mesh_construction.stagger"));
         if (enabled == targets.end() || minimum == targets.end()
             || maximum == targets.end() || midpoint == targets.end()
             || mapping == targets.end() || rotation_x == targets.end()
             || rotation_y == targets.end() || rotation_z == targets.end()
             || rotation_order == targets.end()
             || projection == targets.end() || sizing == targets.end()
+            || environment_enabled == targets.end()
+            || environment_exposure == targets.end()
+            || environment_mix == targets.end()
+            || construction_mode == targets.end()
+            || construction_cycles == targets.end()
+            || construction_stagger == targets.end()
             || !minimum->apply(live_probe, -0.75)
             || live_probe.layers.front().render.surface.plane_displacement.minimum
                    != -0.75
             || !mapping->apply(
                 live_probe, static_cast<double>(pvt::SurfaceMapping::Cylinder))
             || live_probe.layers.front().render.surface.plane_displacement.enabled
+            || live_probe.layers.front().render.surface.mesh_construction.mode
+                   != pvt::MeshConstructionMode::Explode
+            || !construction_mode->apply(
+                live_probe,
+                static_cast<double>(pvt::MeshConstructionMode::Reconstruct))
+            || live_probe.layers.front().render.surface.mesh_construction.mode
+                   != pvt::MeshConstructionMode::Explode
             || !enabled->apply(live_probe, 1.0)
             || !live_probe.layers.front().render.surface.enabled
             || live_probe.layers.front().render.surface.mapping
                    != pvt::SurfaceMapping::Plane
             || !live_probe.layers.front().render.surface.plane_displacement.enabled
+            || !construction_mode->apply(
+                live_probe,
+                static_cast<double>(pvt::MeshConstructionMode::Reconstruct))
+            || !construction_cycles->apply(live_probe, 0.0)
+            || !construction_stagger->apply(live_probe, 0.75)
+            || !environment_enabled->apply(live_probe, 1.0)
+            || !environment_exposure->apply(live_probe, -1.25)
+            || !environment_mix->apply(live_probe, 0.8)
             || !rotation_x->apply(live_probe, -12.0)
             || !rotation_y->apply(live_probe, 23.0)
             || !rotation_z->apply(live_probe, 34.0)
@@ -17912,9 +18502,20 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || live_probe.layers.front().render.surface.projection
                    != pvt::SurfaceProjection::Perspective
             || live_probe.layers.front().render.surface.sizing
-                   != pvt::SurfaceSizing::Cover) {
+                   != pvt::SurfaceSizing::Cover
+            || live_probe.layers.front().render.surface.mesh_construction.mode
+                   != pvt::MeshConstructionMode::Reconstruct
+            || live_probe.layers.front().render.surface.mesh_construction.cycles_per_loop
+                   != 0
+            || live_probe.layers.front().render.surface.mesh_construction.stagger
+                   != 0.75
+            || !live_probe.layers.front().render.surface.environment_map.enabled
+            || live_probe.layers.front().render.surface.environment_map.exposure_stops
+                   != -1.25
+            || live_probe.layers.front().render.surface.environment_map.mix
+                   != 0.8) {
             if (error != nullptr) {
-                *error = tr("Live Plane displacement targets are incomplete or can create an invalid surface combination.");
+                *error = tr("Live surface asset and loop-safe mesh targets are incomplete or can create an invalid prerequisite combination.");
             }
             return false;
         }
@@ -18528,8 +19129,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
     }
     const bool effect_catalog_complete =
-        categorized_effect_entries == 13
-        && categorized_effect_types.size() == 13U
+        categorized_effect_entries == 14
+        && categorized_effect_types.size() == 14U
         && categorized_effects_start_on_texture
         && categorized_effects_start_enabled;
 
@@ -18581,7 +19182,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || effect_category_tabs_ == nullptr
         || effect_category_tabs_->count() != EffectUiCategoryCount
         || !effect_catalog_complete
-        || add_effect_type_->count() != 6
+        || add_effect_type_->count() != 7
         || static_cast<pvt::EffectType>(
                add_effect_type_->itemData(0).toInt())
                != pvt::EffectType::EndlessZoom
@@ -20546,6 +21147,92 @@ bool MainWindow::runSmokeChecks(QString* error) {
     clearUndoHistory(false);
     undo_stack_->setClean();
 
+    const std::string environment_reference =
+        pvt::environment_map_attachment_id(active_layer_uuid_);
+    if (!setEnvironmentMapSource(height_path)) {
+        if (error != nullptr) {
+            *error = tr("The GUI could not embed an environment map immediately.");
+        }
+        return false;
+    }
+    const pvt::ProjectAttachment* embedded_environment =
+        pvt::find_project_attachment(*document_, environment_reference);
+    if (embedded_environment == nullptr
+        || embedded_environment->sha256.empty()
+        || embedded_environment->basename != "attachment height smoke.png"
+        || config_.surface.environment_map.path
+               != embedded_environment->local_path
+        || config_.surface.environment_map.sha256
+               != embedded_environment->sha256
+        || !config_.surface.environment_map.enabled
+        || !config_.surface.enabled
+        || !surface_environment_enabled_->isChecked()
+        || !surface_environment_clear_->isEnabled()
+        || undo_stack_->count() != 1) {
+        if (error != nullptr) {
+            *error = tr("Environment-map embedding did not update lighting and attachment state atomically.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (pvt::find_project_attachment(*document_, environment_reference)
+            != nullptr
+        || !config_.surface.environment_map.sha256.empty()
+        || config_.surface.environment_map.enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not remove environment-map metadata and its attachment reference.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    embedded_environment = pvt::find_project_attachment(
+        *document_, environment_reference);
+    if (embedded_environment == nullptr
+        || config_.surface.environment_map.sha256
+               != embedded_environment->sha256
+        || !config_.surface.environment_map.enabled) {
+        if (error != nullptr) {
+            *error = tr("Redo did not restore the embedded environment map.");
+        }
+        return false;
+    }
+    if (!setEnvironmentMapSource(QString{})) {
+        if (error != nullptr) {
+            *error = tr("The embedded environment map could not be cleared.");
+        }
+        return false;
+    }
+    if (pvt::find_project_attachment(*document_, environment_reference)
+            != nullptr
+        || !config_.surface.environment_map.sha256.empty()
+        || config_.surface.environment_map.enabled) {
+        if (error != nullptr) {
+            *error = tr("Clearing an environment map left attachment or enabled state behind.");
+        }
+        return false;
+    }
+    undo_stack_->undo();
+    if (pvt::find_project_attachment(*document_, environment_reference)
+            == nullptr
+        || config_.surface.environment_map.sha256.empty()
+        || !config_.surface.environment_map.enabled) {
+        if (error != nullptr) {
+            *error = tr("Undo did not restore a cleared environment map.");
+        }
+        return false;
+    }
+    undo_stack_->redo();
+    if (pvt::find_project_attachment(*document_, environment_reference)
+            != nullptr
+        || !config_.surface.environment_map.sha256.empty()) {
+        if (error != nullptr) {
+            *error = tr("Redo did not clear the environment map again.");
+        }
+        return false;
+    }
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+
     const std::string original_layer_label_name = project_.layers.front().name;
     project_.layers.front().name = "literal %2 %3 %4";
     refreshLayerList();
@@ -20913,8 +21600,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     undo_stack_->undo();
 
+    selectLayer(top_uuid);
+    if (!setEnvironmentMapSource(height_path)) {
+        if (error != nullptr) {
+            *error = tr("Could not prepare the environment-map layer lifecycle smoke fixture.");
+        }
+        return false;
+    }
+    const std::string duplicate_source_environment_reference =
+        pvt::environment_map_attachment_id(active_layer_uuid_);
     duplicateLayer();
     const std::string duplicate_uuid = active_layer_uuid_;
+    const std::string duplicate_environment_reference =
+        pvt::environment_map_attachment_id(duplicate_uuid);
     std::unordered_set<std::string> layer_uuids;
     std::unordered_set<std::uint64_t> layer_file_ids;
     for (const auto& layer : project_.layers) {
@@ -20923,7 +21621,13 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     if (project_.layers.size() != 3U || duplicate_uuid == top_uuid
         || layer_uuids.size() != project_.layers.size()
-        || layer_file_ids.size() != project_.layers.size()) {
+        || layer_file_ids.size() != project_.layers.size()
+        || pvt::find_project_attachment(
+               *document_, duplicate_source_environment_reference) == nullptr
+        || pvt::find_project_attachment(
+               *document_, duplicate_environment_reference) == nullptr
+        || findLayer(duplicate_uuid) == nullptr
+        || findLayer(duplicate_uuid)->render.surface.environment_map.sha256.empty()) {
         if (error != nullptr) *error = tr("Layer duplication did not allocate unique identities.");
         return false;
     }
@@ -20932,6 +21636,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
     removeLayer();
     if (project_.layers.size() != 1U || project_.layers.front().uuid != base_uuid) {
         if (error != nullptr) *error = tr("Layer removal selected the wrong survivor.");
+        return false;
+    }
+    if (pvt::find_project_attachment(
+            *document_, duplicate_source_environment_reference) != nullptr
+        || pvt::find_project_attachment(
+               *document_, duplicate_environment_reference) != nullptr) {
+        if (error != nullptr) {
+            *error = tr("Removing duplicated layers left environment-map attachment references behind.");
+        }
         return false;
     }
     QTimer::singleShot(0, [] {

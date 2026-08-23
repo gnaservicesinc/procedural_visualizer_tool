@@ -144,6 +144,8 @@ add_library(ProceduralVisualizerTool
     src/core.cpp
     src/displacement_surface.cpp
     src/displacement_surface.h
+    src/environment_map.cpp
+    src/environment_map.h
     src/frame_renderer.cpp
     src/frame_renderer_internal.h
     src/image_io.cpp
@@ -799,15 +801,22 @@ if(BUILD_TESTING)
     # hidden symbols from the public shared library.
     add_executable(pvt_obj_surface_tests
         tests/obj_surface_isolated_test.cpp
+        src/environment_map.cpp
+        src/environment_map.h
         src/obj_mesh.cpp
         src/obj_mesh.h
         src/obj_surface.cpp
-        src/obj_surface.h)
+        src/obj_surface.h
+        src/source_image.cpp
+        src/source_image.h)
     target_compile_features(pvt_obj_surface_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_obj_surface_tests PROPERTIES CXX_EXTENSIONS NO)
     target_include_directories(pvt_obj_surface_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_link_libraries(pvt_obj_surface_tests PRIVATE Threads::Threads)
+    target_link_libraries(pvt_obj_surface_tests PRIVATE
+        PNG::PNG
+        ZLIB::ZLIB
+        Threads::Threads)
     pvt_enable_warnings(pvt_obj_surface_tests)
     add_test(NAME pvt_obj_surface
         COMMAND pvt_obj_surface_tests ${CMAKE_CURRENT_SOURCE_DIR})

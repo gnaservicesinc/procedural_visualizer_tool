@@ -151,6 +151,7 @@ std::string project_attachment_path(const ProjectDocument& document,
                                     const std::string& reference_id);
 std::string surface_obj_attachment_id(const std::string& layer_uuid);
 std::string plane_displacement_attachment_id(const std::string& layer_uuid);
+std::string environment_map_attachment_id(const std::string& layer_uuid);
 std::string starting_image_attachment_id(const std::string& layer_uuid);
 std::string layer_music_attachment_id(const std::string& layer_uuid);
 

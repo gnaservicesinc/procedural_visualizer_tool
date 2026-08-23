@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **12.0.0**. The version is read from `VERSION` by every
+Current product version: **13.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,56 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## Environment lighting and loop-safe mesh construction
+
+Surface lighting can now use a managed equirectangular PNG or OpenEXR
+environment map. **Auto** honors PNG color metadata and treats OpenEXR as
+linear light; explicit **sRGB** and **Linear** interpretations are also
+available. Rotation wraps longitude around the Y-up environment, exposure and
+intensity scale HDR radiance, and a direct/environment mix combines a fixed
+five-sample diffuse approximation with the existing ambient and directional
+light. Decoding and caching have a hard byte ceiling, alpha is ignored for
+lighting, and the same coordinate and radiance contract is used by CPU, Metal,
+and OpenGL surface rendering. Project bundles store the source as a
+content-addressed layer attachment and retain it through copy, history,
+external-edit, and stale-writer workflows.
+
+Custom OBJ and displaced-Plane meshes can now **Explode**, **Deconstruct**, or
+**Reconstruct** through deterministic fragments. **Automatic** fragmentation
+uses authored connected components when they are useful and falls back to
+stable spatial triangle clusters for a single shell or generated grid. The
+artist controls the bounded fragment target, signed whole cycles (zero is a
+static pose), phase, travel, spin, minimum scale, stagger, and 64-bit seed.
+Transforms are applied in normalized object space before the existing surface
+scale and Euler rotation. Explode and Deconstruct are assembled at the loop
+seam; Reconstruct is disassembled there and assembled halfway through; every
+mode returns exactly to its starting state. Animated mesh rasterization remains
+an ordered shared stage inside a GPU-owned frame on Metal and OpenGL rather
+than triggering a silent whole-frame CPU retry.
+
+## Native Water refraction
+
+The ordered effect stack now includes **Water**, a directional analytic
+refraction with source/refraction mix, short-edge displacement, spatial wave
+density, cross-wave complexity, rotation, local-area placement, and the normal
+edge-fill choices. Its three component waves use integer temporal harmonics,
+so synchronized and free-running effects close at the project-loop boundary
+without baking a simulation cache. CPU and Metal share the same formula;
+Windows/Linux GPU rendering executes Water as a real ordered OpenGL 3.3 shader
+pass and propagates shader/context failures instead of silently retrying it on
+CPU. The desktop editor, interactive CLI, randomizer, numeric LFOs, and Live
+targets expose the same bounded controls.
+
+Water appends a new effect token without changing `EffectConfig`'s layout.
+Setup format 20 and layer format 18 persist that token together with
+environment lighting and mesh-construction controls; setup 19/layer 17 and
+older inputs retain their existing effect meanings and receive disabled
+defaults for the new surface features.
+
+The environment-map and mesh-construction records expand the public by-value
+`SurfaceConfig`, so this feature set advances the product and shared-library
+SONAME together to 13.0.0/13. Installed consumers must rebuild.
 
 ## 12.0.0 ordered finishing and host-aware workflow controls
 
@@ -1375,8 +1425,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-18 remain importable;
-current explicit legacy output is setup format 19. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-19 remain importable;
+current explicit legacy output is setup format 20. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1403,9 +1453,10 @@ files receive visible compatibility values that reproduce their former
 presentation without carrying hidden behavior forward. Format 17 adds numeric
 parameter LFOs. Format 18 adds the independent red, green, and blue inversion
 stages. Format 19 adds simultaneous RGBA channel routing and the exact
-eight-stage post-processing order; project layer records use the corresponding
-current layer format 17. Older records receive the historical stage order and
-a disabled identity map.
+eight-stage post-processing order. Format 20 appends the Water effect token;
+project layer records use the corresponding current layer format 18. Older
+records receive the historical stage order, a disabled identity map, and their
+unchanged pre-Water effect vocabulary.
 Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.

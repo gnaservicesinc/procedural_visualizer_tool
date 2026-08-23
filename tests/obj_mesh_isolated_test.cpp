@@ -1,5 +1,6 @@
 #include "../src/obj_mesh.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -60,6 +61,32 @@ int main(int argc, char** argv) {
     ObjMesh bom_mesh;
     if (!parse_obj_mesh(bom, bom_mesh, &error) || bom_mesh.triangles.size() != 1U) {
         return fail(4, "UTF-8 BOM parse failed: " + error);
+    }
+    if (polygon.connected_component_count != 1U
+        || polygon.triangle_components.size() != polygon.triangles.size()
+        || std::any_of(polygon.triangle_components.begin(),
+                       polygon.triangle_components.end(),
+                       [](std::size_t component) { return component != 0U; })) {
+        return fail(9, "connected polygon topology was not labelled stably");
+    }
+    const std::string disconnected =
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+        "v 3 0 0\nv 4 0 0\nv 3 1 0\n"
+        "f 1 2 3\nf 4 5 6\n";
+    ObjMesh disconnected_mesh;
+    if (!parse_obj_mesh(disconnected, disconnected_mesh, &error)
+        || disconnected_mesh.connected_component_count != 2U
+        || disconnected_mesh.triangle_components
+               != std::vector<std::size_t>{0U, 1U}) {
+        return fail(10, "disconnected triangle components were not deterministic: "
+                            + error);
+    }
+    const std::size_t metadata_bytes =
+        disconnected_mesh.triangle_components.capacity()
+        * sizeof(std::size_t);
+    if (disconnected_mesh.estimated_bytes()
+        < sizeof(ObjMesh) + metadata_bytes) {
+        return fail(11, "component metadata was omitted from the mesh estimate");
     }
 
     ObjLoadLimits tiny_limits;

@@ -28,6 +28,19 @@ PVT_API bool load_data_image_source(const std::string& path,
                                     const std::atomic_bool* cancel,
                                     std::string* error);
 
+// Environment maps share the bounded image cache while retaining their
+// authored transfer interpretation. Auto uses PNG color metadata and linear
+// OpenEXR; Srgb forces the standard sRGB transfer; Linear preserves sample
+// values exactly.
+PVT_API bool validate_environment_map_source(
+    const std::string& path, EnvironmentMapEncoding encoding,
+    std::string* error);
+
+PVT_API bool load_environment_map_source(
+    const std::string& path, EnvironmentMapEncoding encoding,
+    std::shared_ptr<const Image>& image, const std::atomic_bool* cancel,
+    std::string* error);
+
 bool render_starting_image(const StartingImageConfig& source,
                            int destination_width,
                            int destination_height,
