@@ -3,8 +3,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cmath>
+#include <condition_variable>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -751,17 +754,56 @@ struct ObjFileStamp {
     std::filesystem::file_time_type write_time{};
 };
 
+struct PendingObjMesh {
+    ObjFileStamp stamp;
+    ObjLoadLimits limits;
+    std::uint64_t cache_generation = 0U;
+    std::uint64_t publication_sequence = 0U;
+    bool complete = false;
+    bool succeeded = false;
+    bool source_changed = false;
+    std::shared_ptr<const ObjMesh> mesh;
+    std::string error;
+    std::exception_ptr exception;
+    std::condition_variable wake;
+};
+
 struct ObjMeshCache {
     std::mutex mutex;
     ObjFileStamp stamp;
     ObjLoadLimits limits;
     std::shared_ptr<const ObjMesh> mesh;
+    std::vector<std::shared_ptr<PendingObjMesh>> pending;
+    std::uint64_t generation = 0U;
+    std::uint64_t next_publication_sequence = 0U;
+    std::uint64_t published_sequence = 0U;
 };
+
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+std::atomic<std::uint64_t> obj_mesh_cache_parse_count{0U};
+std::mutex obj_mesh_cache_test_mutex;
+std::condition_variable obj_mesh_cache_test_wake;
+bool obj_mesh_cache_parse_paused = false;
+bool obj_mesh_cache_pause_next_publication = false;
+bool obj_mesh_cache_publication_paused = false;
+#endif
 
 ObjMeshCache& obj_mesh_cache() {
     static ObjMeshCache cache;
     return cache;
 }
+
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+void pause_obj_mesh_cache_publication_for_testing() {
+    std::unique_lock<std::mutex> lock(obj_mesh_cache_test_mutex);
+    if (!obj_mesh_cache_pause_next_publication) return;
+    obj_mesh_cache_pause_next_publication = false;
+    obj_mesh_cache_publication_paused = true;
+    obj_mesh_cache_test_wake.notify_all();
+    obj_mesh_cache_test_wake.wait(
+        lock, [] { return !obj_mesh_cache_publication_paused; });
+}
+#endif
 
 bool same_limits(const ObjLoadLimits& first, const ObjLoadLimits& second) {
     return first.maximum_file_bytes == second.maximum_file_bytes
@@ -830,13 +872,49 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
             }
 
             ObjMeshCache& cache = obj_mesh_cache();
+            std::shared_ptr<PendingObjMesh> pending;
+            bool load_owner = false;
             {
-                std::lock_guard<std::mutex> lock(cache.mutex);
+                std::unique_lock<std::mutex> lock(cache.mutex);
                 if (cache.mesh && same_stamp(cache.stamp, before)
                     && same_limits(cache.limits, limits)) {
                     destination = cache.mesh;
                     return true;
                 }
+
+                const auto loading = std::find_if(
+                    cache.pending.begin(), cache.pending.end(),
+                    [&](const std::shared_ptr<PendingObjMesh>& candidate) {
+                        return same_stamp(candidate->stamp, before)
+                               && same_limits(candidate->limits, limits)
+                               && candidate->cache_generation
+                                      == cache.generation;
+                    });
+                if (loading != cache.pending.end()) {
+                    pending = *loading;
+                    pending->wake.wait(
+                        lock, [&] { return pending->complete; });
+                    if (pending->exception) {
+                        std::rethrow_exception(pending->exception);
+                    }
+                    if (pending->succeeded) {
+                        destination = pending->mesh;
+                        clear_error(error);
+                        return true;
+                    }
+                    if (pending->source_changed) {
+                        if (attempt == 0) continue;
+                        return fail(
+                            error,
+                            "OBJ changed repeatedly while it was being loaded.");
+                    }
+                    return fail(
+                        error,
+                        pending->error.empty()
+                            ? "The shared OBJ load failed unexpectedly."
+                            : pending->error);
+                }
+
                 // This is deliberately a one-entry cache. Drop a mismatched
                 // strong entry before reading its replacement so a normal
                 // cache miss never retains two maximum-sized meshes at once.
@@ -845,40 +923,116 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
                 cache.mesh.reset();
                 cache.stamp = {};
                 cache.limits = {};
-            }
-
-            auto loaded = std::make_shared<ObjMesh>();
-            if (!load_obj_mesh(before.normalized_path, *loaded, error, limits)) {
-                return false;
-            }
-
-            ObjFileStamp after;
-            if (!inspect_obj_file(before.normalized_path, limits, after, error)) {
-                return false;
-            }
-            if (!same_stamp(before, after)) {
-                if (attempt == 0) {
-                    continue;
+                pending = std::make_shared<PendingObjMesh>();
+                pending->stamp = before;
+                pending->limits = limits;
+                pending->cache_generation = cache.generation;
+                pending->publication_sequence =
+                    ++cache.next_publication_sequence;
+                if (pending->publication_sequence == 0U) {
+                    pending->publication_sequence =
+                        ++cache.next_publication_sequence;
                 }
-                return fail(error, "OBJ changed repeatedly while it was being loaded.");
+                cache.pending.push_back(pending);
+                load_owner = true;
             }
 
-            std::shared_ptr<const ObjMesh> selected = std::move(loaded);
-            {
-                std::lock_guard<std::mutex> lock(cache.mutex);
-                // Another thread may have completed the same parse while this
-                // thread was outside the lock. Reuse its immutable instance.
-                if (cache.mesh && same_stamp(cache.stamp, after)
-                    && same_limits(cache.limits, limits)) {
-                    selected = cache.mesh;
-                } else {
-                    cache.stamp = after;
-                    cache.limits = limits;
-                    cache.mesh = selected;
+            if (!load_owner) continue;
+
+            try {
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+                obj_mesh_cache_parse_count.fetch_add(
+                    1U, std::memory_order_relaxed);
+                {
+                    std::unique_lock<std::mutex> test_lock(
+                        obj_mesh_cache_test_mutex);
+                    obj_mesh_cache_test_wake.wait(
+                        test_lock,
+                        [] { return !obj_mesh_cache_parse_paused; });
                 }
+#endif
+                std::string load_error;
+                auto loaded = std::make_shared<ObjMesh>();
+                bool loaded_ok = load_obj_mesh(
+                    before.normalized_path, *loaded, &load_error, limits);
+                bool source_changed = false;
+                std::shared_ptr<const ObjMesh> selected;
+                if (loaded_ok) selected = std::move(loaded);
+                ObjFileStamp after;
+                if (loaded_ok
+                    && !inspect_obj_file(
+                        before.normalized_path, limits, after, &load_error)) {
+                    loaded_ok = false;
+                } else if (loaded_ok && !same_stamp(before, after)) {
+                    loaded_ok = false;
+                    source_changed = true;
+                    load_error =
+                        "OBJ changed while it was being loaded.";
+                }
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+                pause_obj_mesh_cache_publication_for_testing();
+#endif
+                {
+                    std::lock_guard<std::mutex> lock(cache.mutex);
+                    // A different key may have replaced the single strong
+                    // entry while this parse ran. Publication still owns only
+                    // one cache entry; handed-out meshes retain independent
+                    // shared ownership exactly as before.
+                    if (loaded_ok
+                        && pending->cache_generation == cache.generation
+                        && cache.mesh && same_stamp(cache.stamp, after)
+                        && same_limits(cache.limits, limits)) {
+                        selected = cache.mesh;
+                    } else if (loaded_ok
+                               && pending->cache_generation
+                                      == cache.generation
+                               && pending->publication_sequence
+                                      >= cache.published_sequence) {
+                        cache.stamp = std::move(after);
+                        cache.limits = limits;
+                        cache.mesh = selected;
+                        cache.published_sequence =
+                            pending->publication_sequence;
+                    }
+                    pending->mesh = selected;
+                    pending->error = load_error;
+                    pending->source_changed = source_changed;
+                    pending->succeeded = loaded_ok;
+                    pending->complete = true;
+                    const auto loading = std::find(
+                        cache.pending.begin(), cache.pending.end(), pending);
+                    if (loading != cache.pending.end()) {
+                        cache.pending.erase(loading);
+                    }
+                }
+                pending->wake.notify_all();
+                if (!loaded_ok) {
+                    if (source_changed) {
+                        if (attempt == 0) continue;
+                        return fail(
+                            error,
+                            "OBJ changed repeatedly while it was being loaded.");
+                    }
+                    return fail(error, std::move(load_error));
+                }
+                destination = std::move(selected);
+                clear_error(error);
+                return true;
+            } catch (...) {
+                {
+                    std::lock_guard<std::mutex> lock(cache.mutex);
+                    pending->exception = std::current_exception();
+                    pending->succeeded = false;
+                    pending->complete = true;
+                    const auto loading = std::find(
+                        cache.pending.begin(), cache.pending.end(), pending);
+                    if (loading != cache.pending.end()) {
+                        cache.pending.erase(loading);
+                    }
+                }
+                pending->wake.notify_all();
+                throw;
             }
-            destination = std::move(selected);
-            return true;
         }
         return fail(error, "OBJ changed repeatedly while it was being loaded.");
     } catch (const std::bad_alloc&) {
@@ -898,7 +1052,47 @@ void clear_obj_mesh_cache() noexcept {
     cache.mesh.reset();
     cache.stamp = {};
     cache.limits = {};
+    ++cache.generation;
+    if (cache.generation == 0U) ++cache.generation;
+    cache.published_sequence = 0U;
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+    obj_mesh_cache_parse_count.store(0U, std::memory_order_relaxed);
+#endif
 }
+
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+std::uint64_t obj_mesh_cache_parse_count_for_testing() noexcept {
+    return obj_mesh_cache_parse_count.load(std::memory_order_relaxed);
+}
+
+void set_obj_mesh_cache_parse_paused_for_testing(bool paused) noexcept {
+    {
+        const std::lock_guard<std::mutex> lock(obj_mesh_cache_test_mutex);
+        obj_mesh_cache_parse_paused = paused;
+    }
+    if (!paused) obj_mesh_cache_test_wake.notify_all();
+}
+
+void arm_obj_mesh_cache_publication_pause_for_testing() noexcept {
+    const std::lock_guard<std::mutex> lock(obj_mesh_cache_test_mutex);
+    obj_mesh_cache_pause_next_publication = true;
+    obj_mesh_cache_publication_paused = false;
+}
+
+void wait_obj_mesh_cache_publication_paused_for_testing() {
+    std::unique_lock<std::mutex> lock(obj_mesh_cache_test_mutex);
+    obj_mesh_cache_test_wake.wait(
+        lock, [] { return obj_mesh_cache_publication_paused; });
+}
+
+void resume_obj_mesh_cache_publication_for_testing() noexcept {
+    {
+        const std::lock_guard<std::mutex> lock(obj_mesh_cache_test_mutex);
+        obj_mesh_cache_publication_paused = false;
+    }
+    obj_mesh_cache_test_wake.notify_all();
+}
+#endif
 
 } // namespace detail
 } // namespace pvt

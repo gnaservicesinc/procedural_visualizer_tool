@@ -6,6 +6,7 @@
 #include <cmath>
 #include <exception>
 #include <new>
+#include <optional>
 #include <string>
 
 namespace pvt {
@@ -169,17 +170,27 @@ bool render_frame_at_phase(const RenderConfig& config,
         if (!std::isfinite(normalized_phase)) {
             return fail(error, "Normalized render phase must be finite.");
         }
-        const RenderConfig resolved = detail::materialize_parameter_lfos(
-            config, normalized_phase);
+        std::optional<RenderConfig> resolved_storage;
+        const RenderConfig* resolved = &config;
+        if (!config.parameter_lfos.empty()) {
+            resolved_storage.emplace(detail::materialize_parameter_lfos(
+                config, normalized_phase));
+            resolved = &*resolved_storage;
+            const ValidationResult resolved_validation =
+                detail::validate_frame_render_config(*resolved);
+            if (!resolved_validation.ok) {
+                return fail(error, resolved_validation.message);
+            }
+        }
         return render_with_backend(
-            resolved, options, destination, cancel, error,
+            *resolved, options, destination, cancel, error,
             [&](detail::PreparedFrame& prepared, std::string* prepare_error) {
-                return detail::prepare_frame_for_backend_at_phase(
-                    resolved, normalized_phase, prepared, prepare_error);
+                return detail::prepare_frame_for_backend_at_phase_validated_resolved(
+                    *resolved, normalized_phase, prepared, prepare_error);
             },
             [&] {
-                return render_frame_at_phase_cancellable(
-                    resolved, normalized_phase, destination, cancel, error);
+                return detail::render_frame_at_phase_validated_resolved(
+                    *resolved, normalized_phase, destination, cancel, error);
             });
     } catch (const std::bad_alloc&) {
         return fail(error,
@@ -202,17 +213,28 @@ bool render_frame(const RenderConfig& config, int frame_index,
         const ValidationResult validation =
             detail::validate_frame_render_config(config);
         if (!validation.ok) return fail(error, validation.message);
-        const RenderConfig resolved =
-            detail::materialize_parameter_lfos_at_frame(config, frame_index);
+        std::optional<RenderConfig> resolved_storage;
+        const RenderConfig* resolved = &config;
+        if (!config.parameter_lfos.empty()) {
+            resolved_storage.emplace(
+                detail::materialize_parameter_lfos_at_frame(
+                    config, frame_index));
+            resolved = &*resolved_storage;
+            const ValidationResult resolved_validation =
+                detail::validate_frame_render_config(*resolved);
+            if (!resolved_validation.ok) {
+                return fail(error, resolved_validation.message);
+            }
+        }
         return render_with_backend(
-            resolved, options, destination, cancel, error,
+            *resolved, options, destination, cancel, error,
             [&](detail::PreparedFrame& prepared, std::string* prepare_error) {
-                return detail::prepare_frame_for_backend(
-                    resolved, frame_index, prepared, prepare_error);
+                return detail::prepare_frame_for_backend_validated_resolved(
+                    *resolved, frame_index, prepared, prepare_error);
             },
             [&] {
-                return render_frame_cancellable(
-                    resolved, frame_index, destination, cancel, error);
+                return detail::render_frame_validated_resolved(
+                    *resolved, frame_index, destination, cancel, error);
             });
     } catch (const std::bad_alloc&) {
         return fail(error,

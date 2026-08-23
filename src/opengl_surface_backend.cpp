@@ -211,6 +211,8 @@ void main() {
 constexpr const char* kFragmentShader = R"PVT_GLSL(#version 330 core
 uniform sampler2D sourceImage;
 uniform ivec2 imageSize;
+uniform int exactCopy;
+uniform int identityPlaneSampling;
 uniform int mapping;
 uniform int projection;
 uniform int sizing;
@@ -671,7 +673,10 @@ bool intersectSphere(vec3 origin, vec3 direction,
 }
 
 vec4 sampleSphereHit(Hit hit, vec3 worldDirection) {
-    float longitude = atan(hit.normal.x, hit.normal.z);
+    // GLSL leaves atan(0, 0) implementation-defined. Match the CPU and Metal
+    // source-texture address at the exact equirectangular pole.
+    float longitude = hit.normal.x == 0.0 && hit.normal.z == 0.0
+        ? 0.0 : atan(hit.normal.x, hit.normal.z);
     float latitude = asin(clamp(hit.normal.y, -1.0, 1.0));
     float u = wrapUnit(0.5 + longitude / TAU);
     float v = 0.5 - latitude / PI;
@@ -691,6 +696,10 @@ void main() {
     int x = int(gl_FragCoord.x);
     int y = imageSize.y - 1 - int(gl_FragCoord.y);
     vec4 planar = loadPixel(x, y);
+    if (exactCopy != 0) {
+        outputColor = planar;
+        return;
+    }
     float widthSpan = float(max(1, imageSize.x - 1));
     float heightSpan = float(max(1, imageSize.y - 1));
     float shortSide = float(min(imageSize.x, imageSize.y));
@@ -733,7 +742,10 @@ void main() {
     bool hasBack = false;
 
     if (mapping == 0) {
-        if (abs(direction.z) <= 1.0e-12) {
+        if (identityPlaneSampling != 0) {
+            mapped = shadeHit(planar, vec3(0.0, 0.0, 1.0),
+                              worldDirection);
+        } else if (abs(direction.z) <= 1.0e-12) {
             visible = false;
         } else {
             float distance = -origin.z / direction.z;
@@ -1290,6 +1302,195 @@ bool generated_base_supported_config(const RenderConfig& config) {
         && !starting.include_alpha && !shaped;
 }
 
+struct SurfaceUniformLocations {
+    GLint source_image = -1;
+    GLint image_size = -1;
+    GLint exact_copy = -1;
+    GLint identity_plane_sampling = -1;
+    GLint mapping = -1;
+    GLint projection = -1;
+    GLint sizing = -1;
+    GLint outside_mode = -1;
+    GLint composite_backfaces = -1;
+    GLint rotation_order = -1;
+    GLint rotation = -1;
+    GLint object_scale = -1;
+    GLint position = -1;
+    GLint size_multiplier = -1;
+    GLint camera_distance = -1;
+    GLint focal_length = -1;
+    GLint curvature = -1;
+    GLint lighting = -1;
+    GLint light_direction = -1;
+    GLint light_ambient = -1;
+    GLint light_diffuse = -1;
+    GLint environment_image = -1;
+    GLint environment_size = -1;
+    GLint environment_enabled = -1;
+    GLint environment_rotation = -1;
+    GLint environment_radiance_scale = -1;
+    GLint environment_mix = -1;
+};
+
+struct WaterUniformLocations {
+    GLint source_image = -1;
+    GLint image_size = -1;
+    GLint edge_mode = -1;
+    GLint phase = -1;
+    GLint intensity = -1;
+    GLint magnitude = -1;
+    GLint frequency = -1;
+    GLint complexity = -1;
+    GLint center = -1;
+    GLint angle = -1;
+    GLint area_radius = -1;
+};
+
+struct GeneratedBaseUniformLocations {
+    GLint wave_data = -1;
+    GLint swing_data = -1;
+    GLint image_size = -1;
+    GLint block_size = -1;
+    GLint wave_count = -1;
+    GLint swing_count = -1;
+    GLint loop_phase = -1;
+    GLint independent_loop_phase = -1;
+    GLint global_motion_phase = -1;
+    GLint breath = -1;
+    GLint pattern_center = -1;
+    GLint ghost_lag = -1;
+    GLint ghost_mix = -1;
+    GLint displacement_enabled = -1;
+    GLint lighting_enabled = -1;
+    GLint spiral_enabled = -1;
+    GLint wall_enabled = -1;
+    GLint displacement_amount = -1;
+    GLint wave_depth = -1;
+    GLint spiral_frequency = -1;
+    GLint wall_frequency = -1;
+    GLint wall_mix = -1;
+    GLint spiral_arms = -1;
+    GLint hue_cycles = -1;
+    GLint saturation = -1;
+    GLint audio_hue_shift = -1;
+    GLint starting_minimum = -1;
+    GLint starting_maximum = -1;
+    GLint alpha_enabled = -1;
+    GLint alpha_cycles = -1;
+    GLint alpha_values = -1;
+};
+
+SurfaceUniformLocations load_surface_uniform_locations(
+    QOpenGLExtraFunctions* gl, GLuint program) {
+    SurfaceUniformLocations result;
+    result.source_image = gl->glGetUniformLocation(program, "sourceImage");
+    result.image_size = gl->glGetUniformLocation(program, "imageSize");
+    result.exact_copy = gl->glGetUniformLocation(program, "exactCopy");
+    result.identity_plane_sampling =
+        gl->glGetUniformLocation(program, "identityPlaneSampling");
+    result.mapping = gl->glGetUniformLocation(program, "mapping");
+    result.projection = gl->glGetUniformLocation(program, "projection");
+    result.sizing = gl->glGetUniformLocation(program, "sizing");
+    result.outside_mode = gl->glGetUniformLocation(program, "outsideMode");
+    result.composite_backfaces =
+        gl->glGetUniformLocation(program, "compositeBackfaces");
+    result.rotation_order =
+        gl->glGetUniformLocation(program, "rotationOrder");
+    result.rotation = gl->glGetUniformLocation(program, "rotation");
+    result.object_scale = gl->glGetUniformLocation(program, "objectScale");
+    result.position = gl->glGetUniformLocation(program, "position");
+    result.size_multiplier =
+        gl->glGetUniformLocation(program, "sizeMultiplier");
+    result.camera_distance =
+        gl->glGetUniformLocation(program, "cameraDistance");
+    result.focal_length = gl->glGetUniformLocation(program, "focalLength");
+    result.curvature = gl->glGetUniformLocation(program, "curvature");
+    result.lighting = gl->glGetUniformLocation(program, "lighting");
+    result.light_direction =
+        gl->glGetUniformLocation(program, "lightDirection");
+    result.light_ambient = gl->glGetUniformLocation(program, "lightAmbient");
+    result.light_diffuse = gl->glGetUniformLocation(program, "lightDiffuse");
+    result.environment_image =
+        gl->glGetUniformLocation(program, "environmentImage");
+    result.environment_size =
+        gl->glGetUniformLocation(program, "environmentSize");
+    result.environment_enabled =
+        gl->glGetUniformLocation(program, "environmentEnabled");
+    result.environment_rotation =
+        gl->glGetUniformLocation(program, "environmentRotation");
+    result.environment_radiance_scale =
+        gl->glGetUniformLocation(program, "environmentRadianceScale");
+    result.environment_mix =
+        gl->glGetUniformLocation(program, "environmentMix");
+    return result;
+}
+
+WaterUniformLocations load_water_uniform_locations(
+    QOpenGLExtraFunctions* gl, GLuint program) {
+    WaterUniformLocations result;
+    result.source_image = gl->glGetUniformLocation(program, "sourceImage");
+    result.image_size = gl->glGetUniformLocation(program, "imageSize");
+    result.edge_mode = gl->glGetUniformLocation(program, "edgeMode");
+    result.phase = gl->glGetUniformLocation(program, "phase");
+    result.intensity = gl->glGetUniformLocation(program, "intensity");
+    result.magnitude = gl->glGetUniformLocation(program, "magnitude");
+    result.frequency = gl->glGetUniformLocation(program, "frequency");
+    result.complexity = gl->glGetUniformLocation(program, "complexity");
+    result.center = gl->glGetUniformLocation(program, "center");
+    result.angle = gl->glGetUniformLocation(program, "angle");
+    result.area_radius = gl->glGetUniformLocation(program, "areaRadius");
+    return result;
+}
+
+GeneratedBaseUniformLocations load_generated_base_uniform_locations(
+    QOpenGLExtraFunctions* gl, GLuint program) {
+    GeneratedBaseUniformLocations result;
+    result.wave_data = gl->glGetUniformLocation(program, "waveData");
+    result.swing_data = gl->glGetUniformLocation(program, "swingData");
+    result.image_size = gl->glGetUniformLocation(program, "imageSize");
+    result.block_size = gl->glGetUniformLocation(program, "blockSize");
+    result.wave_count = gl->glGetUniformLocation(program, "waveCount");
+    result.swing_count = gl->glGetUniformLocation(program, "swingCount");
+    result.loop_phase = gl->glGetUniformLocation(program, "loopPhase");
+    result.independent_loop_phase =
+        gl->glGetUniformLocation(program, "independentLoopPhase");
+    result.global_motion_phase =
+        gl->glGetUniformLocation(program, "globalMotionPhase");
+    result.breath = gl->glGetUniformLocation(program, "breath");
+    result.pattern_center =
+        gl->glGetUniformLocation(program, "patternCenter");
+    result.ghost_lag = gl->glGetUniformLocation(program, "ghostLag");
+    result.ghost_mix = gl->glGetUniformLocation(program, "ghostMix");
+    result.displacement_enabled =
+        gl->glGetUniformLocation(program, "displacementEnabled");
+    result.lighting_enabled =
+        gl->glGetUniformLocation(program, "lightingEnabled");
+    result.spiral_enabled =
+        gl->glGetUniformLocation(program, "spiralEnabled");
+    result.wall_enabled = gl->glGetUniformLocation(program, "wallEnabled");
+    result.displacement_amount =
+        gl->glGetUniformLocation(program, "displacementAmount");
+    result.wave_depth = gl->glGetUniformLocation(program, "waveDepth");
+    result.spiral_frequency =
+        gl->glGetUniformLocation(program, "spiralFrequency");
+    result.wall_frequency =
+        gl->glGetUniformLocation(program, "wallFrequency");
+    result.wall_mix = gl->glGetUniformLocation(program, "wallMix");
+    result.spiral_arms = gl->glGetUniformLocation(program, "spiralArms");
+    result.hue_cycles = gl->glGetUniformLocation(program, "hueCycles");
+    result.saturation = gl->glGetUniformLocation(program, "saturation");
+    result.audio_hue_shift =
+        gl->glGetUniformLocation(program, "audioHueShift");
+    result.starting_minimum =
+        gl->glGetUniformLocation(program, "startingMinimum");
+    result.starting_maximum =
+        gl->glGetUniformLocation(program, "startingMaximum");
+    result.alpha_enabled = gl->glGetUniformLocation(program, "alphaEnabled");
+    result.alpha_cycles = gl->glGetUniformLocation(program, "alphaCycles");
+    result.alpha_values = gl->glGetUniformLocation(program, "alphaValues");
+    return result;
+}
+
 class OpenGLSurfaceService final {
 public:
     bool available(std::string* device_name, std::string* status) {
@@ -1302,7 +1503,8 @@ public:
 
     bool render(const Image& source, Image& destination,
                 const SurfaceConfig& surface, double loop_phase,
-                const std::atomic_bool* cancel, std::string* error) {
+                const std::atomic_bool* cancel, std::string* error,
+                bool exact_copy = false) {
         if (cancelled(cancel)) {
             return fail(error,
                         "OpenGL surface rendering was cancelled; destination "
@@ -1337,7 +1539,7 @@ public:
             rendered = render_on_gpu_thread(source, candidate, surface,
                                             loop_phase, displacement_mesh,
                                             prepared_environment,
-                                            &render_error);
+                                            exact_copy, &render_error);
         };
         if (QThread::currentThread() == render_thread_) {
             work();
@@ -1518,6 +1720,9 @@ public:
             }
         }
 
+        surface_uniforms_ = {};
+        water_uniforms_ = {};
+        base_uniforms_ = {};
         delete context_;
         context_ = nullptr;
         delete worker_;
@@ -1705,6 +1910,7 @@ private:
 
     bool ensure_program(QOpenGLExtraFunctions* gl, std::string* error) {
         if (program_ != 0U && vertex_array_ != 0U) return true;
+        surface_uniforms_ = {};
         if (vertex_array_ != 0U) {
             gl->glDeleteVertexArrays(1, &vertex_array_);
             vertex_array_ = 0U;
@@ -1753,12 +1959,14 @@ private:
             program_ = 0U;
             return fail(error, "OpenGL could not create a vertex array.");
         }
+        surface_uniforms_ = load_surface_uniform_locations(gl, program_);
         return true;
     }
 
     bool ensure_water_program(QOpenGLExtraFunctions* gl,
                               std::string* error) {
         if (water_program_ != 0U && water_vertex_array_ != 0U) return true;
+        water_uniforms_ = {};
         if (water_vertex_array_ != 0U) {
             gl->glDeleteVertexArrays(1, &water_vertex_array_);
             water_vertex_array_ = 0U;
@@ -1811,11 +2019,13 @@ private:
             return fail(error,
                         "OpenGL could not create the Water vertex array.");
         }
+        water_uniforms_ = load_water_uniform_locations(gl, water_program_);
         return true;
     }
 
     bool ensure_base_program(QOpenGLExtraFunctions* gl, std::string* error) {
         if (base_program_ != 0U && base_vertex_array_ != 0U) return true;
+        base_uniforms_ = {};
         if (base_vertex_array_ != 0U) {
             gl->glDeleteVertexArrays(1, &base_vertex_array_);
             base_vertex_array_ = 0U;
@@ -1870,6 +2080,8 @@ private:
                         "OpenGL could not create the generated-source "
                         "vertex array.");
         }
+        base_uniforms_ =
+            load_generated_base_uniform_locations(gl, base_program_);
         return true;
     }
 
@@ -2436,30 +2648,27 @@ private:
         gl->glUseProgram(water_program_);
         gl->glActiveTexture(GL_TEXTURE0);
         gl->glBindTexture(GL_TEXTURE_2D, source_texture);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(water_program_, "sourceImage"), 0);
-        gl->glUniform2i(gl->glGetUniformLocation(water_program_, "imageSize"),
+        gl->glUniform1i(water_uniforms_.source_image, 0);
+        gl->glUniform2i(water_uniforms_.image_size,
                         source.width, source.height);
-        gl->glUniform1i(gl->glGetUniformLocation(water_program_, "edgeMode"),
+        gl->glUniform1i(water_uniforms_.edge_mode,
                         static_cast<int>(effect.edge_mode));
-        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "phase"),
-                        static_cast<float>(phase));
-        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "intensity"),
+        gl->glUniform1f(water_uniforms_.phase, static_cast<float>(phase));
+        gl->glUniform1f(water_uniforms_.intensity,
                         static_cast<float>(effect.intensity));
-        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "magnitude"),
+        gl->glUniform1f(water_uniforms_.magnitude,
                         static_cast<float>(effect.magnitude));
-        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "frequency"),
+        gl->glUniform1f(water_uniforms_.frequency,
                         static_cast<float>(effect.frequency));
-        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "complexity"),
+        gl->glUniform1f(water_uniforms_.complexity,
                         static_cast<float>(effect.secondary));
-        gl->glUniform2f(gl->glGetUniformLocation(water_program_, "center"),
+        gl->glUniform2f(water_uniforms_.center,
                         static_cast<float>(effect.center_x),
                         static_cast<float>(effect.center_y));
         constexpr double pi = 3.141592653589793238462643383279502884;
-        gl->glUniform1f(gl->glGetUniformLocation(water_program_, "angle"),
+        gl->glUniform1f(water_uniforms_.angle,
                         static_cast<float>(effect.angle_degrees * pi / 180.0));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(water_program_, "areaRadius"),
+        gl->glUniform1f(water_uniforms_.area_radius,
             static_cast<float>(effect.area_radius));
         gl->glBindVertexArray(water_vertex_array_);
         gl->glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -2635,29 +2844,25 @@ private:
         gl->glUseProgram(base_program_);
         gl->glActiveTexture(GL_TEXTURE0);
         gl->glBindTexture(GL_TEXTURE_2D, wave_texture);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(base_program_, "waveData"), 0);
+        gl->glUniform1i(base_uniforms_.wave_data, 0);
         gl->glActiveTexture(GL_TEXTURE1);
         gl->glBindTexture(GL_TEXTURE_2D, swing_texture);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(base_program_, "swingData"), 1);
-        gl->glUniform2i(gl->glGetUniformLocation(base_program_, "imageSize"),
+        gl->glUniform1i(base_uniforms_.swing_data, 1);
+        gl->glUniform2i(base_uniforms_.image_size,
                         config.width, config.height);
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "blockSize"),
+        gl->glUniform1i(base_uniforms_.block_size,
                         config.block_size);
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "waveCount"),
+        gl->glUniform1i(base_uniforms_.wave_count,
                         static_cast<GLint>(prepared.waves.size()));
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "swingCount"),
+        gl->glUniform1i(base_uniforms_.swing_count,
                         static_cast<GLint>(prepared.spatial_swings.size()));
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "loopPhase"),
+        gl->glUniform1f(base_uniforms_.loop_phase,
                         static_cast<float>(prepared.loop_phase));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(base_program_, "independentLoopPhase"),
+        gl->glUniform1f(base_uniforms_.independent_loop_phase,
             static_cast<float>(prepared.independent_loop_phase));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(base_program_, "globalMotionPhase"),
+        gl->glUniform1f(base_uniforms_.global_motion_phase,
             static_cast<float>(prepared.global_motion_phase));
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "breath"),
+        gl->glUniform1f(base_uniforms_.breath,
                         static_cast<float>(
                             0.85 + 0.35 * std::sin(prepared.loop_phase)));
         double center_x = 0.5 * static_cast<double>(config.width);
@@ -2666,64 +2871,54 @@ private:
             center_x = prepared.waves.front().source_x;
             center_y = prepared.waves.front().source_y;
         }
-        gl->glUniform2f(
-            gl->glGetUniformLocation(base_program_, "patternCenter"),
+        gl->glUniform2f(base_uniforms_.pattern_center,
             static_cast<float>(center_x), static_cast<float>(center_y));
         constexpr double pi = 3.141592653589793238462643383279502884;
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "ghostLag"),
+        gl->glUniform1f(base_uniforms_.ghost_lag,
                         static_cast<float>(
                             config.ghost_lag_degrees * pi / 180.0));
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "ghostMix"),
+        gl->glUniform1f(base_uniforms_.ghost_mix,
                         static_cast<float>(config.ghost_mix));
-        gl->glUniform1i(
-            gl->glGetUniformLocation(base_program_, "displacementEnabled"),
+        gl->glUniform1i(base_uniforms_.displacement_enabled,
             config.displacement_enabled ? 1 : 0);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(base_program_, "lightingEnabled"),
+        gl->glUniform1i(base_uniforms_.lighting_enabled,
             config.lighting_enabled ? 1 : 0);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(base_program_, "spiralEnabled"),
+        gl->glUniform1i(base_uniforms_.spiral_enabled,
             config.spiral_enabled ? 1 : 0);
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "wallEnabled"),
+        gl->glUniform1i(base_uniforms_.wall_enabled,
                         config.wall_reflection_enabled ? 1 : 0);
-        gl->glUniform1f(
-            gl->glGetUniformLocation(base_program_, "displacementAmount"),
+        gl->glUniform1f(base_uniforms_.displacement_amount,
             static_cast<float>(config.displacement));
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "waveDepth"),
+        gl->glUniform1f(base_uniforms_.wave_depth,
                         static_cast<float>(config.wave_depth));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(base_program_, "spiralFrequency"),
+        gl->glUniform1f(base_uniforms_.spiral_frequency,
             static_cast<float>(config.spiral_frequency));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(base_program_, "wallFrequency"),
+        gl->glUniform1f(base_uniforms_.wall_frequency,
             static_cast<float>(config.wall_frequency));
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "wallMix"),
+        gl->glUniform1f(base_uniforms_.wall_mix,
                         static_cast<float>(config.wall_mix));
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "spiralArms"),
+        gl->glUniform1i(base_uniforms_.spiral_arms,
                         config.spiral_arms);
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "hueCycles"),
+        gl->glUniform1i(base_uniforms_.hue_cycles,
                         config.hue_cycles);
-        gl->glUniform1f(gl->glGetUniformLocation(base_program_, "saturation"),
+        gl->glUniform1f(base_uniforms_.saturation,
                         static_cast<float>(config.saturation));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(base_program_, "audioHueShift"),
+        gl->glUniform1f(base_uniforms_.audio_hue_shift,
             static_cast<float>(prepared.audio_hue_shift_degrees));
         const StartingColorConfig& starting = config.starting_colors;
-        gl->glUniform3f(
-            gl->glGetUniformLocation(base_program_, "startingMinimum"),
+        gl->glUniform3f(base_uniforms_.starting_minimum,
             static_cast<float>(starting.red_minimum),
             static_cast<float>(starting.green_minimum),
             static_cast<float>(starting.blue_minimum));
-        gl->glUniform3f(
-            gl->glGetUniformLocation(base_program_, "startingMaximum"),
+        gl->glUniform3f(base_uniforms_.starting_maximum,
             static_cast<float>(starting.red_maximum),
             static_cast<float>(starting.green_maximum),
             static_cast<float>(starting.blue_maximum));
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "alphaEnabled"),
+        gl->glUniform1i(base_uniforms_.alpha_enabled,
                         config.alpha.enabled ? 1 : 0);
-        gl->glUniform1i(gl->glGetUniformLocation(base_program_, "alphaCycles"),
+        gl->glUniform1i(base_uniforms_.alpha_cycles,
                         config.alpha.cycles_per_loop);
-        gl->glUniform4f(gl->glGetUniformLocation(base_program_, "alphaValues"),
+        gl->glUniform4f(base_uniforms_.alpha_values,
                         static_cast<float>(config.alpha.minimum),
                         static_cast<float>(config.alpha.maximum),
                         static_cast<float>(
@@ -2764,6 +2959,7 @@ private:
                               const SurfaceConfig& surface, double loop_phase,
                               const std::shared_ptr<const ObjMesh>& displacement_mesh,
                               const PreparedEnvironmentMap& environment,
+                              bool exact_copy,
                               std::string* error) {
         std::size_t expected_values = 0U;
         const bool dimensions_fit = source.width > 0 && source.height > 0
@@ -2873,25 +3069,43 @@ private:
         gl->glUseProgram(program_);
         gl->glActiveTexture(GL_TEXTURE0);
         gl->glBindTexture(GL_TEXTURE_2D, source_texture);
-        gl->glUniform1i(gl->glGetUniformLocation(program_, "sourceImage"), 0);
-        gl->glUniform2i(gl->glGetUniformLocation(program_, "imageSize"),
+        gl->glUniform1i(surface_uniforms_.source_image, 0);
+        gl->glUniform2i(surface_uniforms_.image_size,
                         source.width, source.height);
-        gl->glUniform1i(gl->glGetUniformLocation(program_, "mapping"),
+        gl->glUniform1i(surface_uniforms_.exact_copy,
+                        exact_copy ? 1 : 0);
+        const bool identity_plane_sampling =
+            surface.mapping == SurfaceMapping::Plane
+            && surface.projection == SurfaceProjection::Orthographic
+            && surface.sizing == SurfaceSizing::Contain
+            && surface.rotation_x_turns_per_loop == 0
+            && surface.rotation_y_turns_per_loop == 0
+            && surface.rotation_z_turns_per_loop == 0
+            && std::fmod(surface.rotation_x_degrees, 360.0) == 0.0
+            && std::fmod(surface.rotation_y_degrees, 360.0) == 0.0
+            && std::fmod(surface.rotation_z_degrees, 360.0) == 0.0
+            && surface.size_percent == 100.0
+            && surface.scale_x == 1.0 && surface.scale_y == 1.0
+            && surface.scale_z == 1.0
+            && surface.position_x_percent == 0.0
+            && surface.position_y_percent == 0.0
+            && surface.position_z == 0.0;
+        gl->glUniform1i(surface_uniforms_.identity_plane_sampling,
+            identity_plane_sampling ? 1 : 0);
+        gl->glUniform1i(surface_uniforms_.mapping,
                         static_cast<int>(surface.mapping));
-        gl->glUniform1i(gl->glGetUniformLocation(program_, "projection"),
+        gl->glUniform1i(surface_uniforms_.projection,
                         static_cast<int>(surface.projection));
-        gl->glUniform1i(gl->glGetUniformLocation(program_, "sizing"),
+        gl->glUniform1i(surface_uniforms_.sizing,
                         static_cast<int>(surface.sizing));
-        gl->glUniform1i(gl->glGetUniformLocation(program_, "outsideMode"),
+        gl->glUniform1i(surface_uniforms_.outside_mode,
                         static_cast<int>(surface.outside));
-        gl->glUniform1i(
-            gl->glGetUniformLocation(program_, "compositeBackfaces"),
+        gl->glUniform1i(surface_uniforms_.composite_backfaces,
             surface.composite_backfaces ? 1 : 0);
-        gl->glUniform1i(gl->glGetUniformLocation(program_, "rotationOrder"),
+        gl->glUniform1i(surface_uniforms_.rotation_order,
                         static_cast<int>(surface.rotation_order));
         constexpr double pi = 3.141592653589793238462643383279502884;
-        gl->glUniform3f(
-            gl->glGetUniformLocation(program_, "rotation"),
+        gl->glUniform3f(surface_uniforms_.rotation,
             static_cast<float>(surface.rotation_x_degrees * pi / 180.0
                 + static_cast<double>(surface.rotation_x_turns_per_loop)
                       * loop_phase),
@@ -2901,54 +3115,48 @@ private:
             static_cast<float>(surface.rotation_z_degrees * pi / 180.0
                 + static_cast<double>(surface.rotation_z_turns_per_loop)
                       * loop_phase));
-        gl->glUniform3f(gl->glGetUniformLocation(program_, "objectScale"),
+        gl->glUniform3f(surface_uniforms_.object_scale,
                         static_cast<float>(surface.scale_x),
                         static_cast<float>(surface.scale_y),
                         static_cast<float>(surface.scale_z));
-        gl->glUniform3f(gl->glGetUniformLocation(program_, "position"),
+        gl->glUniform3f(surface_uniforms_.position,
                         static_cast<float>(surface.position_x_percent),
                         static_cast<float>(surface.position_y_percent),
                         static_cast<float>(surface.position_z));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "sizeMultiplier"),
+        gl->glUniform1f(surface_uniforms_.size_multiplier,
                         static_cast<float>(surface.size_percent / 100.0));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "cameraDistance"),
+        gl->glUniform1f(surface_uniforms_.camera_distance,
                         static_cast<float>(surface.camera_distance));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "focalLength"),
+        gl->glUniform1f(surface_uniforms_.focal_length,
                         static_cast<float>(surface.focal_length));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "curvature"),
+        gl->glUniform1f(surface_uniforms_.curvature,
                         static_cast<float>((std::max)(
                             0.0, (std::min)(1.0, surface.curvature))));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "lighting"),
+        gl->glUniform1f(surface_uniforms_.lighting,
                         static_cast<float>(surface.lighting));
-        gl->glUniform3f(gl->glGetUniformLocation(program_, "lightDirection"),
+        gl->glUniform3f(surface_uniforms_.light_direction,
                         static_cast<float>(surface.light_direction_x),
                         static_cast<float>(surface.light_direction_y),
                         static_cast<float>(surface.light_direction_z));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "lightAmbient"),
+        gl->glUniform1f(surface_uniforms_.light_ambient,
                         static_cast<float>(surface.light_ambient));
-        gl->glUniform1f(gl->glGetUniformLocation(program_, "lightDiffuse"),
+        gl->glUniform1f(surface_uniforms_.light_diffuse,
                         static_cast<float>(surface.light_diffuse));
         gl->glActiveTexture(GL_TEXTURE1);
         gl->glBindTexture(
             GL_TEXTURE_2D,
             environment_texture != 0U ? environment_texture : source_texture);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(program_, "environmentImage"), 1);
-        gl->glUniform2i(
-            gl->glGetUniformLocation(program_, "environmentSize"),
+        gl->glUniform1i(surface_uniforms_.environment_image, 1);
+        gl->glUniform2i(surface_uniforms_.environment_size,
             environment ? environment.image->width : source.width,
             environment ? environment.image->height : source.height);
-        gl->glUniform1i(
-            gl->glGetUniformLocation(program_, "environmentEnabled"),
+        gl->glUniform1i(surface_uniforms_.environment_enabled,
             environment ? 1 : 0);
-        gl->glUniform1f(
-            gl->glGetUniformLocation(program_, "environmentRotation"),
+        gl->glUniform1f(surface_uniforms_.environment_rotation,
             static_cast<float>(environment.rotation_turns));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(program_, "environmentRadianceScale"),
+        gl->glUniform1f(surface_uniforms_.environment_radiance_scale,
             static_cast<float>(environment.radiance_scale));
-        gl->glUniform1f(
-            gl->glGetUniformLocation(program_, "environmentMix"),
+        gl->glUniform1f(surface_uniforms_.environment_mix,
             static_cast<float>(environment.mix));
         gl->glActiveTexture(GL_TEXTURE0);
         gl->glBindVertexArray(vertex_array_);
@@ -3016,10 +3224,13 @@ private:
     QObject* worker_ = nullptr;
     GLuint program_ = 0U;
     GLuint vertex_array_ = 0U;
+    SurfaceUniformLocations surface_uniforms_;
     GLuint water_program_ = 0U;
     GLuint water_vertex_array_ = 0U;
+    WaterUniformLocations water_uniforms_;
     GLuint base_program_ = 0U;
     GLuint base_vertex_array_ = 0U;
+    GeneratedBaseUniformLocations base_uniforms_;
     GLuint mesh_program_ = 0U;
     GLuint mesh_vertex_array_ = 0U;
     GLuint mesh_vertex_buffer_ = 0U;
@@ -3171,7 +3382,8 @@ bool complete_frame_opengl(const Image& source, Image& destination,
     identity.outside = SurfaceOutside::Source;
     identity.curvature = 0.0;
     identity.lighting = 0.0;
-    return service().render(source, destination, identity, 0.0, cancel, error);
+    return service().render(source, destination, identity, 0.0, cancel, error,
+                            true);
 }
 
 } // namespace pvt::detail

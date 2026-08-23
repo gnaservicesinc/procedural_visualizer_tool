@@ -241,6 +241,36 @@ void test_backend_contract() {
         check_close(cpu, gpu, 0.00002, 0.000001,
                     0.00002, 0.000001, label.c_str());
     }
+
+    // Generated base colors are produced once per block, then expanded by a
+    // per-pixel Metal pass so large authored blocks do not serialize an entire
+    // image behind one GPU thread. Cover exact and partial block grids while
+    // procedural alpha varies independently inside every block.
+    pvt::RenderConfig block_fill = generated;
+    block_fill.width = 257;
+    block_fill.height = 193;
+    block_fill.starting_colors.mode =
+        pvt::StartingColorMode::HorizontalRainbow;
+    block_fill.starting_colors.legacy_alpha_outermost = false;
+    block_fill.alpha.enabled = true;
+    block_fill.alpha.minimum = 0.17;
+    block_fill.alpha.maximum = 0.83;
+    block_fill.alpha.spatial_frequency = 3.25;
+    block_fill.alpha.cycles_per_loop = 2;
+    block_fill.alpha.phase_degrees = 23.0;
+    block_fill.alpha.use_source_alpha = true;
+    for (const int block_size : {1, 4, 7, 32, 64, 256}) {
+        block_fill.block_size = block_size;
+        CHECK(pvt::render_frame_at_phase(block_fill, 0.31, cpu_options,
+                                         cpu, nullptr, &error));
+        CHECK(pvt::render_frame_at_phase(block_fill, 0.31, gpu_options,
+                                         gpu, nullptr, &error));
+        const std::string label = "generated two-pass block size "
+                                  + std::to_string(block_size);
+        check_close(cpu, gpu, 0.00002, 0.000001,
+                    0.00002, 0.000001, label.c_str());
+    }
+
     generated.starting_colors.mode =
         pvt::StartingColorMode::HorizontalRainbow;
     generated.starting_colors.legacy_alpha_outermost = true;
@@ -943,6 +973,41 @@ void test_backend_contract() {
                     surface.second);
     }
 
+    // Exercise the exact equirectangular pole with a horizontally varying
+    // source. atan2(0, 0) is not a portable source-texture address.
+    pvt::RenderConfig pole = config;
+    pole.width = 65;
+    pole.height = 65;
+    pole.block_size = 1;
+    pole.surface.mapping = pvt::SurfaceMapping::Sphere;
+    pole.surface.curvature = 1.0;
+    pole.surface.lighting = 0.0;
+    pole.surface.rotation_x_degrees = 0.0;
+    pole.surface.rotation_y_degrees = 0.0;
+    pole.surface.rotation_z_degrees = 0.0;
+    pole.surface.rotation_x_turns_per_loop = 0;
+    pole.surface.rotation_y_turns_per_loop = 0;
+    pole.surface.rotation_z_turns_per_loop = 0;
+    pole.surface.composite_backfaces = false;
+    pole.starting_colors.mode = pvt::StartingColorMode::HorizontalRainbow;
+    CHECK(pvt::render_frame_at_phase(pole, 0.31, cpu_options, cpu, nullptr,
+                                     &error));
+    CHECK(pvt::render_frame_at_phase(pole, 0.31, gpu_options, gpu, nullptr,
+                                     &error));
+    const std::size_t pole_offset =
+        static_cast<std::size_t>(pole.width / 2) * 4U;
+    const bool pole_storage_valid = cpu.pixels.size() >= pole_offset + 4U
+        && gpu.pixels.size() >= pole_offset + 4U;
+    CHECK(pole_storage_valid);
+    if (pole_storage_valid) {
+        for (std::size_t channel = 0U; channel < 4U; ++channel) {
+            CHECK(std::fabs(
+                      static_cast<double>(cpu.pixels[pole_offset + channel])
+                      - gpu.pixels[pole_offset + channel])
+                  <= 0.0035);
+        }
+    }
+
     // Environment-map lighting is decoded once on the host and sampled by
     // the analytic Metal kernel with the same fixed five-tap approximation as
     // the CPU reference.
@@ -1024,6 +1089,30 @@ void test_backend_contract() {
                             &error));
     check_close(reference, hybrid, 0.24, 0.018, 0.06, 0.0025,
                 "displacement Plane hybrid surface");
+
+    // A dormant height-map toggle must not force the ordered CPU raster split
+    // (or load its asset) when zero curvature makes displacement inactive.
+    pvt::RenderConfig dormant_displacement = config;
+    dormant_displacement.surface.curvature = 0.0;
+    dormant_displacement.surface.lighting = 0.65;
+    dormant_displacement.surface.plane_displacement.path =
+        PVT_TEST_SOURCE_DIR "/icon/missing-dormant-height-map.exr";
+    pvt::RenderConfig displacement_disabled = dormant_displacement;
+    displacement_disabled.surface.plane_displacement.enabled = false;
+    const pvt::ValidationResult dormant_validation =
+        pvt::validate(dormant_displacement);
+    const pvt::ValidationResult disabled_validation =
+        pvt::validate(displacement_disabled);
+    CHECK(dormant_validation.ok);
+    CHECK(disabled_validation.ok);
+    CHECK(dormant_validation.estimated_peak_bytes
+          == disabled_validation.estimated_peak_bytes);
+    CHECK(pvt::render_frame(dormant_displacement, 4, cpu_options, reference,
+                            nullptr, &error));
+    CHECK(pvt::render_frame(dormant_displacement, 4, gpu_options, gpu,
+                            nullptr, &error));
+    check_close(reference, gpu, 0.24, 0.018, 0.06, 0.0025,
+                "dormant displacement remains on Metal");
 
     std::atomic_bool cancel {true};
     pvt::Image sentinel = cpu;

@@ -1941,8 +1941,20 @@ ValidationResult validate(const ProjectConfig& project) {
                         || (layer.opacity == 1.0
                             && !render_data_can_create_transparency(layer.render));
                 }
-                worst_layer_peak =
-                    std::max(worst_layer_peak, layer_validation.estimated_peak_bytes);
+                std::size_t materialized_music_bytes = 0U;
+                std::size_t admitted_layer_peak =
+                    layer_validation.estimated_peak_bytes;
+                if (!detail::render_config_music_copy_bytes(
+                        render, materialized_music_bytes)
+                    || !checked_add(admitted_layer_peak,
+                                    materialized_music_bytes,
+                                    admitted_layer_peak)) {
+                    return invalid_result(
+                        "Layer " + std::to_string(index + 1U)
+                        + " music-analysis copy estimate overflowed.");
+                }
+                worst_layer_peak = std::max(worst_layer_peak,
+                                            admitted_layer_peak);
             }
         }
 

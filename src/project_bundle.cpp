@@ -64,6 +64,15 @@ constexpr std::size_t kMaximumLineageAliases = kMaximumUiItems;
 constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
 constexpr std::uint32_t kProjectVersionFormatVersion = 5U;
+constexpr std::uint32_t kSplitLayerFormatVersion = 2U;
+constexpr std::uint32_t kLegacySplitLayerFormatVersion = 1U;
+constexpr std::uint32_t kLayerFormatVersionBeforeAlphaOrdering = 19U;
+constexpr std::uint32_t kLayerFormatVersionWithAlphaOrdering = 20U;
+constexpr std::string_view kSplitLayerVersionKey =
+    "split.layer_format_version";
+
+static_assert(detail::kLayerConfigFormatVersion
+              >= kLayerFormatVersionWithAlphaOrdering);
 
 struct RootMetadata {
     struct PreservedVersion {
@@ -349,6 +358,17 @@ bool text_document_version(const std::string& bytes,
         return false;
     }
     version = parsed;
+    return true;
+}
+
+bool append_bounded_metadata_line(std::string& destination,
+                                  std::string_view line) {
+    if (destination.size() > kMaximumMetadataBytes) return false;
+    const std::size_t remaining =
+        kMaximumMetadataBytes - destination.size();
+    if (line.size() >= remaining) return false;
+    destination.append(line.data(), line.size());
+    destination.push_back('\n');
     return true;
 }
 
@@ -1215,13 +1235,16 @@ bool split_layer_and_music(
     if (!detail::sha256_hex(analysis_bytes, analysis_digest, error)) {
         return false;
     }
-    // Unknown/rejected analysis records need their original codec envelope;
-    // keep those uncommon future-data layers whole rather than risking loss.
-    if (!render.layer_clock.clock.music.compatibility.records.empty()) {
+    const auto keep_complete_layer = [&]() {
         analysis_bytes.clear();
         analysis_digest.clear();
         layer_bytes = std::move(complete_layer);
         return true;
+    };
+    // Unknown/rejected analysis records need their original codec envelope;
+    // keep those uncommon future-data layers whole rather than risking loss.
+    if (!render.layer_clock.clock.music.compatibility.records.empty()) {
+        return keep_complete_layer();
     }
 
     const std::string complete_header =
@@ -1231,7 +1254,14 @@ bool split_layer_and_music(
         return fail(error,
                     "Layer codec returned an unexpected header during compaction.");
     }
-    layer_bytes = "PVT_LAYER_SPLIT\t1\n";
+    TextBuilder split_builder("PVT_LAYER_SPLIT", kSplitLayerFormatVersion);
+    split_builder.integer(kSplitLayerVersionKey,
+                          detail::kLayerConfigFormatVersion);
+    if (!split_builder.ok()) {
+        return fail(error,
+                    "Layer music-analysis split exceeds the signed-int format limit.");
+    }
+    layer_bytes = split_builder.bytes();
     std::size_t start = complete_header.size();
     while (start < complete_layer.size()) {
         const std::size_t newline = complete_layer.find('\n', start);
@@ -1245,9 +1275,19 @@ bool split_layer_and_music(
                         "Layer codec returned a malformed record during compaction.");
         }
         const std::string_view key = line.substr(0U, tab);
+        // This envelope key is not part of the layer codec. If a future layer
+        // supplies it as preserved compatibility data, keep that layer whole
+        // instead of creating an ambiguous split document.
+        if (key == kSplitLayerVersionKey) {
+            return keep_complete_layer();
+        }
         if (key.rfind("layer_clock.music.", 0U) != 0U) {
-            layer_bytes.append(line.data(), line.size());
-            layer_bytes.push_back('\n');
+            if (!append_bounded_metadata_line(layer_bytes, line)) {
+                // The complete layer already passed the codec bound. Avoid
+                // making the compact envelope's small amount of metadata a
+                // new reason that an otherwise valid project cannot save.
+                return keep_complete_layer();
+            }
         }
         if (newline == std::string::npos) break;
         start = newline + 1U;
@@ -1261,10 +1301,86 @@ bool deserialize_split_layer_and_music(
     RenderData& render,
     const std::vector<CubicMotionPath>& motion_paths,
     std::string* error) {
-    constexpr std::string_view split_header = "PVT_LAYER_SPLIT\t1\n";
-    if (split_layer.rfind(split_header, 0U) != 0U) {
+    if (split_layer.empty() || split_layer.size() > kMaximumMetadataBytes) {
+        return fail(error,
+                    "Layer music-analysis split is empty or exceeds the signed-int format limit.");
+    }
+    std::uint32_t split_version = 0U;
+    if (!text_document_version(
+            split_layer, "PVT_LAYER_SPLIT", split_version)
+        || (split_version != kLegacySplitLayerFormatVersion
+            && split_version != kSplitLayerFormatVersion)) {
         return fail(error,
                     "Layer music-analysis split has an unsupported header.");
+    }
+    const std::string split_header =
+        "PVT_LAYER_SPLIT\t" + std::to_string(split_version) + "\n";
+    if (split_layer.rfind(split_header, 0U) != 0U) {
+        return fail(error,
+                    "Layer music-analysis split has a malformed header.");
+    }
+
+    std::uint32_t layer_format_version = 0U;
+    bool found_layer_format_version = false;
+    bool found_alpha_ordering = false;
+    std::string split_payload;
+    split_payload.reserve(split_layer.size() - split_header.size());
+    std::size_t split_start = split_header.size();
+    while (split_start < split_layer.size()) {
+        const std::size_t newline = split_layer.find('\n', split_start);
+        const std::size_t end = newline == std::string::npos
+                                    ? split_layer.size() : newline;
+        std::string_view line(
+            split_layer.data() + split_start, end - split_start);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1U);
+        const std::size_t tab = line.find('\t');
+        const std::string_view key = tab == std::string_view::npos
+                                         ? std::string_view{}
+                                         : line.substr(0U, tab);
+        if (split_version == kSplitLayerFormatVersion
+            && key == kSplitLayerVersionKey) {
+            if (found_layer_format_version
+                || line.find('\t', tab + 1U) != std::string_view::npos) {
+                return fail(error,
+                            "Layer music-analysis split has duplicate or malformed layer-version metadata.");
+            }
+            const std::string_view value = line.substr(tab + 1U);
+            const auto parsed = std::from_chars(
+                value.data(), value.data() + value.size(),
+                layer_format_version, 10);
+            if (value.empty() || parsed.ec != std::errc{}
+                || parsed.ptr != value.data() + value.size()
+                || layer_format_version == 0U
+                || layer_format_version > detail::kLayerConfigFormatVersion) {
+                return fail(error,
+                            "Layer music-analysis split references an unsupported layer format.");
+            }
+            found_layer_format_version = true;
+        } else {
+            found_alpha_ordering = found_alpha_ordering
+                                   || key
+                                          == "starting_colors.legacy_alpha_outermost";
+            if (!append_bounded_metadata_line(split_payload, line)) {
+                return fail(
+                    error,
+                    "Layer music-analysis split exceeds the signed-int format limit.");
+            }
+        }
+        if (newline == std::string::npos) break;
+        split_start = newline + 1U;
+    }
+    if (split_version == kSplitLayerFormatVersion) {
+        if (!found_layer_format_version) {
+            return fail(error,
+                        "Layer music-analysis split is missing its layer format.");
+        }
+    } else {
+        // Split v1 was written by both layer-v19 and layer-v20 builds. The
+        // explicit alpha-ordering record was introduced by layer v20, so its
+        // exact presence is the only safe discriminator for those files.
+        layer_format_version = found_alpha_ordering
+                                   ? kLayerFormatVersionWithAlphaOrdering
+                                   : kLayerFormatVersionBeforeAlphaOrdering;
     }
     MusicAnalysis analysis;
     if (!detail::deserialize_music_analysis_config(
@@ -1286,10 +1402,12 @@ bool deserialize_split_layer_and_music(
     constexpr std::string_view analysis_header =
         "PVT_MUSIC_ANALYSIS\t1\n";
     std::string combined =
-        "PVT_LAYER\t" + std::to_string(detail::kLayerConfigFormatVersion)
-        + "\n";
-    combined.append(split_layer.data() + split_header.size(),
-                    split_layer.size() - split_header.size());
+        "PVT_LAYER\t" + std::to_string(layer_format_version) + "\n";
+    if (split_payload.size() > kMaximumMetadataBytes - combined.size()) {
+        return fail(error,
+                    "Combined layer data exceeds the signed-int format limit.");
+    }
+    combined.append(split_payload);
     std::size_t start = analysis_header.size();
     while (start < validation_analysis_bytes.size()) {
         const std::size_t newline = validation_analysis_bytes.find('\n', start);
@@ -1308,11 +1426,14 @@ bool deserialize_split_layer_and_music(
             return fail(error,
                         "Shared layer music analysis contains an unrelated field.");
         }
-        combined.append("layer_clock.music.");
-        combined.append(key.data() + source_prefix.size(),
-                        key.size() - source_prefix.size());
-        combined.append(line.data() + tab, line.size() - tab);
-        combined.push_back('\n');
+        std::string mapped_line = "layer_clock.music.";
+        mapped_line.append(key.data() + source_prefix.size(),
+                           key.size() - source_prefix.size());
+        mapped_line.append(line.data() + tab, line.size() - tab);
+        if (!append_bounded_metadata_line(combined, mapped_line)) {
+            return fail(error,
+                        "Combined layer data exceeds the signed-int format limit.");
+        }
         if (newline == std::string::npos) break;
         start = newline + 1U;
     }

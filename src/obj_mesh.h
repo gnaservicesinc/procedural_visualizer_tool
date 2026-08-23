@@ -103,13 +103,22 @@ bool load_obj_mesh(const std::string& utf8_path,
 
 // Keeps one immutable mesh alive across frames. The cache key includes the
 // absolute normalized path, file size, last-write time, and load limits. A
-// file that changes during parsing is retried once and then rejected.
+// file that changes during parsing is retried once and then rejected. Cold
+// concurrent requests for the same key share one in-flight parse.
 bool load_obj_mesh_cached(const std::string& utf8_path,
                           std::shared_ptr<const ObjMesh>& destination,
                           std::string* error,
                           const ObjLoadLimits& limits = ObjLoadLimits{});
 
 void clear_obj_mesh_cache() noexcept;
+
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+std::uint64_t obj_mesh_cache_parse_count_for_testing() noexcept;
+void set_obj_mesh_cache_parse_paused_for_testing(bool paused) noexcept;
+void arm_obj_mesh_cache_publication_pause_for_testing() noexcept;
+void wait_obj_mesh_cache_publication_paused_for_testing();
+void resume_obj_mesh_cache_publication_for_testing() noexcept;
+#endif
 
 } // namespace detail
 } // namespace pvt

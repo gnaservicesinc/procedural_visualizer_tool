@@ -790,6 +790,8 @@ if(BUILD_TESTING)
         src/obj_mesh.cpp
         src/obj_mesh.h)
     target_compile_features(pvt_obj_mesh_tests PRIVATE cxx_std_17)
+    target_compile_definitions(pvt_obj_mesh_tests PRIVATE
+        PVT_OBJ_MESH_TEST_HOOKS=1)
     set_target_properties(pvt_obj_mesh_tests PROPERTIES CXX_EXTENSIONS NO)
     target_link_libraries(pvt_obj_mesh_tests PRIVATE Threads::Threads)
     pvt_enable_warnings(pvt_obj_mesh_tests)

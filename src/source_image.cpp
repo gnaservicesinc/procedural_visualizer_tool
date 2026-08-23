@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -49,12 +51,34 @@ struct CachedSource {
     std::shared_ptr<const Image> image;
     std::size_t decoded_bytes = 0U;
     std::uint64_t last_used = 0U;
+    std::uint64_t publication_sequence = 0U;
+};
+
+// Sequence and movie workers commonly request the same immutable source on
+// their first frame.  Keep those cache misses single-flight: decoding the same
+// large PNG/EXR once per worker defeats both the decoded-image cache and the
+// export memory admission budget before any entry can be published.
+struct PendingSource {
+    std::string path;
+    DecodeIntent intent = DecodeIntent::Color;
+    std::uintmax_t file_size = 0U;
+    fs::file_time_type modified{};
+    std::uint64_t publication_sequence = 0U;
+    bool complete = false;
+    bool succeeded = false;
+    bool retryable = false;
+    bool source_changed = false;
+    std::shared_ptr<const Image> image;
+    std::string error;
+    std::condition_variable wake;
 };
 
 std::mutex source_cache_mutex;
 std::vector<CachedSource> source_cache;
+std::vector<std::shared_ptr<PendingSource>> pending_sources;
 std::size_t source_cache_bytes = 0U;
 std::uint64_t source_cache_clock = 0U;
+std::uint64_t source_cache_next_publication_sequence = 0U;
 constexpr std::size_t kMaximumDecodedSourceBytes =
     std::size_t{512} * 1024U * 1024U;
 constexpr std::size_t kMaximumCachedSourceImages = 64U;
@@ -943,64 +967,218 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
 bool load_cached(const std::string& path, DecodeIntent intent,
                  std::shared_ptr<const Image>& image,
                  const std::atomic_bool* cancel, std::string* error) {
-    std::uintmax_t file_size = 0U;
-    fs::file_time_type modified{};
-    if (!inspect_source(path, file_size, modified, error)) return false;
-    {
-        const std::lock_guard<std::mutex> lock(source_cache_mutex);
-        const auto found = std::find_if(
-            source_cache.begin(), source_cache.end(),
-            [&](const CachedSource& candidate) {
-                return candidate.path == path
-                       && candidate.intent == intent
-                       && candidate.file_size == file_size
-                       && candidate.modified == modified
-                       && candidate.image;
-            });
-        if (found != source_cache.end()) {
-            found->last_used = ++source_cache_clock;
-            image = found->image;
-            return true;
-        }
-    }
-    std::shared_ptr<Image> decoded;
-    if (!decode_source(path, file_size, intent, decoded, cancel, error)) {
-        return false;
-    }
-    {
-        const std::lock_guard<std::mutex> lock(source_cache_mutex);
-        const auto existing = std::find_if(
-            source_cache.begin(), source_cache.end(),
-            [&path, intent](const CachedSource& candidate) {
-                return candidate.path == path && candidate.intent == intent;
-            });
-        if (existing != source_cache.end()) {
-            source_cache_bytes -= existing->decoded_bytes;
-            source_cache.erase(existing);
-        }
-        const std::size_t decoded_bytes =
-            decoded->pixels.size() * sizeof(float);
-        if (decoded_bytes > kMaximumDecodedSourceBytes) {
-            return fail(error,
-                        "Decoded image exceeds the decoded-image byte limit.");
-        }
-        source_cache.push_back({path, intent, file_size, modified, decoded,
-                                decoded_bytes, ++source_cache_clock});
-        source_cache_bytes += decoded_bytes;
-        while ((source_cache.size() > kMaximumCachedSourceImages
-                || source_cache_bytes > kMaximumDecodedSourceBytes)
-               && source_cache.size() > 1U) {
-            const auto oldest = std::min_element(
+    int shared_load_retries = 0;
+    constexpr int kMaximumSharedLoadRetries = 2;
+    for (;;) {
+        std::uintmax_t file_size = 0U;
+        fs::file_time_type modified{};
+        if (!inspect_source(path, file_size, modified, error)) return false;
+
+        std::shared_ptr<PendingSource> pending;
+        bool decode_owner = false;
+        {
+            std::unique_lock<std::mutex> lock(source_cache_mutex);
+            const auto found = std::find_if(
                 source_cache.begin(), source_cache.end(),
-                [](const CachedSource& left, const CachedSource& right) {
-                    return left.last_used < right.last_used;
+                [&](const CachedSource& candidate) {
+                    return candidate.path == path
+                           && candidate.intent == intent
+                           && candidate.file_size == file_size
+                           && candidate.modified == modified
+                           && candidate.image;
                 });
-            source_cache_bytes -= oldest->decoded_bytes;
-            source_cache.erase(oldest);
+            if (found != source_cache.end()) {
+                found->last_used = ++source_cache_clock;
+                image = found->image;
+                return true;
+            }
+
+            const auto loading = std::find_if(
+                pending_sources.begin(), pending_sources.end(),
+                [&](const std::shared_ptr<PendingSource>& candidate) {
+                    return candidate->path == path
+                           && candidate->intent == intent
+                           && candidate->file_size == file_size
+                           && candidate->modified == modified;
+                });
+            if (loading == pending_sources.end()) {
+                pending = std::make_shared<PendingSource>();
+                pending->path = path;
+                pending->intent = intent;
+                pending->file_size = file_size;
+                pending->modified = modified;
+                pending->publication_sequence =
+                    ++source_cache_next_publication_sequence;
+                if (pending->publication_sequence == 0U) {
+                    pending->publication_sequence =
+                        ++source_cache_next_publication_sequence;
+                }
+                pending_sources.push_back(pending);
+                decode_owner = true;
+            } else {
+                pending = *loading;
+                while (!pending->complete) {
+                    if (cancelled(cancel)) {
+                        return fail(error,
+                                    "Image source decoding was cancelled while waiting for a shared cache load.");
+                    }
+                    pending->wake.wait_for(
+                        lock, std::chrono::milliseconds(5));
+                }
+                if (pending->succeeded) {
+                    image = pending->image;
+                    if (error != nullptr) error->clear();
+                    return true;
+                }
+                if (pending->retryable && !cancelled(cancel)) {
+                    if (!pending->source_changed
+                        || shared_load_retries
+                               < kMaximumSharedLoadRetries) {
+                        if (pending->source_changed) ++shared_load_retries;
+                        continue;
+                    }
+                }
+                return fail(
+                    error,
+                    pending->error.empty()
+                        ? "The shared image source load failed unexpectedly."
+                        : pending->error);
+            }
+        }
+
+        if (!decode_owner) continue;
+
+        try {
+            std::shared_ptr<Image> decoded;
+            std::string decode_error;
+            bool decoded_ok = decode_source(
+                path, file_size, intent, decoded, cancel, &decode_error);
+            const bool owner_cancelled = !decoded_ok && cancelled(cancel);
+            bool source_changed = false;
+            std::size_t decoded_bytes = 0U;
+            if (decoded_ok) {
+                decoded_bytes = decoded->pixels.size() * sizeof(float);
+                if (decoded_bytes > kMaximumDecodedSourceBytes) {
+                    decoded_ok = false;
+                    decode_error =
+                        "Decoded image exceeds the decoded-image byte limit.";
+                }
+            }
+
+            std::uintmax_t current_size = 0U;
+            fs::file_time_type current_modified{};
+            if (decoded_ok
+                && !inspect_source(path, current_size, current_modified,
+                                   &decode_error)) {
+                decoded_ok = false;
+            } else if (decoded_ok
+                       && (current_size != file_size
+                           || current_modified != modified)) {
+                decoded_ok = false;
+                source_changed = true;
+                decode_error =
+                    "Image source changed while it was being decoded.";
+            }
+
+            std::shared_ptr<const Image> selected;
+            {
+                const std::lock_guard<std::mutex> lock(source_cache_mutex);
+                if (decoded_ok) {
+                    const auto newer = std::find_if(
+                        source_cache.begin(), source_cache.end(),
+                        [&](const CachedSource& candidate) {
+                            return candidate.path == path
+                                   && candidate.intent == intent
+                                   && candidate.publication_sequence
+                                          > pending->publication_sequence;
+                        });
+                    // Final metadata I/O deliberately happens before taking
+                    // the process-global cache lock. If a newer owner for the
+                    // same logical source publishes in that interval, its
+                    // monotonic sequence wins and this older caller receives
+                    // its valid immutable decode without replacing the cache.
+                    if (newer != source_cache.end()) {
+                        if (newer->file_size == file_size
+                            && newer->modified == modified) {
+                            selected = newer->image;
+                            newer->last_used = ++source_cache_clock;
+                        } else {
+                            selected = std::move(decoded);
+                        }
+                    } else {
+                        for (auto existing = source_cache.begin();
+                             existing != source_cache.end();) {
+                            if (existing->path == path
+                                && existing->intent == intent) {
+                                source_cache_bytes -= existing->decoded_bytes;
+                                existing = source_cache.erase(existing);
+                            } else {
+                                ++existing;
+                            }
+                        }
+                        selected = std::move(decoded);
+                        source_cache.push_back(
+                            {path, intent, file_size, modified, selected,
+                             decoded_bytes, ++source_cache_clock,
+                             pending->publication_sequence});
+                        source_cache_bytes += decoded_bytes;
+                        while ((source_cache.size()
+                                    > kMaximumCachedSourceImages
+                                || source_cache_bytes
+                                       > kMaximumDecodedSourceBytes)
+                               && source_cache.size() > 1U) {
+                            const auto oldest = std::min_element(
+                                source_cache.begin(), source_cache.end(),
+                                [](const CachedSource& left,
+                                   const CachedSource& right) {
+                                    return left.last_used < right.last_used;
+                                });
+                            source_cache_bytes -= oldest->decoded_bytes;
+                            source_cache.erase(oldest);
+                        }
+                    }
+                }
+                pending->complete = true;
+                pending->succeeded = decoded_ok;
+                pending->retryable =
+                    !decoded_ok && (owner_cancelled || source_changed);
+                pending->source_changed = source_changed;
+                pending->image = selected;
+                pending->error = decode_error;
+                const auto loading = std::find(
+                    pending_sources.begin(), pending_sources.end(), pending);
+                if (loading != pending_sources.end()) {
+                    pending_sources.erase(loading);
+                }
+            }
+            pending->wake.notify_all();
+            if (!decoded_ok) {
+                if (source_changed && !cancelled(cancel)
+                    && shared_load_retries < kMaximumSharedLoadRetries) {
+                    ++shared_load_retries;
+                    continue;
+                }
+                return fail(error, std::move(decode_error));
+            }
+            image = std::move(selected);
+            if (error != nullptr) error->clear();
+            return true;
+        } catch (...) {
+            {
+                const std::lock_guard<std::mutex> lock(source_cache_mutex);
+                pending->complete = true;
+                pending->succeeded = false;
+                pending->retryable = false;
+                const auto loading = std::find(
+                    pending_sources.begin(), pending_sources.end(), pending);
+                if (loading != pending_sources.end()) {
+                    pending_sources.erase(loading);
+                }
+            }
+            pending->wake.notify_all();
+            throw;
         }
     }
-    image = std::move(decoded);
-    return true;
 }
 
 float sample_channel(const Image& image, double x, double y,

@@ -14,6 +14,88 @@
 
 namespace pvt::detail {
 
+inline bool checked_retained_add(std::size_t amount,
+                                 std::size_t& total) noexcept {
+    if (amount > (std::numeric_limits<std::size_t>::max)() - total) {
+        return false;
+    }
+    total += amount;
+    return true;
+}
+
+template <typename Value>
+inline bool add_vector_payload(const std::vector<Value>& values,
+                               std::size_t& total) noexcept {
+    if (values.size()
+        > (std::numeric_limits<std::size_t>::max)() / sizeof(Value)) {
+        return false;
+    }
+    return checked_retained_add(values.size() * sizeof(Value), total);
+}
+
+// Dynamic bytes duplicated by MusicAnalysis' ordinary value-copy semantics.
+// Counting string lengths slightly over-admits small-string implementations,
+// which is preferable to letting large cached analyses multiply outside the
+// worker memory gates.
+inline bool music_analysis_copy_bytes(const MusicAnalysis& analysis,
+                                      std::size_t& bytes) noexcept {
+    bytes = 0U;
+    const auto add_text = [&](const std::string& value) {
+        return checked_retained_add(value.size(), bytes);
+    };
+    if (!add_text(analysis.analyzer_version)
+        || !add_text(analysis.source_sha256)
+        || !add_text(analysis.source_basename)
+        || !add_text(analysis.source_format)
+        || !add_vector_payload(analysis.beat_times_seconds, bytes)
+        || !add_vector_payload(analysis.tempo_points, bytes)
+        || !add_vector_payload(analysis.feature_samples, bytes)
+        || !add_vector_payload(analysis.frequency_streams, bytes)
+        || !add_vector_payload(
+            analysis.input_processing.equalizer_bands, bytes)
+        || !add_vector_payload(
+            analysis.input_processing.frequency_streams, bytes)
+        || !add_vector_payload(analysis.compatibility.records, bytes)
+        || !add_vector_payload(analysis.compatibility.repair_notes, bytes)) {
+        return false;
+    }
+    for (const MusicFrequencyStreamAnalysis& stream :
+         analysis.frequency_streams) {
+        if (!add_text(stream.uuid)
+            || !add_vector_payload(stream.beat_times_seconds, bytes)
+            || !add_vector_payload(stream.tempo_points, bytes)
+            || !add_vector_payload(stream.feature_samples, bytes)) {
+            return false;
+        }
+    }
+    for (const AudioFrequencyStreamConfig& stream :
+         analysis.input_processing.frequency_streams) {
+        if (!add_text(stream.uuid) || !add_text(stream.name)) return false;
+    }
+    for (const PreservedConfigRecord& record :
+         analysis.compatibility.records) {
+        if (!add_text(record.key) || !add_text(record.value)) return false;
+    }
+    for (const std::string& note : analysis.compatibility.repair_notes) {
+        if (!add_text(note)) return false;
+    }
+    return true;
+}
+
+inline bool render_config_music_copy_bytes(const RenderConfig& config,
+                                           std::size_t& bytes) noexcept {
+    std::size_t project_clock_bytes = 0U;
+    std::size_t layer_clock_bytes = 0U;
+    if (!music_analysis_copy_bytes(config.clock.music,
+                                   project_clock_bytes)
+        || !music_analysis_copy_bytes(
+            config.layer_clock.clock.music, layer_clock_bytes)) {
+        return false;
+    }
+    bytes = project_clock_bytes;
+    return checked_retained_add(layer_clock_bytes, bytes);
+}
+
 // Particle work is bounded in units of conservatively covered stamp pixels.
 // Keep this calculation shared by validation, persistence recovery, and GPU
 // preflight so an accepted setup cannot acquire a different trail count in a
@@ -230,6 +312,25 @@ RenderConfig materialize_parameter_lfos(const RenderConfig& config,
 RenderConfig materialize_parameter_lfos_at_frame(const RenderConfig& config,
                                                   int frame_index);
 ValidationResult validate_frame_render_config(const RenderConfig& config);
+
+// Selected-backend rendering validates and materializes parameter LFOs before
+// dispatch. These entry points preserve that work instead of repeating it in
+// the legacy public CPU/prepare APIs. Callers must pass a valid configuration
+// whose parameter_lfos collection is empty.
+bool render_frame_at_phase_validated_resolved(
+    const RenderConfig& config, double normalized_phase,
+    Image& destination, const std::atomic_bool* cancel,
+    std::string* error);
+bool render_frame_validated_resolved(
+    const RenderConfig& config, int frame_index,
+    Image& destination, const std::atomic_bool* cancel,
+    std::string* error);
+bool prepare_frame_for_backend_at_phase_validated_resolved(
+    const RenderConfig& config, double normalized_phase,
+    PreparedFrame& prepared, std::string* error);
+bool prepare_frame_for_backend_validated_resolved(
+    const RenderConfig& config, int frame_index,
+    PreparedFrame& prepared, std::string* error);
 
 PVT_API bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
                                                 double normalized_phase,

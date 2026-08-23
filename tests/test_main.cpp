@@ -214,6 +214,125 @@ void test_parameter_lfos() {
                             nullptr, &error));
     CHECK(maximum_difference(clock_reference, clock_selected_cpu) <= 1.0e-7);
 
+    // Validation of the authored fallback is not sufficient for an animated
+    // workload. A legal LFO range can resolve a particle field beyond the
+    // dimension-aware admission bound. Both the legacy and backend-selecting
+    // APIs must reject that actual frame transactionally before rendering.
+    pvt::RenderConfig animated_workload = pvt::default_config();
+    animated_workload.width = 16;
+    animated_workload.height = 16;
+    animated_workload.block_size = 4;
+    animated_workload.total_frames = 2;
+    auto animated_particles = std::find_if(
+        animated_workload.effects.begin(), animated_workload.effects.end(),
+        [](const pvt::EffectConfig& effect) {
+            return effect.type == pvt::EffectType::ParticleField;
+        });
+    CHECK(animated_particles != animated_workload.effects.end());
+    if (animated_particles != animated_workload.effects.end()) {
+        animated_particles->enabled = true;
+        animated_particles->intensity = 1.0;
+        animated_particles->frequency = 1.0;
+        animated_particles->secondary = 0.0;
+        animated_particles->radius_pixels = 16.0;
+        animated_particles->particle_size_variation = 0.0;
+        pvt::ParameterLfo particle_count_lfo;
+        particle_count_lfo.target_path =
+            "effect/" + std::to_string(animated_particles->id)
+            + "/frequency";
+        particle_count_lfo.minimum = 1.0;
+        particle_count_lfo.maximum = 80000.0;
+        particle_count_lfo.phase_degrees = -90.0;
+        animated_workload.parameter_lfos.push_back(particle_count_lfo);
+        CHECK(pvt::validate(animated_workload).ok);
+        const pvt::RenderConfig peak_workload =
+            pvt::detail::materialize_parameter_lfos(animated_workload, 0.5);
+        CHECK(!pvt::validate(peak_workload).ok);
+
+        pvt::Image workload_sentinel;
+        workload_sentinel.width = 1;
+        workload_sentinel.height = 1;
+        workload_sentinel.pixels = {0.2F, 0.4F, 0.6F, 0.8F};
+        pvt::Image rejected_workload = workload_sentinel;
+        error.clear();
+        CHECK(!pvt::render_frame_at_phase(
+            animated_workload, 0.5, rejected_workload, &error));
+        CHECK(error.find("bounded dimension-aware stamp workload")
+              != std::string::npos);
+        CHECK(rejected_workload.width == workload_sentinel.width
+              && rejected_workload.height == workload_sentinel.height
+              && rejected_workload.pixels == workload_sentinel.pixels);
+
+        std::atomic_bool already_cancelled {true};
+        rejected_workload = workload_sentinel;
+        error.clear();
+        CHECK(!pvt::render_frame(
+            animated_workload, 1, selected_cpu, rejected_workload,
+            &already_cancelled, &error));
+        CHECK(error.find("bounded dimension-aware stamp workload")
+              != std::string::npos);
+        CHECK(rejected_workload.width == workload_sentinel.width
+              && rejected_workload.height == workload_sentinel.height
+              && rejected_workload.pixels == workload_sentinel.pixels);
+    }
+
+    // Cached analysis remains part of a valid setup even while the music
+    // clock is inactive. Keep this collection large enough to make accidental
+    // deep copies material in profiling, and require the selected CPU path to
+    // remain byte-identical to both legacy entry points.
+    pvt::RenderConfig cached_analysis = pvt::default_config();
+    cached_analysis.width = 16;
+    cached_analysis.height = 16;
+    cached_analysis.block_size = 4;
+    cached_analysis.clock.music.feature_samples.resize(131072U);
+    CHECK(cached_analysis.parameter_lfos.empty());
+    const pvt::ValidationResult cached_validation =
+        pvt::validate(cached_analysis);
+    CHECK(cached_validation.ok);
+    pvt::RenderConfig animated_cached_analysis = cached_analysis;
+    animated_cached_analysis.parameter_lfos.push_back(lfo);
+    const pvt::ValidationResult animated_cached_validation =
+        pvt::validate(animated_cached_analysis);
+    const std::size_t cached_feature_bytes =
+        cached_analysis.clock.music.feature_samples.size()
+        * sizeof(pvt::MusicFeatureSample);
+    CHECK(animated_cached_validation.ok);
+    CHECK(animated_cached_validation.estimated_peak_bytes
+          >= cached_validation.estimated_peak_bytes + cached_feature_bytes);
+
+    pvt::ProjectConfig cached_analysis_project = pvt::default_project();
+    cached_analysis_project.canvas.width = 16;
+    cached_analysis_project.canvas.height = 16;
+    cached_analysis_project.canvas.block_size = 4;
+    const pvt::ValidationResult empty_project_validation =
+        pvt::validate(cached_analysis_project);
+    cached_analysis_project.canvas.clock.music =
+        cached_analysis.clock.music;
+    const pvt::ValidationResult cached_project_validation =
+        pvt::validate(cached_analysis_project);
+    CHECK(empty_project_validation.ok);
+    CHECK(cached_project_validation.ok);
+    CHECK(cached_project_validation.estimated_peak_bytes
+          >= empty_project_validation.estimated_peak_bytes
+                 + cached_feature_bytes);
+    pvt::Image legacy_cached_frame;
+    pvt::Image selected_cached_frame;
+    CHECK(pvt::render_frame(cached_analysis, 3, legacy_cached_frame, &error));
+    CHECK(pvt::render_frame(cached_analysis, 3, selected_cpu,
+                            selected_cached_frame, nullptr, &error));
+    CHECK(legacy_cached_frame.width == selected_cached_frame.width);
+    CHECK(legacy_cached_frame.height == selected_cached_frame.height);
+    CHECK(legacy_cached_frame.pixels == selected_cached_frame.pixels);
+    pvt::Image legacy_cached_phase;
+    pvt::Image selected_cached_phase;
+    CHECK(pvt::render_frame_at_phase(cached_analysis, 0.375,
+                                     legacy_cached_phase, &error));
+    CHECK(pvt::render_frame_at_phase(cached_analysis, 0.375, selected_cpu,
+                                     selected_cached_phase, nullptr, &error));
+    CHECK(legacy_cached_phase.width == selected_cached_phase.width);
+    CHECK(legacy_cached_phase.height == selected_cached_phase.height);
+    CHECK(legacy_cached_phase.pixels == selected_cached_phase.pixels);
+
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
     CHECK(serialized.find("PVT_SETUP\t22\n") == 0U);
@@ -586,6 +705,49 @@ void test_plane_displacement_mesh(const fs::path& directory) {
 
     const auto validation = pvt::validate(config);
     CHECK(validation.ok);
+
+    // Parallel frame workers must share the first generated plane, not each
+    // retain a private copy after racing through the same cache miss.
+    constexpr std::size_t mesh_loader_count = 8U;
+    std::array<std::shared_ptr<const pvt::detail::ObjMesh>,
+               mesh_loader_count>
+        shared_meshes;
+    std::array<bool, mesh_loader_count> shared_mesh_ok{};
+    std::array<std::string, mesh_loader_count> shared_mesh_errors;
+    std::atomic<std::size_t> ready_mesh_loaders{0U};
+    std::atomic_bool release_mesh_loaders{false};
+    std::vector<std::thread> mesh_loader_threads;
+    mesh_loader_threads.reserve(mesh_loader_count);
+    for (std::size_t loader = 0U; loader < mesh_loader_count; ++loader) {
+        mesh_loader_threads.emplace_back([&, loader] {
+            ready_mesh_loaders.fetch_add(1U, std::memory_order_release);
+            while (!release_mesh_loaders.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            shared_mesh_ok[loader] =
+                pvt::detail::load_displacement_plane_mesh(
+                    config.surface.plane_displacement, 320, 240,
+                    shared_meshes[loader], nullptr,
+                    &shared_mesh_errors[loader]);
+        });
+    }
+    while (ready_mesh_loaders.load(std::memory_order_acquire)
+           < mesh_loader_count) {
+        std::this_thread::yield();
+    }
+    release_mesh_loaders.store(true, std::memory_order_release);
+    for (std::thread& loader : mesh_loader_threads) loader.join();
+    for (std::size_t loader = 0U; loader < mesh_loader_count; ++loader) {
+        if (!shared_mesh_ok[loader]) {
+            std::cerr << "parallel mesh load " << loader << ": "
+                      << shared_mesh_errors[loader] << '\n';
+        }
+        CHECK(shared_mesh_ok[loader]);
+        CHECK(shared_meshes[loader] == shared_meshes[0U]);
+    }
+    shared_meshes.fill({});
+    pvt::detail::clear_displacement_mesh_cache();
+
     pvt::Image first;
     std::string error;
     CHECK(pvt::render_frame(config, 0, first, &error));
@@ -1156,6 +1318,62 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         source, 2U, 2U,
         {255U, 0U, 0U, 255U, 0U, 255U, 0U, 255U,
          0U, 0U, 255U, 255U, 255U, 255U, 255U, 0U}));
+
+    // Parallel sequence workers must coalesce their first cache miss. Without
+    // single-flight publication every worker decodes and retains its own full
+    // float image before racing to replace the same cache entry, multiplying
+    // both startup time and peak memory.
+    const fs::path shared_source = directory / "parallel-starting-image.png";
+    constexpr png_uint_32 shared_side = 512U;
+    std::vector<unsigned char> shared_pixels(
+        static_cast<std::size_t>(shared_side)
+            * static_cast<std::size_t>(shared_side) * 4U);
+    for (std::size_t pixel = 0U;
+         pixel < static_cast<std::size_t>(shared_side)
+                     * static_cast<std::size_t>(shared_side);
+         ++pixel) {
+        shared_pixels[pixel * 4U] =
+            static_cast<unsigned char>((pixel * 17U) & 0xffU);
+        shared_pixels[pixel * 4U + 1U] =
+            static_cast<unsigned char>((pixel * 29U) & 0xffU);
+        shared_pixels[pixel * 4U + 2U] =
+            static_cast<unsigned char>((pixel * 43U) & 0xffU);
+        shared_pixels[pixel * 4U + 3U] = 255U;
+    }
+    CHECK(write_test_png(
+        shared_source, shared_side, shared_side, shared_pixels));
+    constexpr std::size_t loader_count = 8U;
+    std::array<std::shared_ptr<const pvt::Image>, loader_count> shared_loads;
+    std::array<bool, loader_count> shared_load_ok{};
+    std::array<std::string, loader_count> shared_load_errors;
+    std::atomic<std::size_t> ready_loaders{0U};
+    std::atomic_bool release_loaders{false};
+    std::vector<std::thread> loader_threads;
+    loader_threads.reserve(loader_count);
+    for (std::size_t loader = 0U; loader < loader_count; ++loader) {
+        loader_threads.emplace_back([&, loader] {
+            ready_loaders.fetch_add(1U, std::memory_order_release);
+            while (!release_loaders.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            shared_load_ok[loader] = pvt::detail::load_starting_image_source(
+                shared_source.string(), shared_loads[loader], nullptr,
+                &shared_load_errors[loader]);
+        });
+    }
+    while (ready_loaders.load(std::memory_order_acquire) < loader_count) {
+        std::this_thread::yield();
+    }
+    release_loaders.store(true, std::memory_order_release);
+    for (std::thread& loader : loader_threads) loader.join();
+    for (std::size_t loader = 0U; loader < loader_count; ++loader) {
+        if (!shared_load_ok[loader]) {
+            std::cerr << "parallel source load " << loader << ": "
+                      << shared_load_errors[loader] << '\n';
+        }
+        CHECK(shared_load_ok[loader]);
+        CHECK(shared_loads[loader] == shared_loads[0U]);
+    }
 
     // Loading is never routed through an 8-bit intermediate. Values that
     // cannot be represented by 8-bit expansion must survive a 16-bit PNG
@@ -3883,6 +4101,29 @@ void test_palettes_transforms_and_spatial_stages() {
     std::string error;
     pvt::Image baseline;
     CHECK(pvt::render_frame_at_phase(config, 0.371, baseline, &error));
+
+    // Wave heights affect generated colors only through displacement and
+    // slope lighting. When both consumers are disabled, changing amplitudes
+    // is an exact render no-op and the transient node rows are not admitted.
+    auto slopes_disabled = config;
+    slopes_disabled.displacement_enabled = false;
+    slopes_disabled.lighting_enabled = false;
+    const auto cached_slope_validation = pvt::validate(config);
+    const auto skipped_slope_validation = pvt::validate(slopes_disabled);
+    CHECK(cached_slope_validation.ok);
+    CHECK(skipped_slope_validation.ok);
+    CHECK(cached_slope_validation.estimated_peak_bytes
+          > skipped_slope_validation.estimated_peak_bytes);
+    pvt::Image slopes_disabled_before;
+    pvt::Image slopes_disabled_after;
+    CHECK(pvt::render_frame_at_phase(
+        slopes_disabled, 0.371, slopes_disabled_before, &error));
+    for (pvt::WaveConfig& wave : slopes_disabled.waves) {
+        wave.amplitude *= 123.0;
+    }
+    CHECK(pvt::render_frame_at_phase(
+        slopes_disabled, 0.371, slopes_disabled_after, &error));
+    CHECK(slopes_disabled_before.pixels == slopes_disabled_after.pixels);
 
     // A populated but disabled palette is a complete render bypass. This
     // locks down the GUI/CLI toggle contract independently of persistence.

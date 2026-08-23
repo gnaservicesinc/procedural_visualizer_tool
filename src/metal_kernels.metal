@@ -559,19 +559,12 @@ float procedural_alpha(constant FrameConstants& frame,
     return mix(frame.alpha_quant.x, frame.alpha_quant.y, amount);
 }
 
-kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
-                        const device GpuWave* waves [[buffer(1)]],
-                        const device GpuSwing* swings [[buffer(2)]],
-                        const device float4* palette [[buffer(3)]],
-                        device float4* output [[buffer(4)]],
-                        uint2 gid [[thread_position_in_grid]]) {
-    const uint width = frame.dimensions_counts.x;
-    const uint height = frame.dimensions_counts.y;
-    const uint block_size = frame.dimensions_counts.z;
-    const uint block_x = gid.x * block_size;
-    const uint block_y = gid.y * block_size;
-    if (block_x >= width || block_y >= height) return;
-
+float4 generated_base_color(constant FrameConstants& frame,
+                            const device GpuWave* waves,
+                            const device GpuSwing* swings,
+                            const device float4* palette,
+                            uint width, uint height, uint block_size,
+                            uint block_x, uint block_y) {
     const float x = float(block_x);
     const float y = float(block_y);
     const float motion = motion_phase_at(frame, swings, x, y);
@@ -710,6 +703,26 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
         }
     }
 
+    return base;
+}
+
+kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
+                        const device GpuWave* waves [[buffer(1)]],
+                        const device GpuSwing* swings [[buffer(2)]],
+                        const device float4* palette [[buffer(3)]],
+                        device float4* output [[buffer(4)]],
+                        uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    const uint block_size = frame.dimensions_counts.z;
+    const uint block_x = gid.x * block_size;
+    const uint block_y = gid.y * block_size;
+    if (block_x >= width || block_y >= height) return;
+
+    const float4 base = generated_base_color(
+        frame, waves, swings, palette, width, height, block_size,
+        block_x, block_y);
+
     const uint end_x = min(block_x + block_size, width);
     const uint end_y = min(block_y + block_size, height);
     for (uint py = block_y; py < end_y; ++py) {
@@ -722,6 +735,49 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
             output[py * width + px] = float4(base.rgb, clamp_unit(alpha));
         }
     }
+}
+
+kernel void base_prepare(constant FrameConstants& frame [[buffer(0)]],
+                         const device GpuWave* waves [[buffer(1)]],
+                         const device GpuSwing* swings [[buffer(2)]],
+                         const device float4* palette [[buffer(3)]],
+                         device float4* block_colors [[buffer(4)]],
+                         uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    const uint block_size = frame.dimensions_counts.z;
+    const uint block_x = gid.x * block_size;
+    const uint block_y = gid.y * block_size;
+    if (block_x >= width || block_y >= height) return;
+
+    const float4 base = generated_base_color(
+        frame, waves, swings, palette, width, height, block_size,
+        block_x, block_y);
+    const uint block_columns = width / block_size
+        + (width % block_size != 0u ? 1u : 0u);
+    block_colors[gid.y * block_columns + gid.x] = base;
+}
+
+kernel void base_fill(constant FrameConstants& frame [[buffer(0)]],
+                      const device float4* block_colors [[buffer(1)]],
+                      device float4* output [[buffer(2)]],
+                      uint2 gid [[thread_position_in_grid]]) {
+    const uint width = frame.dimensions_counts.x;
+    const uint height = frame.dimensions_counts.y;
+    if (gid.x >= width || gid.y >= height) return;
+
+    const uint block_size = frame.dimensions_counts.z;
+    const uint block_columns = width / block_size
+        + (width % block_size != 0u ? 1u : 0u);
+    const uint block_index = (gid.y / block_size) * block_columns
+                             + gid.x / block_size;
+    const float4 base = block_colors[block_index];
+    const float source_alpha = frame.starting_flags.z != 0u
+                                   ? base.a : 1.0f;
+    const float alpha = source_alpha
+                        * procedural_alpha(frame, gid.x, gid.y,
+                                           width, height);
+    output[gid.y * width + gid.x] = float4(base.rgb, clamp_unit(alpha));
 }
 
 int reflected_index(int index, int size) {
@@ -1031,7 +1087,8 @@ float3 surface_world_normal(float3 normal, float3 scale, float3 angles,
 }
 
 float3 orient_normal(float3 normal, float3 ray_direction) {
-    return dot(normal, ray_direction) > 0.0f ? -normal : normal;
+    return dot(normal, ray_direction) > 8.0f * 1.1920929e-7f
+        ? -normal : normal;
 }
 
 int environment_wrap_index(int value, uint extent) {
@@ -1439,21 +1496,43 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
         const float a = dot(direction, direction);
         const float b = 2.0f * dot(origin, direction);
         const float c = dot(origin, origin) - 1.0f;
-        const float discriminant = b * b - 4.0f * a * c;
-        if (a <= 1.0e-12f || discriminant < 0.0f) {
+        const float b_squared = b * b;
+        const float four_ac = 4.0f * a * c;
+        const float discriminant = b_squared - four_ac;
+        const float discriminant_tolerance = 8.0f * 1.1920929e-7f
+            * max(1.0f, max(fabs(b_squared), fabs(four_ac)));
+        if (a <= 1.0e-12f
+            || discriminant < -discriminant_tolerance) {
             visible = false;
         } else {
-            const float root = sqrt(max(0.0f, discriminant));
-            const float first = (-b - root) / (2.0f * a);
-            const float second = (-b + root) / (2.0f * a);
+            const float stable_discriminant =
+                fabs(discriminant) <= discriminant_tolerance
+                    ? 0.0f : discriminant;
+            const float root = sqrt(max(0.0f, stable_discriminant));
+            float first = (-b - root) / (2.0f * a);
+            float second = (-b + root) / (2.0f * a);
+            if (first > second) {
+                const float temporary = first;
+                first = second;
+                second = temporary;
+            }
             const float front_distance = first >= 0.0f ? first : second;
             if (second < 0.0f) {
                 visible = false;
             } else {
-                const auto sample_hit = [&](float distance) {
-                    const float3 point = origin + direction * distance;
+                const auto sample_hit = [&](float distance,
+                                            bool tangent) {
+                    float3 point = origin + direction * distance;
+                    if (tangent) {
+                        point -= direction * (dot(point, direction) / a);
+                    }
                     const float3 normal = normalize(point);
-                    const float longitude = atan2(normal.x, normal.z);
+                    // Match the CPU and OpenGL source-texture address at the
+                    // exact equirectangular pole instead of relying on the
+                    // device-specific atan2(0, 0) result.
+                    const float longitude =
+                        normal.x == 0.0f && normal.z == 0.0f
+                            ? 0.0f : atan2(normal.x, normal.z);
                     const float latitude = asin(clamp(normal.y, -1.0f, 1.0f));
                     const float u = wrap_unit(0.5f + longitude / kTau);
                     const float v = 0.5f - latitude / kPi;
@@ -1461,11 +1540,12 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
                         source, u * float(width), v * height_span,
                         width, height), normal);
                 };
-                mapped = sample_hit(front_distance);
+                mapped = sample_hit(front_distance,
+                                    stable_discriminant == 0.0f);
                 if (surface.flags.x != 0u && first >= 0.0f
-                    && second - first > 1.0e-7f) {
+                    && second - first > 1.0e-10f) {
                     mapped = composite_straight_over(
-                        mapped, sample_hit(second));
+                        mapped, sample_hit(second, false));
                 }
             }
         }

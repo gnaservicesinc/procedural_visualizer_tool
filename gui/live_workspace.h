@@ -59,6 +59,13 @@ public:
     void setProjectLiveConfig(const pvt::LiveConfig& config);
     void refreshProjectSnapshot();
 
+    // Project load/save owns a staged document snapshot. Lock the inspector
+    // for that transaction while leaving GO LIVE, Freeze, Blackout, and
+    // stage-output controls available to the performer.
+    // The commit path is guarded too, so queued/runtime-driven authoring cannot
+    // bypass the visual lock.
+    void setProjectEditingEnabled(bool enabled);
+
     // Entering Live starts the bounded renderer and configured runtime I/O;
     // leaving it tears those down. Freeze, blackout, current scene, captured
     // samples, learned-value overlays, and resolved devices are never saved.

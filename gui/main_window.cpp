@@ -7183,6 +7183,17 @@ void MainWindow::restoreLiveWorkspace(bool resume_editor_preview) {
 
 void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
                                          const QString& reason) {
+    if (project_io_active_) {
+        if (live_workspace_ != nullptr) {
+            live_workspace_->setProjectLiveConfig(project_.canvas.live);
+            live_workspace_->refreshProjectSnapshot();
+        }
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "Live project settings are locked until the project file operation finishes."));
+        }
+        return;
+    }
     pvt::ProjectConfig candidate = project_;
     candidate.canvas.live = live;
     const pvt::ValidationResult validation = pvt::validate(candidate);
@@ -17752,6 +17763,9 @@ bool MainWindow::adoptLoadedProject(pvt::ProjectDocument loaded,
 
 void MainWindow::setProjectIoActive(bool active, const QString& message) {
     project_io_active_ = active;
+    if (live_workspace_ != nullptr) {
+        live_workspace_->setProjectEditingEnabled(!active);
+    }
     if (active && live_workspace_ != nullptr
         && live_workspace_->isPresentationActive()) {
         setLivePreviewOutputActive(false);
@@ -18130,24 +18144,68 @@ bool MainWindow::runSmokeChecks(QString* error) {
     // admission. Beginning a load/save must drain presentation first, and a
     // direct LIVE request cannot use that transition window to start the
     // performance runtime while the transaction is active.
+    const bool authored_live_before =
+        project_.canvas.live.safety.prevent_device_sleep;
+    const bool config_live_before =
+        config_.live.safety.prevent_device_sleep;
+    auto* const transaction_last_good_editor =
+        live_workspace_->findChild<QSpinBox*>(
+            QStringLiteral("liveLastGoodTimeout"));
+    const int last_good_before =
+        project_.canvas.live.safety.last_good_frame_timeout_milliseconds;
+    const bool document_live_before = document_ != nullptr
+        ? document_->project.canvas.live.safety.prevent_device_sleep
+        : authored_live_before;
+    const int undo_count_before_live_transaction = undo_stack_->count();
+    const bool undo_clean_before_live_transaction = undo_stack_->isClean();
     live_workspace_->setPresentationActive(true);
     QApplication::processEvents();
     setProjectIoActive(true, QString{});
     QApplication::processEvents();
     setLiveMode(true);
     QApplication::processEvents();
+    if (transaction_last_good_editor != nullptr) {
+        transaction_last_good_editor->setValue(
+            last_good_before == 0 ? 1 : 0);
+    }
+    pvt::LiveConfig blocked_live_edit = project_.canvas.live;
+    blocked_live_edit.safety.prevent_device_sleep = !authored_live_before;
+    applyAuthoredLiveConfig(
+        blocked_live_edit, tr("Blocked Live edit during project transaction"));
+    QApplication::processEvents();
     const bool transaction_output_guarded =
         !live_workspace_->isPresentationActive()
         && !live_workspace_->isLiveActive()
         && live_mode_action_ != nullptr
         && !live_mode_action_->isEnabled();
+    const bool transaction_live_authoring_guarded =
+        live_tabs != nullptr && !live_tabs->isEnabled()
+        && live_freeze != nullptr && live_freeze->isEnabled()
+        && live_blackout != nullptr && live_blackout->isEnabled()
+        && transaction_last_good_editor != nullptr
+        && !transaction_last_good_editor->isEnabled()
+        && transaction_last_good_editor->value() == last_good_before
+        && project_.canvas.live.safety
+                   .last_good_frame_timeout_milliseconds
+               == last_good_before
+        && project_.canvas.live.safety.prevent_device_sleep
+               == authored_live_before
+        && config_.live.safety.prevent_device_sleep == config_live_before
+        && document_ != nullptr
+        && document_->project.canvas.live.safety.prevent_device_sleep
+               == document_live_before
+        && undo_stack_->count() == undo_count_before_live_transaction
+        && undo_stack_->isClean() == undo_clean_before_live_transaction;
     setProjectIoActive(false);
-    if (!transaction_output_guarded) {
+    const bool live_authoring_reenabled =
+        live_tabs != nullptr && live_tabs->isEnabled();
+    if (!transaction_output_guarded || !transaction_live_authoring_guarded
+        || !live_authoring_reenabled) {
         live_workspace_->setPresentationActive(false);
         restoreLiveWorkspace(false);
         if (error != nullptr) {
             *error = tr(
-                "A project transaction did not stop presentation output and block the reverse transition into performance LIVE.");
+                "A project transaction did not stop presentation output, block the reverse transition into performance LIVE, or lock and restore authored Live controls without changing the staged document.");
         }
         return false;
     }

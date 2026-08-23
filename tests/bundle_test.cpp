@@ -3087,8 +3087,83 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(directory_files.files.count("0/0.music_analysis.txt") == 1U);
     CHECK(directory_files.files["0/0.pvt"].find(
               "layer_clock.music.feature_samples") == std::string::npos);
+    const std::string split_layer_prefix =
+        "PVT_LAYER_SPLIT\t2\nsplit.layer_format_version\t"
+        + std::to_string(pvt::detail::kLayerConfigFormatVersion) + "\n";
+    CHECK(directory_files.files["0/0.pvt"].rfind(
+              split_layer_prefix, 0U) == 0U);
     CHECK(directory_files.files.count(".DS_Store") == 0U
           && directory_files.files.count("0/.DS_Store") == 0U);
+
+    // Split-layer v1 did not record the layer codec version. A v15-era v1
+    // record contains the explicit alpha-order field and must retain its
+    // authored value; only an older v1 record with that key absent migrates to
+    // the historical alpha-outermost behavior.
+    const fs::path current_split_v1_bundle =
+        directory / "split-layer-v1-current";
+    filesystem_error.clear();
+    fs::copy(bundle, current_split_v1_bundle, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    std::string current_split_v1 =
+        read_bytes(current_split_v1_bundle / "0" / "0.pvt");
+    CHECK(replace_once(current_split_v1, "PVT_LAYER_SPLIT\t2\n",
+                       "PVT_LAYER_SPLIT\t1\n"));
+    CHECK(erase_record(current_split_v1, "split.layer_format_version"));
+    CHECK(write_bytes(current_split_v1_bundle / "0" / "0.pvt",
+                      current_split_v1));
+    pvt::ProjectDocument current_split_v1_loaded;
+    CHECK(pvt::load_project_document(as_utf8(current_split_v1_bundle),
+                                     current_split_v1_loaded, &error));
+    CHECK(!current_split_v1_loaded.project.layers.front().render
+               .starting_colors.legacy_alpha_outermost);
+
+    const fs::path historical_split_v1_bundle =
+        directory / "split-layer-v1-historical";
+    filesystem_error.clear();
+    fs::copy(bundle, historical_split_v1_bundle, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    std::string historical_split_v1 =
+        read_bytes(historical_split_v1_bundle / "0" / "0.pvt");
+    CHECK(replace_once(historical_split_v1, "PVT_LAYER_SPLIT\t2\n",
+                       "PVT_LAYER_SPLIT\t1\n"));
+    CHECK(erase_record(historical_split_v1, "split.layer_format_version"));
+    CHECK(erase_record(
+        historical_split_v1,
+        "starting_colors.legacy_alpha_outermost"));
+    CHECK(write_bytes(historical_split_v1_bundle / "0" / "0.pvt",
+                      historical_split_v1));
+    pvt::ProjectDocument historical_split_v1_loaded;
+    CHECK(pvt::load_project_document(as_utf8(historical_split_v1_bundle),
+                                     historical_split_v1_loaded, &error));
+    CHECK(historical_split_v1_loaded.project.layers.front().render
+              .starting_colors.legacy_alpha_outermost);
+
+    // The envelope version is a hostile-input boundary, and a rejected load
+    // must leave its destination untouched.
+    const fs::path future_split_layer_bundle =
+        directory / "split-layer-future-codec";
+    filesystem_error.clear();
+    fs::copy(bundle, future_split_layer_bundle, fs::copy_options::recursive,
+             filesystem_error);
+    CHECK(!filesystem_error);
+    std::string future_split_layer =
+        read_bytes(future_split_layer_bundle / "0" / "0.pvt");
+    CHECK(replace_record_value(
+        future_split_layer, "split.layer_format_version",
+        std::to_string(pvt::detail::kLayerConfigFormatVersion + 1U)));
+    CHECK(write_bytes(future_split_layer_bundle / "0" / "0.pvt",
+                      future_split_layer));
+    pvt::ProjectDocument future_split_sentinel =
+        pvt::default_project_document();
+    future_split_sentinel.project.name = "split layer sentinel";
+    const std::string future_split_sentinel_uuid =
+        future_split_sentinel.project.uuid;
+    CHECK(!pvt::load_project_document(as_utf8(future_split_layer_bundle),
+                                      future_split_sentinel, &error));
+    CHECK(future_split_sentinel.project.uuid == future_split_sentinel_uuid
+          && future_split_sentinel.project.name == "split layer sentinel");
 
     // The no-change fast path must still notice direct API edits inside the
     // large music tables even when a caller does not separately set dirty.

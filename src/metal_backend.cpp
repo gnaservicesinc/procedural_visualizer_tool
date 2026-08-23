@@ -161,6 +161,11 @@ static_assert(sizeof(GpuMotion) == 32U);
 static_assert(sizeof(GpuParticlePoint) == 32U);
 static_assert(sizeof(GpuParticleGrid) == 16U);
 
+// Small blocks keep the direct path to avoid an extra full-image read/write.
+// At and above this size, the serial per-block fill is large enough to justify
+// splitting per-pixel alpha and expansion across the complete GPU.
+constexpr int kTwoPassBaseMinimumBlockSize = 64;
+
 bool cancelled(const std::atomic_bool* cancel) {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
@@ -219,6 +224,8 @@ std::string ns_error_text(const NS::Error* error) {
 
 enum class Pipeline : std::size_t {
     Base = 0,
+    BasePrepare,
+    BaseFill,
     SourceImage,
     Coordinate,
     Surface,
@@ -241,6 +248,8 @@ enum class Pipeline : std::size_t {
 
 constexpr const char* kPipelineNames[] = {
     "base_render",
+    "base_prepare",
+    "base_fill",
     "source_image_render",
     "coordinate_effect",
     "surface_mapping",
@@ -1359,7 +1368,8 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     const bool cpu_raster_surface = surface_has_work(config.surface)
         && (config.surface.mapping == SurfaceMapping::CustomObj
             || (config.surface.mapping == SurfaceMapping::Plane
-                && config.surface.plane_displacement.enabled));
+                && config.surface.plane_displacement.enabled
+                && config.surface.curvature > 0.0));
     PreparedEnvironmentMap prepared_environment;
     const bool environment_work = surface_has_work(config.surface)
         && !cpu_raster_surface && config.surface.environment_map.enabled
@@ -1426,6 +1436,30 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error, "Metal working buffer size overflowed.");
     }
     const std::size_t frame_working_bytes = frame_bytes * 3U;
+    const std::size_t block_size =
+        static_cast<std::size_t>(config.block_size);
+    const std::size_t block_columns =
+        static_cast<std::size_t>(config.width) / block_size
+        + (static_cast<std::size_t>(config.width) % block_size != 0U
+               ? 1U : 0U);
+    const std::size_t block_rows =
+        static_cast<std::size_t>(config.height) / block_size
+        + (static_cast<std::size_t>(config.height) % block_size != 0U
+               ? 1U : 0U);
+    const bool use_two_pass_base =
+        !starting_image
+        && config.block_size >= kTwoPassBaseMinimumBlockSize;
+    std::size_t base_block_count = 0U;
+    std::size_t generated_block_bytes = 0U;
+    if (use_two_pass_base
+        && (!checked_size_multiply(block_columns, block_rows,
+                                   base_block_count)
+            || !checked_size_multiply(base_block_count,
+                                      sizeof(Float4),
+                                      generated_block_bytes))) {
+        return fail(error,
+                    "The Metal generated-block buffer estimate overflowed.");
+    }
     std::size_t particle_working_bytes = 0U;
     for (const PreparedEffect& effect : prepared.effects) {
         if (effect.type != EffectType::ParticleField) continue;
@@ -1454,6 +1488,12 @@ bool render_prepared_frame_metal(const RenderConfig& config,
             error,
             "The Metal working buffers and environment map overflowed.");
     }
+    if (!checked_size_add(working_bytes, generated_block_bytes,
+                          working_bytes)) {
+        return fail(
+            error,
+            "The Metal working buffers and generated-block state overflowed.");
+    }
     if (!checked_size_add(working_bytes, particle_working_bytes,
                           working_bytes)) {
         return fail(error,
@@ -1461,8 +1501,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     }
     // Reserve no more than three quarters of the device's advisory working set
     // across all callers. Particle point/tile arrays are included because their
-    // Metal buffers remain retained until command completion; the final quarter
-    // leaves the driver and the rest of the application breathing room.
+    // Metal buffers remain retained until command completion. Generated-base
+    // block colors are included because their two-pass fill keeps them live
+    // until the command buffer completes; the final quarter leaves the driver
+    // and the rest of the application breathing room.
     const std::uint64_t recommended =
         context.device()->recommendedMaxWorkingSetSize();
     const std::uint64_t recommended_budget =
@@ -1473,7 +1515,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                                          : static_cast<std::size_t>(recommended_budget);
     if (memory_budget != 0U && working_bytes > memory_budget) {
         return fail(error,
-                    "This Metal frame's working buffers, source/environment images, and particle acceleration data would exceed the bounded GPU working-set budget.");
+                    "This Metal frame's working buffers, generated-block state, source/environment images, and particle acceleration data would exceed the bounded GPU working-set budget.");
     }
     AdmissionPermit permit(options.maximum_gpu_frames_in_flight,
                            working_bytes, memory_budget, cancel);
@@ -1504,12 +1546,18 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     auto first = make_frame_buffer(context.device(), frame_bytes);
     auto second = make_frame_buffer(context.device(), frame_bytes);
     auto auxiliary = make_frame_buffer(context.device(), frame_bytes);
+    MetalPtr<MTL::Buffer> generated_block_buffer;
+    if (generated_block_bytes != 0U) {
+        generated_block_buffer = make_frame_buffer(
+            context.device(), generated_block_bytes);
+    }
     if (!wave_buffer || !swing_buffer || !palette_buffer
         || (starting_image && !starting_image_buffer)
         || (prepared_environment && !environment_image_buffer)
+        || (generated_block_bytes != 0U && !generated_block_buffer)
         || !first || !second || !auxiliary) {
         return fail(error,
-                    "Metal could not allocate its bounded shared frame buffers.");
+                    "Metal could not allocate its bounded shared frame and generated-block buffers.");
     }
 
     MTL::CommandBuffer* command_buffer = context.queue()->commandBuffer();
@@ -1543,14 +1591,8 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         static_cast<NS::UInteger>(config.width),
         static_cast<NS::UInteger>(config.height), 1U);
     const auto block_grid = MTL::Size(
-        static_cast<NS::UInteger>(
-            (static_cast<std::uint64_t>(config.width)
-             + static_cast<std::uint64_t>(config.block_size) - 1U)
-            / static_cast<std::uint64_t>(config.block_size)),
-        static_cast<NS::UInteger>(
-            (static_cast<std::uint64_t>(config.height)
-             + static_cast<std::uint64_t>(config.block_size) - 1U)
-            / static_cast<std::uint64_t>(config.block_size)), 1U);
+        static_cast<NS::UInteger>(block_columns),
+        static_cast<NS::UInteger>(block_rows), 1U);
 
     if (starting_image) {
         const GpuSourceImage source = make_source_image(
@@ -1566,14 +1608,32 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                         encoder->setBuffer(current, 0U, 4U);
                     });
     } else {
-        encode_grid(command_buffer, context.pipeline(Pipeline::Base), block_grid,
+        encode_grid(command_buffer,
+                    context.pipeline(use_two_pass_base
+                                         ? Pipeline::BasePrepare
+                                         : Pipeline::Base),
+                    block_grid,
                     [&](MTL::ComputeCommandEncoder* encoder) {
                         encoder->setBytes(&constants, sizeof(constants), 0U);
                         encoder->setBuffer(wave_buffer.get(), 0U, 1U);
                         encoder->setBuffer(swing_buffer.get(), 0U, 2U);
                         encoder->setBuffer(palette_buffer.get(), 0U, 3U);
-                        encoder->setBuffer(current, 0U, 4U);
+                        encoder->setBuffer(
+                            use_two_pass_base
+                                ? generated_block_buffer.get() : current,
+                            0U, 4U);
                     });
+        if (use_two_pass_base) {
+            encode_grid(command_buffer, context.pipeline(Pipeline::BaseFill),
+                        pixel_grid,
+                        [&](MTL::ComputeCommandEncoder* encoder) {
+                            encoder->setBytes(&constants, sizeof(constants),
+                                              0U);
+                            encoder->setBuffer(generated_block_buffer.get(),
+                                               0U, 1U);
+                            encoder->setBuffer(current, 0U, 2U);
+                        });
+        }
     }
 
     bool effect_buffer_failure = false;

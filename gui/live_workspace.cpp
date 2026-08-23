@@ -405,6 +405,7 @@ struct LiveWorkspace::Impl {
     bool active = false;
     bool presentation_active = false;
     bool rebuilding = false;
+    bool project_editing_enabled = true;
     bool user_freeze = false;
     bool user_blackout = false;
     bool safety_blackout = false;
@@ -1488,6 +1489,10 @@ void LiveWorkspace::Impl::connectRuntime() {
 
 void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
                                        const QString& reason) {
+    if (!project_editing_enabled) {
+        refreshConfigUi();
+        return;
+    }
     const pvt::ValidationResult validation = pvt::validate(next);
     if (!validation.ok) {
         QMessageBox::warning(q, q->tr("Live configuration"),
@@ -4279,6 +4284,17 @@ void LiveWorkspace::refreshProjectSnapshot() {
                    ? impl_->project_provider() : pvt::default_project());
         impl_->restartFrameSchedule(project.canvas.fps);
         impl_->requestFrame();
+    }
+}
+
+void LiveWorkspace::setProjectEditingEnabled(bool enabled) {
+    impl_->project_editing_enabled = enabled;
+    if (!enabled) impl_->learn_mapping = -1;
+    if (impl_->tabs != nullptr) impl_->tabs->setEnabled(enabled);
+    if (impl_->learn_button != nullptr) {
+        impl_->learn_button->setText(
+            impl_->learn_mapping >= 0 ? tr("Listening…")
+                                      : tr("MIDI Learn"));
     }
 }
 

@@ -4,7 +4,9 @@
 #include "source_image.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -36,10 +38,33 @@ struct CachedMesh {
     std::uint64_t last_used = 0U;
 };
 
+// A project export can start several frame workers at once. The decoded height
+// image is shared, so coalesce the first generated-mesh miss as well; otherwise
+// every worker independently allocates and fills the same potentially large
+// subdivision grid before one of them wins the cache race.
+struct PendingMesh {
+    std::shared_ptr<const Image> height_image;
+    int render_width = 0;
+    int render_height = 0;
+    int pixels_per_node = 0;
+    double minimum = 0.0;
+    double maximum = 0.0;
+    double midpoint = 0.0;
+    std::uint64_t cache_generation = 0U;
+    bool complete = false;
+    bool succeeded = false;
+    bool retryable = false;
+    std::shared_ptr<const ObjMesh> mesh;
+    std::string error;
+    std::condition_variable wake;
+};
+
 std::mutex mesh_cache_mutex;
 std::vector<CachedMesh> mesh_cache;
+std::vector<std::shared_ptr<PendingMesh>> pending_meshes;
 std::size_t mesh_cache_bytes = 0U;
 std::uint64_t mesh_cache_clock = 0U;
+std::uint64_t mesh_cache_generation = 0U;
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) *error = std::move(message);
@@ -148,6 +173,22 @@ bool cache_key_matches(const CachedMesh& cached,
            && cached.maximum == config.maximum
            && cached.midpoint == config.midpoint
            && cached.mesh;
+}
+
+bool pending_key_matches(const PendingMesh& pending,
+                         const std::shared_ptr<const Image>& height_image,
+                         const PlaneDisplacementConfig& config,
+                         int render_width,
+                         int render_height,
+                         std::uint64_t cache_generation) {
+    return pending.height_image == height_image
+           && pending.render_width == render_width
+           && pending.render_height == render_height
+           && pending.pixels_per_node == config.pixels_per_node
+           && pending.minimum == config.minimum
+           && pending.maximum == config.maximum
+           && pending.midpoint == config.midpoint
+           && pending.cache_generation == cache_generation;
 }
 
 bool build_mesh(const Image& height_image,
@@ -342,60 +383,143 @@ bool load_displacement_plane_mesh(
         }
         return false;
     }
-    {
-        const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
-        const auto found = std::find_if(
-            mesh_cache.begin(), mesh_cache.end(),
-            [&](const CachedMesh& candidate) {
-                return cache_key_matches(candidate, height_image, displacement,
-                                         render_width, render_height);
-            });
-        if (found != mesh_cache.end()) {
-            found->last_used = ++mesh_cache_clock;
-            destination = found->mesh;
-            return true;
-        }
-    }
-
-    std::shared_ptr<const ObjMesh> generated;
-    if (!build_mesh(*height_image, displacement, render_width, render_height,
-                    generated, cancel, error)) {
-        return false;
-    }
-    const std::size_t generated_bytes = generated->estimated_bytes();
-    {
-        const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
-        const auto existing = std::find_if(
-            mesh_cache.begin(), mesh_cache.end(),
-            [&](const CachedMesh& candidate) {
-                return cache_key_matches(candidate, height_image, displacement,
-                                         render_width, render_height);
-            });
-        if (existing != mesh_cache.end()) {
-            existing->last_used = ++mesh_cache_clock;
-            destination = existing->mesh;
-            return true;
-        }
-        mesh_cache.push_back({height_image, render_width, render_height,
-                              displacement.pixels_per_node,
-                              displacement.minimum, displacement.maximum,
-                              displacement.midpoint, generated,
-                              generated_bytes, ++mesh_cache_clock});
-        mesh_cache_bytes += generated_bytes;
-        while ((mesh_cache.size() > kMaximumCachedMeshes
-                || mesh_cache_bytes > kMaximumCachedMeshBytes)
-               && mesh_cache.size() > 1U) {
-            const auto oldest = std::min_element(
+    for (;;) {
+        std::shared_ptr<PendingMesh> pending;
+        bool build_owner = false;
+        {
+            std::unique_lock<std::mutex> lock(mesh_cache_mutex);
+            const auto found = std::find_if(
                 mesh_cache.begin(), mesh_cache.end(),
-                [](const CachedMesh& left, const CachedMesh& right) {
-                    return left.last_used < right.last_used;
+                [&](const CachedMesh& candidate) {
+                    return cache_key_matches(
+                        candidate, height_image, displacement,
+                        render_width, render_height);
                 });
-            mesh_cache_bytes -= oldest->bytes;
-            mesh_cache.erase(oldest);
+            if (found != mesh_cache.end()) {
+                found->last_used = ++mesh_cache_clock;
+                destination = found->mesh;
+                return true;
+            }
+
+            const auto building = std::find_if(
+                pending_meshes.begin(), pending_meshes.end(),
+                [&](const std::shared_ptr<PendingMesh>& candidate) {
+                    return pending_key_matches(
+                        *candidate, height_image, displacement,
+                        render_width, render_height,
+                        mesh_cache_generation);
+                });
+            if (building == pending_meshes.end()) {
+                pending = std::make_shared<PendingMesh>();
+                pending->height_image = height_image;
+                pending->render_width = render_width;
+                pending->render_height = render_height;
+                pending->pixels_per_node = displacement.pixels_per_node;
+                pending->minimum = displacement.minimum;
+                pending->maximum = displacement.maximum;
+                pending->midpoint = displacement.midpoint;
+                pending->cache_generation = mesh_cache_generation;
+                pending_meshes.push_back(pending);
+                build_owner = true;
+            } else {
+                pending = *building;
+                while (!pending->complete) {
+                    if (cancel != nullptr
+                        && cancel->load(std::memory_order_relaxed)) {
+                        return fail(
+                            error,
+                            "Displacement-plane generation was cancelled while waiting for a shared mesh build.");
+                    }
+                    pending->wake.wait_for(
+                        lock, std::chrono::milliseconds(5));
+                }
+                if (pending->succeeded) {
+                    destination = pending->mesh;
+                    clear_error(error);
+                    return true;
+                }
+                if (pending->retryable
+                    && (cancel == nullptr
+                        || !cancel->load(std::memory_order_relaxed))) {
+                    continue;
+                }
+                return fail(
+                    error,
+                    pending->error.empty()
+                        ? "The shared displacement-plane build failed unexpectedly."
+                        : pending->error);
+            }
+        }
+
+        if (!build_owner) continue;
+
+        try {
+            std::shared_ptr<const ObjMesh> generated;
+            std::string build_error;
+            const bool generated_ok = build_mesh(
+                *height_image, displacement, render_width, render_height,
+                generated, cancel, &build_error);
+            const std::size_t generated_bytes =
+                generated_ok ? generated->estimated_bytes() : 0U;
+            {
+                const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
+                if (generated_ok
+                    && pending->cache_generation
+                           == mesh_cache_generation) {
+                    mesh_cache.push_back(
+                        {height_image, render_width, render_height,
+                         displacement.pixels_per_node,
+                         displacement.minimum, displacement.maximum,
+                         displacement.midpoint, generated,
+                         generated_bytes, ++mesh_cache_clock});
+                    mesh_cache_bytes += generated_bytes;
+                    while ((mesh_cache.size() > kMaximumCachedMeshes
+                            || mesh_cache_bytes > kMaximumCachedMeshBytes)
+                           && mesh_cache.size() > 1U) {
+                        const auto oldest = std::min_element(
+                            mesh_cache.begin(), mesh_cache.end(),
+                            [](const CachedMesh& left,
+                               const CachedMesh& right) {
+                                return left.last_used < right.last_used;
+                            });
+                        mesh_cache_bytes -= oldest->bytes;
+                        mesh_cache.erase(oldest);
+                    }
+                }
+                pending->complete = true;
+                pending->succeeded = generated_ok;
+                pending->retryable =
+                    !generated_ok && cancel != nullptr
+                    && cancel->load(std::memory_order_relaxed);
+                pending->mesh = generated;
+                pending->error = build_error;
+                const auto building = std::find(
+                    pending_meshes.begin(), pending_meshes.end(), pending);
+                if (building != pending_meshes.end()) {
+                    pending_meshes.erase(building);
+                }
+            }
+            pending->wake.notify_all();
+            if (!generated_ok) return fail(error, std::move(build_error));
+            destination = std::move(generated);
+            clear_error(error);
+            return true;
+        } catch (...) {
+            {
+                const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
+                pending->complete = true;
+                pending->succeeded = false;
+                pending->retryable = false;
+                const auto building = std::find(
+                    pending_meshes.begin(), pending_meshes.end(), pending);
+                if (building != pending_meshes.end()) {
+                    pending_meshes.erase(building);
+                }
+            }
+            pending->wake.notify_all();
+            throw;
         }
     }
-    destination = std::move(generated);
-    return true;
 }
 
 bool apply_displacement_plane_mapping(
@@ -420,6 +544,8 @@ void clear_displacement_mesh_cache() noexcept {
     mesh_cache.clear();
     mesh_cache_bytes = 0U;
     mesh_cache_clock = 0U;
+    ++mesh_cache_generation;
+    if (mesh_cache_generation == 0U) ++mesh_cache_generation;
 }
 
 } // namespace pvt::detail

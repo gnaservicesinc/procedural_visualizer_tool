@@ -256,6 +256,46 @@ int main(int argc, char** argv) {
         CHECK(difference <= tolerance);
     }
 
+    // The top-center Sphere sample is the exact equirectangular pole. GLSL
+    // leaves atan(0, 0) implementation-defined, so address a source whose
+    // horizontal colors/alpha make a non-canonical longitude observable.
+    pvt::RenderConfig pole = analytic_config(pvt::SurfaceMapping::Sphere);
+    pole.width = 65;
+    pole.height = 65;
+    pole.block_size = 1;
+    pole.surface.curvature = 1.0;
+    pole.surface.lighting = 0.0;
+    pole.surface.rotation_x_degrees = 0.0;
+    pole.surface.rotation_y_degrees = 0.0;
+    pole.surface.rotation_z_degrees = 0.0;
+    pole.surface.rotation_x_turns_per_loop = 0;
+    pole.surface.rotation_y_turns_per_loop = 0;
+    pole.surface.rotation_z_turns_per_loop = 0;
+    pole.surface.composite_backfaces = false;
+    pole.starting_colors.mode = pvt::StartingColorMode::HorizontalRainbow;
+    pvt::Image pole_reference;
+    pvt::Image pole_strict;
+    std::string pole_error;
+    CHECK(pvt::render_frame_at_phase(pole, 0.31, cpu, pole_reference,
+                                     nullptr, &pole_error));
+    CHECK(pvt::render_frame_at_phase(pole, 0.31, gpu, pole_strict,
+                                     nullptr, &pole_error));
+    const std::size_t pole_offset =
+        static_cast<std::size_t>(pole.width / 2) * 4U;
+    const bool pole_storage_valid =
+        pole_reference.pixels.size() >= pole_offset + 4U
+        && pole_strict.pixels.size() >= pole_offset + 4U;
+    CHECK(pole_storage_valid);
+    if (pole_storage_valid) {
+        for (std::size_t channel = 0U; channel < 4U; ++channel) {
+            CHECK(std::fabs(
+                      static_cast<double>(
+                          pole_reference.pixels[pole_offset + channel])
+                      - pole_strict.pixels[pole_offset + channel])
+                  <= 0.0035);
+        }
+    }
+
     const std::filesystem::path environment_map =
         std::filesystem::temp_directory_path()
         / ("pvt-opengl-environment-"
@@ -344,7 +384,9 @@ int main(int argc, char** argv) {
                       << pixel % static_cast<std::size_t>(reference.width)
                       << ", "
                       << pixel / static_cast<std::size_t>(reference.width)
-                      << ") channel " << maximum_index % 4U << '\n';
+                      << ") channel " << maximum_index % 4U
+                      << " (CPU " << reference.pixels[maximum_index]
+                      << ", GPU " << strict.pixels[maximum_index] << ")\n";
         }
         CHECK(difference <= 0.0065);
     }
@@ -561,8 +603,12 @@ int main(int argc, char** argv) {
                             unsupported_gpu, nullptr, &error));
     // This path is deliberately outside the generated-source shader. Its GPU
     // completion pass must be an identity operation, not a subtle resample.
-    CHECK(maximum_difference(unsupported_reference, unsupported_gpu)
-          <= 1.0e-6);
+    // A macOS audit build may compile both backends, in which case the public
+    // GPU selector deliberately chooses Metal before OpenGL and this target
+    // cannot observe the OpenGL completion pass.
+    if (!capabilities.metal_available) {
+        CHECK(unsupported_reference.pixels == unsupported_gpu.pixels);
+    }
 
     if (failures != 0) {
         std::cerr << failures << " OpenGL surface backend test(s) failed.\n";

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -34,6 +35,9 @@ constexpr std::size_t kMaximumMeterExpressionBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMeterMeasures = kMaximumUiItems;
 constexpr std::size_t kMaximumMeterGroups = kMaximumUiItems;
 constexpr int kMaximumMeterValue = (std::numeric_limits<int>::max)();
+// Two rolling rows, each retaining one motion phase and wave height per block
+// boundary. Validation admits this transient cache alongside image buffers.
+constexpr std::size_t kWaveNodeCacheBytesPerColumn = 4U * sizeof(double);
 constexpr double kMaximumMusicDurationSeconds =
     static_cast<double>((std::numeric_limits<int>::max)());
 
@@ -2041,7 +2045,7 @@ double wave_height(const RenderConfig& config, double x, double y,
     const AudioReactiveConfig& audio = effective_audio_reactive(config);
     double height = 0.0;
     for (const WaveConfig& wave : config.waves) {
-        if (!wave.enabled) {
+        if (!wave.enabled || wave.amplitude == 0.0) {
             continue;
         }
         const double clock = wave.synchronized ? motion_phase : loop_phase;
@@ -2062,6 +2066,25 @@ double wave_height(const RenderConfig& config, double x, double y,
                              - phase + radians(wave.phase_degrees));
     }
     return height;
+}
+
+bool has_enabled_wave(const RenderConfig& config) {
+    return std::any_of(
+        config.waves.begin(), config.waves.end(),
+        [](const WaveConfig& wave) { return wave.enabled; });
+}
+
+bool has_contributing_wave(const RenderConfig& config) {
+    return std::any_of(
+        config.waves.begin(), config.waves.end(),
+        [](const WaveConfig& wave) {
+            return wave.enabled && wave.amplitude != 0.0;
+        });
+}
+
+bool wave_slopes_have_render_work(const RenderConfig& config) {
+    return (config.displacement_enabled && config.displacement != 0.0)
+           || (config.lighting_enabled && config.wave_depth != 0.0);
 }
 
 void ensure_image(Image& image, int width, int height) {
@@ -4090,10 +4113,32 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (!checked_multiply(frame_bytes, buffer_count, peak_bytes)) {
         return invalid_result("The renderer's peak memory estimate overflowed.");
     }
+    // Parameter LFOs can materialize a currently-zero displacement or wave
+    // depth after this authored configuration is admitted, so reserve the
+    // small rolling-row cache whenever either consumer is enabled.
+    if ((config.displacement_enabled || config.lighting_enabled)
+        && has_enabled_wave(config)) {
+        const std::size_t block_size =
+            static_cast<std::size_t>(config.block_size);
+        const std::size_t width = static_cast<std::size_t>(config.width);
+        const std::size_t block_columns =
+            width / block_size + (width % block_size != 0U ? 1U : 0U);
+        std::size_t node_columns = 0U;
+        std::size_t wave_cache_bytes = 0U;
+        if (!checked_add(block_columns, 1U, node_columns)
+            || !checked_multiply(node_columns,
+                                 kWaveNodeCacheBytesPerColumn,
+                                 wave_cache_bytes)
+            || !checked_add(peak_bytes, wave_cache_bytes, peak_bytes)) {
+            return invalid_result(
+                "The wave-node cache peak memory estimate overflowed.");
+        }
+    }
     const bool uses_raster_mesh = surface_has_render_work(config.surface)
         && (config.surface.mapping == SurfaceMapping::CustomObj
             || (config.surface.mapping == SurfaceMapping::Plane
-                && config.surface.plane_displacement.enabled));
+                && config.surface.plane_displacement.enabled
+                && config.surface.curvature > 0.0));
     if (uses_raster_mesh) {
         std::size_t obj_working_bytes = 0;
         if (!checked_multiply(pixel_count,
@@ -4187,7 +4232,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
     if (surface_has_render_work(config.surface)
         && config.surface.mapping == SurfaceMapping::Plane
-        && config.surface.plane_displacement.enabled) {
+        && config.surface.plane_displacement.enabled
+        && config.surface.curvature > 0.0) {
         std::size_t columns = 0U;
         std::size_t rows = 0U;
         std::size_t mesh_bytes = 0U;
@@ -4218,6 +4264,19 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 return invalid_result(
                     "The mesh-construction peak memory estimate overflowed.");
             }
+        }
+    }
+
+    // Materializing enabled parameter LFOs uses a render-only value copy.
+    // Cached music analysis can dominate that copy, so it must participate in
+    // per-frame worker admission rather than multiplying invisibly.
+    if (!config.parameter_lfos.empty()) {
+        std::size_t music_copy_bytes = 0U;
+        if (!detail::render_config_music_copy_bytes(config,
+                                                    music_copy_bytes)
+            || !checked_add(peak_bytes, music_copy_bytes, peak_bytes)) {
+            return invalid_result(
+                "The animated music-analysis copy estimate overflowed.");
         }
     }
 
@@ -4734,60 +4793,83 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
     const bool use_base_alpha =
         config.alpha.use_source_alpha || use_generated_alpha;
 
+    struct WaveNode {
+        double motion_phase = 0.0;
+        double height = 0.0;
+    };
+    const bool use_wave_node_cache =
+        wave_slopes_have_render_work(config)
+        && has_contributing_wave(config);
+    std::vector<WaveNode> current_wave_nodes;
+    std::vector<WaveNode> next_wave_nodes;
+    const std::size_t block_size = static_cast<std::size_t>(config.block_size);
+    const std::size_t width = static_cast<std::size_t>(config.width);
+    const std::size_t block_columns =
+        width / block_size + (width % block_size != 0U ? 1U : 0U);
+    const auto populate_wave_row = [&](std::vector<WaveNode>& row,
+                                       std::int64_t y) {
+        for (std::size_t column = 0U; column < row.size(); ++column) {
+            if ((column & 63U) == 0U) throw_if_cancelled(cancel);
+            const std::int64_t x = static_cast<std::int64_t>(column)
+                                   * config.block_size;
+            const double motion_phase = motion_clock.spatial_swings.empty()
+                ? motion_clock.global_phase
+                : motion_phase_at(
+                      motion_clock, static_cast<double>(x),
+                      static_cast<double>(y), config.width, config.height);
+            row[column] = {
+                motion_phase,
+                wave_height(config, static_cast<double>(x),
+                            static_cast<double>(y), independent_loop_phase,
+                            motion_phase, music)};
+        }
+    };
+    if (use_wave_node_cache) {
+        current_wave_nodes.resize(block_columns + 1U);
+        next_wave_nodes.resize(block_columns + 1U);
+        populate_wave_row(current_wave_nodes, 0);
+        populate_wave_row(next_wave_nodes, config.block_size);
+    }
+
     std::size_t block_counter = 0U;
+    std::size_t block_row_index = 0U;
     for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
-         block_y_wide += config.block_size) {
+         block_y_wide += config.block_size, ++block_row_index) {
         const int block_y = static_cast<int>(block_y_wide);
         throw_if_cancelled(cancel);
+        if (use_wave_node_cache && block_row_index != 0U) {
+            current_wave_nodes.swap(next_wave_nodes);
+            populate_wave_row(
+                next_wave_nodes, block_y_wide + config.block_size);
+        }
+        std::size_t block_column_index = 0U;
         for (std::int64_t block_x_wide = 0; block_x_wide < config.width;
-             block_x_wide += config.block_size) {
+             block_x_wide += config.block_size, ++block_column_index) {
             const int block_x = static_cast<int>(block_x_wide);
             const std::uint64_t starting_color_index =
                 generated_starting_color_index(config, block_x, block_y);
             if ((block_counter++ & 63U) == 0U) {
                 throw_if_cancelled(cancel);
             }
-            const double motion_phase = motion_phase_at(
-                motion_clock, static_cast<double>(block_x),
-                static_cast<double>(block_y), config.width, config.height);
-            const double motion_phase_right =
-                motion_clock.spatial_swings.empty()
-                    ? motion_phase
-                    : motion_phase_at(
-                          motion_clock,
-                          static_cast<double>(block_x)
-                              + static_cast<double>(config.block_size),
-                          static_cast<double>(block_y), config.width,
-                          config.height);
-            const double motion_phase_down =
-                motion_clock.spatial_swings.empty()
-                    ? motion_phase
-                    : motion_phase_at(
-                          motion_clock, static_cast<double>(block_x),
-                          static_cast<double>(block_y)
-                              + static_cast<double>(config.block_size),
-                          config.width, config.height);
+            const double motion_phase = use_wave_node_cache
+                ? current_wave_nodes[block_column_index].motion_phase
+                : motion_phase_at(
+                      motion_clock, static_cast<double>(block_x),
+                      static_cast<double>(block_y), config.width,
+                      config.height);
             const double ghost_phase = motion_phase
                                        - radians(config.ghost_lag_degrees);
-            const double height_here = wave_height(config, block_x, block_y,
-                                                   independent_loop_phase,
-                                                   motion_phase,
-                                                   music);
-            const double height_right = wave_height(config,
-                                                     static_cast<double>(block_x_wide)
-                                                         + config.block_size,
-                                                     block_y,
-                                                     independent_loop_phase,
-                                                     motion_phase_right,
-                                                     music);
-            const double height_down = wave_height(config, block_x,
-                                                    static_cast<double>(block_y_wide)
-                                                        + config.block_size,
-                                                    independent_loop_phase,
-                                                    motion_phase_down,
-                                                    music);
-            const double slope_x = height_right - height_here;
-            const double slope_y = height_down - height_here;
+            double slope_x = 0.0;
+            double slope_y = 0.0;
+            if (use_wave_node_cache) {
+                const double height_here =
+                    current_wave_nodes[block_column_index].height;
+                slope_x =
+                    current_wave_nodes[block_column_index + 1U].height
+                    - height_here;
+                slope_y = next_wave_nodes[block_column_index].height
+                          - height_here;
+            }
             const double displacement = config.displacement_enabled
                                             ? config.displacement * breath
                                             : 0.0;
@@ -6643,8 +6725,14 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                         break;
                     }
                     const auto sample_hit = [&](const CubeHit& hit) {
-                        const double longitude = std::atan2(
-                            hit.normal.x, hit.normal.z);
+                        // Longitude is geometrically undefined at either pole.
+                        // Keep the source-texture address deterministic across
+                        // the CPU and shader backends instead of inheriting
+                        // each platform's atan2(0, 0) result.
+                        const double longitude =
+                            hit.normal.x == 0.0 && hit.normal.z == 0.0
+                                ? 0.0
+                                : std::atan2(hit.normal.x, hit.normal.z);
                         const double latitude = std::asin(clamp_value(
                             hit.normal.y, -1.0, 1.0));
                         const double u = wrap_unit(0.5 + longitude / kTau);
@@ -7334,6 +7422,18 @@ CubicPathSample bound_path_sample(const RenderConfig& config,
     return sample;
 }
 
+bool has_enabled_path_binding(const RenderConfig& config) {
+    return std::any_of(
+               config.waves.begin(), config.waves.end(),
+               [](const WaveConfig& wave) { return wave.path.enabled; })
+           || std::any_of(
+               config.effects.begin(), config.effects.end(),
+               [](const EffectConfig& effect) {
+                   return effect.path.enabled;
+               })
+           || (config.motion.enabled && config.motion.custom_path.enabled);
+}
+
 void resolve_path_bindings(RenderConfig& config, double loop_phase,
                            const MotionClockState& motion_clock) {
     for (WaveConfig& wave : config.waves) {
@@ -7480,7 +7580,8 @@ namespace {
 bool render_frame_at_timeline_sample_cancellable(
     const RenderConfig& config, const TimelineSample& timeline,
     Image& destination, const std::atomic_bool* cancel,
-    bool configuration_already_validated, std::string* error) {
+    bool configuration_already_validated, bool parameter_lfos_already_resolved,
+    std::string* error) {
     try {
         throw_if_cancelled(cancel);
         if (!configuration_already_validated) {
@@ -7503,14 +7604,38 @@ bool render_frame_at_timeline_sample_cancellable(
             kTau * wrap_unit(timeline.normalized_phase);
         const double independent_loop_phase =
             kTau * wrap_unit(timeline.independent_phase);
-        RenderConfig resolved_config = config;
-        materialize_parameter_lfos_in_place(
-            resolved_config, timeline.normalized_phase);
+        const bool resolve_paths = has_enabled_path_binding(config);
+        std::optional<RenderConfig> resolved_storage;
+        const RenderConfig* render_config = &config;
+        if (!parameter_lfos_already_resolved || resolve_paths) {
+            resolved_storage.emplace(config);
+            if (!parameter_lfos_already_resolved) {
+                materialize_parameter_lfos_in_place(
+                    *resolved_storage, timeline.normalized_phase);
+                // LFO targets are clamped to their field's structural range,
+                // but their resolved combination can still cross a
+                // canvas-dependent workload or memory-admission boundary.
+                // Validate the actual frame before any work begins; validating
+                // only the authored fallback would let animation bypass those
+                // limits.
+                if (!config.parameter_lfos.empty()) {
+                    const ValidationResult resolved_validation =
+                        validate_impl(*resolved_storage, false);
+                    if (!resolved_validation.ok) {
+                        set_error(error, resolved_validation.message);
+                        return false;
+                    }
+                }
+            }
+            render_config = &*resolved_storage;
+        }
         const MotionClockState motion_clock =
-            prepare_motion_clock(resolved_config, loop_phase);
-        resolve_path_bindings(resolved_config, independent_loop_phase,
-                              motion_clock);
-        const RenderConfig& render = resolved_config;
+            prepare_motion_clock(*render_config, loop_phase);
+        if (resolve_paths) {
+            resolve_path_bindings(*resolved_storage, independent_loop_phase,
+                                  motion_clock);
+        }
+        const RenderConfig& render = *render_config;
         const AudioReactiveConfig& audio =
             effective_audio_reactive(render);
         Image current;
@@ -7682,6 +7807,33 @@ ValidationResult validate_frame_render_config(const RenderConfig& config) {
     return validate_impl(config, false);
 }
 
+bool render_frame_at_phase_validated_resolved(
+    const RenderConfig& config, double normalized_phase,
+    Image& destination, const std::atomic_bool* cancel,
+    std::string* error) {
+    TimelineSample direct;
+    direct.normalized_phase = normalized_phase;
+    direct.independent_phase = normalized_phase;
+    if (config.clock.mode == ClockMode::Music
+        && config.clock.music.duration_seconds > 0.0
+        && std::isfinite(normalized_phase)) {
+        direct.music = music_features_at(
+            config.clock,
+            wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
+    }
+    return render_frame_at_timeline_sample_cancellable(
+        config, direct, destination, cancel, true, true, error);
+}
+
+bool render_frame_validated_resolved(
+    const RenderConfig& config, int frame_index,
+    Image& destination, const std::atomic_bool* cancel,
+    std::string* error) {
+    return render_frame_at_timeline_sample_cancellable(
+        config, resolve_timeline_sample(config, frame_index),
+        destination, cancel, true, true, error);
+}
+
 ValidationResult validate_render_config_structure(const RenderConfig& config) {
     return validate_impl(config, true, true, false);
 }
@@ -7691,30 +7843,45 @@ namespace {
 bool prepare_frame_for_backend_timeline(const RenderConfig& config,
                                         const TimelineSample& timeline,
                                         PreparedFrame& prepared,
+                                        bool configuration_already_validated,
+                                        bool parameter_lfos_already_resolved,
                                         std::string* error) {
     if (!std::isfinite(timeline.normalized_phase)
         || !std::isfinite(timeline.independent_phase)) {
         set_error(error, "Normalized render phase must be finite.");
         return false;
     }
-    const ValidationResult validation = validate_impl(config, false);
-    if (!validation.ok) {
-        set_error(error, validation.message);
-        return false;
+    if (!configuration_already_validated) {
+        const ValidationResult validation = validate_impl(config, false);
+        if (!validation.ok) {
+            set_error(error, validation.message);
+            return false;
+        }
     }
 
     PreparedFrame candidate;
     candidate.loop_phase = kTau * wrap_unit(timeline.normalized_phase);
     candidate.independent_loop_phase =
         kTau * wrap_unit(timeline.independent_phase);
-    RenderConfig resolved_config = config;
-    materialize_parameter_lfos_in_place(
-        resolved_config, timeline.normalized_phase);
+    const bool resolve_paths = has_enabled_path_binding(config);
+    std::optional<RenderConfig> resolved_storage;
+    const RenderConfig* render_config = &config;
+    if (!parameter_lfos_already_resolved || resolve_paths) {
+        resolved_storage.emplace(config);
+        if (!parameter_lfos_already_resolved) {
+            materialize_parameter_lfos_in_place(
+                *resolved_storage, timeline.normalized_phase);
+        }
+        render_config = &*resolved_storage;
+    }
     const MotionClockState motion_clock =
-        prepare_motion_clock(resolved_config, candidate.loop_phase);
-    resolve_path_bindings(resolved_config, candidate.independent_loop_phase,
-                          motion_clock);
-    const RenderConfig& render = resolved_config;
+        prepare_motion_clock(*render_config, candidate.loop_phase);
+    if (resolve_paths) {
+        resolve_path_bindings(*resolved_storage,
+                              candidate.independent_loop_phase,
+                              motion_clock);
+    }
+    const RenderConfig& render = *render_config;
     const AudioReactiveConfig& audio = effective_audio_reactive(render);
     candidate.global_motion_phase = motion_clock.global_phase;
     candidate.spatial_swings.reserve(motion_clock.spatial_swings.size());
@@ -7810,6 +7977,31 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
 
 } // namespace
 
+bool prepare_frame_for_backend_at_phase_validated_resolved(
+    const RenderConfig& config, double normalized_phase,
+    PreparedFrame& prepared, std::string* error) {
+    TimelineSample timeline;
+    timeline.normalized_phase = normalized_phase;
+    timeline.independent_phase = normalized_phase;
+    if (config.clock.mode == ClockMode::Music
+        && config.clock.music.duration_seconds > 0.0
+        && std::isfinite(normalized_phase)) {
+        timeline.music = music_features_at(
+            config.clock,
+            wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
+    }
+    return prepare_frame_for_backend_timeline(
+        config, timeline, prepared, true, true, error);
+}
+
+bool prepare_frame_for_backend_validated_resolved(
+    const RenderConfig& config, int frame_index,
+    PreparedFrame& prepared, std::string* error) {
+    return prepare_frame_for_backend_timeline(
+        config, resolve_timeline_sample(config, frame_index), prepared,
+        true, true, error);
+}
+
 bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
                                         double normalized_phase,
                                         PreparedFrame& prepared,
@@ -7824,15 +8016,16 @@ bool prepare_frame_for_backend_at_phase(const RenderConfig& config,
             config.clock,
             wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
     }
-    return prepare_frame_for_backend_timeline(config, timeline, prepared,
-                                              error);
+    return prepare_frame_for_backend_timeline(
+        config, timeline, prepared, false, false, error);
 }
 
 bool prepare_frame_for_backend(const RenderConfig& config, int frame_index,
                                PreparedFrame& prepared,
                                std::string* error) {
     return prepare_frame_for_backend_timeline(
-        config, resolve_timeline_sample(config, frame_index), prepared, error);
+        config, resolve_timeline_sample(config, frame_index), prepared,
+        false, false, error);
 }
 
 bool prepare_starting_image_for_backend(const RenderConfig& config,
@@ -7886,7 +8079,7 @@ bool render_frame_at_phase_cancellable(const RenderConfig& config,
             wrap_unit(normalized_phase) * config.clock.music.duration_seconds);
     }
     return render_frame_at_timeline_sample_cancellable(
-        config, direct, destination, cancel, false, error);
+        config, direct, destination, cancel, false, false, error);
 }
 
 bool render_frame_at_phase(const RenderConfig& config, double normalized_phase,
@@ -7911,7 +8104,7 @@ bool render_frame_cancellable(const RenderConfig& config, int frame_index,
     const TimelineSample timeline = resolve_timeline_sample(config,
                                                             frame_index);
     return render_frame_at_timeline_sample_cancellable(
-        config, timeline, destination, cancel, true, error);
+        config, timeline, destination, cancel, true, false, error);
 }
 
 bool render_frame(const RenderConfig& config, int frame_index,
