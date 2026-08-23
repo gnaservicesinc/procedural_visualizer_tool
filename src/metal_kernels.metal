@@ -1056,7 +1056,8 @@ float3 sample_environment_direction(const device float4* image,
                                     float3 direction) {
     const uint width = surface.environment.x;
     const uint height = surface.environment.y;
-    const float longitude = atan2(direction.x, direction.z);
+    const float longitude = direction.x == 0.0f && direction.z == 0.0f
+        ? 0.0f : atan2(direction.x, direction.z);
     const float u = fract(0.5f + longitude / kTau
                           + surface.environment_values.x);
     const float v = clamp(

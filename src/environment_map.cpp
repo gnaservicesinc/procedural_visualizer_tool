@@ -60,7 +60,11 @@ int wrap_index(int value, int extent) noexcept {
 EnvironmentMapRgb sample_direction(const PreparedEnvironmentMap& environment,
                                    Direction direction) noexcept {
     const Image& image = *environment.image;
-    const double longitude = std::atan2(direction.x, direction.z);
+    // Longitude has no geometric meaning at either pole. Do not delegate
+    // atan2(0, 0) to a platform-specific libm choice because shader languages
+    // likewise leave it undefined.
+    const double longitude = direction.x == 0.0 && direction.z == 0.0
+        ? 0.0 : std::atan2(direction.x, direction.z);
     double u = 0.5 + longitude / kTau + environment.rotation_turns;
     u -= std::floor(u);
     const double v = std::clamp(

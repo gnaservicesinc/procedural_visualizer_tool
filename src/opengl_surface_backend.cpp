@@ -395,7 +395,11 @@ vec3 environmentTexel(ivec2 coordinate) {
 }
 
 vec3 sampleEnvironmentDirection(vec3 direction) {
-    float longitude = atan(direction.x, direction.z);
+    // Longitude is geometrically undefined at either pole, and GLSL leaves
+    // atan(0, 0) implementation-defined. Canonicalize the exact pole so Mesa,
+    // Metal, and the CPU address the same equirectangular texel.
+    float longitude = direction.x == 0.0 && direction.z == 0.0
+        ? 0.0 : atan(direction.x, direction.z);
     float u = fract(0.5 + longitude / TAU + environmentRotation);
     float v = clamp(0.5 - asin(clamp(direction.y, -1.0, 1.0)) / PI,
                     0.0, 1.0);
@@ -470,12 +474,10 @@ vec4 compositeStraightOver(vec4 front, vec4 back) {
 
 vec3 cubeNormal(vec3 point) {
     vec3 absolute = abs(point);
-    float maximum = max(absolute.x, max(absolute.y, absolute.z));
-    float edgeTolerance = 16.0 * 1.1920929e-7 * max(1.0, maximum);
-    if (absolute.x + edgeTolerance >= maximum) {
+    if (absolute.x >= absolute.y && absolute.x >= absolute.z) {
         return vec3(point.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0);
     }
-    if (absolute.y + edgeTolerance >= maximum) {
+    if (absolute.y >= absolute.x && absolute.y >= absolute.z) {
         return vec3(0.0, point.y >= 0.0 ? 1.0 : -1.0, 0.0);
     }
     return vec3(0.0, 0.0, point.z >= 0.0 ? 1.0 : -1.0);

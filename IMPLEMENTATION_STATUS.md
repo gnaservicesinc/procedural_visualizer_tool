@@ -8,13 +8,12 @@ snapshots, not inputs to the current build.
 
 ## 13.0.1 cross-platform release fix
 
-CPU and OpenGL Cube face classification now share a 16-float-epsilon edge
-tolerance with deterministic X/Y/Z precedence. It is applied only when two
-absolute hit coordinates are effectively tied at a geometric cube edge, so
-Mesa cannot choose a different face UV/environment normal from the CPU while
-ordinary face ownership remains unchanged. The Metal parity test now directly
-includes `<array>`, fixing MSVC builds that correctly reject the former
-transitive dependency.
+The environment sampler explicitly canonicalizes exact north/south-pole
+longitude to zero on CPU, Metal, and OpenGL. C++ `atan2(0, 0)` and shader
+`atan(0, 0)` otherwise vary by implementation, which made Mesa sample a
+different equirectangular column for the Cube's top face. The Metal parity test
+now directly includes `<array>`, fixing MSVC builds that correctly reject the
+former transitive dependency.
 
 ## Environment lighting and mesh construction
 

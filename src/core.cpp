@@ -6144,19 +6144,10 @@ Vec3 cube_normal(Vec3 point) {
     const double absolute_x = std::fabs(point.x);
     const double absolute_y = std::fabs(point.y);
     const double absolute_z = std::fabs(point.z);
-    const double maximum = std::max({absolute_x, absolute_y, absolute_z});
-    // A ray landing on a cube edge has two equally valid face normals. The
-    // CPU evaluates intersections in double while OpenGL uses float, so tiny
-    // last-bit differences must not make the backends choose different faces
-    // (and therefore different UVs/environment lighting). Resolve values
-    // within the shared float raster tolerance in X/Y/Z precedence order.
-    const double edge_tolerance =
-        16.0 * static_cast<double>((std::numeric_limits<float>::epsilon)())
-        * std::max(1.0, maximum);
-    if (absolute_x + edge_tolerance >= maximum) {
+    if (absolute_x >= absolute_y && absolute_x >= absolute_z) {
         return {point.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0};
     }
-    if (absolute_y + edge_tolerance >= maximum) {
+    if (absolute_y >= absolute_x && absolute_y >= absolute_z) {
         return {0.0, point.y >= 0.0 ? 1.0 : -1.0, 0.0};
     }
     return {0.0, 0.0, point.z >= 0.0 ? 1.0 : -1.0};

@@ -12,13 +12,12 @@ linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 
 ## 13.0.1 cross-platform release fix
 
-Cube edge hits now resolve nearly tied face coordinates with the same bounded
-float-raster tolerance and X/Y/Z precedence on CPU and OpenGL. This prevents
-Mesa from selecting a different UV and environment-lighting normal at the
-single-pixel face boundary while preserving the strict parity limit everywhere
-else. The Metal backend test also includes its direct standard-library
-dependency so both Windows architectures compile it without relying on a
-transitive header.
+Environment-map sampling now assigns longitude zero at the exact north and
+south poles, where longitude is geometrically undefined and shader-language
+`atan(0, 0)` results vary by driver. CPU, Metal, and OpenGL therefore select the
+same equirectangular texel on Mesa as well as Apple hardware. The Metal backend
+test also includes its direct standard-library dependency so both Windows
+architectures compile it without relying on a transitive header.
 
 ## Environment lighting and loop-safe mesh construction
 
