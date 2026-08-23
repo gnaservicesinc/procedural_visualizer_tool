@@ -150,37 +150,6 @@ bool post_process_stage_enabled(const pvt::RenderConfig& config,
     return false;
 }
 
-void set_post_process_stage_enabled(pvt::RenderConfig& config,
-                                    pvt::PostProcessStage stage,
-                                    bool enabled) {
-    switch (stage) {
-        case pvt::PostProcessStage::InvertRgb:
-            config.post_process.invert_rgb_enabled = enabled;
-            break;
-        case pvt::PostProcessStage::InvertRed:
-            config.post_process.invert_red_enabled = enabled;
-            break;
-        case pvt::PostProcessStage::InvertGreen:
-            config.post_process.invert_green_enabled = enabled;
-            break;
-        case pvt::PostProcessStage::InvertBlue:
-            config.post_process.invert_blue_enabled = enabled;
-            break;
-        case pvt::PostProcessStage::InvertAlpha:
-            config.post_process.invert_alpha_enabled = enabled;
-            break;
-        case pvt::PostProcessStage::ChannelMap:
-            config.post_process.channel_map.enabled = enabled;
-            break;
-        case pvt::PostProcessStage::Antialias:
-            config.post_process.antialias_enabled = enabled;
-            break;
-        case pvt::PostProcessStage::Quantization:
-            config.quantization.enabled = enabled;
-            break;
-    }
-}
-
 QString post_process_stage_label(pvt::PostProcessStage stage) {
     switch (stage) {
         case pvt::PostProcessStage::InvertRgb:
@@ -203,6 +172,125 @@ QString post_process_stage_label(pvt::PostProcessStage stage) {
     return QObject::tr("Unknown effect");
 }
 
+pvt::PostProcessEffectConfig make_post_process_effect(
+    pvt::PostProcessStage stage) {
+    pvt::PostProcessEffectConfig effect;
+    effect.stage = stage;
+    effect.name = pvt::post_process_stage_name(stage);
+    return effect;
+}
+
+pvt::PostProcessEffectConfig legacy_post_process_effect(
+    const pvt::RenderConfig& config, pvt::PostProcessStage stage) {
+    pvt::PostProcessEffectConfig effect = make_post_process_effect(stage);
+    effect.enabled = post_process_stage_enabled(config, stage);
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            effect.mix = config.post_process.invert_rgb_mix;
+            break;
+        case pvt::PostProcessStage::InvertRed:
+            effect.mix = config.post_process.invert_red_mix;
+            break;
+        case pvt::PostProcessStage::InvertGreen:
+            effect.mix = config.post_process.invert_green_mix;
+            break;
+        case pvt::PostProcessStage::InvertBlue:
+            effect.mix = config.post_process.invert_blue_mix;
+            break;
+        case pvt::PostProcessStage::InvertAlpha:
+            effect.mix = config.post_process.invert_alpha_mix;
+            break;
+        case pvt::PostProcessStage::ChannelMap:
+            effect.mix = config.post_process.channel_map.mix;
+            effect.red_source = config.post_process.channel_map.red_source;
+            effect.green_source = config.post_process.channel_map.green_source;
+            effect.blue_source = config.post_process.channel_map.blue_source;
+            effect.alpha_source = config.post_process.channel_map.alpha_source;
+            break;
+        case pvt::PostProcessStage::Antialias:
+            effect.antialias_strength =
+                config.post_process.antialias_strength;
+            effect.antialias_threshold =
+                config.post_process.antialias_threshold;
+            effect.antialias_passes = config.post_process.antialias_passes;
+            break;
+        case pvt::PostProcessStage::Quantization:
+            effect.mix = config.quantization.mix;
+            effect.quantization_levels = config.quantization.levels;
+            effect.quantization_mode = config.quantization.mode;
+            break;
+    }
+    return effect;
+}
+
+void remap_legacy_post_effect_lfos(pvt::RenderConfig& config,
+                                   pvt::PostProcessStage stage,
+                                   std::uint64_t id) {
+    const std::string prefix = "post_effect/" + std::to_string(id) + '/';
+    const auto remap = [&](std::string_view old_path,
+                           std::string_view property) {
+        for (pvt::ParameterLfo& lfo : config.parameter_lfos) {
+            if (lfo.target_path == old_path) {
+                lfo.target_path = prefix + std::string(property);
+            }
+        }
+    };
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            remap("post.invert_rgb_mix", "mix");
+            break;
+        case pvt::PostProcessStage::InvertRed:
+            remap("post.invert_red_mix", "mix");
+            break;
+        case pvt::PostProcessStage::InvertGreen:
+            remap("post.invert_green_mix", "mix");
+            break;
+        case pvt::PostProcessStage::InvertBlue:
+            remap("post.invert_blue_mix", "mix");
+            break;
+        case pvt::PostProcessStage::InvertAlpha:
+            remap("post.invert_alpha_mix", "mix");
+            break;
+        case pvt::PostProcessStage::ChannelMap:
+            remap("post.channel_map_mix", "mix");
+            break;
+        case pvt::PostProcessStage::Antialias:
+            remap("post.antialias_strength", "antialias_strength");
+            remap("post.antialias_threshold", "antialias_threshold");
+            remap("post.antialias_passes", "antialias_passes");
+            break;
+        case pvt::PostProcessStage::Quantization:
+            remap("quantization.levels", "quantization_levels");
+            remap("quantization.mix", "mix");
+            break;
+    }
+}
+
+void ensure_post_process_effect_stack(pvt::RenderConfig& config) {
+    if (config.post_process.effects_authoritative) return;
+    config.post_process.effects.clear();
+    for (const pvt::PostProcessStage stage : config.post_process.order) {
+        auto effect = legacy_post_process_effect(config, stage);
+        effect.id = pvt::allocate_id(config);
+        const std::uint64_t id = effect.id;
+        config.post_process.effects.push_back(std::move(effect));
+        remap_legacy_post_effect_lfos(config, stage, id);
+    }
+    config.post_process.effects_authoritative = true;
+}
+
+QString post_process_effect_label(
+    const pvt::PostProcessEffectConfig& effect, std::size_t index) {
+    QString label = QObject::tr("%1. %2")
+                        .arg(static_cast<qulonglong>(index + 1U))
+                        .arg(QString::fromStdString(effect.name));
+    if (!effect.enabled) label.append(QObject::tr(" (bypassed)"));
+    if (effect.stage != pvt::PostProcessStage::Antialias) {
+        label.append(QObject::tr(" — mix %1").arg(effect.mix, 0, 'f', 2));
+    }
+    return label;
+}
+
 QString channel_source_label(pvt::ChannelSource source) {
     switch (source) {
         case pvt::ChannelSource::Red: return QObject::tr("input red");
@@ -213,25 +301,6 @@ QString channel_source_label(pvt::ChannelSource source) {
         case pvt::ChannelSource::One: return QObject::tr("constant 1");
     }
     return QObject::tr("unknown");
-}
-
-void place_post_process_stage(pvt::RenderConfig& config,
-                              pvt::PostProcessStage stage,
-                              bool active) {
-    auto& order = config.post_process.order;
-    const auto stage_position = std::find(order.begin(), order.end(), stage);
-    if (stage_position != order.end()) order.erase(stage_position);
-    if (!active) {
-        order.push_back(stage);
-        return;
-    }
-    auto insertion = order.begin();
-    for (auto candidate = order.begin(); candidate != order.end(); ++candidate) {
-        if (post_process_stage_enabled(config, *candidate)) {
-            insertion = std::next(candidate);
-        }
-    }
-    order.insert(insertion, stage);
 }
 
 std::size_t read_size_preference(const QSettings& settings,
@@ -1164,6 +1233,9 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
                            render.swings.capacity() * sizeof(pvt::SwingConfig));
     bytes = saturating_add(bytes,
                            render.effects.capacity() * sizeof(pvt::EffectConfig));
+    bytes = saturating_add(
+        bytes, render.post_process.effects.capacity()
+                   * sizeof(pvt::PostProcessEffectConfig));
     for (const auto& wave : render.waves) {
         bytes = saturating_add(bytes, estimated_string_bytes(wave.name));
     }
@@ -1171,6 +1243,9 @@ std::size_t estimated_render_data_bytes(const pvt::RenderData& render) {
         bytes = saturating_add(bytes, estimated_string_bytes(swing.name));
     }
     for (const auto& effect : render.effects) {
+        bytes = saturating_add(bytes, estimated_string_bytes(effect.name));
+    }
+    for (const auto& effect : render.post_process.effects) {
         bytes = saturating_add(bytes, estimated_string_bytes(effect.name));
     }
     bytes = saturating_add(bytes, estimated_string_bytes(render.surface.obj_path));
@@ -2963,7 +3038,16 @@ void MainWindow::updateWorkflowSummaries() {
             tr("%1 categorized layer effects")
                 .arg(static_cast<qulonglong>(config_.effects.size())));
         QStringList active_post_effects;
-        for (const pvt::PostProcessStage stage : config_.post_process.order) {
+        if (config_.post_process.effects_authoritative) {
+            for (const pvt::PostProcessEffectConfig& effect :
+                 config_.post_process.effects) {
+                if (effect.enabled) {
+                    active_post_effects.append(
+                        QString::fromStdString(effect.name));
+                }
+            }
+        } else for (const pvt::PostProcessStage stage :
+                    config_.post_process.order) {
             switch (stage) {
                 case pvt::PostProcessStage::InvertRgb:
                     if (config_.post_process.invert_rgb_enabled)
@@ -4653,10 +4737,10 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "Closed path list above; advanced bindings can also drive individual "
         "waves or effect centers."));
     motion->addRow(tr("Closed path"), motion_path_);
-    motion->addRow(tr("Path center X"), motion_center_x_);
-    motion->addRow(tr("Path center Y"), motion_center_y_);
-    motion->addRow(tr("Horizontal travel"), motion_travel_x_);
-    motion->addRow(tr("Vertical travel"), motion_travel_y_);
+    motion->addRow(tr("Center X / reusable X offset"), motion_center_x_);
+    motion->addRow(tr("Center Y / reusable Y offset"), motion_center_y_);
+    motion->addRow(tr("Horizontal added travel"), motion_travel_x_);
+    motion->addRow(tr("Vertical added travel"), motion_travel_y_);
     motion->addRow(tr("Horizontal cycles"), motion_cycles_x_);
     motion->addRow(tr("Vertical cycles"), motion_cycles_y_);
     motion->addRow(tr("Starting phase"), motion_phase_);
@@ -5171,7 +5255,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_process_available_->setObjectName(
         QStringLiteral("postProcessAvailable"));
     post_process_available_->setToolTip(tr(
-        "Effects not currently in the active stack."));
+        "Choose any post-effect type. The same type can be added any number of times."));
     post_process_add_ = new QPushButton(tr("Add effect"));
     post_process_add_->setObjectName(QStringLiteral("postProcessAdd"));
     post_process_add_layout->addWidget(post_process_available_, 1);
@@ -5184,17 +5268,21 @@ QWidget* MainWindow::createLayerSettingsPage() {
     post_process_up_->setObjectName(QStringLiteral("postProcessMoveUp"));
     post_process_down_ = new QPushButton(tr("Move down"));
     post_process_down_->setObjectName(QStringLiteral("postProcessMoveDown"));
+    post_process_duplicate_ = new QPushButton(tr("Duplicate effect"));
+    post_process_duplicate_->setObjectName(
+        QStringLiteral("postProcessDuplicate"));
     post_process_remove_ = new QPushButton(tr("Remove effect"));
     post_process_remove_->setObjectName(
         QStringLiteral("postProcessRemove"));
     post_process_order_button_layout->addWidget(post_process_up_);
     post_process_order_button_layout->addWidget(post_process_down_);
+    post_process_order_button_layout->addWidget(post_process_duplicate_);
     post_process_order_button_layout->addWidget(post_process_remove_);
     post_process_order_button_layout->addStretch(1);
     auto* post_process_order_help = new QLabel(tr(
-        "Removing an effect bypasses it without erasing its settings, so adding "
-        "it again restores those settings. Order is layer-local and identical "
-        "for CPU and GPU rendering."));
+        "Each row is an independent instance with its own settings. Add or "
+        "duplicate a type as often as needed; removing deletes only the selected "
+        "instance. Order is layer-local and runs natively on the GPU."));
     post_process_order_help->setWordWrap(true);
     post_process_order_layout->addWidget(post_process_order_);
     post_process_order_layout->addWidget(post_process_add_row);
@@ -5206,6 +5294,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
             [this] { moveSelectedPostProcessStage(1); });
     connect(post_process_add_, &QPushButton::clicked, this,
             &MainWindow::addSelectedPostProcessStage);
+    connect(post_process_duplicate_, &QPushButton::clicked, this,
+            &MainWindow::duplicateSelectedPostProcessStage);
     connect(post_process_remove_, &QPushButton::clicked, this,
             &MainWindow::removeSelectedPostProcessStage);
     connect(post_process_available_, &QComboBox::currentIndexChanged, this,
@@ -5218,16 +5308,21 @@ QWidget* MainWindow::createLayerSettingsPage() {
                 post_process_up_->setEnabled(row > 0);
                 post_process_down_->setEnabled(
                     row >= 0 && row + 1 < post_process_order_->count());
+                post_process_duplicate_->setEnabled(row >= 0);
                 post_process_remove_->setEnabled(row >= 0);
+                loadSelectedPostProcessEffect();
             });
     finish_layout->addWidget(post_process_order_group);
 
     auto* post_process_group = new QGroupBox(
-        tr("Inversion, channel routing, and edge antialiasing"));
+        tr("Selected post-effect settings"));
     post_process_group->setObjectName(QStringLiteral("postProcessGroup"));
     post_process_group->setToolTip(tr(
         "Layer-local finishing effects run in the order authored above."));
-    auto* post_process = new QFormLayout(post_process_group);
+    auto* post_process_layout = new QVBoxLayout(post_process_group);
+    post_process_editor_stack_ = new QStackedWidget;
+    post_process_editor_stack_->setObjectName(
+        QStringLiteral("postProcessEditorStack"));
     post_invert_rgb_enabled_ = new QCheckBox(tr("Invert all RGB channels"));
     post_invert_rgb_enabled_->setObjectName(
         QStringLiteral("postInvertColors"));
@@ -5351,29 +5446,52 @@ QWidget* MainWindow::createLayerSettingsPage() {
         QStringLiteral("postAntialiasPasses"));
     post_antialias_passes_->setToolTip(tr(
         "Repeat the antialias pass for stronger smoothing. Additional passes cost frame time."));
-    post_process->addRow(post_invert_rgb_enabled_);
-    post_process->addRow(tr("All-RGB invert mix"), post_invert_rgb_mix_);
-    post_process->addRow(post_invert_red_enabled_);
-    post_process->addRow(tr("Red invert mix"), post_invert_red_mix_);
-    post_process->addRow(post_invert_green_enabled_);
-    post_process->addRow(tr("Green invert mix"), post_invert_green_mix_);
-    post_process->addRow(post_invert_blue_enabled_);
-    post_process->addRow(tr("Blue invert mix"), post_invert_blue_mix_);
-    post_process->addRow(post_invert_alpha_enabled_);
-    post_process->addRow(tr("Alpha invert mix"), post_invert_alpha_mix_);
-    post_process->addRow(post_channel_map_enabled_);
-    post_process->addRow(tr("Routing amount (0 = unchanged, 1 = routed)"),
-                         post_channel_map_mix_);
-    post_process->addRow(tr("Red output  ←"), post_channel_red_source_);
-    post_process->addRow(tr("Green output  ←"), post_channel_green_source_);
-    post_process->addRow(tr("Blue output  ←"), post_channel_blue_source_);
-    post_process->addRow(tr("Alpha output  ←"), post_channel_alpha_source_);
-    post_process->addRow(post_channel_map_summary_);
-    post_process->addRow(post_channel_map_reset_);
-    post_process->addRow(post_antialias_enabled_);
-    post_process->addRow(tr("Strength"), post_antialias_strength_);
-    post_process->addRow(tr("Edge threshold"), post_antialias_threshold_);
-    post_process->addRow(tr("Passes"), post_antialias_passes_);
+    const auto add_post_page = [this]() {
+        auto* page = new QWidget;
+        auto* form = new QFormLayout(page);
+        post_process_editor_stack_->addWidget(page);
+        return form;
+    };
+    auto* invert_rgb_page = add_post_page();
+    invert_rgb_page->addRow(post_invert_rgb_enabled_);
+    invert_rgb_page->addRow(tr("All-RGB invert mix"),
+                            post_invert_rgb_mix_);
+    auto* invert_red_page = add_post_page();
+    invert_red_page->addRow(post_invert_red_enabled_);
+    invert_red_page->addRow(tr("Red invert mix"), post_invert_red_mix_);
+    auto* invert_green_page = add_post_page();
+    invert_green_page->addRow(post_invert_green_enabled_);
+    invert_green_page->addRow(tr("Green invert mix"),
+                              post_invert_green_mix_);
+    auto* invert_blue_page = add_post_page();
+    invert_blue_page->addRow(post_invert_blue_enabled_);
+    invert_blue_page->addRow(tr("Blue invert mix"), post_invert_blue_mix_);
+    auto* invert_alpha_page = add_post_page();
+    invert_alpha_page->addRow(post_invert_alpha_enabled_);
+    invert_alpha_page->addRow(tr("Alpha invert mix"),
+                              post_invert_alpha_mix_);
+    auto* channel_map_page = add_post_page();
+    channel_map_page->addRow(post_channel_map_enabled_);
+    channel_map_page->addRow(
+        tr("Routing amount (0 = unchanged, 1 = routed)"),
+        post_channel_map_mix_);
+    channel_map_page->addRow(tr("Red output  ←"),
+                             post_channel_red_source_);
+    channel_map_page->addRow(tr("Green output  ←"),
+                             post_channel_green_source_);
+    channel_map_page->addRow(tr("Blue output  ←"),
+                             post_channel_blue_source_);
+    channel_map_page->addRow(tr("Alpha output  ←"),
+                             post_channel_alpha_source_);
+    channel_map_page->addRow(post_channel_map_summary_);
+    channel_map_page->addRow(post_channel_map_reset_);
+    auto* antialias_page = add_post_page();
+    antialias_page->addRow(post_antialias_enabled_);
+    antialias_page->addRow(tr("Strength"), post_antialias_strength_);
+    antialias_page->addRow(tr("Edge threshold"),
+                           post_antialias_threshold_);
+    antialias_page->addRow(tr("Passes"), post_antialias_passes_);
+    post_process_layout->addWidget(post_process_editor_stack_);
     finish_layout->addWidget(post_process_group);
 
     auto* quantization_group = new QGroupBox(tr("Post-effects color quantization"));
@@ -5389,7 +5507,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
     quantization->addRow(tr("Levels"), quantization_levels_);
     quantization->addRow(tr("Mix"), quantization_mix_);
     quantization->addRow(tr("Mode"), quantization_mode_);
-    finish_layout->addWidget(quantization_group);
+    post_process_editor_stack_->addWidget(quantization_group);
 
     auto* alpha_group = new QGroupBox(tr("Alpha channel"));
     auto* alpha = new QFormLayout(alpha_group);
@@ -12684,13 +12802,7 @@ void MainWindow::loadGlobalEditors() {
     motion_group_->setChecked(config_.motion.enabled);
     populate_layer_motion_paths(motion_path_, config_.motion_paths,
                                 config_.motion);
-    motion_center_x_->setValue(config_.motion.center_x);
-    motion_center_y_->setValue(config_.motion.center_y);
-    motion_travel_x_->setValue(config_.motion.travel_x);
-    motion_travel_y_->setValue(config_.motion.travel_y);
-    motion_cycles_x_->setValue(config_.motion.cycles_x);
-    motion_cycles_y_->setValue(config_.motion.cycles_y);
-    motion_phase_->setValue(config_.motion.phase_degrees);
+    loadMotionPlacementEditors();
     motion_rotations_->setValue(config_.motion.rotations_per_loop);
     motion_rotation_offset_->setValue(
         config_.motion.rotation_offset_degrees);
@@ -12742,13 +12854,12 @@ void MainWindow::loadGlobalEditors() {
     post_antialias_threshold_->setValue(
         config_.post_process.antialias_threshold);
     post_antialias_passes_->setValue(config_.post_process.antialias_passes);
-    updateSurfaceEditorState();
-    updatePostProcessEditorState();
-    refreshPostProcessOrder();
     quantization_enabled_->setChecked(config_.quantization.enabled);
     quantization_levels_->setValue(config_.quantization.levels);
     quantization_mix_->setValue(config_.quantization.mix);
     select_enum(quantization_mode_, config_.quantization.mode);
+    updateSurfaceEditorState();
+    refreshPostProcessOrder();
     alpha_enabled_->setChecked(config_.alpha.enabled);
     alpha_use_source_->setChecked(config_.alpha.use_source_alpha);
     alpha_minimum_->setValue(config_.alpha.minimum);
@@ -12909,6 +13020,48 @@ void MainWindow::updateSurfaceEditorState() {
                    : tr("Crossfade from the original flat image at 0 to the fully mapped 3D surface at 1.")));
 }
 
+void MainWindow::loadMotionPlacementEditors() {
+    if (motion_center_x_ == nullptr || motion_center_y_ == nullptr
+        || motion_travel_x_ == nullptr || motion_travel_y_ == nullptr
+        || motion_cycles_x_ == nullptr || motion_cycles_y_ == nullptr
+        || motion_phase_ == nullptr) {
+        return;
+    }
+    const bool reusable = config_.motion.custom_path.enabled;
+    const QSignalBlocker center_x_blocker(motion_center_x_);
+    const QSignalBlocker center_y_blocker(motion_center_y_);
+    const QSignalBlocker travel_x_blocker(motion_travel_x_);
+    const QSignalBlocker travel_y_blocker(motion_travel_y_);
+    const QSignalBlocker cycles_x_blocker(motion_cycles_x_);
+    const QSignalBlocker cycles_y_blocker(motion_cycles_y_);
+    const QSignalBlocker phase_blocker(motion_phase_);
+    motion_center_x_->setValue(
+        reusable ? config_.motion.custom_offset_x : config_.motion.center_x);
+    motion_center_y_->setValue(
+        reusable ? config_.motion.custom_offset_y : config_.motion.center_y);
+    motion_travel_x_->setValue(
+        reusable ? config_.motion.custom_travel_x : config_.motion.travel_x);
+    motion_travel_y_->setValue(
+        reusable ? config_.motion.custom_travel_y : config_.motion.travel_y);
+    motion_cycles_x_->setValue(
+        reusable ? config_.motion.custom_cycles_x : config_.motion.cycles_x);
+    motion_cycles_y_->setValue(
+        reusable ? config_.motion.custom_cycles_y : config_.motion.cycles_y);
+    motion_phase_->setValue(
+        reusable ? config_.motion.custom_phase_degrees
+                 : config_.motion.phase_degrees);
+    const QString center_help = reusable
+        ? tr("Normalized offset added to every point sampled from the reusable path. Zero is neutral.")
+        : tr("Normalized canvas location used as the built-in path center.");
+    motion_center_x_->setToolTip(center_help);
+    motion_center_y_->setToolTip(center_help);
+    const QString travel_help = reusable
+        ? tr("Adds seamless oscillating travel to the reusable path. Zero preserves the path exactly.")
+        : tr("Travel distance around the built-in path center, as a fraction of the canvas dimension.");
+    motion_travel_x_->setToolTip(travel_help);
+    motion_travel_y_->setToolTip(travel_help);
+}
+
 void MainWindow::updatePostProcessEditorState() {
     if (post_invert_rgb_enabled_ == nullptr
         || post_invert_rgb_mix_ == nullptr
@@ -12931,17 +13084,30 @@ void MainWindow::updatePostProcessEditorState() {
         || post_antialias_enabled_ == nullptr
         || post_antialias_strength_ == nullptr
         || post_antialias_threshold_ == nullptr
-        || post_antialias_passes_ == nullptr) {
+        || post_antialias_passes_ == nullptr
+        || post_process_editor_stack_ == nullptr) {
         return;
     }
-    post_invert_rgb_mix_->setEnabled(post_invert_rgb_enabled_->isChecked());
-    post_invert_red_mix_->setEnabled(post_invert_red_enabled_->isChecked());
-    post_invert_green_mix_->setEnabled(
-        post_invert_green_enabled_->isChecked());
-    post_invert_blue_mix_->setEnabled(post_invert_blue_enabled_->isChecked());
-    post_invert_alpha_mix_->setEnabled(
-        post_invert_alpha_enabled_->isChecked());
-    const bool channel_map = post_channel_map_enabled_->isChecked();
+    const auto index = selectedPostProcessEffectIndex();
+    const bool selected = index.has_value();
+    post_process_editor_stack_->setEnabled(selected);
+    if (!selected) {
+        post_channel_map_summary_->setText(tr(
+            "No post effect selected. Add any effect type to the stack; "
+            "types may be added more than once."));
+        return;
+    }
+    const auto& effect = config_.post_process.effects[*index];
+    post_process_editor_stack_->setCurrentIndex(
+        static_cast<int>(effect.stage));
+    const bool enabled = effect.enabled;
+    post_invert_rgb_mix_->setEnabled(enabled);
+    post_invert_red_mix_->setEnabled(enabled);
+    post_invert_green_mix_->setEnabled(enabled);
+    post_invert_blue_mix_->setEnabled(enabled);
+    post_invert_alpha_mix_->setEnabled(enabled);
+    const bool channel_map = enabled
+        && effect.stage == pvt::PostProcessStage::ChannelMap;
     post_channel_map_mix_->setEnabled(channel_map);
     post_channel_red_source_->setEnabled(channel_map);
     post_channel_green_source_->setEnabled(channel_map);
@@ -12976,37 +13142,51 @@ void MainWindow::updatePostProcessEditorState() {
         && selected_source(post_channel_alpha_source_)
                == pvt::ChannelSource::Alpha;
     post_channel_map_reset_->setEnabled(channel_map || !identity);
-    const bool antialiasing = post_antialias_enabled_->isChecked();
+    const bool antialiasing = enabled
+        && effect.stage == pvt::PostProcessStage::Antialias;
     post_antialias_strength_->setEnabled(antialiasing);
     post_antialias_threshold_->setEnabled(antialiasing);
     post_antialias_passes_->setEnabled(antialiasing);
+    const bool quantization = enabled
+        && effect.stage == pvt::PostProcessStage::Quantization;
+    quantization_levels_->setEnabled(quantization);
+    quantization_mix_->setEnabled(quantization);
+    quantization_mode_->setEnabled(quantization);
 }
 
 void MainWindow::refreshPostProcessOrder(int selectedRow) {
     if (post_process_order_ == nullptr || post_process_up_ == nullptr
         || post_process_down_ == nullptr || post_process_available_ == nullptr
-        || post_process_add_ == nullptr || post_process_remove_ == nullptr) {
+        || post_process_add_ == nullptr || post_process_remove_ == nullptr
+        || post_process_duplicate_ == nullptr) {
         return;
     }
-    if (selectedRow < 0) selectedRow = post_process_order_->currentRow();
+    ensure_post_process_effect_stack(config_);
+    std::optional<std::uint64_t> selected_id;
+    if (selectedRow < 0 && post_process_order_->currentItem() != nullptr) {
+        selected_id = post_process_order_->currentItem()
+                          ->data(Qt::UserRole).toULongLong();
+    }
     const QSignalBlocker order_blocker(post_process_order_);
     const QSignalBlocker available_blocker(post_process_available_);
     post_process_order_->clear();
     post_process_available_->clear();
-    int active_index = 0;
-    for (const pvt::PostProcessStage stage : config_.post_process.order) {
-        if (post_process_stage_enabled(config_, stage)) {
-            auto* item = new QListWidgetItem(
-                tr("%1. %2")
-                    .arg(active_index + 1)
-                    .arg(post_process_stage_label(stage)),
-                post_process_order_);
-            item->setData(Qt::UserRole, static_cast<int>(stage));
-            ++active_index;
-        } else {
-            post_process_available_->addItem(
-                post_process_stage_label(stage), static_cast<int>(stage));
+    for (std::size_t index = 0U;
+         index < config_.post_process.effects.size(); ++index) {
+        const auto& effect = config_.post_process.effects[index];
+        auto* item = new QListWidgetItem(
+            post_process_effect_label(effect, index), post_process_order_);
+        item->setData(Qt::UserRole,
+                      QVariant::fromValue<qulonglong>(effect.id));
+        if (selectedRow < 0 && selected_id && effect.id == *selected_id) {
+            selectedRow = static_cast<int>(index);
         }
+    }
+    for (std::size_t raw_stage = 0U;
+         raw_stage < pvt::kPostProcessStageCount; ++raw_stage) {
+        const auto stage = static_cast<pvt::PostProcessStage>(raw_stage);
+        post_process_available_->addItem(
+            post_process_stage_label(stage), static_cast<int>(stage));
     }
     if (post_process_order_->count() > 0) {
         if (selectedRow < 0) selectedRow = 0;
@@ -13019,8 +13199,109 @@ void MainWindow::refreshPostProcessOrder(int selectedRow) {
     post_process_up_->setEnabled(selectedRow > 0);
     post_process_down_->setEnabled(
         selectedRow >= 0 && selectedRow + 1 < post_process_order_->count());
+    post_process_duplicate_->setEnabled(selectedRow >= 0);
     post_process_remove_->setEnabled(selectedRow >= 0);
     post_process_add_->setEnabled(post_process_available_->count() > 0);
+    loadSelectedPostProcessEffect();
+}
+
+std::optional<std::size_t> MainWindow::selectedPostProcessEffectIndex() const {
+    const QListWidgetItem* item = post_process_order_ != nullptr
+                                      ? post_process_order_->currentItem()
+                                      : nullptr;
+    if (item == nullptr) return std::nullopt;
+    const std::uint64_t id = item->data(Qt::UserRole).toULongLong();
+    const auto found = std::find_if(
+        config_.post_process.effects.cbegin(),
+        config_.post_process.effects.cend(),
+        [id](const pvt::PostProcessEffectConfig& effect) {
+            return effect.id == id;
+        });
+    if (found == config_.post_process.effects.cend()) return std::nullopt;
+    return static_cast<std::size_t>(std::distance(
+        config_.post_process.effects.cbegin(), found));
+}
+
+void MainWindow::loadSelectedPostProcessEffect() {
+    if (post_process_editor_stack_ == nullptr) return;
+    const auto index = selectedPostProcessEffectIndex();
+    const bool was_populating = populating_;
+    populating_ = true;
+    post_invert_rgb_enabled_->setChecked(false);
+    post_invert_red_enabled_->setChecked(false);
+    post_invert_green_enabled_->setChecked(false);
+    post_invert_blue_enabled_->setChecked(false);
+    post_invert_alpha_enabled_->setChecked(false);
+    post_channel_map_enabled_->setChecked(false);
+    post_antialias_enabled_->setChecked(false);
+    quantization_enabled_->setChecked(false);
+    if (index) {
+        const auto& effect = config_.post_process.effects[*index];
+        post_process_editor_stack_->setCurrentIndex(
+            static_cast<int>(effect.stage));
+        switch (effect.stage) {
+            case pvt::PostProcessStage::InvertRgb:
+                post_invert_rgb_enabled_->setChecked(effect.enabled);
+                post_invert_rgb_mix_->setValue(effect.mix);
+                break;
+            case pvt::PostProcessStage::InvertRed:
+                post_invert_red_enabled_->setChecked(effect.enabled);
+                post_invert_red_mix_->setValue(effect.mix);
+                break;
+            case pvt::PostProcessStage::InvertGreen:
+                post_invert_green_enabled_->setChecked(effect.enabled);
+                post_invert_green_mix_->setValue(effect.mix);
+                break;
+            case pvt::PostProcessStage::InvertBlue:
+                post_invert_blue_enabled_->setChecked(effect.enabled);
+                post_invert_blue_mix_->setValue(effect.mix);
+                break;
+            case pvt::PostProcessStage::InvertAlpha:
+                post_invert_alpha_enabled_->setChecked(effect.enabled);
+                post_invert_alpha_mix_->setValue(effect.mix);
+                break;
+            case pvt::PostProcessStage::ChannelMap:
+                post_channel_map_enabled_->setChecked(effect.enabled);
+                post_channel_map_mix_->setValue(effect.mix);
+                select_enum(post_channel_red_source_, effect.red_source);
+                select_enum(post_channel_green_source_, effect.green_source);
+                select_enum(post_channel_blue_source_, effect.blue_source);
+                select_enum(post_channel_alpha_source_, effect.alpha_source);
+                break;
+            case pvt::PostProcessStage::Antialias:
+                post_antialias_enabled_->setChecked(effect.enabled);
+                post_antialias_strength_->setValue(
+                    effect.antialias_strength);
+                post_antialias_threshold_->setValue(
+                    effect.antialias_threshold);
+                post_antialias_passes_->setValue(effect.antialias_passes);
+                break;
+            case pvt::PostProcessStage::Quantization:
+                quantization_enabled_->setChecked(effect.enabled);
+                quantization_levels_->setValue(effect.quantization_levels);
+                quantization_mix_->setValue(effect.mix);
+                select_enum(quantization_mode_, effect.quantization_mode);
+                break;
+        }
+    }
+    populating_ = was_populating;
+    updatePostProcessEditorState();
+}
+
+void MainWindow::updatePostProcessListItem(std::size_t index) {
+    if (index >= config_.post_process.effects.size()
+        || post_process_order_ == nullptr) {
+        return;
+    }
+    const auto& effect = config_.post_process.effects[index];
+    for (int row = 0; row < post_process_order_->count(); ++row) {
+        auto* item = post_process_order_->item(row);
+        if (item != nullptr
+            && item->data(Qt::UserRole).toULongLong() == effect.id) {
+            item->setText(post_process_effect_label(effect, index));
+            return;
+        }
+    }
 }
 
 void MainWindow::addSelectedPostProcessStage() {
@@ -13030,22 +13311,22 @@ void MainWindow::addSelectedPostProcessStage() {
     }
     const auto stage = static_cast<pvt::PostProcessStage>(
         post_process_available_->currentData().toInt());
-    if (post_process_stage_enabled(config_, stage)) return;
+    if (config_.post_process.effects.size()
+        >= pvt::kMaximumPostProcessEffects) {
+        QMessageBox::warning(
+            this, tr("Post-effect limit"),
+            tr("The Qt item-index limit is %1 post effects.")
+                .arg(pvt::kMaximumPostProcessEffects));
+        return;
+    }
     auto before = captureActiveState();
-    set_post_process_stage_enabled(config_, stage, true);
-    place_post_process_stage(config_, stage, true);
+    auto effect = make_post_process_effect(stage);
+    effect.id = pvt::allocate_id(config_);
+    config_.post_process.effects.push_back(std::move(effect));
     ensureAlphaForTransparency();
     syncActiveRender();
-    loadGlobalEditors();
-    int selected_row = -1;
-    for (int row = 0; row < post_process_order_->count(); ++row) {
-        if (post_process_order_->item(row)->data(Qt::UserRole).toInt()
-            == static_cast<int>(stage)) {
-            selected_row = row;
-            break;
-        }
-    }
-    refreshPostProcessOrder(selected_row);
+    refreshPostProcessOrder(
+        static_cast<int>(config_.post_process.effects.size() - 1U));
     updateWorkflowSummaries();
     preview_->setConfiguration(config_);
     schedulePreview();
@@ -13054,24 +13335,46 @@ void MainWindow::addSelectedPostProcessStage() {
     recordActiveStateChange(tr("Add post effect"), std::move(before));
 }
 
-void MainWindow::removeSelectedPostProcessStage() {
-    if (populating_ || post_process_order_ == nullptr) return;
-    const int row = post_process_order_->currentRow();
-    if (row < 0) return;
-    const auto stage = static_cast<pvt::PostProcessStage>(
-        post_process_order_->item(row)->data(Qt::UserRole).toInt());
-    if (!post_process_stage_enabled(config_, stage)) return;
+void MainWindow::duplicateSelectedPostProcessStage() {
+    if (populating_) return;
+    const auto index = selectedPostProcessEffectIndex();
+    if (!index || config_.post_process.effects.size()
+                      >= pvt::kMaximumPostProcessEffects) {
+        return;
+    }
     auto before = captureActiveState();
-    set_post_process_stage_enabled(config_, stage, false);
-    place_post_process_stage(config_, stage, false);
+    auto effect = config_.post_process.effects[*index];
+    effect.id = pvt::allocate_id(config_);
+    append_copy_suffix(effect.name);
+    config_.post_process.effects.insert(
+        config_.post_process.effects.begin()
+            + static_cast<std::ptrdiff_t>(*index + 1U),
+        std::move(effect));
     syncActiveRender();
-    loadGlobalEditors();
-    refreshPostProcessOrder(row);
+    refreshPostProcessOrder(static_cast<int>(*index + 1U));
     updateWorkflowSummaries();
     preview_->setConfiguration(config_);
     schedulePreview();
-    status_->setText(tr("Removed %1 from the post-effect stack; its settings were kept.")
-                         .arg(post_process_stage_label(stage)));
+    status_->setText(tr("Duplicated the selected post effect."));
+    recordActiveStateChange(tr("Duplicate post effect"), std::move(before));
+}
+
+void MainWindow::removeSelectedPostProcessStage() {
+    if (populating_) return;
+    const auto index = selectedPostProcessEffectIndex();
+    if (!index) return;
+    const QString name = QString::fromStdString(
+        config_.post_process.effects[*index].name);
+    auto before = captureActiveState();
+    config_.post_process.effects.erase(
+        config_.post_process.effects.begin()
+        + static_cast<std::ptrdiff_t>(*index));
+    syncActiveRender();
+    refreshPostProcessOrder(static_cast<int>(*index));
+    updateWorkflowSummaries();
+    preview_->setConfiguration(config_);
+    schedulePreview();
+    status_->setText(tr("Removed %1 from the post-effect stack.").arg(name));
     recordActiveStateChange(tr("Remove post effect"), std::move(before));
 }
 
@@ -13086,21 +13389,9 @@ void MainWindow::moveSelectedPostProcessStage(int direction) {
         || destination >= post_process_order_->count()) {
         return;
     }
-    const auto stage = static_cast<pvt::PostProcessStage>(
-        post_process_order_->item(row)->data(Qt::UserRole).toInt());
-    const auto destination_stage = static_cast<pvt::PostProcessStage>(
-        post_process_order_->item(destination)->data(Qt::UserRole).toInt());
-    auto stage_position = std::find(config_.post_process.order.begin(),
-                                    config_.post_process.order.end(), stage);
-    auto destination_position = std::find(
-        config_.post_process.order.begin(), config_.post_process.order.end(),
-        destination_stage);
-    if (stage_position == config_.post_process.order.end()
-        || destination_position == config_.post_process.order.end()) {
-        return;
-    }
     auto before = captureActiveState();
-    std::iter_swap(stage_position, destination_position);
+    std::iter_swap(config_.post_process.effects.begin() + row,
+                   config_.post_process.effects.begin() + destination);
     syncActiveRender();
     refreshPostProcessOrder(destination);
     updateWorkflowSummaries();
@@ -13114,25 +13405,26 @@ void MainWindow::moveSelectedPostProcessStage(int direction) {
 
 void MainWindow::resetPostProcessChannelRouting() {
     if (populating_) return;
-    const auto& channel_map = config_.post_process.channel_map;
-    const bool already_original = !channel_map.enabled
-        && channel_map.mix == 1.0
-        && channel_map.red_source == pvt::ChannelSource::Red
-        && channel_map.green_source == pvt::ChannelSource::Green
-        && channel_map.blue_source == pvt::ChannelSource::Blue
-        && channel_map.alpha_source == pvt::ChannelSource::Alpha;
+    const auto index = selectedPostProcessEffectIndex();
+    if (!index) return;
+    auto& effect = config_.post_process.effects[*index];
+    if (effect.stage != pvt::PostProcessStage::ChannelMap) return;
+    const bool already_original = !effect.enabled && effect.mix == 1.0
+        && effect.red_source == pvt::ChannelSource::Red
+        && effect.green_source == pvt::ChannelSource::Green
+        && effect.blue_source == pvt::ChannelSource::Blue
+        && effect.alpha_source == pvt::ChannelSource::Alpha;
     if (already_original) return;
     auto before = captureActiveState();
-    config_.post_process.channel_map.enabled = false;
-    config_.post_process.channel_map.mix = 1.0;
-    config_.post_process.channel_map.red_source = pvt::ChannelSource::Red;
-    config_.post_process.channel_map.green_source = pvt::ChannelSource::Green;
-    config_.post_process.channel_map.blue_source = pvt::ChannelSource::Blue;
-    config_.post_process.channel_map.alpha_source = pvt::ChannelSource::Alpha;
-    place_post_process_stage(config_, pvt::PostProcessStage::ChannelMap,
-                             false);
+    effect.enabled = false;
+    effect.mix = 1.0;
+    effect.red_source = pvt::ChannelSource::Red;
+    effect.green_source = pvt::ChannelSource::Green;
+    effect.blue_source = pvt::ChannelSource::Blue;
+    effect.alpha_source = pvt::ChannelSource::Alpha;
     syncActiveRender();
-    loadGlobalEditors();
+    loadSelectedPostProcessEffect();
+    updatePostProcessListItem(*index);
     updateWorkflowSummaries();
     preview_->setConfiguration(config_);
     schedulePreview();
@@ -14924,6 +15216,13 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         (void)setSurfaceObjSource(surface_obj_path_->text());
         return;
     }
+    const auto selected_post_effect_index =
+        selectedPostProcessEffectIndex();
+    pvt::PostProcessEffectConfig* selected_post_effect =
+        selected_post_effect_index
+            ? &config_.post_process.effects[*selected_post_effect_index]
+            : nullptr;
+    bool post_effect_changed = false;
     auto before = captureActiveState();
     bool affects_preview = true;
     if (changed_editor == width_) {
@@ -15075,20 +15374,49 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
                 motion_path_->currentData().toInt());
             config_.motion.custom_path.enabled = false;
         }
+        loadMotionPlacementEditors();
     } else if (changed_editor == motion_center_x_) {
-        config_.motion.center_x = motion_center_x_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_offset_x = motion_center_x_->value();
+        } else {
+            config_.motion.center_x = motion_center_x_->value();
+        }
     } else if (changed_editor == motion_center_y_) {
-        config_.motion.center_y = motion_center_y_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_offset_y = motion_center_y_->value();
+        } else {
+            config_.motion.center_y = motion_center_y_->value();
+        }
     } else if (changed_editor == motion_travel_x_) {
-        config_.motion.travel_x = motion_travel_x_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_travel_x = motion_travel_x_->value();
+        } else {
+            config_.motion.travel_x = motion_travel_x_->value();
+        }
     } else if (changed_editor == motion_travel_y_) {
-        config_.motion.travel_y = motion_travel_y_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_travel_y = motion_travel_y_->value();
+        } else {
+            config_.motion.travel_y = motion_travel_y_->value();
+        }
     } else if (changed_editor == motion_cycles_x_) {
-        config_.motion.cycles_x = motion_cycles_x_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_cycles_x = motion_cycles_x_->value();
+        } else {
+            config_.motion.cycles_x = motion_cycles_x_->value();
+        }
     } else if (changed_editor == motion_cycles_y_) {
-        config_.motion.cycles_y = motion_cycles_y_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_cycles_y = motion_cycles_y_->value();
+        } else {
+            config_.motion.cycles_y = motion_cycles_y_->value();
+        }
     } else if (changed_editor == motion_phase_) {
-        config_.motion.phase_degrees = motion_phase_->value();
+        if (config_.motion.custom_path.enabled) {
+            config_.motion.custom_phase_degrees = motion_phase_->value();
+        } else {
+            config_.motion.phase_degrees = motion_phase_->value();
+        }
     } else if (changed_editor == motion_rotations_) {
         config_.motion.rotations_per_loop = motion_rotations_->value();
     } else if (changed_editor == motion_rotation_offset_) {
@@ -15401,97 +15729,163 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == surface_normalize_obj_) {
         config_.surface.normalize_obj = surface_normalize_obj_->isChecked();
     } else if (changed_editor == post_invert_rgb_enabled_) {
-        config_.post_process.invert_rgb_enabled =
-            post_invert_rgb_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::InvertRgb,
-            config_.post_process.invert_rgb_enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertRgb) return;
+        selected_post_effect->enabled = post_invert_rgb_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_rgb_mix_) {
-        config_.post_process.invert_rgb_mix = post_invert_rgb_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertRgb) return;
+        selected_post_effect->mix = post_invert_rgb_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_red_enabled_) {
-        config_.post_process.invert_red_enabled =
-            post_invert_red_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::InvertRed,
-            config_.post_process.invert_red_enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertRed) return;
+        selected_post_effect->enabled = post_invert_red_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_red_mix_) {
-        config_.post_process.invert_red_mix = post_invert_red_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertRed) return;
+        selected_post_effect->mix = post_invert_red_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_green_enabled_) {
-        config_.post_process.invert_green_enabled =
-            post_invert_green_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::InvertGreen,
-            config_.post_process.invert_green_enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertGreen) return;
+        selected_post_effect->enabled = post_invert_green_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_green_mix_) {
-        config_.post_process.invert_green_mix =
-            post_invert_green_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertGreen) return;
+        selected_post_effect->mix = post_invert_green_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_blue_enabled_) {
-        config_.post_process.invert_blue_enabled =
-            post_invert_blue_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::InvertBlue,
-            config_.post_process.invert_blue_enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertBlue) return;
+        selected_post_effect->enabled = post_invert_blue_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_blue_mix_) {
-        config_.post_process.invert_blue_mix = post_invert_blue_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertBlue) return;
+        selected_post_effect->mix = post_invert_blue_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_alpha_enabled_) {
-        config_.post_process.invert_alpha_enabled =
-            post_invert_alpha_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::InvertAlpha,
-            config_.post_process.invert_alpha_enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertAlpha) return;
+        selected_post_effect->enabled = post_invert_alpha_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_invert_alpha_mix_) {
-        config_.post_process.invert_alpha_mix = post_invert_alpha_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::InvertAlpha) return;
+        selected_post_effect->mix = post_invert_alpha_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_channel_map_enabled_) {
-        config_.post_process.channel_map.enabled =
-            post_channel_map_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::ChannelMap,
-            config_.post_process.channel_map.enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::ChannelMap) return;
+        selected_post_effect->enabled = post_channel_map_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_channel_map_mix_) {
-        config_.post_process.channel_map.mix = post_channel_map_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::ChannelMap) return;
+        selected_post_effect->mix = post_channel_map_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_channel_red_source_) {
-        config_.post_process.channel_map.red_source =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::ChannelMap) return;
+        selected_post_effect->red_source =
             static_cast<pvt::ChannelSource>(
                 post_channel_red_source_->currentData().toInt());
+        post_effect_changed = true;
     } else if (changed_editor == post_channel_green_source_) {
-        config_.post_process.channel_map.green_source =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::ChannelMap) return;
+        selected_post_effect->green_source =
             static_cast<pvt::ChannelSource>(
                 post_channel_green_source_->currentData().toInt());
+        post_effect_changed = true;
     } else if (changed_editor == post_channel_blue_source_) {
-        config_.post_process.channel_map.blue_source =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::ChannelMap) return;
+        selected_post_effect->blue_source =
             static_cast<pvt::ChannelSource>(
                 post_channel_blue_source_->currentData().toInt());
+        post_effect_changed = true;
     } else if (changed_editor == post_channel_alpha_source_) {
-        config_.post_process.channel_map.alpha_source =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::ChannelMap) return;
+        selected_post_effect->alpha_source =
             static_cast<pvt::ChannelSource>(
                 post_channel_alpha_source_->currentData().toInt());
+        post_effect_changed = true;
     } else if (changed_editor == post_antialias_enabled_) {
-        config_.post_process.antialias_enabled =
-            post_antialias_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::Antialias,
-            config_.post_process.antialias_enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Antialias) return;
+        selected_post_effect->enabled = post_antialias_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == post_antialias_strength_) {
-        config_.post_process.antialias_strength =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Antialias) return;
+        selected_post_effect->antialias_strength =
             post_antialias_strength_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_antialias_threshold_) {
-        config_.post_process.antialias_threshold =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Antialias) return;
+        selected_post_effect->antialias_threshold =
             post_antialias_threshold_->value();
+        post_effect_changed = true;
     } else if (changed_editor == post_antialias_passes_) {
-        config_.post_process.antialias_passes =
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Antialias) return;
+        selected_post_effect->antialias_passes =
             post_antialias_passes_->value();
+        post_effect_changed = true;
     } else if (changed_editor == quantization_enabled_) {
-        config_.quantization.enabled = quantization_enabled_->isChecked();
-        place_post_process_stage(
-            config_, pvt::PostProcessStage::Quantization,
-            config_.quantization.enabled);
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Quantization) return;
+        selected_post_effect->enabled = quantization_enabled_->isChecked();
+        post_effect_changed = true;
     } else if (changed_editor == quantization_levels_) {
-        config_.quantization.levels = quantization_levels_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Quantization) return;
+        selected_post_effect->quantization_levels =
+            quantization_levels_->value();
+        post_effect_changed = true;
     } else if (changed_editor == quantization_mix_) {
-        config_.quantization.mix = quantization_mix_->value();
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Quantization) return;
+        selected_post_effect->mix = quantization_mix_->value();
+        post_effect_changed = true;
     } else if (changed_editor == quantization_mode_) {
-        config_.quantization.mode =
-            static_cast<pvt::QuantizationMode>(quantization_mode_->currentData().toInt());
+        if (selected_post_effect == nullptr
+            || selected_post_effect->stage
+                   != pvt::PostProcessStage::Quantization) return;
+        selected_post_effect->quantization_mode =
+            static_cast<pvt::QuantizationMode>(
+                quantization_mode_->currentData().toInt());
+        post_effect_changed = true;
     } else if (changed_editor == alpha_enabled_) {
         config_.alpha.enabled = alpha_enabled_->isChecked();
     } else if (changed_editor == alpha_use_source_) {
@@ -15574,15 +15968,8 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     updatePostProcessEditorState();
     updateWaveOutputState();
     png_compression_->setEnabled(config_.output.bit_depth != 32);
-    if (changed_editor == post_invert_rgb_enabled_
-        || changed_editor == post_invert_red_enabled_
-        || changed_editor == post_invert_green_enabled_
-        || changed_editor == post_invert_blue_enabled_
-        || changed_editor == post_invert_alpha_enabled_
-        || changed_editor == post_channel_map_enabled_
-        || changed_editor == post_antialias_enabled_
-        || changed_editor == quantization_enabled_) {
-        refreshPostProcessOrder();
+    if (post_effect_changed && selected_post_effect_index) {
+        updatePostProcessListItem(*selected_post_effect_index);
         updateWorkflowSummaries();
     }
     if (changed_editor == frames_ || changed_editor == fps_) {
@@ -15598,9 +15985,19 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         schedulePreview();
     }
     const QString key = editor_change_is_continuous(changed_editor)
-                            ? QStringLiteral("setting:%1:%2")
-                                  .arg(QString::fromStdString(active_layer_uuid_))
-                                  .arg(reinterpret_cast<quintptr>(changed_editor))
+                            ? (post_effect_changed
+                                   && selected_post_effect != nullptr
+                               ? QStringLiteral("post-effect:%1:%2:%3")
+                                     .arg(QString::fromStdString(
+                                         active_layer_uuid_))
+                                     .arg(selected_post_effect->id)
+                                     .arg(reinterpret_cast<quintptr>(
+                                         changed_editor))
+                               : QStringLiteral("setting:%1:%2")
+                                     .arg(QString::fromStdString(
+                                         active_layer_uuid_))
+                                     .arg(reinterpret_cast<quintptr>(
+                                         changed_editor)))
                             : QString{};
     recordActiveStateChange(tr("Edit project setting"), std::move(before), key);
 }
@@ -18766,12 +19163,27 @@ bool MainWindow::runSmokeChecks(QString* error) {
             && config_.motion.path == pvt::LayerMotionPath::None
             && config_.motion.custom_path.enabled
             && config_.motion.custom_path.path_id == selectable_id;
+        const double built_in_center_x = config_.motion.center_x;
+        const double built_in_travel_y = config_.motion.travel_y;
+        motion_center_x_->setValue(0.17);
+        motion_travel_y_->setValue(0.23);
+        motion_cycles_y_->setValue(-4);
+        motion_phase_->setValue(61.0);
+        const bool custom_modifiers = selected_custom_path
+            && config_.motion.custom_offset_x == 0.17
+            && config_.motion.custom_travel_y == 0.23
+            && config_.motion.custom_cycles_y == -4
+            && config_.motion.custom_phase_degrees == 61.0
+            && config_.motion.center_x == built_in_center_x
+            && config_.motion.travel_y == built_in_travel_y
+            && motion_center_x_->toolTip().contains(
+                tr("Zero is neutral"));
         restoreActiveState(motion_choice_layer, before_motion_choice);
         clearUndoHistory(false);
         undo_stack_->setClean();
-        if (!selected_custom_path) {
+        if (!custom_modifiers) {
             if (error != nullptr) {
-                *error = tr("Selecting a reusable closed path did not bind it to the active layer.");
+                *error = tr("Reusable path selection or neutral-default motion modifiers are not bound to the active layer.");
             }
             return false;
         }
@@ -19266,7 +19678,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_antialias_passes_ == nullptr
         || post_process_order_ == nullptr
         || post_process_available_ == nullptr
-        || post_process_add_ == nullptr || post_process_remove_ == nullptr
+        || post_process_editor_stack_ == nullptr
+        || post_process_add_ == nullptr
+        || post_process_duplicate_ == nullptr
+        || post_process_remove_ == nullptr
         || post_process_up_ == nullptr || post_process_down_ == nullptr
         || post_invert_rgb_mix_->minimum() != 0.0
         || post_invert_rgb_mix_->maximum() != 1.0
@@ -19284,8 +19699,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || post_channel_green_source_->count() != 6
         || post_channel_blue_source_->count() != 6
         || post_channel_alpha_source_->count() != 6
-        || post_process_order_->count() + post_process_available_->count()
+        || post_process_available_->count()
                != static_cast<int>(pvt::kPostProcessStageCount)
+        || post_process_order_->count()
+               != static_cast<int>(config_.post_process.effects.size())
         || post_channel_map_summary_->text().isEmpty()
         || post_antialias_strength_->minimum() != 0.0
         || post_antialias_strength_->maximum() != 1.0
@@ -19338,245 +19755,144 @@ bool MainWindow::runSmokeChecks(QString* error) {
                                           finish_contents->layout())
                                     : nullptr;
     QWidget* const post_process_group =
-        post_invert_rgb_enabled_->parentWidget();
+        post_process_editor_stack_->parentWidget();
     QWidget* const post_process_order_group =
         post_process_order_->parentWidget();
     QWidget* const quantization_group = quantization_enabled_->parentWidget();
     if (finish_groups == nullptr || post_process_order_group == nullptr
-        || post_process_group == nullptr
-        || quantization_group == nullptr
+        || post_process_group == nullptr || quantization_group == nullptr
         || finish_groups->indexOf(post_process_order_group) < 0
         || finish_groups->indexOf(post_process_group) < 0
-        || finish_groups->indexOf(quantization_group) < 0
         || finish_groups->indexOf(post_process_order_group)
                >= finish_groups->indexOf(post_process_group)
-        || finish_groups->indexOf(post_process_group)
-               >= finish_groups->indexOf(quantization_group)) {
+        || quantization_group->parentWidget()
+               != post_process_editor_stack_) {
         if (error != nullptr) {
-            *error = tr("The active post-effect stack is not presented before its effect controls.");
+            *error = tr("The active post-effect stack is not presented before its selected-instance controls.");
         }
         return false;
     }
-    int active_row = 0;
-    int available_row = 0;
-    for (const pvt::PostProcessStage stage : config_.post_process.order) {
-        if (post_process_stage_enabled(config_, stage)) {
-            if (post_process_order_->item(active_row) == nullptr
-                || post_process_order_->item(active_row)
-                           ->data(Qt::UserRole).toInt()
-                       != static_cast<int>(stage)) {
-                if (error != nullptr) {
-                    *error = tr("The active post-effect stack disagrees with the active layer.");
-                }
-                return false;
+    for (int row = 0; row < post_process_available_->count(); ++row) {
+        if (post_process_available_->itemData(row).toInt() != row) {
+            if (error != nullptr) {
+                *error = tr("The post-effect type catalog is incomplete or out of order.");
             }
-            ++active_row;
-        } else {
-            if (post_process_available_->itemData(available_row).toInt()
-                != static_cast<int>(stage)) {
-                if (error != nullptr) {
-                    *error = tr("The available post-effect list disagrees with the active layer.");
-                }
-                return false;
-            }
-            ++available_row;
+            return false;
         }
+    }
+
+    pvt::RenderConfig legacy_post_probe = pvt::default_config();
+    legacy_post_probe.post_process.invert_red_enabled = true;
+    legacy_post_probe.post_process.invert_red_mix = 0.37;
+    pvt::ParameterLfo legacy_red_lfo;
+    legacy_red_lfo.target_path = "post.invert_red_mix";
+    legacy_post_probe.parameter_lfos.push_back(legacy_red_lfo);
+    ensure_post_process_effect_stack(legacy_post_probe);
+    const auto migrated_red = std::find_if(
+        legacy_post_probe.post_process.effects.cbegin(),
+        legacy_post_probe.post_process.effects.cend(),
+        [](const pvt::PostProcessEffectConfig& effect) {
+            return effect.stage == pvt::PostProcessStage::InvertRed;
+        });
+    const bool migrated_legacy_stack =
+        legacy_post_probe.post_process.effects_authoritative
+        && legacy_post_probe.post_process.effects.size()
+               == pvt::kPostProcessStageCount
+        && migrated_red != legacy_post_probe.post_process.effects.cend()
+        && migrated_red->enabled && migrated_red->mix == 0.37
+        && legacy_post_probe.parameter_lfos.size() == 1U
+        && legacy_post_probe.parameter_lfos.front().target_path
+               == "post_effect/" + std::to_string(migrated_red->id) + "/mix"
+        && pvt::parameter_lfo_target_supported(
+            legacy_post_probe,
+            legacy_post_probe.parameter_lfos.front().target_path);
+    if (!migrated_legacy_stack) {
+        if (error != nullptr) {
+            *error = tr("Legacy post-effect settings or LFO targets were not migrated to stable instances.");
+        }
+        return false;
     }
 
     const pvt::PostProcessConfig post_process_before_stack_probe =
         config_.post_process;
-    const pvt::QuantizationConfig quantization_before_stack_probe =
-        config_.quantization;
-    for (const pvt::PostProcessStage stage : config_.post_process.order) {
-        set_post_process_stage_enabled(config_, stage, false);
-    }
-    config_.post_process.order = pvt::default_config().post_process.order;
-    config_.post_process.invert_rgb_mix = 0.37;
-    set_post_process_stage_enabled(
-        config_, pvt::PostProcessStage::InvertRgb, true);
-    place_post_process_stage(
-        config_, pvt::PostProcessStage::InvertRgb, true);
-    set_post_process_stage_enabled(
-        config_, pvt::PostProcessStage::InvertRed, true);
-    place_post_process_stage(
-        config_, pvt::PostProcessStage::InvertRed, true);
+    config_.post_process.effects_authoritative = true;
+    config_.post_process.effects.clear();
+    auto first_red = make_post_process_effect(
+        pvt::PostProcessStage::InvertRed);
+    first_red.id = pvt::allocate_id(config_);
+    first_red.mix = 0.21;
+    config_.post_process.effects.push_back(first_red);
+    auto second_red = make_post_process_effect(
+        pvt::PostProcessStage::InvertRed);
+    second_red.id = pvt::allocate_id(config_);
+    second_red.mix = 0.67;
+    config_.post_process.effects.push_back(second_red);
     syncActiveRender();
     loadGlobalEditors();
-    if (post_process_order_->count() != 2
-        || post_process_available_->count() != 6
-        || !post_channel_map_summary_->text().contains(tr("no swap"),
-                                                       Qt::CaseInsensitive)) {
-        if (error != nullptr) {
-            *error = tr("The post-effect editor does not clearly separate active, available, and bypassed effects.");
-        }
-        return false;
-    }
-
-    const int channel_map_choice = post_process_available_->findData(
-        static_cast<int>(pvt::PostProcessStage::ChannelMap));
-    post_process_available_->setCurrentIndex(channel_map_choice);
-    post_process_add_->click();
-    const bool channel_map_added = channel_map_choice >= 0
-        && config_.post_process.channel_map.enabled
-        && post_process_order_->count() == 3
-        && post_process_available_->count() == 5
-        && post_channel_map_summary_->text().contains(tr("Routing on"));
-    if (!channel_map_added || undo_stack_ == nullptr
-        || !undo_stack_->canUndo()) {
-        if (error != nullptr) {
-            *error = tr("Adding channel routing did not activate and append it to the post-effect stack.");
-        }
-        return false;
-    }
-    post_channel_map_reset_->click();
-    const bool routing_reset = !config_.post_process.channel_map.enabled
-        && config_.post_process.channel_map.mix == 1.0
-        && config_.post_process.channel_map.red_source
-               == pvt::ChannelSource::Red
-        && config_.post_process.channel_map.green_source
-               == pvt::ChannelSource::Green
-        && config_.post_process.channel_map.blue_source
-               == pvt::ChannelSource::Blue
-        && config_.post_process.channel_map.alpha_source
-               == pvt::ChannelSource::Alpha
-        && post_process_order_->count() == 2
-        && post_channel_map_summary_->text().contains(tr("no swap"),
-                                                       Qt::CaseInsensitive);
-    if (!routing_reset || !undo_stack_->canUndo()) {
-        if (error != nullptr) {
-            *error = tr("The original-RGBA action did not bypass and reset channel routing.");
-        }
-        return false;
-    }
-    undo_stack_->undo();
-    if (!config_.post_process.channel_map.enabled
-        || post_process_order_->count() != 3) {
-        if (error != nullptr) {
-            *error = tr("Resetting channel routing did not undo cleanly.");
-        }
-        return false;
-    }
-    undo_stack_->undo();
-    if (config_.post_process.channel_map.enabled
-        || post_process_order_->count() != 2) {
-        if (error != nullptr) {
-            *error = tr("Adding a post effect did not undo cleanly.");
-        }
-        return false;
-    }
-
     post_process_order_->setCurrentRow(0);
+    const bool first_mix_loaded = post_invert_red_mix_->value() == 0.21;
+    post_process_order_->setCurrentRow(1);
+    const bool second_mix_loaded = post_invert_red_mix_->value() == 0.67;
+    const int red_choice = post_process_available_->findData(
+        static_cast<int>(pvt::PostProcessStage::InvertRed));
+    post_process_available_->setCurrentIndex(red_choice);
+    post_process_add_->click();
+    post_invert_red_mix_->setValue(0.93);
+    const bool repeated_red_added = red_choice >= 0
+        && config_.post_process.effects.size() == 3U
+        && config_.post_process.effects[0].stage
+               == pvt::PostProcessStage::InvertRed
+        && config_.post_process.effects[1].stage
+               == pvt::PostProcessStage::InvertRed
+        && config_.post_process.effects[2].stage
+               == pvt::PostProcessStage::InvertRed
+        && config_.post_process.effects[0].mix == 0.21
+        && config_.post_process.effects[1].mix == 0.67
+        && config_.post_process.effects[2].mix == 0.93
+        && post_process_available_->count()
+               == static_cast<int>(pvt::kPostProcessStageCount);
+    if (!first_mix_loaded || !second_mix_loaded || !repeated_red_added
+        || undo_stack_ == nullptr || !undo_stack_->canUndo()) {
+        if (error != nullptr) {
+            *error = tr("Repeated post-effect instances do not retain independent settings.");
+        }
+        return false;
+    }
+    const std::uint64_t source_id = config_.post_process.effects.back().id;
+    post_process_duplicate_->click();
+    const bool duplicated = config_.post_process.effects.size() == 4U
+        && config_.post_process.effects[3].id != source_id
+        && config_.post_process.effects[3].mix == 0.93;
     post_process_remove_->click();
-    const bool effect_removed =
-        !config_.post_process.invert_rgb_enabled
-        && config_.post_process.invert_rgb_mix == 0.37
-        && post_process_order_->count() == 1
-        && post_process_available_->findData(
-               static_cast<int>(pvt::PostProcessStage::InvertRgb)) >= 0;
-    if (!effect_removed || !undo_stack_->canUndo()) {
-        if (error != nullptr) {
-            *error = tr("Removing a post effect did not bypass it while preserving its settings.");
-        }
-        return false;
-    }
-    undo_stack_->undo();
-    if (!config_.post_process.invert_rgb_enabled
-        || config_.post_process.invert_rgb_mix != 0.37
-        || post_process_order_->count() != 2) {
-        if (error != nullptr) {
-            *error = tr("Removing a post effect did not undo cleanly.");
-        }
-        return false;
-    }
-
-    const auto first_stage_before_move = static_cast<pvt::PostProcessStage>(
-        post_process_order_->item(0)->data(Qt::UserRole).toInt());
-    const auto second_stage_before_move = static_cast<pvt::PostProcessStage>(
-        post_process_order_->item(1)->data(Qt::UserRole).toInt());
+    const bool removed_one = config_.post_process.effects.size() == 3U
+        && std::none_of(
+            config_.post_process.effects.cbegin(),
+            config_.post_process.effects.cend(),
+            [source_id](const pvt::PostProcessEffectConfig& effect) {
+                return effect.id != source_id && effect.mix == 0.93
+                       && effect.name.find("copy") != std::string::npos;
+            });
+    const std::uint64_t first_id = config_.post_process.effects[0].id;
+    const std::uint64_t second_id = config_.post_process.effects[1].id;
     post_process_order_->setCurrentRow(1);
     post_process_up_->click();
-    const bool order_moved = post_process_order_->count() == 2
-        && post_process_order_->item(0)->data(Qt::UserRole).toInt()
-               == static_cast<int>(second_stage_before_move)
-        && post_process_order_->item(1)->data(Qt::UserRole).toInt()
-               == static_cast<int>(first_stage_before_move)
-        && post_process_order_->currentRow() == 0
-        && !post_process_up_->isEnabled() && post_process_down_->isEnabled();
-    if (!order_moved || !undo_stack_->canUndo()) {
+    const bool moved = config_.post_process.effects[0].id == second_id
+        && config_.post_process.effects[1].id == first_id
+        && post_process_order_->currentRow() == 0;
+    post_invert_red_enabled_->setChecked(false);
+    const bool bypassed = !config_.post_process.effects[0].enabled
+                          && !post_invert_red_mix_->isEnabled();
+    post_invert_red_enabled_->setChecked(true);
+    const bool reenabled = config_.post_process.effects[0].enabled
+                           && post_invert_red_mix_->isEnabled();
+    if (!duplicated || !removed_one || !moved || !bypassed || !reenabled) {
         if (error != nullptr) {
-            *error = tr("The post-effect move controls did not update the active stack.");
-        }
-        return false;
-    }
-    undo_stack_->undo();
-    if (post_process_order_->count() != 2
-        || post_process_order_->item(0)->data(Qt::UserRole).toInt()
-               != static_cast<int>(first_stage_before_move)
-        || post_process_order_->item(1)->data(Qt::UserRole).toInt()
-               != static_cast<int>(second_stage_before_move)) {
-        if (error != nullptr) {
-            *error = tr("A post-effect stack move did not undo cleanly.");
+            *error = tr("Post-effect duplicate, remove, move, or bypass controls are not instance-safe.");
         }
         return false;
     }
     config_.post_process = post_process_before_stack_probe;
-    config_.quantization = quantization_before_stack_probe;
     syncActiveRender();
-    loadGlobalEditors();
-
-    bool bypass_dependencies = false;
-    bool active_dependencies = false;
-    {
-        const QSignalBlocker rgb_blocker(post_invert_rgb_enabled_);
-        const QSignalBlocker red_blocker(post_invert_red_enabled_);
-        const QSignalBlocker green_blocker(post_invert_green_enabled_);
-        const QSignalBlocker blue_blocker(post_invert_blue_enabled_);
-        const QSignalBlocker alpha_blocker(post_invert_alpha_enabled_);
-        const QSignalBlocker channel_map_blocker(post_channel_map_enabled_);
-        const QSignalBlocker antialias_blocker(post_antialias_enabled_);
-        post_invert_rgb_enabled_->setChecked(false);
-        post_invert_red_enabled_->setChecked(false);
-        post_invert_green_enabled_->setChecked(false);
-        post_invert_blue_enabled_->setChecked(false);
-        post_invert_alpha_enabled_->setChecked(false);
-        post_channel_map_enabled_->setChecked(false);
-        post_antialias_enabled_->setChecked(false);
-        updatePostProcessEditorState();
-        bypass_dependencies = !post_invert_rgb_mix_->isEnabled()
-                              && !post_invert_red_mix_->isEnabled()
-                              && !post_invert_green_mix_->isEnabled()
-                              && !post_invert_blue_mix_->isEnabled()
-                              && !post_invert_alpha_mix_->isEnabled()
-                              && !post_channel_map_mix_->isEnabled()
-                              && !post_channel_red_source_->isEnabled()
-                              && !post_channel_green_source_->isEnabled()
-                              && !post_channel_blue_source_->isEnabled()
-                              && !post_channel_alpha_source_->isEnabled()
-                              && !post_antialias_strength_->isEnabled()
-                              && !post_antialias_threshold_->isEnabled()
-                              && !post_antialias_passes_->isEnabled();
-        post_invert_rgb_enabled_->setChecked(true);
-        post_invert_red_enabled_->setChecked(true);
-        post_invert_green_enabled_->setChecked(true);
-        post_invert_blue_enabled_->setChecked(true);
-        post_invert_alpha_enabled_->setChecked(true);
-        post_channel_map_enabled_->setChecked(true);
-        post_antialias_enabled_->setChecked(true);
-        updatePostProcessEditorState();
-        active_dependencies = post_invert_rgb_mix_->isEnabled()
-                              && post_invert_red_mix_->isEnabled()
-                              && post_invert_green_mix_->isEnabled()
-                              && post_invert_blue_mix_->isEnabled()
-                              && post_invert_alpha_mix_->isEnabled()
-                              && post_channel_map_mix_->isEnabled()
-                              && post_channel_red_source_->isEnabled()
-                              && post_channel_green_source_->isEnabled()
-                              && post_channel_blue_source_->isEnabled()
-                              && post_channel_alpha_source_->isEnabled()
-                              && post_antialias_strength_->isEnabled()
-                              && post_antialias_threshold_->isEnabled()
-                              && post_antialias_passes_->isEnabled();
-    }
     loadGlobalEditors();
     pvt::RenderConfig alpha_invert_probe = pvt::default_config();
     alpha_invert_probe.post_process.invert_alpha_enabled = true;
@@ -19584,11 +19900,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
     alpha_route_probe.post_process.channel_map.enabled = true;
     alpha_route_probe.post_process.channel_map.alpha_source =
         pvt::ChannelSource::Zero;
-    if (!bypass_dependencies || !active_dependencies
-        || !configuration_requires_alpha(alpha_invert_probe)
+    pvt::RenderConfig alpha_instance_probe = pvt::default_config();
+    alpha_instance_probe.post_process.effects_authoritative = true;
+    auto alpha_instance = make_post_process_effect(
+        pvt::PostProcessStage::InvertAlpha);
+    alpha_instance.id = pvt::allocate_id(alpha_instance_probe);
+    alpha_instance_probe.post_process.effects.push_back(alpha_instance);
+    if (!configuration_requires_alpha(alpha_invert_probe)
         || !configuration_requires_alpha(alpha_route_probe)) {
         if (error != nullptr) {
             *error = tr("Post-effect controls, dependencies, or alpha-output safety are not wired correctly.");
+        }
+        return false;
+    }
+    if (!configuration_requires_alpha(alpha_instance_probe)) {
+        if (error != nullptr) {
+            *error = tr("Instance-based alpha post effects are not included in output-alpha safety.");
         }
         return false;
     }

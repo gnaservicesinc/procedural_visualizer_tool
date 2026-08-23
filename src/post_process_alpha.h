@@ -53,6 +53,48 @@ inline PostProcessMixRange post_process_mix_range(
 inline AlphaCertainty post_process_alpha_certainty(
     const RenderData& render, AlphaCertainty input) {
     AlphaCertainty alpha = input;
+    if (render.post_process.effects_authoritative) {
+        for (const PostProcessEffectConfig& effect :
+             render.post_process.effects) {
+            if (!effect.enabled) continue;
+            const std::string target =
+                "post_effect/" + std::to_string(effect.id) + "/mix";
+            if (effect.stage == PostProcessStage::InvertAlpha) {
+                const PostProcessMixRange mix = post_process_mix_range(
+                    render, target, effect.mix);
+                if (mix.maximum == 0.0) continue;
+                if (mix.minimum == 1.0 && mix.maximum == 1.0) {
+                    if (alpha == AlphaCertainty::Zero) {
+                        alpha = AlphaCertainty::One;
+                    } else if (alpha == AlphaCertainty::One) {
+                        alpha = AlphaCertainty::Zero;
+                    }
+                } else {
+                    alpha = AlphaCertainty::Unknown;
+                }
+            } else if (effect.stage == PostProcessStage::ChannelMap) {
+                const PostProcessMixRange mix = post_process_mix_range(
+                    render, target, effect.mix);
+                if (mix.maximum == 0.0
+                    || effect.alpha_source == ChannelSource::Alpha) {
+                    continue;
+                }
+                AlphaCertainty routed = AlphaCertainty::Unknown;
+                if (effect.alpha_source == ChannelSource::Zero) {
+                    routed = AlphaCertainty::Zero;
+                } else if (effect.alpha_source == ChannelSource::One) {
+                    routed = AlphaCertainty::One;
+                }
+                if (mix.minimum == 1.0 && mix.maximum == 1.0) {
+                    alpha = routed;
+                } else if (alpha != routed
+                           || alpha == AlphaCertainty::Unknown) {
+                    alpha = AlphaCertainty::Unknown;
+                }
+            }
+        }
+        return alpha;
+    }
     for (const PostProcessStage stage : render.post_process.order) {
         switch (stage) {
             case PostProcessStage::InvertAlpha: {

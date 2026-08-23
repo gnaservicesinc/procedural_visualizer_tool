@@ -185,9 +185,14 @@ private:
     void loadGlobalEditors();
     void updateWaveOutputState();
     void updateSurfaceEditorState();
+    void loadMotionPlacementEditors();
     void updatePostProcessEditorState();
     void refreshPostProcessOrder(int selectedRow = -1);
+    std::optional<std::size_t> selectedPostProcessEffectIndex() const;
+    void loadSelectedPostProcessEffect();
+    void updatePostProcessListItem(std::size_t index);
     void addSelectedPostProcessStage();
+    void duplicateSelectedPostProcessStage();
     void removeSelectedPostProcessStage();
     void moveSelectedPostProcessStage(int direction);
     void resetPostProcessChannelRouting();
@@ -885,9 +890,11 @@ private:
     QDoubleSpinBox* post_antialias_strength_ = nullptr;
     QDoubleSpinBox* post_antialias_threshold_ = nullptr;
     QSpinBox* post_antialias_passes_ = nullptr;
+    QStackedWidget* post_process_editor_stack_ = nullptr;
     QListWidget* post_process_order_ = nullptr;
     QComboBox* post_process_available_ = nullptr;
     QPushButton* post_process_add_ = nullptr;
+    QPushButton* post_process_duplicate_ = nullptr;
     QPushButton* post_process_remove_ = nullptr;
     QPushButton* post_process_up_ = nullptr;
     QPushButton* post_process_down_ = nullptr;

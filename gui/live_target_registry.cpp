@@ -68,6 +68,18 @@ pvt::EffectConfig* find_effect(pvt::LayerConfig& layer, std::uint64_t id) {
     return found == layer.render.effects.end() ? nullptr : &*found;
 }
 
+pvt::PostProcessEffectConfig* find_post_effect(pvt::LayerConfig& layer,
+                                                std::uint64_t id) {
+    const auto found = std::find_if(
+        layer.render.post_process.effects.begin(),
+        layer.render.post_process.effects.end(),
+        [id](const pvt::PostProcessEffectConfig& item) {
+            return item.id == id;
+        });
+    return found == layer.render.post_process.effects.end()
+               ? nullptr : &*found;
+}
+
 bool mesh_construction_available(const pvt::SurfaceConfig& surface) {
     return surface.mapping == pvt::SurfaceMapping::CustomObj
            || (surface.mapping == pvt::SurfaceMapping::Plane
@@ -467,6 +479,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
         add_nested(QStringLiteral("alpha.use_source"), QObject::tr("Use palette/image alpha"),
                    QObject::tr("Alpha"), LiveTargetKind::Boolean, 0, 1,
                    render.alpha.use_source_alpha, [](pvt::RenderData& r, double v) { r.alpha.use_source_alpha = v >= 0.5; });
+        if (!render.post_process.effects_authoritative) {
         add_nested(QStringLiteral("quantization.enabled"), QObject::tr("Quantization"),
                    QObject::tr("Post Effects"), LiveTargetKind::Boolean, 0, 1,
                    render.quantization.enabled, [](pvt::RenderData& r, double v) { r.quantization.enabled = v >= 0.5; });
@@ -541,29 +554,57 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Post Effects"), LiveTargetKind::Integer, 1,
                    kMaximumIntegerParameter,
                    render.post_process.antialias_passes, [](pvt::RenderData& r, double v) { r.post_process.antialias_passes = static_cast<int>(std::llround(v)); });
+        }
         add_nested(QStringLiteral("motion.enabled"), QObject::tr("Layer motion"),
                    QObject::tr("Movement"), LiveTargetKind::Boolean, 0, 1,
                    render.motion.enabled, [](pvt::RenderData& r, double v) { r.motion.enabled = v >= 0.5; });
         add_nested(QStringLiteral("motion.center_x"), QObject::tr("Motion center X"),
                    QObject::tr("Movement"), LiveTargetKind::Real,
                    -kMaximumRenderParameter, kMaximumRenderParameter,
-                   render.motion.center_x, [](pvt::RenderData& r, double v) { r.motion.center_x = v; });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_offset_x : render.motion.center_x,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_offset_x : r.motion.center_x) = v;
+                   });
         add_nested(QStringLiteral("motion.center_y"), QObject::tr("Motion center Y"),
                    QObject::tr("Movement"), LiveTargetKind::Real,
                    -kMaximumRenderParameter, kMaximumRenderParameter,
-                   render.motion.center_y, [](pvt::RenderData& r, double v) { r.motion.center_y = v; });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_offset_y : render.motion.center_y,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_offset_y : r.motion.center_y) = v;
+                   });
         add_nested(QStringLiteral("motion.travel_x"), QObject::tr("Horizontal travel"),
                    QObject::tr("Movement"), LiveTargetKind::Real, 0,
                    kMaximumRenderParameter,
-                   render.motion.travel_x, [](pvt::RenderData& r, double v) { r.motion.travel_x = v; });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_travel_x : render.motion.travel_x,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_travel_x : r.motion.travel_x) = v;
+                   });
         add_nested(QStringLiteral("motion.travel_y"), QObject::tr("Vertical travel"),
                    QObject::tr("Movement"), LiveTargetKind::Real, 0,
                    kMaximumRenderParameter,
-                   render.motion.travel_y, [](pvt::RenderData& r, double v) { r.motion.travel_y = v; });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_travel_y : render.motion.travel_y,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_travel_y : r.motion.travel_y) = v;
+                   });
         add_nested(QStringLiteral("motion.phase"), QObject::tr("Motion phase"),
                    QObject::tr("Movement"), LiveTargetKind::Real,
                    -kMaximumRenderParameter, kMaximumRenderParameter,
-                   render.motion.phase_degrees, [](pvt::RenderData& r, double v) { r.motion.phase_degrees = v; });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_phase_degrees
+                       : render.motion.phase_degrees,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_phase_degrees
+                            : r.motion.phase_degrees) = v;
+                   });
         add_nested(QStringLiteral("motion.scale"), QObject::tr("Motion scale pulse"),
                    QObject::tr("Movement"), LiveTargetKind::Real, 0,
                    kMaximumRenderParameter,
@@ -574,11 +615,23 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
         add_nested(QStringLiteral("motion.cycles_x"), QObject::tr("Motion X cycles"),
                    QObject::tr("Movement"), LiveTargetKind::Integer,
                    kMinimumIntegerParameter, kMaximumIntegerParameter,
-                   render.motion.cycles_x, [](pvt::RenderData& r, double v) { r.motion.cycles_x = static_cast<int>(std::llround(v)); });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_cycles_x : render.motion.cycles_x,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_cycles_x : r.motion.cycles_x) =
+                           static_cast<int>(std::llround(v));
+                   });
         add_nested(QStringLiteral("motion.cycles_y"), QObject::tr("Motion Y cycles"),
                    QObject::tr("Movement"), LiveTargetKind::Integer,
                    kMinimumIntegerParameter, kMaximumIntegerParameter,
-                   render.motion.cycles_y, [](pvt::RenderData& r, double v) { r.motion.cycles_y = static_cast<int>(std::llround(v)); });
+                   render.motion.custom_path.enabled
+                       ? render.motion.custom_cycles_y : render.motion.cycles_y,
+                   [](pvt::RenderData& r, double v) {
+                       (r.motion.custom_path.enabled
+                            ? r.motion.custom_cycles_y : r.motion.cycles_y) =
+                           static_cast<int>(std::llround(v));
+                   });
         add_nested(QStringLiteral("motion.rotations"), QObject::tr("Motion rotations"),
                    QObject::tr("Movement"), LiveTargetKind::Integer,
                    kMinimumIntegerParameter, kMaximumIntegerParameter,
@@ -1020,6 +1073,124 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                    QObject::tr("Starting Colors"), LiveTargetKind::Integer,
                    kMinimumIntegerParameter, kMaximumIntegerParameter,
                    render.starting_colors.domain_warp.cycles_per_loop, [](pvt::RenderData& r, double v) { r.starting_colors.domain_warp.cycles_per_loop = static_cast<int>(std::llround(v)); });
+
+        if (render.post_process.effects_authoritative) {
+        for (const pvt::PostProcessEffectConfig& effect :
+             render.post_process.effects) {
+            const std::uint64_t id = effect.id;
+            const QString item_prefix =
+                prefix + QStringLiteral("post_effect/%1/").arg(id);
+            const QString section = layer_section(
+                authored_layer, QObject::tr("Post Effect — %1")
+                                    .arg(QString::fromStdString(effect.name)));
+            const auto add_post_effect = [&, id](
+                const QString& key, const QString& label,
+                LiveTargetKind kind, double minimum, double maximum,
+                double current, auto setter) {
+                append(item_prefix + key, label, section, kind, minimum,
+                       maximum, current,
+                       [uuid, id, setter, minimum, maximum](
+                           pvt::ProjectConfig& value, double input) {
+                           pvt::LayerConfig* layer = find_layer(value, uuid);
+                           if (layer == nullptr) return false;
+                           pvt::PostProcessEffectConfig* item =
+                               find_post_effect(*layer, id);
+                           if (item == nullptr) return false;
+                           setter(*item, std::clamp(input, minimum, maximum));
+                           return true;
+                       });
+            };
+            add_post_effect(
+                QStringLiteral("enabled"), QObject::tr("Enabled"),
+                LiveTargetKind::Boolean, 0, 1, effect.enabled,
+                [](pvt::PostProcessEffectConfig& item, double value) {
+                    item.enabled = value >= 0.5;
+                });
+            if (effect.stage != pvt::PostProcessStage::Antialias) {
+                add_post_effect(
+                    QStringLiteral("mix"), QObject::tr("Mix"),
+                    LiveTargetKind::Real, 0, 1, effect.mix,
+                    [](pvt::PostProcessEffectConfig& item, double value) {
+                        item.mix = value;
+                    });
+            }
+            if (effect.stage == pvt::PostProcessStage::ChannelMap) {
+                const auto source_setter = [](auto member) {
+                    return [member](pvt::PostProcessEffectConfig& item,
+                                    double value) {
+                        item.*member = static_cast<pvt::ChannelSource>(
+                            std::llround(value));
+                    };
+                };
+                add_post_effect(
+                    QStringLiteral("red_source"),
+                    QObject::tr("Output red source"),
+                    LiveTargetKind::Enumeration, 0, 5,
+                    static_cast<double>(effect.red_source),
+                    source_setter(&pvt::PostProcessEffectConfig::red_source));
+                add_post_effect(
+                    QStringLiteral("green_source"),
+                    QObject::tr("Output green source"),
+                    LiveTargetKind::Enumeration, 0, 5,
+                    static_cast<double>(effect.green_source),
+                    source_setter(&pvt::PostProcessEffectConfig::green_source));
+                add_post_effect(
+                    QStringLiteral("blue_source"),
+                    QObject::tr("Output blue source"),
+                    LiveTargetKind::Enumeration, 0, 5,
+                    static_cast<double>(effect.blue_source),
+                    source_setter(&pvt::PostProcessEffectConfig::blue_source));
+                add_post_effect(
+                    QStringLiteral("alpha_source"),
+                    QObject::tr("Output alpha source"),
+                    LiveTargetKind::Enumeration, 0, 5,
+                    static_cast<double>(effect.alpha_source),
+                    source_setter(&pvt::PostProcessEffectConfig::alpha_source));
+            } else if (effect.stage == pvt::PostProcessStage::Antialias) {
+                add_post_effect(
+                    QStringLiteral("antialias_strength"),
+                    QObject::tr("Strength"), LiveTargetKind::Real, 0, 1,
+                    effect.antialias_strength,
+                    [](pvt::PostProcessEffectConfig& item, double value) {
+                        item.antialias_strength = value;
+                    });
+                add_post_effect(
+                    QStringLiteral("antialias_threshold"),
+                    QObject::tr("Edge threshold"), LiveTargetKind::Real,
+                    0, 1, effect.antialias_threshold,
+                    [](pvt::PostProcessEffectConfig& item, double value) {
+                        item.antialias_threshold = value;
+                    });
+                add_post_effect(
+                    QStringLiteral("antialias_passes"),
+                    QObject::tr("Passes"), LiveTargetKind::Integer, 1,
+                    kMaximumIntegerParameter, effect.antialias_passes,
+                    [](pvt::PostProcessEffectConfig& item, double value) {
+                        item.antialias_passes =
+                            static_cast<int>(std::llround(value));
+                    });
+            } else if (effect.stage
+                       == pvt::PostProcessStage::Quantization) {
+                add_post_effect(
+                    QStringLiteral("quantization_levels"),
+                    QObject::tr("Levels"), LiveTargetKind::Integer, 2,
+                    kMaximumIntegerParameter, effect.quantization_levels,
+                    [](pvt::PostProcessEffectConfig& item, double value) {
+                        item.quantization_levels =
+                            static_cast<int>(std::llround(value));
+                    });
+                add_post_effect(
+                    QStringLiteral("quantization_mode"),
+                    QObject::tr("Mode"), LiveTargetKind::Enumeration, 0, 2,
+                    static_cast<double>(effect.quantization_mode),
+                    [](pvt::PostProcessEffectConfig& item, double value) {
+                        item.quantization_mode =
+                            static_cast<pvt::QuantizationMode>(
+                                std::llround(value));
+                    });
+            }
+        }
+        }
 
         for (const pvt::WaveConfig& wave : render.waves) {
             const std::uint64_t id = wave.id;

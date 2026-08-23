@@ -296,6 +296,13 @@ void test_layer_codec_backward_compatibility() {
     original.waves.front().path.cycles_per_loop = 2;
     original.effects.front().path.path_id = 91U;
     original.motion.custom_path.path_id = 91U;
+    original.motion.custom_offset_x = -0.12;
+    original.motion.custom_offset_y = 0.18;
+    original.motion.custom_travel_x = 0.24;
+    original.motion.custom_travel_y = 0.31;
+    original.motion.custom_cycles_x = -4;
+    original.motion.custom_cycles_y = 7;
+    original.motion.custom_phase_degrees = 53.0;
     original.layer_clock.mix = pvt::LayerClockMixMode::Difference;
     original.layer_clock.mix_enabled = true;
     original.starting_colors.kaleidoscope.enabled = true;
@@ -332,6 +339,19 @@ void test_layer_codec_backward_compatibility() {
         pvt::PostProcessStage::InvertGreen,
         pvt::PostProcessStage::InvertRed,
         pvt::PostProcessStage::InvertRgb};
+    original.post_process.effects_authoritative = true;
+    original.post_process.effects.clear();
+    pvt::PostProcessEffectConfig first_red;
+    first_red.id = pvt::allocate_id(original);
+    first_red.name = "Bundle red invert one";
+    first_red.stage = pvt::PostProcessStage::InvertRed;
+    first_red.mix = 0.19;
+    original.post_process.effects.push_back(first_red);
+    pvt::PostProcessEffectConfig second_red = first_red;
+    second_red.id = pvt::allocate_id(original);
+    second_red.name = "Bundle red invert two";
+    second_red.mix = 0.88;
+    original.post_process.effects.push_back(second_red);
     original.surface.projection = pvt::SurfaceProjection::Perspective;
     original.surface.sizing = pvt::SurfaceSizing::Cover;
     original.surface.outside = pvt::SurfaceOutside::Source;
@@ -409,7 +429,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t18\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t19\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -503,6 +523,23 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.post_process.antialias_strength == 0.81);
     CHECK(current_round_trip.post_process.antialias_threshold == 0.11);
     CHECK(current_round_trip.post_process.antialias_passes == 2);
+    CHECK(current_round_trip.post_process.effects_authoritative);
+    CHECK(current_round_trip.post_process.effects.size() == 2U);
+    if (current_round_trip.post_process.effects.size() == 2U) {
+        CHECK(current_round_trip.post_process.effects[0].stage
+              == pvt::PostProcessStage::InvertRed);
+        CHECK(current_round_trip.post_process.effects[0].mix == 0.19);
+        CHECK(current_round_trip.post_process.effects[1].stage
+              == pvt::PostProcessStage::InvertRed);
+        CHECK(current_round_trip.post_process.effects[1].mix == 0.88);
+    }
+    CHECK(current_round_trip.motion.custom_offset_x == -0.12);
+    CHECK(current_round_trip.motion.custom_offset_y == 0.18);
+    CHECK(current_round_trip.motion.custom_travel_x == 0.24);
+    CHECK(current_round_trip.motion.custom_travel_y == 0.31);
+    CHECK(current_round_trip.motion.custom_cycles_x == -4);
+    CHECK(current_round_trip.motion.custom_cycles_y == 7);
+    CHECK(current_round_trip.motion.custom_phase_degrees == 53.0);
     CHECK(current_round_trip.surface.projection
           == pvt::SurfaceProjection::Perspective);
     CHECK(current_round_trip.surface.sizing == pvt::SurfaceSizing::Cover);
@@ -573,11 +610,41 @@ void test_layer_codec_backward_compatibility() {
             current_round_trip, loaded_lfo.target_path));
     }
 
+    // Layer v18/setup v20 predates repeatable post-effect instances and the
+    // neutral-default reusable-path motion modifiers.
+    std::istringstream current_v19_input(current_layer);
+    std::ostringstream version_eighteen_output;
+    std::string version_line;
+    CHECK(static_cast<bool>(std::getline(current_v19_input, version_line)));
+    CHECK(version_line == "PVT_LAYER\t19");
+    version_eighteen_output << "PVT_LAYER\t18\n";
+    while (std::getline(current_v19_input, version_line)) {
+        const std::size_t tab = version_line.find('\t');
+        const std::string key = version_line.substr(0U, tab);
+        const bool v19_only =
+            key == "post_process.effects_authoritative"
+            || key.rfind("post_effects.", 0U) == 0U
+            || key.rfind("motion.reusable_path.", 0U) == 0U;
+        if (!v19_only) version_eighteen_output << version_line << '\n';
+    }
+    const std::string version_eighteen = version_eighteen_output.str();
+    pvt::RenderData loaded_version_eighteen;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_eighteen, loaded_version_eighteen, &error, &motion_paths));
+    CHECK(!loaded_version_eighteen.post_process.effects_authoritative);
+    CHECK(loaded_version_eighteen.post_process.effects.empty());
+    CHECK(loaded_version_eighteen.motion.custom_offset_x == 0.0);
+    CHECK(loaded_version_eighteen.motion.custom_offset_y == 0.0);
+    CHECK(loaded_version_eighteen.motion.custom_travel_x == 0.0);
+    CHECK(loaded_version_eighteen.motion.custom_travel_y == 0.0);
+    CHECK(loaded_version_eighteen.motion.custom_cycles_x == 1);
+    CHECK(loaded_version_eighteen.motion.custom_cycles_y == 2);
+    CHECK(loaded_version_eighteen.motion.custom_phase_degrees == 0.0);
+
     // Layer v17/setup v19 predates Water and the setup-v20 surface records.
     // Remove those records rather than only relabeling an impossible file.
-    std::istringstream current_v18_input(current_layer);
+    std::istringstream current_v18_input(version_eighteen);
     std::ostringstream version_seventeen_output;
-    std::string version_line;
     CHECK(static_cast<bool>(std::getline(current_v18_input, version_line)));
     CHECK(version_line == "PVT_LAYER\t18");
     version_seventeen_output << "PVT_LAYER\t17\n";
@@ -612,7 +679,7 @@ void test_layer_codec_backward_compatibility() {
     std::string serialized_water_layer;
     CHECK(pvt::detail::serialize_layer_config(
         water_layer, serialized_water_layer, &error, &motion_paths));
-    CHECK(serialized_water_layer.rfind("PVT_LAYER\t18\n", 0U) == 0U);
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t19\n", 0U) == 0U);
     pvt::RenderData loaded_water_layer;
     CHECK(pvt::detail::deserialize_layer_config(
         serialized_water_layer, loaded_water_layer, &error, &motion_paths));
@@ -1288,7 +1355,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t18");
+    CHECK(line == "PVT_LAYER\t19");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -1330,9 +1397,14 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
         const bool current_post_order_field =
             key.rfind("post_process.channel_map.", 0U) == 0U
             || key.rfind("post_process.order.", 0U) == 0U;
+        const bool current_post_instance_or_path_modifier_field =
+            key == "post_process.effects_authoritative"
+            || key.rfind("post_effects.", 0U) == 0U
+            || key.rfind("motion.reusable_path.", 0U) == 0U;
         if (!current_particle_field && !current_surface_field
             && !current_lfo_field && !current_channel_invert_field
-            && !current_post_order_field) {
+            && !current_post_order_field
+            && !current_post_instance_or_path_modifier_field) {
             legacy_layer << line << '\n';
         }
     }

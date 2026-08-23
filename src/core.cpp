@@ -1705,24 +1705,57 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
     } else if (path == "alpha.frequency") render.alpha.spatial_frequency = finite(0.0, magnitude);
     else if (path == "alpha.cycles") render.alpha.cycles_per_loop = lfo_integer(value);
     else if (path == "alpha.phase") render.alpha.phase_degrees = finite(-magnitude, magnitude);
-    else if (path == "quantization.levels") render.quantization.levels = std::max(2, lfo_integer(value));
-    else if (path == "quantization.mix") render.quantization.mix = finite(0.0, 1.0);
-    else if (path == "post.invert_rgb_mix") render.post_process.invert_rgb_mix = finite(0.0, 1.0);
-    else if (path == "post.invert_red_mix") render.post_process.invert_red_mix = finite(0.0, 1.0);
-    else if (path == "post.invert_green_mix") render.post_process.invert_green_mix = finite(0.0, 1.0);
-    else if (path == "post.invert_blue_mix") render.post_process.invert_blue_mix = finite(0.0, 1.0);
-    else if (path == "post.invert_alpha_mix") render.post_process.invert_alpha_mix = finite(0.0, 1.0);
-    else if (path == "post.channel_map_mix") render.post_process.channel_map.mix = finite(0.0, 1.0);
-    else if (path == "post.antialias_strength") render.post_process.antialias_strength = finite(0.0, 1.0);
-    else if (path == "post.antialias_threshold") render.post_process.antialias_threshold = finite(0.0, 1.0);
-    else if (path == "post.antialias_passes") render.post_process.antialias_passes = std::max(1, lfo_integer(value));
-    else if (path == "motion.center_x") render.motion.center_x = finite(-magnitude, magnitude);
-    else if (path == "motion.center_y") render.motion.center_y = finite(-magnitude, magnitude);
-    else if (path == "motion.travel_x") render.motion.travel_x = finite(0.0, magnitude);
-    else if (path == "motion.travel_y") render.motion.travel_y = finite(0.0, magnitude);
-    else if (path == "motion.cycles_x") render.motion.cycles_x = lfo_integer(value);
-    else if (path == "motion.cycles_y") render.motion.cycles_y = lfo_integer(value);
-    else if (path == "motion.phase") render.motion.phase_degrees = finite(-magnitude, magnitude);
+    else if (!render.post_process.effects_authoritative
+             && path == "quantization.levels") render.quantization.levels = std::max(2, lfo_integer(value));
+    else if (!render.post_process.effects_authoritative
+             && path == "quantization.mix") render.quantization.mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.invert_rgb_mix") render.post_process.invert_rgb_mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.invert_red_mix") render.post_process.invert_red_mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.invert_green_mix") render.post_process.invert_green_mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.invert_blue_mix") render.post_process.invert_blue_mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.invert_alpha_mix") render.post_process.invert_alpha_mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.channel_map_mix") render.post_process.channel_map.mix = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.antialias_strength") render.post_process.antialias_strength = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.antialias_threshold") render.post_process.antialias_threshold = finite(0.0, 1.0);
+    else if (!render.post_process.effects_authoritative
+             && path == "post.antialias_passes") render.post_process.antialias_passes = std::max(1, lfo_integer(value));
+    else if (path == "motion.center_x") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_offset_x : render.motion.center_x) =
+            finite(-magnitude, magnitude);
+    } else if (path == "motion.center_y") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_offset_y : render.motion.center_y) =
+            finite(-magnitude, magnitude);
+    } else if (path == "motion.travel_x") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_travel_x : render.motion.travel_x) =
+            finite(0.0, magnitude);
+    } else if (path == "motion.travel_y") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_travel_y : render.motion.travel_y) =
+            finite(0.0, magnitude);
+    } else if (path == "motion.cycles_x") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_cycles_x : render.motion.cycles_x) =
+            lfo_integer(value);
+    } else if (path == "motion.cycles_y") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_cycles_y : render.motion.cycles_y) =
+            lfo_integer(value);
+    } else if (path == "motion.phase") {
+        (render.motion.custom_path.enabled
+             ? render.motion.custom_phase_degrees
+             : render.motion.phase_degrees) = finite(-magnitude, magnitude);
+    }
     else if (path == "motion.rotations") render.motion.rotations_per_loop = lfo_integer(value);
     else if (path == "motion.rotation_offset") render.motion.rotation_offset_degrees = finite(-magnitude, magnitude);
     else if (path == "motion.scale_pulse") render.motion.scale_pulse = finite(0.0, magnitude);
@@ -1817,6 +1850,26 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
             else if (property == "center_y") found->center_y = finite(-magnitude, magnitude);
             else if (property == "radius") found->radius = finite(0.0, magnitude);
             else return false;
+        } else if (render.post_process.effects_authoritative
+                   && split_lfo_item_target(
+                       path, "post_effect/", id, property)) {
+            const auto found = std::find_if(
+                render.post_process.effects.begin(),
+                render.post_process.effects.end(),
+                [id](const PostProcessEffectConfig& item) {
+                    return item.id == id;
+                });
+            if (found == render.post_process.effects.end()) return false;
+            if (property == "mix") found->mix = finite(0.0, 1.0);
+            else if (property == "antialias_strength") {
+                found->antialias_strength = finite(0.0, 1.0);
+            } else if (property == "antialias_threshold") {
+                found->antialias_threshold = finite(0.0, 1.0);
+            } else if (property == "antialias_passes") {
+                found->antialias_passes = std::max(1, lfo_integer(value));
+            } else if (property == "quantization_levels") {
+                found->quantization_levels = std::max(2, lfo_integer(value));
+            } else return false;
         } else if (split_lfo_item_target(path, "effect/", id, property)) {
             const auto found = std::find_if(render.effects.begin(), render.effects.end(),
                 [id](const EffectConfig& item) { return item.id == id; });
@@ -2873,6 +2926,10 @@ LayerConfig default_layer(std::size_t index) {
     layer.file_id = static_cast<std::uint64_t>(index);
     layer.name = "Layer " + std::to_string(index + 1U);
     layer.render = static_cast<const RenderData&>(legacy);
+    // Newly authored projects use the repeatable post-effect stack. The
+    // fixed fields remain available to direct RenderConfig clients and old
+    // setup files until they are explicitly migrated.
+    layer.render.post_process.effects_authoritative = true;
     layer.render.audio_reactive_override_enabled = false;
     return layer;
 }
@@ -2937,6 +2994,9 @@ std::uint64_t allocate_id(const RenderData& render) {
     for (const WaveConfig& wave : render.waves) remember(wave.id);
     for (const SwingConfig& swing : render.swings) remember(swing.id);
     for (const EffectConfig& effect : render.effects) remember(effect.id);
+    for (const PostProcessEffectConfig& effect : render.post_process.effects) {
+        remember(effect.id);
+    }
 
     if (maximum != std::numeric_limits<std::uint64_t>::max()) {
         return maximum + 1U;
@@ -3310,6 +3370,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (config.effects.size() > kMaximumEffects) {
         return invalid_result("The configuration contains too many effects.");
     }
+    if (config.post_process.effects.size() > kMaximumPostProcessEffects) {
+        return invalid_result(
+            "The configuration contains too many post effects.");
+    }
     if (config.parameter_lfos.size() > kMaximumParameterLfos) {
         return invalid_result(
             "The configuration contains too many parameter LFOs.");
@@ -3586,6 +3650,31 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             }
         }
     }
+
+    for (std::size_t index = 0U;
+         index < config.post_process.effects.size(); ++index) {
+        const PostProcessEffectConfig& effect =
+            config.post_process.effects[index];
+        if (!accept_id(effect.id)) {
+            return invalid_result(
+                "Every wave, swing, effect, and post effect must have a unique nonzero ID.");
+        }
+        if (!valid_name(effect.name) || !valid_enum(effect.stage)
+            || !finite_in_range(effect.mix, 0.0, 1.0)
+            || !valid_enum(effect.red_source)
+            || !valid_enum(effect.green_source)
+            || !valid_enum(effect.blue_source)
+            || !valid_enum(effect.alpha_source)
+            || !finite_in_range(effect.antialias_strength, 0.0, 1.0)
+            || !finite_in_range(effect.antialias_threshold, 0.0, 1.0)
+            || effect.antialias_passes < 1
+            || effect.quantization_levels < 2
+            || !valid_enum(effect.quantization_mode)) {
+            return invalid_result(
+                "Post effect " + std::to_string(index + 1U)
+                + " has an invalid identity, type, or parameter.");
+        }
+    }
     if (validate_particle_workload) {
         detail::ParticleStampWorkloadEstimate particle_workload;
         if (!detail::estimate_particle_stamp_workload(config,
@@ -3717,6 +3806,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_render_parameter(config.motion.phase_degrees)
         || !finite_render_parameter(config.motion.rotation_offset_degrees)
         || !nonnegative_render_parameter(config.motion.scale_pulse)
+        || !finite_render_parameter(config.motion.custom_offset_x)
+        || !finite_render_parameter(config.motion.custom_offset_y)
+        || !nonnegative_render_parameter(config.motion.custom_travel_x)
+        || !nonnegative_render_parameter(config.motion.custom_travel_y)
+        || !finite_render_parameter(config.motion.custom_phase_degrees)
         || !valid_path_binding(config.motion.custom_path,
                                config.motion_paths)) {
         return invalid_result(
@@ -3730,43 +3824,45 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !finite_render_parameter(config.alpha.phase_degrees)) {
         return invalid_result("Alpha modulation values are out of range.");
     }
-    if (config.quantization.levels < 2
-        || !finite_in_range(config.quantization.mix, 0.0, 1.0)
-        || !valid_enum(config.quantization.mode)) {
-        return invalid_result("Quantization values are out of range.");
-    }
-    if (!finite_in_range(config.post_process.invert_rgb_mix, 0.0, 1.0)
-        || !finite_in_range(config.post_process.invert_red_mix, 0.0, 1.0)
-        || !finite_in_range(config.post_process.invert_green_mix, 0.0, 1.0)
-        || !finite_in_range(config.post_process.invert_blue_mix, 0.0, 1.0)
-        || !finite_in_range(config.post_process.invert_alpha_mix, 0.0, 1.0)
-        || !finite_in_range(config.post_process.channel_map.mix, 0.0, 1.0)
-        || !valid_enum(config.post_process.channel_map.red_source)
-        || !valid_enum(config.post_process.channel_map.green_source)
-        || !valid_enum(config.post_process.channel_map.blue_source)
-        || !valid_enum(config.post_process.channel_map.alpha_source)
-        || !finite_in_range(config.post_process.antialias_strength, 0.0, 1.0)
-        || !finite_in_range(config.post_process.antialias_threshold, 0.0, 1.0)
-        || config.post_process.antialias_passes < 1) {
-        return invalid_result(
-            "Post-process inversion, channel-map, or antialias values are out of range.");
-    }
-    if (config.post_process.order.size() != kPostProcessStageCount) {
-        return invalid_result(
-            "The post-process order must contain every stage exactly once.");
-    }
-    std::array<bool, kPostProcessStageCount> seen_post_process_stages{};
-    for (const PostProcessStage stage : config.post_process.order) {
-        if (!valid_enum(stage)) {
-            return invalid_result(
-                "The post-process order contains an unknown stage.");
+    if (!config.post_process.effects_authoritative) {
+        if (config.quantization.levels < 2
+            || !finite_in_range(config.quantization.mix, 0.0, 1.0)
+            || !valid_enum(config.quantization.mode)) {
+            return invalid_result("Quantization values are out of range.");
         }
-        const std::size_t index = static_cast<std::size_t>(stage);
-        if (seen_post_process_stages[index]) {
+        if (!finite_in_range(config.post_process.invert_rgb_mix, 0.0, 1.0)
+            || !finite_in_range(config.post_process.invert_red_mix, 0.0, 1.0)
+            || !finite_in_range(config.post_process.invert_green_mix, 0.0, 1.0)
+            || !finite_in_range(config.post_process.invert_blue_mix, 0.0, 1.0)
+            || !finite_in_range(config.post_process.invert_alpha_mix, 0.0, 1.0)
+            || !finite_in_range(config.post_process.channel_map.mix, 0.0, 1.0)
+            || !valid_enum(config.post_process.channel_map.red_source)
+            || !valid_enum(config.post_process.channel_map.green_source)
+            || !valid_enum(config.post_process.channel_map.blue_source)
+            || !valid_enum(config.post_process.channel_map.alpha_source)
+            || !finite_in_range(config.post_process.antialias_strength, 0.0, 1.0)
+            || !finite_in_range(config.post_process.antialias_threshold, 0.0, 1.0)
+            || config.post_process.antialias_passes < 1) {
+            return invalid_result(
+                "Post-process inversion, channel-map, or antialias values are out of range.");
+        }
+        if (config.post_process.order.size() != kPostProcessStageCount) {
             return invalid_result(
                 "The post-process order must contain every stage exactly once.");
         }
-        seen_post_process_stages[index] = true;
+        std::array<bool, kPostProcessStageCount> seen_post_process_stages{};
+        for (const PostProcessStage stage : config.post_process.order) {
+            if (!valid_enum(stage)) {
+                return invalid_result(
+                    "The post-process order contains an unknown stage.");
+            }
+            const std::size_t index = static_cast<std::size_t>(stage);
+            if (seen_post_process_stages[index]) {
+                return invalid_result(
+                    "The post-process order must contain every stage exactly once.");
+            }
+            seen_post_process_stages[index] = true;
+        }
     }
     const SurfaceConfig& surface = config.surface;
     const EnvironmentMapConfig& environment = surface.environment_map;
@@ -3972,8 +4068,17 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     // alive until the new frame succeeds and is swapped into it.
     std::size_t buffer_count = 2U;
     const bool has_post_antialias =
-        config.post_process.antialias_enabled
-        && config.post_process.antialias_strength > 0.0;
+        config.post_process.effects_authoritative
+            ? std::any_of(
+                  config.post_process.effects.begin(),
+                  config.post_process.effects.end(),
+                  [](const PostProcessEffectConfig& effect) {
+                      return effect.enabled
+                             && effect.stage == PostProcessStage::Antialias
+                             && effect.antialias_strength > 0.0;
+                  })
+            : (config.post_process.antialias_enabled
+               && config.post_process.antialias_strength > 0.0);
     if (has_enabled_effect || surface_has_render_work(config.surface)
         || motion_has_render_work(config.motion) || has_post_antialias) {
         ++buffer_count;
@@ -6699,38 +6804,27 @@ void apply_quantization(Image& image, const QuantizationConfig& quantization,
 }
 
 void apply_channel_inversion(Image& image, PostProcessStage stage,
-                             const PostProcessConfig& post_process,
+                             double amount,
                              const std::atomic_bool* cancel) {
     bool invert_red = false;
     bool invert_green = false;
     bool invert_blue = false;
     bool invert_alpha = false;
-    double amount = 0.0;
     switch (stage) {
         case PostProcessStage::InvertRgb:
             invert_red = invert_green = invert_blue = true;
-            amount = post_process.invert_rgb_enabled
-                         ? post_process.invert_rgb_mix : 0.0;
             break;
         case PostProcessStage::InvertRed:
             invert_red = true;
-            amount = post_process.invert_red_enabled
-                         ? post_process.invert_red_mix : 0.0;
             break;
         case PostProcessStage::InvertGreen:
             invert_green = true;
-            amount = post_process.invert_green_enabled
-                         ? post_process.invert_green_mix : 0.0;
             break;
         case PostProcessStage::InvertBlue:
             invert_blue = true;
-            amount = post_process.invert_blue_enabled
-                         ? post_process.invert_blue_mix : 0.0;
             break;
         case PostProcessStage::InvertAlpha:
             invert_alpha = true;
-            amount = post_process.invert_alpha_enabled
-                         ? post_process.invert_alpha_mix : 0.0;
             break;
         default:
             return;
@@ -6758,6 +6852,37 @@ void apply_channel_inversion(Image& image, PostProcessStage stage,
             store_color(image, x, y, color);
         }
     }
+}
+
+void apply_channel_inversion(Image& image, PostProcessStage stage,
+                             const PostProcessConfig& post_process,
+                             const std::atomic_bool* cancel) {
+    double amount = 0.0;
+    switch (stage) {
+        case PostProcessStage::InvertRgb:
+            amount = post_process.invert_rgb_enabled
+                         ? post_process.invert_rgb_mix : 0.0;
+            break;
+        case PostProcessStage::InvertRed:
+            amount = post_process.invert_red_enabled
+                         ? post_process.invert_red_mix : 0.0;
+            break;
+        case PostProcessStage::InvertGreen:
+            amount = post_process.invert_green_enabled
+                         ? post_process.invert_green_mix : 0.0;
+            break;
+        case PostProcessStage::InvertBlue:
+            amount = post_process.invert_blue_enabled
+                         ? post_process.invert_blue_mix : 0.0;
+            break;
+        case PostProcessStage::InvertAlpha:
+            amount = post_process.invert_alpha_enabled
+                         ? post_process.invert_alpha_mix : 0.0;
+            break;
+        default:
+            return;
+    }
+    apply_channel_inversion(image, stage, amount, cancel);
 }
 
 double channel_source_value(const Color& color, ChannelSource source) {
@@ -6820,7 +6945,7 @@ double premultiplied_contrast(const Color& first, const Color& second) {
 }
 
 void apply_antialias_pass(const Image& source, Image& destination,
-                          const PostProcessConfig& post_process,
+                          double strength, double threshold,
                           const std::atomic_bool* cancel) {
     ensure_image(destination, source.width, source.height);
     constexpr std::array<std::array<int, 2>, 4> offsets{{
@@ -6852,15 +6977,15 @@ void apply_antialias_pass(const Image& source, Image& destination,
                 filtered.b += 0.125 * sample.b;
                 filtered.a += 0.125 * sample.a;
             }
-            if (contrast <= post_process.antialias_threshold) {
+            if (contrast <= threshold) {
                 store_color(destination, x, y, center);
                 continue;
             }
             const double transition = std::max(
-                1.0e-12, 1.0 - post_process.antialias_threshold);
-            const double edge_amount = post_process.antialias_strength
+                1.0e-12, 1.0 - threshold);
+            const double edge_amount = strength
                 * clamp_value(
-                    (contrast - post_process.antialias_threshold)
+                    (contrast - threshold)
                         / transition,
                     0.0, 1.0);
             Color output;
@@ -6886,6 +7011,53 @@ void apply_post_process(Image& image, Image& scratch,
                         const PostProcessConfig& post_process,
                         const QuantizationConfig& quantization,
                         const std::atomic_bool* cancel) {
+    if (post_process.effects_authoritative) {
+        for (const PostProcessEffectConfig& effect : post_process.effects) {
+            if (!effect.enabled) continue;
+            switch (effect.stage) {
+                case PostProcessStage::InvertRgb:
+                case PostProcessStage::InvertRed:
+                case PostProcessStage::InvertGreen:
+                case PostProcessStage::InvertBlue:
+                case PostProcessStage::InvertAlpha:
+                    apply_channel_inversion(
+                        image, effect.stage, effect.mix, cancel);
+                    break;
+                case PostProcessStage::ChannelMap: {
+                    ChannelMapConfig channel_map;
+                    channel_map.enabled = true;
+                    channel_map.mix = effect.mix;
+                    channel_map.red_source = effect.red_source;
+                    channel_map.green_source = effect.green_source;
+                    channel_map.blue_source = effect.blue_source;
+                    channel_map.alpha_source = effect.alpha_source;
+                    apply_channel_map(image, channel_map, cancel);
+                    break;
+                }
+                case PostProcessStage::Antialias:
+                    if (effect.antialias_strength > 0.0) {
+                        for (int pass = 0;
+                             pass < effect.antialias_passes; ++pass) {
+                            apply_antialias_pass(
+                                image, scratch, effect.antialias_strength,
+                                effect.antialias_threshold, cancel);
+                            image.pixels.swap(scratch.pixels);
+                        }
+                    }
+                    break;
+                case PostProcessStage::Quantization: {
+                    QuantizationConfig instance;
+                    instance.enabled = true;
+                    instance.levels = effect.quantization_levels;
+                    instance.mix = effect.mix;
+                    instance.mode = effect.quantization_mode;
+                    apply_quantization(image, instance, cancel);
+                    break;
+                }
+            }
+        }
+        return;
+    }
     for (const PostProcessStage stage : post_process.order) {
         switch (stage) {
             case PostProcessStage::InvertRgb:
@@ -6905,7 +7077,9 @@ void apply_post_process(Image& image, Image& scratch,
                     for (int pass = 0;
                          pass < post_process.antialias_passes; ++pass) {
                         apply_antialias_pass(
-                            image, scratch, post_process, cancel);
+                            image, scratch,
+                            post_process.antialias_strength,
+                            post_process.antialias_threshold, cancel);
                         image.pixels.swap(scratch.pixels);
                     }
                 }
@@ -7177,13 +7351,35 @@ void resolve_path_bindings(RenderConfig& config, double loop_phase,
         }
     }
     if (config.motion.enabled && config.motion.custom_path.enabled) {
-        const CubicPathSample sample = bound_path_sample(
+        CubicPathSample sample = bound_path_sample(
             config, config.motion.custom_path, loop_phase, motion_clock);
+        const double modifier_phase =
+            radians(config.motion.custom_phase_degrees);
+        const double modifier_clock = config.motion.custom_path.synchronized
+            ? motion_clock.global_phase : loop_phase;
+        sample.x += config.motion.custom_offset_x
+                    + config.motion.custom_travel_x
+                          * std::sin(
+                              static_cast<double>(
+                                  config.motion.custom_cycles_x)
+                                  * modifier_clock
+                              + modifier_phase);
+        sample.y += config.motion.custom_offset_y
+                    + config.motion.custom_travel_y
+                          * std::sin(
+                              static_cast<double>(
+                                  config.motion.custom_cycles_y)
+                                  * modifier_clock
+                              + modifier_phase);
         config.motion.path = LayerMotionPath::None;
         config.motion.center_x = sample.x;
         config.motion.center_y = sample.y;
         config.motion.travel_x = 0.0;
         config.motion.travel_y = 0.0;
+        config.motion.cycles_x = config.motion.custom_cycles_x;
+        config.motion.cycles_y = config.motion.custom_cycles_y;
+        config.motion.phase_degrees =
+            config.motion.custom_phase_degrees;
         if (config.motion.custom_path.follow_tangent) {
             config.motion.rotation_offset_degrees +=
                 std::atan2(sample.tangent_y, sample.tangent_x)

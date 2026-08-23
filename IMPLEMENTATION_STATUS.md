@@ -59,7 +59,7 @@ CPU retry. CLI add/edit choices now include the previously omitted Edge Detect
 and Twirl types as well as Water. The GUI catalog/editor/randomizer and Live
 registry expose Water with normalized mix/complexity bounds.
 
-Persistence advances to setup format 20 and layer format 18. Water is appended
+That release advanced persistence to setup format 20 and layer format 18. Water is appended
 after every prior effect token, while setup 19/layer 17 decoding uses the
 previous vocabulary, preserving all older meanings. `EffectConfig` itself is
 unchanged by Water.
@@ -70,23 +70,25 @@ SONAME together to 13.0.0/13. Installed consumers must rebuild.
 
 ## 12.0.0 ordered finishing and host-aware workflow controls
 
-Post Effects is now one explicit eight-stage finishing pipeline: combined RGB
-inversion, the four individual channel inversions, simultaneous RGBA channel
-routing, edge antialiasing, and quantization. Artists can reorder the complete
-pipeline in the Qt editor or interactive CLI. The order must remain an exact
-permutation, so stages are moved rather than duplicated or removed; disabled
-stages stay visible in the order and remain neutral. Channel routing selects
+Post Effects now uses a complete ordered list of stable-ID instances: combined
+RGB inversion, the four individual channel inversions, simultaneous RGBA
+channel routing, edge antialiasing, and quantization may each be added,
+duplicated, removed, bypassed, and reordered without a uniqueness restriction.
+Every instance retains its own settings in the Qt editor, interactive CLI,
+persistence, numeric LFOs, and Live targets. Channel routing selects
 Red, Green, Blue, Alpha, Zero, or One independently for every output channel
 and reads all four sources from the same incoming pixel. It can therefore
 replace, duplicate, clear, fill, or swap channels without ambiguous in-place
 overwrite behavior. Its mix is a numeric LFO target, while the enable and
 source selections are available to Live control.
 
-CPU and Metal execute that authored order with matching straight-alpha
-float-RGBA semantics. Validation rejects missing, duplicate, or unknown stages
-and invalid channel sources. Setup format 19 and layer format 17 persist both
-the exact order and routing configuration; setup 18 and layer 16 migrate to the
-historical order with a disabled identity map. The public by-value
+Metal executes every instance in authored order; CPU is parity/reference
+coverage, not an automatic fallback, and CPU-only mode is unsupported.
+Validation rejects duplicate/zero instance IDs, unknown types, and invalid
+parameters. Setup format 21 and layer format 19 persist the instance list;
+setup 20/layer 18 and older records retain the fixed-stage compatibility model.
+Reusable layer paths also accept neutral-default placement offsets and seamless
+travel modifiers instead of ignoring the placement controls. The public by-value
 `PostProcessConfig` layout changes, so the product major and installed-library
 SONAME advance together to 12.0.0/12 and installed consumers must rebuild.
 
@@ -182,8 +184,9 @@ native workflow's responsibility.
 
 Application Settings now has a dedicated **Performance** tab. Its default
 Automatic policy selects the GPU-primary CPU + GPU scheduler when Metal or Qt
-OpenGL is usable and CPU otherwise, while explicit CPU, CPU + GPU, and strict
-GPU policies remain available for portability and diagnostics. Separate 0=Auto
+OpenGL is usable. Explicit CPU remains a diagnostic/reference policy and
+CPU-only operation is unsupported; admitted GPU failures are never retried as
+whole frames on CPU. Separate 0=Auto
 controls bound per-frame preview/LIVE/still CPU workers, concurrent
 sequence/movie frames, per-frame export CPU layer workers, Metal frames in
 flight, and render memory. The settings live only in `QSettings`: opening the
@@ -1422,7 +1425,7 @@ consumers do not inherit minizip requirements.
 | 31 | Transform and move layer | Complete for compact controls | Directional mirrors/flips plus loop-safe orbit, figure-eight, bounce, and Lissajous placement, rotation, and scale pulse run after surface mapping and before mapped-object effects and post-effects quantization on both CPU and Metal. |
 | 32 | Metal GPU acceleration | Complete | Backend-neutral CPU/CPU+GPU/GPU rendering accelerates live preview and export through cached metal-cpp pipelines, three bounded shared frame buffers per admitted render, output-scaled generated sources, fitted-image palette/dither and alpha handling, path resolution, particles, starting images, motion, analytic surfaces/effects, transactional cancellation, and CPU/Metal image/straight-alpha/seam parity tests. Project frames pair independent CPU and Metal layer lanes with ordered compositing. Floyd-Steinberg source quantization and custom OBJ depth peeling are dependency-ordered CPU stages inside the accelerated frame; neither causes whole-layer fallback. Available-Metal failures are surfaced rather than silently retried on CPU. |
 | 33 | Layer starting image | Complete | Embedded 8/16-bit PNG and HALF/FLOAT OpenEXR layers use the existing managed attachment store, strict metadata/path/dimension bounds, a shared 512 MiB/64-entry LRU decoded cache, CPU and Metal Stretch/Contain/Cover/Tile sampling, CLI and GUI controls, undo, bundle copies, cancellation, and seam/render/parity coverage. Procedural palettes are bypassed only at the source stage; later effects/surfaces/transforms/motion/quantization still apply. |
-| 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Setup v7, layer v5, render-output v4, bundles, semantic diffs, validation, undo, CPU rendering, Metal preparation, checked arc-length sampling, and seam/round-trip tests cover the feature. |
+| 34 | Closed reusable motion paths | Complete | Named project-level paths contain at least three stable-ID cubic nodes through signed-int UI/API indexing, with explicit handles and Corner/Auto Smooth/Smooth/Symmetric policies. A dedicated GUI table editor includes a four-node ellipse factory and handle fitting. Separate layer/wave/effect bindings own sync/free clock, integer cycles, phase, reverse, offset, and tangent following. Reusable layer placement also composes neutral-default X/Y offsets and seamless travel/cycle/phase modifiers with the sampled path. Setup v21, layer v19, bundles, semantic diffs, validation, undo, CPU reference rendering, native GPU preparation, checked arc-length sampling, and seam/round-trip tests cover the feature. |
 | 35 | Synchronization tab and clock controls | Complete | Global and optional active-layer Default/Frame/Time/Meter/Music clocks, interpolation, fit/exact spacing, direction/phase/beat offset, five local-duration mappings, Data only, an authoritative per-layer Swing block, project audio defaults, and a visible layer override live in one GUI tab and in the CLI/API. |
 | 36 | Adaptive high-detail music response | Complete | Full-source decoding plus time-varying beat/tempo reconciliation and a dense multiband/onset/spectral/chroma track through signed-int container/API capacity drive the base clock and independently routable wave/effect/color response. First project import enables the shared profile without creating layer overrides, Energy supplies a visibly dynamic default hue route, and later user choices remain intact. No fixed whole-song BPM clock is used. |
 | 37 | Native music-video export | Complete on macOS | AVFoundation/VideoToolbox writes atomic MOV files as lossless PNG, ProRes 4444/XQ, or high-rate HEVC; bounded parallel frame render/conversion feeds one ordered writer while hardware policy, alpha, synchronized audio, Data-only exclusion, progress, cancellation, and collision safety remain explicit. No FFmpeg executable or library is used. |
@@ -1439,7 +1442,7 @@ consumers do not inherit minizip requirements.
 | 48 | Export current frame | Complete | The GUI renders the current timeline frame at full canvas resolution through the selected backend and transactionally writes the configured 8/16-bit PNG or 32-bit FLOAT EXR quality, independent of preview scaling. |
 | 49 | Per-layer Alpha Over/Under | Complete | Alpha Over retains legacy source-over behavior; Alpha Under places the layer beneath the accumulated lower stack after opacity while preserving artistic blend selection. GUI, CLI, project render paths, manifest v5 migration, semantic diffs, validation, and composite tests cover it. |
 | 50 | Layer groups | Complete | Flat contiguous folder groups support one or more layers, rename, visibility, preview solo, authoring lock/unlock, membership changes, atomic reordering, and safe remove-to-ungroup. Rendering, audio, undo, bundle persistence/copies, validation, and Cocoa GUI smoke coverage share the same semantics. |
-| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local all-RGB, red, green, blue, and alpha inversions, simultaneous RGBA routing, edge antialiasing, and quantization form an artist-orderable eight-stage finishing pipeline. Routing can select R/G/B/A/Zero/One independently for every output, its mix is LFO-capable, and CPU, Metal, persistence, GUI, Live targets, interactive CLI, migration, and parity coverage share the same neutral defaults and bounded controls. |
+| 51 | Expanded final post effects | Complete; full release matrix pending | Layer-local all-RGB, red, green, blue, and alpha inversions, simultaneous RGBA routing, edge antialiasing, and quantization form an arbitrary-length ordered instance stack. Any type may repeat with independent stable-ID settings; add/duplicate/remove/reorder/bypass, LFO/Live targeting, setup v21/layer v19 persistence, legacy migration, CPU reference parity, and native Metal dispatch are covered. GPU remains authoritative and CPU-only mode is unsupported. |
 | 52 | Pre-analysis audio processing and named clock streams | Complete; hardware qualification pending | Music and Live apply optional HP/LP plus graphical EQ before analysis, then expose stable named frequency-range analyses to project and active-layer clocks. Defaults are flat/full-band; validation, transactional reanalysis, setup-14 persistence, and causal/offline tests cover routing. |
 | 53 | Live workflow expansion | Complete; hardware qualification pending | Audio inputs receive a smart default beat route, control-map targets use a searchable grouped tree, LIVE opens automatically in a visible companion window while the editor remains available, editor preview consumes routed Live frames, and supported platforms can prevent sleep for precisely the active session. |
 | 54 | Edge/Twirl effects and particle shapes | Complete; release matrix pending | Linear-light Edge Detect, seamless Twirl, and five visibly distinct deterministic particle silhouettes share CPU/Metal, GUI, CLI, Live mapping, randomization, validation, migration, and persistence semantics. Custom PNG sprites remain deferred. |

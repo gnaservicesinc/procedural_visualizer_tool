@@ -739,37 +739,295 @@ bool parse_move_command(const std::string& input, std::size_t count,
     return true;
 }
 
-void configure_post_process_order(RenderConfig& config) {
-    for (;;) {
-        std::cout << "\n-- Post-effect order --\n";
-        for (std::size_t index = 0U;
-             index < config.post_process.order.size(); ++index) {
-            std::cout << "  " << (index + 1U) << ") "
-                      << pvt::post_process_stage_name(
-                             config.post_process.order[index])
-                      << '\n';
+std::vector<std::pair<pvt::PostProcessStage, std::string>>
+post_process_stage_choices() {
+    std::vector<std::pair<pvt::PostProcessStage, std::string>> choices;
+    for (std::size_t index = 0U; index < pvt::kPostProcessStageCount;
+         ++index) {
+        const auto stage = static_cast<pvt::PostProcessStage>(index);
+        choices.emplace_back(stage, pvt::post_process_stage_name(stage));
+    }
+    return choices;
+}
+
+bool legacy_post_process_stage_enabled(const RenderConfig& config,
+                                       pvt::PostProcessStage stage) {
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            return config.post_process.invert_rgb_enabled;
+        case pvt::PostProcessStage::InvertRed:
+            return config.post_process.invert_red_enabled;
+        case pvt::PostProcessStage::InvertGreen:
+            return config.post_process.invert_green_enabled;
+        case pvt::PostProcessStage::InvertBlue:
+            return config.post_process.invert_blue_enabled;
+        case pvt::PostProcessStage::InvertAlpha:
+            return config.post_process.invert_alpha_enabled;
+        case pvt::PostProcessStage::ChannelMap:
+            return config.post_process.channel_map.enabled;
+        case pvt::PostProcessStage::Antialias:
+            return config.post_process.antialias_enabled;
+        case pvt::PostProcessStage::Quantization:
+            return config.quantization.enabled;
+    }
+    return false;
+}
+
+pvt::PostProcessEffectConfig legacy_post_process_effect(
+    const RenderConfig& config, pvt::PostProcessStage stage) {
+    pvt::PostProcessEffectConfig effect;
+    effect.stage = stage;
+    effect.name = pvt::post_process_stage_name(stage);
+    effect.enabled = legacy_post_process_stage_enabled(config, stage);
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            effect.mix = config.post_process.invert_rgb_mix;
+            break;
+        case pvt::PostProcessStage::InvertRed:
+            effect.mix = config.post_process.invert_red_mix;
+            break;
+        case pvt::PostProcessStage::InvertGreen:
+            effect.mix = config.post_process.invert_green_mix;
+            break;
+        case pvt::PostProcessStage::InvertBlue:
+            effect.mix = config.post_process.invert_blue_mix;
+            break;
+        case pvt::PostProcessStage::InvertAlpha:
+            effect.mix = config.post_process.invert_alpha_mix;
+            break;
+        case pvt::PostProcessStage::ChannelMap:
+            effect.mix = config.post_process.channel_map.mix;
+            effect.red_source = config.post_process.channel_map.red_source;
+            effect.green_source = config.post_process.channel_map.green_source;
+            effect.blue_source = config.post_process.channel_map.blue_source;
+            effect.alpha_source = config.post_process.channel_map.alpha_source;
+            break;
+        case pvt::PostProcessStage::Antialias:
+            effect.antialias_strength =
+                config.post_process.antialias_strength;
+            effect.antialias_threshold =
+                config.post_process.antialias_threshold;
+            effect.antialias_passes = config.post_process.antialias_passes;
+            break;
+        case pvt::PostProcessStage::Quantization:
+            effect.mix = config.quantization.mix;
+            effect.quantization_levels = config.quantization.levels;
+            effect.quantization_mode = config.quantization.mode;
+            break;
+    }
+    return effect;
+}
+
+void remap_legacy_post_effect_lfos(RenderConfig& config,
+                                   pvt::PostProcessStage stage,
+                                   std::uint64_t id) {
+    const std::string prefix = "post_effect/" + std::to_string(id) + '/';
+    const auto remap = [&](const char* old_path, const char* property) {
+        for (pvt::ParameterLfo& lfo : config.parameter_lfos) {
+            if (lfo.target_path == old_path) {
+                lfo.target_path = prefix + property;
+            }
         }
+    };
+    switch (stage) {
+        case pvt::PostProcessStage::InvertRgb:
+            remap("post.invert_rgb_mix", "mix"); break;
+        case pvt::PostProcessStage::InvertRed:
+            remap("post.invert_red_mix", "mix"); break;
+        case pvt::PostProcessStage::InvertGreen:
+            remap("post.invert_green_mix", "mix"); break;
+        case pvt::PostProcessStage::InvertBlue:
+            remap("post.invert_blue_mix", "mix"); break;
+        case pvt::PostProcessStage::InvertAlpha:
+            remap("post.invert_alpha_mix", "mix"); break;
+        case pvt::PostProcessStage::ChannelMap:
+            remap("post.channel_map_mix", "mix"); break;
+        case pvt::PostProcessStage::Antialias:
+            remap("post.antialias_strength", "antialias_strength");
+            remap("post.antialias_threshold", "antialias_threshold");
+            remap("post.antialias_passes", "antialias_passes");
+            break;
+        case pvt::PostProcessStage::Quantization:
+            remap("quantization.levels", "quantization_levels");
+            remap("quantization.mix", "mix");
+            break;
+    }
+}
+
+void ensure_post_process_effect_stack(RenderConfig& config) {
+    if (config.post_process.effects_authoritative) return;
+    config.post_process.effects.clear();
+    for (const pvt::PostProcessStage stage : config.post_process.order) {
+        auto effect = legacy_post_process_effect(config, stage);
+        effect.id = pvt::allocate_id(config);
+        const std::uint64_t id = effect.id;
+        config.post_process.effects.push_back(std::move(effect));
+        remap_legacy_post_effect_lfos(config, stage, id);
+    }
+    config.post_process.effects_authoritative = true;
+}
+
+bool configure_post_process_effect(pvt::PostProcessEffectConfig& effect) {
+    if (!prompt_text("Name", effect.name, kMaximumNameBytes)
+        || !prompt_bool("Enabled", effect.enabled)) {
+        return false;
+    }
+    switch (effect.stage) {
+        case pvt::PostProcessStage::InvertRgb:
+        case pvt::PostProcessStage::InvertRed:
+        case pvt::PostProcessStage::InvertGreen:
+        case pvt::PostProcessStage::InvertBlue:
+        case pvt::PostProcessStage::InvertAlpha:
+            return prompt_real("Mix", effect.mix, 0.0, 1.0);
+        case pvt::PostProcessStage::ChannelMap: {
+            const std::vector<std::pair<pvt::ChannelSource, std::string>>
+                sources{{pvt::ChannelSource::Red, "Red"},
+                        {pvt::ChannelSource::Green, "Green"},
+                        {pvt::ChannelSource::Blue, "Blue"},
+                        {pvt::ChannelSource::Alpha, "Alpha"},
+                        {pvt::ChannelSource::Zero, "Zero"},
+                        {pvt::ChannelSource::One, "One"}};
+            return prompt_real("Mix", effect.mix, 0.0, 1.0)
+                   && prompt_enum("Red output source", effect.red_source,
+                                  sources)
+                   && prompt_enum("Green output source", effect.green_source,
+                                  sources)
+                   && prompt_enum("Blue output source", effect.blue_source,
+                                  sources)
+                   && prompt_enum("Alpha output source", effect.alpha_source,
+                                  sources);
+        }
+        case pvt::PostProcessStage::Antialias:
+            return prompt_real("Strength", effect.antialias_strength, 0.0,
+                               1.0)
+                   && prompt_real("Threshold", effect.antialias_threshold,
+                                  0.0, 1.0)
+                   && prompt_int("Passes", effect.antialias_passes, 1, 4);
+        case pvt::PostProcessStage::Quantization:
+            return prompt_int("Levels", effect.quantization_levels, 2, 65536)
+                   && prompt_real("Mix", effect.mix, 0.0, 1.0)
+                   && prompt_enum(
+                       "Mode", effect.quantization_mode,
+                       {{pvt::QuantizationMode::Rgb, "RGB channels"},
+                        {pvt::QuantizationMode::Luminance, "Luminance"},
+                        {pvt::QuantizationMode::Hue, "Hue"}});
+    }
+    return false;
+}
+
+void configure_post_process_stack(RenderConfig& config) {
+    ensure_post_process_effect_stack(config);
+    for (;;) {
+        std::cout << "\n-- Post-effect stack ("
+                  << config.post_process.effects.size() << ") --\n";
+        for (std::size_t index = 0U;
+             index < config.post_process.effects.size(); ++index) {
+            const auto& effect = config.post_process.effects[index];
+            std::cout << "  " << (index + 1U) << ") "
+                      << (effect.enabled ? "on  " : "off ") << effect.name
+                      << " [" << pvt::post_process_stage_name(effect.stage)
+                      << "]";
+            if (effect.stage != pvt::PostProcessStage::Antialias) {
+                std::cout << " | mix " << effect.mix;
+            }
+            std::cout << '\n';
+        }
+        std::cout << "Enter a number to edit, a to add, c N to copy, d N to "
+                     "delete, m FROM TO to move, or b to go back. Repeated "
+                     "types are allowed.\n";
         std::string input;
-        if (!read_line("m FROM TO to move a stage, or b [b]: ", input)
+        if (!read_line("Post-effect action [b]: ", input)
             || input.empty() || input == "b" || input == "B") {
             return;
         }
-        std::size_t from = 0U;
-        std::size_t to = 0U;
-        if (!parse_move_command(
-                input, config.post_process.order.size(), from, to)) {
-            std::cout << "Use m followed by two existing stage numbers.\n";
+        if (input == "a" || input == "A") {
+            if (config.post_process.effects.size()
+                >= pvt::kMaximumPostProcessEffects) {
+                std::cout << "The signed-int UI/API post-effect index is "
+                             "exhausted.\n";
+                continue;
+            }
+            pvt::PostProcessStage stage = pvt::PostProcessStage::InvertRgb;
+            if (!prompt_enum("Effect type", stage,
+                             post_process_stage_choices())) {
+                return;
+            }
+            pvt::PostProcessEffectConfig effect;
+            effect.id = pvt::allocate_id(config);
+            effect.stage = stage;
+            effect.name = pvt::post_process_stage_name(stage);
+            config.post_process.effects.push_back(std::move(effect));
+            g_prompt_changed = true;
+            if (!configure_post_process_effect(
+                    config.post_process.effects.back())) {
+                return;
+            }
             continue;
         }
-        if (from == to) continue;
-        const pvt::PostProcessStage stage = config.post_process.order[from];
-        config.post_process.order.erase(
-            config.post_process.order.begin()
-            + static_cast<std::ptrdiff_t>(from));
-        config.post_process.order.insert(
-            config.post_process.order.begin()
-            + static_cast<std::ptrdiff_t>(to), stage);
-        g_prompt_changed = true;
+        if ((input[0] == 'c' || input[0] == 'C') && input.size() > 1U) {
+            long long selected = 0;
+            if (parse_integer(trim(input.substr(1)), 1,
+                              static_cast<long long>(
+                                  config.post_process.effects.size()),
+                              selected)
+                && config.post_process.effects.size()
+                       < pvt::kMaximumPostProcessEffects) {
+                auto copy = config.post_process.effects[
+                    static_cast<std::size_t>(selected - 1)];
+                copy.id = pvt::allocate_id(config);
+                copy.name += " copy";
+                config.post_process.effects.push_back(std::move(copy));
+                g_prompt_changed = true;
+            } else {
+                std::cout << "Use c followed by an existing post-effect "
+                             "number while stack capacity remains.\n";
+            }
+            continue;
+        }
+        if ((input[0] == 'd' || input[0] == 'D') && input.size() > 1U) {
+            long long selected = 0;
+            if (parse_integer(trim(input.substr(1)), 1,
+                              static_cast<long long>(
+                                  config.post_process.effects.size()),
+                              selected)) {
+                config.post_process.effects.erase(
+                    config.post_process.effects.begin() + (selected - 1));
+                g_prompt_changed = true;
+            } else {
+                std::cout << "Use d followed by an existing post-effect "
+                             "number.\n";
+            }
+            continue;
+        }
+        std::size_t from = 0U;
+        std::size_t to = 0U;
+        if (parse_move_command(input, config.post_process.effects.size(),
+                               from, to)) {
+            if (from == to) continue;
+            auto effect = std::move(config.post_process.effects[from]);
+            config.post_process.effects.erase(
+                config.post_process.effects.begin()
+                + static_cast<std::ptrdiff_t>(from));
+            config.post_process.effects.insert(
+                config.post_process.effects.begin()
+                    + static_cast<std::ptrdiff_t>(to),
+                std::move(effect));
+            g_prompt_changed = true;
+            continue;
+        }
+        long long selected = 0;
+        if (parse_integer(input, 1,
+                          static_cast<long long>(
+                              config.post_process.effects.size()),
+                          selected)) {
+            if (!configure_post_process_effect(
+                    config.post_process.effects[
+                        static_cast<std::size_t>(selected - 1)])) {
+                return;
+            }
+        } else {
+            std::cout << "Unrecognized post-effect action.\n";
+        }
     }
 }
 
@@ -1572,8 +1830,14 @@ void configure_color(RenderConfig& config) {
                        config.starting_colors.domain_warp.cycles_per_loop,
                        -1000, 1000)
         || !prompt_uint64("Domain warp deterministic seed",
-                          config.starting_colors.domain_warp.seed)
-        || !prompt_bool("Invert colors (RGB)",
+                          config.starting_colors.domain_warp.seed)) {
+        return;
+    }
+
+    // Fixed post-process fields remain the compatibility editor for legacy
+    // projects. Once migrated, only the instance stack is authoritative.
+    if (!config.post_process.effects_authoritative
+        && (!prompt_bool("Invert colors (RGB)",
                         config.post_process.invert_rgb_enabled)
         || !prompt_real("Invert colors mix",
                         config.post_process.invert_rgb_mix, 0.0, 1.0)
@@ -1645,11 +1909,11 @@ void configure_color(RenderConfig& config) {
         || !prompt_enum("Post-effects quantization mode", config.quantization.mode,
                        {{pvt::QuantizationMode::Rgb, "RGB channels"},
                         {pvt::QuantizationMode::Luminance, "Luminance"},
-                        {pvt::QuantizationMode::Hue, "Hue"}})) {
+                        {pvt::QuantizationMode::Hue, "Hue"}}))) {
         return;
     }
 
-    configure_post_process_order(config);
+    configure_post_process_stack(config);
     configure_palette(config);
 }
 
@@ -2131,8 +2395,29 @@ void configure_surface(RenderConfig& config,
     }
     std::cout << "\n-- Seamless layer motion (compact path animation) --\n";
     if (!prompt_bool("Enable layer motion", config.motion.enabled)) return;
-    if (config.motion.enabled
-        && (!prompt_enum("Closed motion path", config.motion.path,
+    if (config.motion.enabled && config.motion.custom_path.enabled) {
+        std::cout << "Reusable path " << config.motion.custom_path.path_id
+                  << " is active. The following neutral-default controls are "
+                     "added to the sampled path.\n";
+        if (!prompt_real("Reusable path X offset",
+                         config.motion.custom_offset_x, -10.0, 10.0)
+            || !prompt_real("Reusable path Y offset",
+                            config.motion.custom_offset_y, -10.0, 10.0)
+            || !prompt_real("Added horizontal travel",
+                            config.motion.custom_travel_x, 0.0, 10.0)
+            || !prompt_real("Added vertical travel",
+                            config.motion.custom_travel_y, 0.0, 10.0)
+            || !prompt_int("Horizontal modifier cycles",
+                           config.motion.custom_cycles_x, -1000, 1000)
+            || !prompt_int("Vertical modifier cycles",
+                           config.motion.custom_cycles_y, -1000, 1000)
+            || !prompt_real("Modifier phase (degrees)",
+                            config.motion.custom_phase_degrees,
+                            -36000.0, 36000.0)) {
+            return;
+        }
+    } else if (config.motion.enabled
+               && (!prompt_enum("Closed motion path", config.motion.path,
                          {{pvt::LayerMotionPath::None, "Static placement only"},
                           {pvt::LayerMotionPath::Orbit, "Orbit"},
                           {pvt::LayerMotionPath::FigureEight, "Figure eight"},
@@ -2145,9 +2430,12 @@ void configure_surface(RenderConfig& config,
             || !prompt_int("Horizontal cycles", config.motion.cycles_x, -1000, 1000)
             || !prompt_int("Vertical cycles", config.motion.cycles_y, -1000, 1000)
             || !prompt_real("Path phase (degrees)", config.motion.phase_degrees,
-                            -36000.0, 36000.0)
-            || !prompt_int("Layer rotations per loop",
-                           config.motion.rotations_per_loop, -1000, 1000)
+                            -36000.0, 36000.0))) {
+        return;
+    }
+    if (config.motion.enabled
+        && (!prompt_int("Layer rotations per loop",
+                        config.motion.rotations_per_loop, -1000, 1000)
             || !prompt_real("Layer starting rotation (degrees)",
                             config.motion.rotation_offset_degrees,
                             -36000.0, 36000.0)

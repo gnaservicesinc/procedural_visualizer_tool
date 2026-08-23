@@ -88,6 +88,8 @@ namespace {
 // permutation of all post-process stages, including quantization.
 // Version 20 adds the native loop-safe Water refraction effect type plus
 // environment-map lighting and loop-safe mesh-construction surface records.
+// Version 21 replaces the unique finishing-stage model with an ordered,
+// independently parameterized collection that permits repeated stage types.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -99,8 +101,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 20U,
-              "config_io.cpp implements setup format version 20");
+static_assert(kSetupFormatVersion == 21U,
+              "config_io.cpp implements setup format version 21");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -112,13 +114,13 @@ bool starts_with(std::string_view text, std::string_view prefix) {
 }
 
 bool render_record_key(std::string_view key) {
-    constexpr std::array<std::string_view, 17U> prefixes{{
+    constexpr std::array<std::string_view, 18U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
         "starting_colors.",
-        "post_process.", "parameter_lfos.",
+        "post_process.", "post_effects.", "parameter_lfos.",
     }};
     return std::any_of(prefixes.begin(), prefixes.end(),
                        [key](std::string_view prefix) {
@@ -318,6 +320,12 @@ bool setup_v19_record(std::string_view key) {
 bool setup_v20_record(std::string_view key) {
     return starts_with(key, "surface.environment_map.")
            || starts_with(key, "surface.mesh_construction.");
+}
+
+bool setup_v21_record(std::string_view key) {
+    return key == "post_process.effects_authoritative"
+           || starts_with(key, "post_effects.")
+           || starts_with(key, "motion.reusable_path.");
 }
 
 void clear_error(std::string* error) {
@@ -1891,6 +1899,8 @@ bool serialize_setup(const RenderConfig& config,
     if (config.waves.size() > kMaximumWaves
         || config.swings.size() > kMaximumSwings
         || config.effects.size() > kMaximumEffects
+        || config.post_process.effects.size()
+               > kMaximumPostProcessEffects
         || config.parameter_lfos.size() > kMaximumParameterLfos) {
         return fail(error, "Cannot save configuration: a collection exceeds its public maximum.");
     }
@@ -2230,6 +2240,48 @@ bool serialize_setup(const RenderConfig& config,
                          config.post_process.order[index],
                          kPostProcessStages);
     }
+    builder.add_bool("post_process.effects_authoritative",
+                     config.post_process.effects_authoritative);
+    builder.add_integer("post_effects.count",
+                        config.post_process.effects.size());
+    for (std::size_t index = 0U;
+         index < config.post_process.effects.size(); ++index) {
+        const PostProcessEffectConfig& effect =
+            config.post_process.effects[index];
+        builder.add_integer(indexed_key("post_effects", index, "id"),
+                            effect.id);
+        builder.add_string(indexed_key("post_effects", index, "name"),
+                           effect.name);
+        builder.add_enum(indexed_key("post_effects", index, "stage"),
+                         effect.stage, kPostProcessStages);
+        builder.add_bool(indexed_key("post_effects", index, "enabled"),
+                         effect.enabled);
+        builder.add_double(indexed_key("post_effects", index, "mix"),
+                           effect.mix);
+        builder.add_enum(indexed_key("post_effects", index, "red_source"),
+                         effect.red_source, kChannelSources);
+        builder.add_enum(indexed_key("post_effects", index, "green_source"),
+                         effect.green_source, kChannelSources);
+        builder.add_enum(indexed_key("post_effects", index, "blue_source"),
+                         effect.blue_source, kChannelSources);
+        builder.add_enum(indexed_key("post_effects", index, "alpha_source"),
+                         effect.alpha_source, kChannelSources);
+        builder.add_double(
+            indexed_key("post_effects", index, "antialias_strength"),
+            effect.antialias_strength);
+        builder.add_double(
+            indexed_key("post_effects", index, "antialias_threshold"),
+            effect.antialias_threshold);
+        builder.add_integer(
+            indexed_key("post_effects", index, "antialias_passes"),
+            effect.antialias_passes);
+        builder.add_integer(
+            indexed_key("post_effects", index, "quantization_levels"),
+            effect.quantization_levels);
+        builder.add_enum(
+            indexed_key("post_effects", index, "quantization_mode"),
+            effect.quantization_mode, kQuantizationModes);
+    }
 
     builder.add_bool("surface.enabled", config.surface.enabled);
     builder.add_enum("surface.mapping", config.surface.mapping, kSurfaceMappings);
@@ -2377,6 +2429,20 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("motion.scale_pulse", config.motion.scale_pulse);
     add_path_binding_records(builder, "motion.custom_path.",
                              config.motion.custom_path);
+    builder.add_double("motion.reusable_path.offset_x",
+                       config.motion.custom_offset_x);
+    builder.add_double("motion.reusable_path.offset_y",
+                       config.motion.custom_offset_y);
+    builder.add_double("motion.reusable_path.travel_x",
+                       config.motion.custom_travel_x);
+    builder.add_double("motion.reusable_path.travel_y",
+                       config.motion.custom_travel_y);
+    builder.add_integer("motion.reusable_path.cycles_x",
+                        config.motion.custom_cycles_x);
+    builder.add_integer("motion.reusable_path.cycles_y",
+                        config.motion.custom_cycles_y);
+    builder.add_double("motion.reusable_path.phase_degrees",
+                       config.motion.custom_phase_degrees);
 
     builder.add_integer("output.bit_depth", config.output.bit_depth);
     builder.add_integer("output.png_compression_level",
@@ -3821,6 +3887,87 @@ bool deserialize_setup(Records& records,
             }
         }
     }
+    if (setup_version >= 21U) {
+        PostProcessConfig& post = candidate.post_process;
+        std::size_t post_effect_count = 0U;
+        if (!consume_bool(records, "post_process.effects_authoritative",
+                          post.effects_authoritative, error)
+            || !consume_count(records, "post_effects.count",
+                              kMaximumPostProcessEffects, post_effect_count,
+                              error)) {
+            return false;
+        }
+        if (post_effect_count > records.size()) {
+            return fail(
+                error,
+                record_error(
+                    "Collection count exceeds the records available to decode in setup key",
+                    "post_effects.count"));
+        }
+        post.effects.clear();
+        post.effects.resize(post_effect_count);
+        for (std::size_t index = 0U; index < post_effect_count; ++index) {
+            PostProcessEffectConfig& effect = post.effects[index];
+            if (!consume_integer(
+                    records, indexed_key("post_effects", index, "id"),
+                    effect.id, error)
+                || !consume_string(
+                    records, indexed_key("post_effects", index, "name"),
+                    effect.name, error)
+                || !consume_enum(
+                    records, indexed_key("post_effects", index, "stage"),
+                    effect.stage, kPostProcessStages, error)
+                || !consume_bool(
+                    records, indexed_key("post_effects", index, "enabled"),
+                    effect.enabled, error)
+                || !consume_double(
+                    records, indexed_key("post_effects", index, "mix"),
+                    effect.mix, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("post_effects", index, "red_source"),
+                    effect.red_source, kChannelSources, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("post_effects", index, "green_source"),
+                    effect.green_source, kChannelSources, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("post_effects", index, "blue_source"),
+                    effect.blue_source, kChannelSources, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("post_effects", index, "alpha_source"),
+                    effect.alpha_source, kChannelSources, error)
+                || !consume_double(
+                    records,
+                    indexed_key("post_effects", index,
+                                "antialias_strength"),
+                    effect.antialias_strength, error)
+                || !consume_double(
+                    records,
+                    indexed_key("post_effects", index,
+                                "antialias_threshold"),
+                    effect.antialias_threshold, error)
+                || !consume_integer(
+                    records,
+                    indexed_key("post_effects", index,
+                                "antialias_passes"),
+                    effect.antialias_passes, error)
+                || !consume_integer(
+                    records,
+                    indexed_key("post_effects", index,
+                                "quantization_levels"),
+                    effect.quantization_levels, error)
+                || !consume_enum(
+                    records,
+                    indexed_key("post_effects", index,
+                                "quantization_mode"),
+                    effect.quantization_mode, kQuantizationModes, error)) {
+                return false;
+            }
+        }
+    }
     if (setup_version >= 10U) {
         StartingColorConfig& starting = candidate.starting_colors;
         if (!consume_bool(records, "alpha.use_source_alpha",
@@ -4139,6 +4286,25 @@ bool deserialize_setup(Records& records,
         && !consume_path_binding_records(records, "motion.custom_path.",
                                          candidate.motion.custom_path,
                                          error)) {
+        return false;
+    }
+    if (setup_version >= 21U
+        && (!consume_double(records, "motion.reusable_path.offset_x",
+                            candidate.motion.custom_offset_x, error)
+            || !consume_double(records, "motion.reusable_path.offset_y",
+                               candidate.motion.custom_offset_y, error)
+            || !consume_double(records, "motion.reusable_path.travel_x",
+                               candidate.motion.custom_travel_x, error)
+            || !consume_double(records, "motion.reusable_path.travel_y",
+                               candidate.motion.custom_travel_y, error)
+            || !consume_integer(records, "motion.reusable_path.cycles_x",
+                                candidate.motion.custom_cycles_x, error)
+            || !consume_integer(records, "motion.reusable_path.cycles_y",
+                                candidate.motion.custom_cycles_y, error)
+            || !consume_double(records,
+                               "motion.reusable_path.phase_degrees",
+                               candidate.motion.custom_phase_degrees,
+                               error))) {
         return false;
     }
 
@@ -4475,7 +4641,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 17U && setup_v17_record(key))
              || (setup_version < 18U && setup_v18_record(key))
              || (setup_version < 19U && setup_v19_record(key))
-             || (setup_version < 20U && setup_v20_record(key)));
+             || (setup_version < 20U && setup_v20_record(key))
+             || (setup_version < 21U && setup_v21_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,
@@ -4595,14 +4762,14 @@ RecoveryAttempt decode_with_record_repair(
 }
 
 std::string recovery_group(std::string_view key) {
-    constexpr std::array<std::string_view, 24U> groups{{
+    constexpr std::array<std::string_view, 25U> groups{{
         "paths.", "timing.music.", "timing.clock.", "canvas.",
         "output.", "waves.", "swings.", "effects.", "layer_clock.",
         "palette.", "surface.", "source_image.", "motion.", "alpha.",
         "quantization.", "transform.", "audio_reactive.", "appearance.",
         "rhythm.", "audio_response_defaults.",
         "starting_colors.",
-        "post_process.", "parameter_lfos.",
+        "post_process.", "post_effects.", "parameter_lfos.",
         "live.",
     }};
     for (const std::string_view group : groups) {
@@ -4613,7 +4780,8 @@ std::string recovery_group(std::string_view key) {
 
 bool collection_recovery_group(std::string_view group) {
     return group == "paths." || group == "waves." || group == "swings."
-           || group == "effects." || group == "palette."
+           || group == "effects." || group == "post_effects."
+           || group == "palette."
            || group == "timing.music." || group == "layer_clock."
            || group == "live." || group == "parameter_lfos.";
 }

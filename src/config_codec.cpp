@@ -99,13 +99,13 @@ bool document_version(const std::string& serialized,
 }
 
 bool is_render_key(std::string_view key) {
-    constexpr std::array<std::string_view, 17U> prefixes{{
+    constexpr std::array<std::string_view, 18U> prefixes{{
         "waves.", "swings.", "effects.", "rhythm.", "appearance.",
         "audio_reactive.", "alpha.", "quantization.", "surface.",
         "palette.", "transform.", "layer_clock.", "motion.",
         "source_image.",
         "starting_colors.",
-        "post_process.", "parameter_lfos.",
+        "post_process.", "post_effects.", "parameter_lfos.",
     }};
     for (const std::string_view prefix : prefixes) {
         if (starts_with(key, prefix)) {
@@ -282,6 +282,12 @@ bool is_setup_v20_key(std::string_view key) {
            || starts_with(key, "surface.mesh_construction.");
 }
 
+bool is_setup_v21_key(std::string_view key) {
+    return key == "post_process.effects_authoritative"
+           || starts_with(key, "post_effects.")
+           || starts_with(key, "motion.reusable_path.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -305,7 +311,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 14U ? 16U
                     : layer_version == 15U ? 17U
                     : layer_version == 16U ? 18U
-                    : layer_version == 17U ? 19U : 20U;
+                    : layer_version == 17U ? 19U
+                    : layer_version == 18U ? 20U : 21U;
     return true;
 }
 
@@ -584,6 +591,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 20U && is_setup_v20_key(key)) {
+            continue;
+        }
+        if (setup_version < 21U && is_setup_v21_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

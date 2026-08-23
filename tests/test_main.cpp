@@ -140,6 +140,31 @@ void test_parameter_lfos() {
     CHECK(mapped.post_process.channel_map.mix == 0.44);
     CHECK(mapped.parameter_lfos.size() == 1U);
 
+    pvt::RenderConfig instance_mapped = pvt::default_config();
+    instance_mapped.post_process.effects_authoritative = true;
+    pvt::PostProcessEffectConfig red_instance;
+    red_instance.id = pvt::allocate_id(instance_mapped);
+    red_instance.name = "LFO red instance";
+    red_instance.stage = pvt::PostProcessStage::InvertRed;
+    red_instance.mix = 0.44;
+    instance_mapped.post_process.effects.push_back(red_instance);
+    pvt::ParameterLfo instance_mix_lfo;
+    instance_mix_lfo.target_path =
+        "post_effect/" + std::to_string(red_instance.id) + "/mix";
+    instance_mix_lfo.minimum = 0.15;
+    instance_mix_lfo.maximum = 0.85;
+    instance_mix_lfo.phase_degrees = -90.0;
+    instance_mapped.parameter_lfos.push_back(instance_mix_lfo);
+    CHECK(pvt::parameter_lfo_target_supported(
+        instance_mapped, instance_mix_lfo.target_path));
+    const pvt::RenderConfig instance_minimum =
+        pvt::detail::materialize_parameter_lfos(instance_mapped, 0.0);
+    const pvt::RenderConfig instance_maximum =
+        pvt::detail::materialize_parameter_lfos(instance_mapped, 0.5);
+    CHECK(instance_minimum.post_process.effects.front().mix == 0.15);
+    CHECK(instance_maximum.post_process.effects.front().mix == 0.85);
+    CHECK(instance_mapped.post_process.effects.front().mix == 0.44);
+
     const auto maximum_difference = [](const pvt::Image& left,
                                        const pvt::Image& right) {
         if (left.width != right.width || left.height != right.height
@@ -191,7 +216,7 @@ void test_parameter_lfos() {
 
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t20\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t21\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -219,6 +244,16 @@ void test_project_post_process_alpha_safety() {
 
     pvt::PostProcessConfig& finishing =
         project.layers.front().render.post_process;
+    pvt::PostProcessEffectConfig alpha_instance;
+    alpha_instance.id = pvt::allocate_id(project.layers.front().render);
+    alpha_instance.name = "Instance alpha invert";
+    alpha_instance.stage = pvt::PostProcessStage::InvertAlpha;
+    finishing.effects.push_back(alpha_instance);
+    CHECK(!pvt::validate(project).ok);
+    finishing.effects.clear();
+
+    // Retain coverage of the pre-v21 compatibility representation too.
+    finishing.effects_authoritative = false;
     finishing.invert_alpha_enabled = true;
     CHECK(!pvt::validate(project).ok);
 
@@ -271,6 +306,7 @@ void test_project_post_process_alpha_safety() {
 
     pvt::PostProcessConfig& eraser_finishing =
         project.layers.back().render.post_process;
+    eraser_finishing.effects_authoritative = false;
     eraser_finishing.invert_alpha_enabled = true;
     CHECK(!pvt::validate(project).ok);
     eraser_finishing.channel_map.enabled = true;
@@ -824,6 +860,42 @@ void test_post_process_effects(const fs::path& directory) {
         CHECK(std::fabs(pixel[3] - 1.0F) < 1.0e-6F);
     }
 
+    // The authoritative model is an ordered list of instances, not a set of
+    // eight unique stage toggles. Exercise the concrete artist workflow that
+    // motivated it: ten Red Invert instances with ten independent mixes.
+    pvt::RenderConfig repeated_red = config;
+    repeated_red.post_process = {};
+    repeated_red.post_process.effects_authoritative = true;
+    double expected_red = baseline.pixels.front();
+    for (std::size_t index = 0U; index < 10U; ++index) {
+        pvt::PostProcessEffectConfig effect;
+        effect.id = pvt::allocate_id(repeated_red);
+        effect.name = "Red invert " + std::to_string(index + 1U);
+        effect.stage = pvt::PostProcessStage::InvertRed;
+        effect.mix = static_cast<double>(index + 1U) / 11.0;
+        repeated_red.post_process.effects.push_back(effect);
+        expected_red = expected_red * (1.0 - effect.mix)
+                       + (1.0 - expected_red) * effect.mix;
+    }
+    CHECK(repeated_red.post_process.effects.size() == 10U);
+    CHECK(pvt::validate(repeated_red).ok);
+    pvt::Image ten_red_inverts;
+    CHECK(pvt::render_frame_at_phase(
+        repeated_red, 0.0, ten_red_inverts, &error));
+    if (const float* pixel = ten_red_inverts.pixel(0, 0)) {
+        CHECK(std::fabs(pixel[0] - expected_red) < 2.0e-6F);
+        CHECK(std::fabs(pixel[1] - baseline.pixels[1U]) < 1.0e-6F);
+        CHECK(std::fabs(pixel[2] - baseline.pixels[2U]) < 1.0e-6F);
+        CHECK(std::fabs(pixel[3] - baseline.pixels[3U]) < 1.0e-6F);
+    }
+    pvt::RenderConfig duplicate_post_id = repeated_red;
+    duplicate_post_id.post_process.effects.back().id =
+        duplicate_post_id.post_process.effects.front().id;
+    CHECK(!pvt::validate(duplicate_post_id).ok);
+    pvt::RenderConfig zero_post_id = repeated_red;
+    zero_post_id.post_process.effects.front().id = 0U;
+    CHECK(!pvt::validate(zero_post_id).ok);
+
     // The all-RGB stage deliberately precedes the channel stages. A full
     // red inversion in both stages therefore restores red while green and
     // blue remain globally inverted.
@@ -1010,7 +1082,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t20\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t21\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -1860,6 +1932,26 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     CHECK(pvt::render_frame_at_phase(path_config, 1.0, seam, &error));
     CHECK(start.pixels == seam.pixels);
     CHECK(mean_absolute_difference(start, middle) > 0.00001);
+
+    // Reusable paths keep their authored shape while the ordinary placement
+    // controls act as neutral-default modifiers instead of being ignored.
+    pvt::RenderConfig offset_path = path_config;
+    offset_path.motion.custom_offset_x = 0.17;
+    offset_path.motion.custom_offset_y = -0.11;
+    pvt::Image offset_middle;
+    CHECK(pvt::render_frame_at_phase(
+        offset_path, 0.25, offset_middle, &error));
+    CHECK(mean_absolute_difference(middle, offset_middle) > 0.00001);
+    pvt::RenderConfig travel_path = path_config;
+    travel_path.motion.custom_travel_x = 0.19;
+    travel_path.motion.custom_travel_y = 0.13;
+    travel_path.motion.custom_cycles_x = 3;
+    travel_path.motion.custom_cycles_y = -2;
+    travel_path.motion.custom_phase_degrees = 90.0;
+    pvt::Image travel_start;
+    CHECK(pvt::render_frame_at_phase(
+        travel_path, 0.0, travel_start, &error));
+    CHECK(mean_absolute_difference(start, travel_start) > 0.00001);
 
     // Reverse changes traversal direction, not the separately authored
     // starting phase. Follow-tangent orientation must face actual travel and
@@ -4505,6 +4597,19 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
         pvt::PostProcessStage::InvertRed,
         pvt::PostProcessStage::InvertRgb,
         pvt::PostProcessStage::Antialias};
+    original.post_process.effects_authoritative = true;
+    original.post_process.effects.clear();
+    pvt::PostProcessEffectConfig first_red;
+    first_red.id = pvt::allocate_id(original);
+    first_red.name = "First persisted red invert";
+    first_red.stage = pvt::PostProcessStage::InvertRed;
+    first_red.mix = 0.23;
+    original.post_process.effects.push_back(first_red);
+    pvt::PostProcessEffectConfig second_red = first_red;
+    second_red.id = pvt::allocate_id(original);
+    second_red.name = "Second persisted red invert";
+    second_red.mix = 0.79;
+    original.post_process.effects.push_back(second_red);
     original.surface.enabled = true;
     original.surface.mapping = pvt::SurfaceMapping::Cylinder;
     original.surface.projection = pvt::SurfaceProjection::Perspective;
@@ -4644,6 +4749,13 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.motion.phase_degrees = 27.0;
     original.motion.rotations_per_loop = -2;
     original.motion.scale_pulse = 0.14;
+    original.motion.custom_offset_x = -0.13;
+    original.motion.custom_offset_y = 0.21;
+    original.motion.custom_travel_x = 0.17;
+    original.motion.custom_travel_y = 0.29;
+    original.motion.custom_cycles_x = -3;
+    original.motion.custom_cycles_y = 5;
+    original.motion.custom_phase_degrees = 47.0;
 
     const fs::path first = directory / "first.pvt";
     const fs::path second = directory / "second.pvt";
@@ -4817,6 +4929,18 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.post_process.antialias_threshold == 0.14);
     CHECK(loaded.post_process.antialias_passes == 3);
     CHECK(loaded.post_process.order == original.post_process.order);
+    CHECK(loaded.post_process.effects_authoritative);
+    CHECK(loaded.post_process.effects.size() == 2U);
+    if (loaded.post_process.effects.size() == 2U) {
+        CHECK(loaded.post_process.effects[0].stage
+              == pvt::PostProcessStage::InvertRed);
+        CHECK(loaded.post_process.effects[0].mix == 0.23);
+        CHECK(loaded.post_process.effects[1].stage
+              == pvt::PostProcessStage::InvertRed);
+        CHECK(loaded.post_process.effects[1].mix == 0.79);
+        CHECK(loaded.post_process.effects[0].id
+              != loaded.post_process.effects[1].id);
+    }
 
     // New radial spirals serialize under their own token. The former
     // `subtractive` token migrates to the explicitly named square spiral so
@@ -4925,6 +5049,13 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.motion.cycles_x == 3 && loaded.motion.cycles_y == 2);
     CHECK(loaded.motion.rotations_per_loop == -2);
     CHECK(loaded.motion.scale_pulse == 0.14);
+    CHECK(loaded.motion.custom_offset_x == -0.13);
+    CHECK(loaded.motion.custom_offset_y == 0.21);
+    CHECK(loaded.motion.custom_travel_x == 0.17);
+    CHECK(loaded.motion.custom_travel_y == 0.29);
+    CHECK(loaded.motion.custom_cycles_x == -3);
+    CHECK(loaded.motion.custom_cycles_y == 5);
+    CHECK(loaded.motion.custom_phase_degrees == 47.0);
     CHECK(pvt::save_setup(loaded, second.string(), &error));
     CHECK(read_bytes(first) == read_bytes(second));
 
@@ -5055,9 +5186,24 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t20\n", 0U) == 0U);
-    std::string version_nineteen(current_version_bytes.begin(),
-                                 current_version_bytes.end());
+              .rfind("PVT_SETUP\t21\n", 0U) == 0U);
+    std::string version_twenty(current_version_bytes.begin(),
+                               current_version_bytes.end());
+    version_twenty.replace(0U, std::string("PVT_SETUP\t21").size(),
+                           "PVT_SETUP\t20");
+    pvt::RenderConfig loaded_version_twenty;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_twenty, loaded_version_twenty, &error));
+    CHECK(!loaded_version_twenty.post_process.effects_authoritative);
+    CHECK(loaded_version_twenty.post_process.effects.empty());
+    CHECK(loaded_version_twenty.motion.custom_offset_x == 0.0);
+    CHECK(loaded_version_twenty.motion.custom_offset_y == 0.0);
+    CHECK(loaded_version_twenty.motion.custom_travel_x == 0.0);
+    CHECK(loaded_version_twenty.motion.custom_travel_y == 0.0);
+    CHECK(loaded_version_twenty.motion.custom_cycles_x == 1);
+    CHECK(loaded_version_twenty.motion.custom_cycles_y == 2);
+    CHECK(loaded_version_twenty.motion.custom_phase_degrees == 0.0);
+    std::string version_nineteen = version_twenty;
     version_nineteen.replace(0U, std::string("PVT_SETUP\t20").size(),
                              "PVT_SETUP\t19");
     erase_records_with_prefix(version_nineteen,

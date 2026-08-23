@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **13.0.1**. The version is read from `VERSION` by every
+Current product version: **14.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -60,7 +60,7 @@ CPU. The desktop editor, interactive CLI, randomizer, numeric LFOs, and Live
 targets expose the same bounded controls.
 
 Water appends a new effect token without changing `EffectConfig`'s layout.
-Setup format 20 and layer format 18 persist that token together with
+That release's setup format 20 and layer format 18 persist the token together with
 environment lighting and mesh-construction controls; setup 19/layer 17 and
 older inputs retain their existing effect meanings and receive disabled
 defaults for the new surface features.
@@ -69,9 +69,29 @@ The environment-map and mesh-construction records expand the public by-value
 `SurfaceConfig`, so this feature set advances the product and shared-library
 SONAME together to 13.0.0/13. Installed consumers must rebuild.
 
+## Repeatable post-effect instances and reusable-path motion modifiers
+
+Post Effects is an authored list of independent instances. Any of the eight
+effect types can be added, duplicated, removed, bypassed, or reordered any
+number of times; ten Red Invert instances therefore retain ten stable IDs and
+ten separate mix values. The GUI shows settings only for the selected instance,
+the interactive CLI exposes the same list operations, and numeric LFO/Live
+targets address stable instance IDs. Metal dispatches every enabled instance in
+the saved order. The CPU implementation is parity/reference coverage rather
+than a fallback: CPU-only mode is unsupported, and an admitted GPU failure is
+reported instead of silently retrying the frame on CPU.
+
+When seamless layer motion uses a reusable path, Center X/Y become offsets from
+the sampled path and Travel X/Y add seamless oscillation using the visible
+cycles and phase controls. Their defaults—zero offsets/travel, cycles 1/2, and
+zero phase—leave the reusable path unchanged. Rotation, tangent following, and
+scale pulse remain composable. Setup format 21 and layer format 19 persist the
+instance stack and modifiers; older records retain the fixed-stage compatibility
+model and neutral modifier defaults.
+
 ## 12.0.0 ordered finishing and host-aware workflow controls
 
-Post Effects is now an artist-orderable eight-stage finishing pipeline:
+Version 12.0.0 originally introduced an artist-orderable eight-stage finishing pipeline:
 combined RGB inversion, individual Red/Green/Blue/Alpha inversions,
 simultaneous RGBA channel routing, edge antialiasing, and quantization. Every
 output channel can read Red, Green, Blue, Alpha, Zero, or One from the same
@@ -324,7 +344,8 @@ Windows and Linux surface acceleration now negotiate several public Qt OpenGL
 3.3 profiles against the actual context format before creating the offscreen
 surface. Drivers that provide hardware OpenGL without threaded-context support
 can render on the GUI thread instead of losing acceleration. Independent project
-layers use two bounded CPU lanes for CPU-only stages and fallback scenes, which
+layers use two bounded CPU lanes for known CPU-only stages and independent
+unsupported layers, which
 keeps preview and export responsive when only part of a composition is portable
 to OpenGL.
 
@@ -923,11 +944,12 @@ sudo apt install procedural-visualizer-tool
   (left-to-right, right-to-left, top-to-bottom, bottom-to-top, or four-way).
 - Independent feature toggles for displacement, slope lighting, spiral, and
   wall reflection.
-- An artist-orderable eight-stage Post Effects pipeline: combined RGB and
-  individual R/G/B/A inversions, simultaneous RGBA channel routing,
+- An artist-orderable Post Effects instance stack: each entry may independently
+  be combined RGB or individual R/G/B/A inversion, simultaneous RGBA channel routing,
   premultiplied edge antialiasing with strength/threshold/pass controls, and
   RGB, luminance, or hue quantization from 2 through the signed-int UI/API
-  capacity with adjustable mix. Each mapped output can read R/G/B/A/Zero/One
+  capacity with adjustable mix. Types may repeat without sharing settings.
+  Each mapped output can read R/G/B/A/Zero/One
   from the same input pixel, so duplication and swaps are deterministic. This
   final pipeline remains independent of the starting palette.
 - Plane (flat or PNG-displaced), closed ray-cast cylinder, sphere, ray-cast
@@ -1152,8 +1174,8 @@ to keep a CPU lane busy. Independent unsupported layers use a bounded,
 host-adaptive CPU pool beside a one-thread Metal submission pipeline, while
 authored compositing order stays deterministic. Generated source ordering,
 source alpha, starting-image palette selection, starting-image fitting,
-particles, reusable path resolution, built-in placement, rotation, and scale
-all keep Metal active. Floyd-Steinberg source dithering, custom OBJ depth
+particles, reusable path resolution plus its placement/travel modifiers,
+built-in placement, rotation, and scale all keep Metal active. Floyd-Steinberg source dithering, custom OBJ depth
 peeling, and displacement-Plane rasterization are ordered CPU stages inside
 the accelerated pipeline rather than whole-layer fallbacks. An unexpected
 Metal error is surfaced immediately instead of being hidden behind an
@@ -1434,8 +1456,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-19 remain importable;
-current explicit legacy output is setup format 20. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-20 remain importable;
+current explicit legacy output is setup format 21. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1462,10 +1484,12 @@ files receive visible compatibility values that reproduce their former
 presentation without carrying hidden behavior forward. Format 17 adds numeric
 parameter LFOs. Format 18 adds the independent red, green, and blue inversion
 stages. Format 19 adds simultaneous RGBA channel routing and the exact
-eight-stage post-processing order. Format 20 appends the Water effect token;
-project layer records use the corresponding current layer format 18. Older
-records receive the historical stage order, a disabled identity map, and their
-unchanged pre-Water effect vocabulary.
+eight-stage post-processing order. Format 20 appends the Water effect token.
+Format 21 replaces that unique-stage representation with repeatable stable-ID
+post-effect instances and adds neutral-default offsets/travel/cycles/phase for
+reusable layer-motion paths; project layer records use current layer format 19.
+Older records receive the historical stage order, a disabled identity map,
+neutral reusable-path modifiers, and their unchanged pre-Water vocabulary.
 Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.

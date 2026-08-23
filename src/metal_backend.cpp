@@ -1808,7 +1808,132 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }
-    for (const PostProcessStage stage : config.post_process.order) {
+    if (config.post_process.effects_authoritative) {
+        for (const PostProcessEffectConfig& effect :
+             config.post_process.effects) {
+            if (!effect.enabled) continue;
+            switch (effect.stage) {
+                case PostProcessStage::InvertRgb:
+                case PostProcessStage::InvertRed:
+                case PostProcessStage::InvertGreen:
+                case PostProcessStage::InvertBlue:
+                case PostProcessStage::InvertAlpha: {
+                    if (effect.mix <= 0.0) break;
+                    GpuFrameConstants instance_constants = constants;
+                    switch (effect.stage) {
+                        case PostProcessStage::InvertRgb:
+                            instance_constants.post_flags.x = 1U;
+                            instance_constants.post_values.x =
+                                static_cast<float>(effect.mix);
+                            break;
+                        case PostProcessStage::InvertRed:
+                            instance_constants.post_channel_flags.x = 1U;
+                            instance_constants.post_channel_mixes.x =
+                                static_cast<float>(effect.mix);
+                            break;
+                        case PostProcessStage::InvertGreen:
+                            instance_constants.post_channel_flags.y = 1U;
+                            instance_constants.post_channel_mixes.y =
+                                static_cast<float>(effect.mix);
+                            break;
+                        case PostProcessStage::InvertBlue:
+                            instance_constants.post_channel_flags.z = 1U;
+                            instance_constants.post_channel_mixes.z =
+                                static_cast<float>(effect.mix);
+                            break;
+                        case PostProcessStage::InvertAlpha:
+                            instance_constants.post_flags.y = 1U;
+                            instance_constants.post_values.y =
+                                static_cast<float>(effect.mix);
+                            break;
+                        default:
+                            break;
+                    }
+                    const std::uint32_t stage_value =
+                        static_cast<std::uint32_t>(effect.stage);
+                    encode_grid(
+                        command_buffer, context.pipeline(Pipeline::PostInvert),
+                        pixel_grid,
+                        [&](MTL::ComputeCommandEncoder* encoder) {
+                            encoder->setBytes(&instance_constants,
+                                              sizeof(instance_constants), 0U);
+                            encoder->setBytes(&stage_value,
+                                              sizeof(stage_value), 1U);
+                            encoder->setBuffer(current, 0U, 2U);
+                        });
+                    break;
+                }
+                case PostProcessStage::ChannelMap: {
+                    if (effect.mix <= 0.0) break;
+                    ChannelMapConfig instance;
+                    instance.enabled = true;
+                    instance.mix = effect.mix;
+                    instance.red_source = effect.red_source;
+                    instance.green_source = effect.green_source;
+                    instance.blue_source = effect.blue_source;
+                    instance.alpha_source = effect.alpha_source;
+                    const GpuChannelMap channel_map = make_channel_map(instance);
+                    encode_grid(
+                        command_buffer,
+                        context.pipeline(Pipeline::PostChannelMap), pixel_grid,
+                        [&](MTL::ComputeCommandEncoder* encoder) {
+                            encoder->setBytes(
+                                &constants, sizeof(constants), 0U);
+                            encoder->setBytes(
+                                &channel_map, sizeof(channel_map), 1U);
+                            encoder->setBuffer(current, 0U, 2U);
+                        });
+                    break;
+                }
+                case PostProcessStage::Antialias:
+                    if (effect.antialias_strength > 0.0) {
+                        GpuFrameConstants instance_constants = constants;
+                        instance_constants.post_values.z =
+                            static_cast<float>(effect.antialias_strength);
+                        instance_constants.post_values.w =
+                            static_cast<float>(effect.antialias_threshold);
+                        for (int pass = 0;
+                             pass < effect.antialias_passes; ++pass) {
+                            encode_grid(
+                                command_buffer,
+                                context.pipeline(Pipeline::PostAntialias),
+                                pixel_grid,
+                                [&](MTL::ComputeCommandEncoder* encoder) {
+                                    encoder->setBytes(
+                                        &instance_constants,
+                                        sizeof(instance_constants), 0U);
+                                    encoder->setBuffer(current, 0U, 1U);
+                                    encoder->setBuffer(scratch, 0U, 2U);
+                                });
+                            std::swap(current, scratch);
+                        }
+                    }
+                    break;
+                case PostProcessStage::Quantization:
+                    if (effect.mix > 0.0) {
+                        GpuFrameConstants instance_constants = constants;
+                        instance_constants.transform_quant.w =
+                            static_cast<std::uint32_t>(
+                                effect.quantization_mode);
+                        instance_constants.quant_values.x =
+                            static_cast<std::uint32_t>(
+                                effect.quantization_levels);
+                        instance_constants.alpha_quant.w =
+                            static_cast<float>(effect.mix);
+                        encode_grid(
+                            command_buffer,
+                            context.pipeline(Pipeline::Quantize), pixel_grid,
+                            [&](MTL::ComputeCommandEncoder* encoder) {
+                                encoder->setBytes(
+                                    &instance_constants,
+                                    sizeof(instance_constants), 0U);
+                                encoder->setBuffer(current, 0U, 1U);
+                            });
+                    }
+                    break;
+            }
+        }
+    } else for (const PostProcessStage stage : config.post_process.order) {
         switch (stage) {
             case PostProcessStage::InvertRgb:
             case PostProcessStage::InvertRed:

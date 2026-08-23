@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 20;
+constexpr std::uint32_t kSetupFormatVersion = 21;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -43,6 +43,7 @@ inline double maximum_render_parameter_magnitude() noexcept {
 }
 constexpr std::size_t kMaximumWaves = kMaximumUiItems;
 constexpr std::size_t kMaximumEffects = kMaximumUiItems;
+constexpr std::size_t kMaximumPostProcessEffects = kMaximumUiItems;
 constexpr std::size_t kMaximumSwings = kMaximumUiItems;
 constexpr std::size_t kMaximumLayers = kMaximumUiItems;
 constexpr std::size_t kMaximumLayerGroups = kMaximumLayers;
@@ -942,6 +943,18 @@ struct LayerMotionConfig {
     // A reusable cubic-path binding overrides only the built-in placement
     // path. Rotation and scale pulse remain independently composable.
     PathBinding custom_path;
+    // Reusable paths retain their own neutral-default placement modifiers so
+    // switching between a built-in path and a reusable path never discards or
+    // silently ignores the controls shown beneath the path selector. Offsets
+    // are normalized canvas fractions. Travel adds a seamless sine offset to
+    // the sampled path; zero travel is exactly neutral.
+    double custom_offset_x = 0.0;
+    double custom_offset_y = 0.0;
+    double custom_travel_x = 0.0;
+    double custom_travel_y = 0.0;
+    int custom_cycles_x = 1;
+    int custom_cycles_y = 2;
+    double custom_phase_degrees = 0.0;
 };
 
 struct AlphaConfig {
@@ -1027,6 +1040,29 @@ struct ChannelMapConfig {
     ChannelSource alpha_source = ChannelSource::Alpha;
 };
 
+// One independently authored item in the layer-local finishing stack. Unlike
+// the legacy fixed stage fields below, this representation deliberately allows
+// any stage type to appear any number of times. Every item owns its parameters
+// so two adjacent red inversions, for example, can use different mixes.
+// Fields that do not apply to an item's stage are retained unchanged; this
+// makes stage duplication and future type editing lossless.
+struct PostProcessEffectConfig {
+    std::uint64_t id = 0;
+    std::string name;
+    PostProcessStage stage = PostProcessStage::InvertRgb;
+    bool enabled = true;
+    double mix = 1.0;
+    ChannelSource red_source = ChannelSource::Red;
+    ChannelSource green_source = ChannelSource::Green;
+    ChannelSource blue_source = ChannelSource::Blue;
+    ChannelSource alpha_source = ChannelSource::Alpha;
+    double antialias_strength = 0.75;
+    double antialias_threshold = 0.08;
+    int antialias_passes = 1;
+    int quantization_levels = 16;
+    QuantizationMode quantization_mode = QuantizationMode::Rgb;
+};
+
 // Layer-local finishing controls. The order is an exact permutation of all
 // PostProcessStage values. Its compatibility default reproduces the historical
 // pipeline: combined RGB inversion, individual R/G/B/A inversions, the neutral
@@ -1061,6 +1097,11 @@ struct PostProcessConfig {
         PostProcessStage::ChannelMap,
         PostProcessStage::Antialias,
         PostProcessStage::Quantization};
+    // Appended for source compatibility. When authoritative, this is the
+    // complete ordered stack and may be empty. When false, direct API clients
+    // retain the historical fixed-field/order behavior above.
+    std::vector<PostProcessEffectConfig> effects;
+    bool effects_authoritative = false;
 };
 
 // Optional height-field geometry for the built-in Plane surface. The height

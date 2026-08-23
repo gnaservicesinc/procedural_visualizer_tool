@@ -95,15 +95,9 @@ file(WRITE "${interactive_input}"
     # Keep the new Kaleidoscope and Domain Warp controls at their defaults.
     "\n\n\n\n"
     "\n\n\n\n\n\n"
-    # Keep all-RGB, per-channel, and alpha inversion at neutral defaults.
-    "\n\n\n\n\n\n\n\n\n\n"
-    # Keep simultaneous channel routing disabled with its identity selectors.
-    "\n\n\n\n\n\n"
-    # Keep edge antialiasing at its neutral defaults.
-    "\n\n\n\n"
-    # Preserve the existing post-effects quantization defaults.
-    "\n\n\n\n"
-    # Retain the compatibility post-effect order and leave its move editor.
+    # Add the same post-effect type twice with independent mixes.
+    "a\n2\n\n\n0.25\n"
+    "a\n2\n\n\n0.75\n"
     "b\n"
     "1\n"
     "\n\n\n"
@@ -142,6 +136,12 @@ foreach(expected_record
         "starting_colors.red_minimum${field_separator}0.125"
         "starting_colors.blue_maximum${field_separator}0.75"
         "starting_colors.alpha_minimum${field_separator}0.875"
+        "post_process.effects_authoritative${field_separator}1"
+        "post_effects.count${field_separator}2"
+        "post_effects.0.stage${field_separator}invert_red"
+        "post_effects.0.mix${field_separator}0.25"
+        "post_effects.1.stage${field_separator}invert_red"
+        "post_effects.1.mix${field_separator}0.75"
         "palette.colors.0.alpha${field_separator}0.25"
         "alpha.use_source_alpha${field_separator}0")
     string(FIND "${interactive_setup}" "${expected_record}"

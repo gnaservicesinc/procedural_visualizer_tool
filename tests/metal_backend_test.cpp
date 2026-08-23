@@ -396,6 +396,29 @@ void test_backend_contract() {
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
                 "reversed reusable wave path tangent");
 
+    // Layer motion on a reusable path retains GPU ownership; placement and
+    // travel settings are resolved as offsets before native Metal transform.
+    path_wave.motion.enabled = true;
+    path_wave.motion.custom_path.enabled = true;
+    path_wave.motion.custom_path.path_id = 500U;
+    path_wave.motion.custom_path.cycles_per_loop = 2;
+    path_wave.motion.custom_path.follow_tangent = true;
+    path_wave.motion.custom_offset_x = -0.08;
+    path_wave.motion.custom_offset_y = 0.12;
+    path_wave.motion.custom_travel_x = 0.17;
+    path_wave.motion.custom_travel_y = 0.11;
+    path_wave.motion.custom_cycles_x = 3;
+    path_wave.motion.custom_cycles_y = -2;
+    path_wave.motion.custom_phase_degrees = 37.0;
+    path_wave.motion.rotations_per_loop = 1;
+    path_wave.motion.scale_pulse = 0.09;
+    CHECK(pvt::render_frame_at_phase(path_wave, 0.31, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(path_wave, 0.31, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.003, 0.0003,
+                "reusable layer path with placement/travel modifiers");
+
     pvt::RenderConfig shaped_source = parity_config();
     shaped_source.palette = {};
     shaped_source.effects.clear();
@@ -700,6 +723,29 @@ void test_backend_contract() {
                             gpu, nullptr, &error));
     check_close(cpu, gpu, 0.12, 0.012, 0.003, 0.0003,
                 "post-process global/channel double inversion/straight-alpha antialias");
+
+    // Repeated types remain separate native Metal dispatches. Ten Red Invert
+    // instances with different mixes catch both accidental type de-duplication
+    // and implementations that collapse instance settings into one slot.
+    pvt::RenderConfig repeated_post = parity_config();
+    repeated_post.quantization.enabled = false;
+    repeated_post.post_process = {};
+    repeated_post.post_process.effects_authoritative = true;
+    for (std::size_t index = 0U; index < 10U; ++index) {
+        pvt::PostProcessEffectConfig effect;
+        effect.id = pvt::allocate_id(repeated_post);
+        effect.name = "Metal red invert " + std::to_string(index + 1U);
+        effect.stage = pvt::PostProcessStage::InvertRed;
+        effect.mix = static_cast<double>(index + 1U) / 11.0;
+        repeated_post.post_process.effects.push_back(effect);
+    }
+    CHECK(pvt::validate(repeated_post).ok);
+    CHECK(pvt::render_frame(repeated_post, 8, cpu_options,
+                            cpu, nullptr, &error));
+    CHECK(pvt::render_frame(repeated_post, 8, gpu_options,
+                            gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,
+                "ten independent Red Invert post-effect instances");
 
     // A one-color linear palette makes the source channels exact and visibly
     // out of range while spatial alpha still gives the later odd antialias
