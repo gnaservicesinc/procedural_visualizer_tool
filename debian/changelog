@@ -1,6 +1,8 @@
 procedural-visualizer-tool (15.0.0) stonking; urgency=medium
 
   * Correct generated RGBA traversal while preserving an exposed legacy order.
+  * Keep private test hooks linkable in shared-library package builds.
+  * Package the SONAME 15 runtime under its matching binary package name.
 
  -- gnaservicesinc <alast.andy@gmail.com>  Sun, 23 Aug 2026 14:25:44 -0400
 

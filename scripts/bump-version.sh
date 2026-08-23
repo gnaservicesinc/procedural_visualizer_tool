@@ -54,6 +54,33 @@ rewrite_file "$repository_dir/debian/pvt-render.1" \
 rewrite_file "$repository_dir/debian/procedural-visualizer-tool.1" \
     '1s/(Procedural Visualizer Tool )[^\"]+(\" \"User Commands)/\1'"${version}"'\2/'
 
+abi_major=${version%%.*}
+runtime_package="libproceduralvisualizertool${abi_major}"
+control_file="$repository_dir/debian/control"
+current_runtime_package=$(sed -n \
+    's/^Package: \(libproceduralvisualizertool[0-9][0-9]*\)$/\1/p' \
+    "$control_file")
+case "$current_runtime_package" in
+    ""|*'
+'*)
+        echo "debian/control must declare exactly one versioned PVT runtime package." >&2
+        exit 1
+        ;;
+esac
+current_runtime_install="$repository_dir/debian/${current_runtime_package}.install"
+runtime_install="$repository_dir/debian/${runtime_package}.install"
+if [ ! -f "$current_runtime_install" ]; then
+    echo "Missing Debian install manifest: $current_runtime_install" >&2
+    exit 1
+fi
+if [ "$current_runtime_package" != "$runtime_package" ]; then
+    rewrite_file "$control_file" \
+        "s/${current_runtime_package}/${runtime_package}/g"
+    mv "$current_runtime_install" "$runtime_install"
+fi
+rewrite_file "$runtime_install" \
+    's/(libProceduralVisualizerTool\.so\.)[0-9]+(\*)/\1'"${abi_major}"'\2/'
+
 debian_version=$(printf '%s\n' "$version" | sed 's/-/~/')
 if ! head -n 1 "$repository_dir/debian/changelog" |
         grep -Fq "procedural-visualizer-tool ($debian_version)"; then

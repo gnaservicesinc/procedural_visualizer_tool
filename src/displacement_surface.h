@@ -42,7 +42,7 @@ bool apply_displacement_plane_mapping(
     std::string* error,
     const std::atomic_bool* cancel = nullptr);
 
-void clear_displacement_mesh_cache() noexcept;
+PVT_API void clear_displacement_mesh_cache() noexcept;
 
 } // namespace pvt::detail
 

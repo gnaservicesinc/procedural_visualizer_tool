@@ -307,10 +307,10 @@ struct PreparedFrame {
 
 // Materializes layer-local parameter LFOs into a render-only copy. Authored
 // values and the saved oscillator definitions remain unchanged.
-RenderConfig materialize_parameter_lfos(const RenderConfig& config,
-                                        double normalized_phase);
-RenderConfig materialize_parameter_lfos_at_frame(const RenderConfig& config,
-                                                  int frame_index);
+PVT_API RenderConfig materialize_parameter_lfos(const RenderConfig& config,
+                                                double normalized_phase);
+PVT_API RenderConfig materialize_parameter_lfos_at_frame(
+    const RenderConfig& config, int frame_index);
 ValidationResult validate_frame_render_config(const RenderConfig& config);
 
 // Selected-backend rendering validates and materializes parameter LFOs before
