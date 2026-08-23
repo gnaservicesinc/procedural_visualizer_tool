@@ -1792,6 +1792,8 @@ void configure_color(RenderConfig& config) {
              {pvt::StartingColorMode::Random, "Random"}})
         || !prompt_bool("Generated colors include alpha",
                         config.starting_colors.include_alpha)
+        || !prompt_bool("Repeat RGB gamut for each alpha level (legacy)",
+                        config.starting_colors.legacy_alpha_outermost)
         || !prompt_real("Generated red minimum",
                         config.starting_colors.red_minimum, 0.0, 1.0)
         || !prompt_real("Generated red maximum",
@@ -3310,7 +3312,8 @@ void print_help(const char* program) {
         << "          color-erase-tones|color-erase-brightness\n"
         << "  --layer-opacity N --enable-layer --disable-layer\n"
         << "  --alpha --no-alpha                 Final RGB/RGBA channel selection\n"
-        << "  --alpha-modulation --no-alpha-modulation  Active-layer artwork\n\n"
+        << "  --alpha-modulation --no-alpha-modulation  Active-layer artwork\n"
+        << "  --legacy-alpha-order --corrected-alpha-order  Generated RGBA ordering\n\n"
         << "Render and output options:\n"
         << "  --render (or --defaults)\n"
         << "  --width N --height N --block-size N --frames N --fps N\n"
@@ -3685,6 +3688,18 @@ int main(int argc, char** argv) {
         }
         if (option == "--no-alpha-modulation") {
             mark_changed(state.document.project.layers.at(state.active_layer).render.alpha.enabled,
+                         false);
+            continue;
+        }
+        if (option == "--legacy-alpha-order") {
+            mark_changed(state.document.project.layers.at(state.active_layer)
+                             .render.starting_colors.legacy_alpha_outermost,
+                         true);
+            continue;
+        }
+        if (option == "--corrected-alpha-order") {
+            mark_changed(state.document.project.layers.at(state.active_layer)
+                             .render.starting_colors.legacy_alpha_outermost,
                          false);
             continue;
         }

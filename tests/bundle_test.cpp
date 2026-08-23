@@ -310,6 +310,7 @@ void test_layer_codec_backward_compatibility() {
     original.starting_colors.domain_warp.enabled = true;
     original.starting_colors.domain_warp.strength = 0.21;
     original.starting_colors.domain_warp.seed = UINT64_C(0x123456789abcdef0);
+    original.starting_colors.legacy_alpha_outermost = true;
     original.post_process.invert_rgb_enabled = true;
     original.post_process.invert_rgb_mix = 0.67;
     original.post_process.invert_red_enabled = true;
@@ -429,7 +430,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t19\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t20\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -497,6 +498,7 @@ void test_layer_codec_backward_compatibility() {
     CHECK(current_round_trip.starting_colors.domain_warp.strength == 0.21);
     CHECK(current_round_trip.starting_colors.domain_warp.seed
           == UINT64_C(0x123456789abcdef0));
+    CHECK(current_round_trip.starting_colors.legacy_alpha_outermost);
     CHECK(current_round_trip.post_process.invert_rgb_enabled);
     CHECK(current_round_trip.post_process.invert_rgb_mix == 0.67);
     CHECK(current_round_trip.post_process.invert_red_enabled);
@@ -610,11 +612,31 @@ void test_layer_codec_backward_compatibility() {
             current_round_trip, loaded_lfo.target_path));
     }
 
+    // Layer v19/setup v21 predates the explicit generated-alpha ordering
+    // variable. It imports with the historical alpha-outermost order enabled.
+    std::istringstream current_v20_input(current_layer);
+    std::ostringstream version_nineteen_output;
+    std::string version_line;
+    CHECK(static_cast<bool>(std::getline(current_v20_input, version_line)));
+    CHECK(version_line == "PVT_LAYER\t20");
+    version_nineteen_output << "PVT_LAYER\t19\n";
+    while (std::getline(current_v20_input, version_line)) {
+        const std::size_t tab = version_line.find('\t');
+        const std::string key = version_line.substr(0U, tab);
+        if (key != "starting_colors.legacy_alpha_outermost") {
+            version_nineteen_output << version_line << '\n';
+        }
+    }
+    const std::string version_nineteen = version_nineteen_output.str();
+    pvt::RenderData loaded_version_nineteen;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_nineteen, loaded_version_nineteen, &error, &motion_paths));
+    CHECK(loaded_version_nineteen.starting_colors.legacy_alpha_outermost);
+
     // Layer v18/setup v20 predates repeatable post-effect instances and the
     // neutral-default reusable-path motion modifiers.
-    std::istringstream current_v19_input(current_layer);
+    std::istringstream current_v19_input(version_nineteen);
     std::ostringstream version_eighteen_output;
-    std::string version_line;
     CHECK(static_cast<bool>(std::getline(current_v19_input, version_line)));
     CHECK(version_line == "PVT_LAYER\t19");
     version_eighteen_output << "PVT_LAYER\t18\n";
@@ -640,6 +662,7 @@ void test_layer_codec_backward_compatibility() {
     CHECK(loaded_version_eighteen.motion.custom_cycles_x == 1);
     CHECK(loaded_version_eighteen.motion.custom_cycles_y == 2);
     CHECK(loaded_version_eighteen.motion.custom_phase_degrees == 0.0);
+    CHECK(loaded_version_eighteen.starting_colors.legacy_alpha_outermost);
 
     // Layer v17/setup v19 predates Water and the setup-v20 surface records.
     // Remove those records rather than only relabeling an impossible file.
@@ -679,7 +702,7 @@ void test_layer_codec_backward_compatibility() {
     std::string serialized_water_layer;
     CHECK(pvt::detail::serialize_layer_config(
         water_layer, serialized_water_layer, &error, &motion_paths));
-    CHECK(serialized_water_layer.rfind("PVT_LAYER\t19\n", 0U) == 0U);
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t20\n", 0U) == 0U);
     pvt::RenderData loaded_water_layer;
     CHECK(pvt::detail::deserialize_layer_config(
         serialized_water_layer, loaded_water_layer, &error, &motion_paths));
@@ -1355,7 +1378,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t19");
+    CHECK(line == "PVT_LAYER\t20");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {

@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 21;
+constexpr std::uint32_t kSetupFormatVersion = 22;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -1022,6 +1022,12 @@ struct StartingColorConfig {
         int cycles_per_loop = 1;
         std::uint64_t seed = 0;
     } domain_warp;
+    // Appended compatibility option for projects saved before setup format 22.
+    // When true, alpha is the outermost (slowest-changing) generated
+    // dimension, so the complete RGB gamut repeats once per alpha level. New
+    // projects keep alpha innermost, matching literal nested RGBA enumeration
+    // and preserving one coherent RGB traversal across the output.
+    bool legacy_alpha_outermost = false;
 };
 
 struct QuantizationConfig {

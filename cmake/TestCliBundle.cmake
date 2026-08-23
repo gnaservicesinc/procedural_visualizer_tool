@@ -91,6 +91,8 @@ file(WRITE "${interactive_input}"
     "\n\n\n\n\n"
     "5\n"
     "y\n"
+    # Keep corrected alpha-fastest ordering for this new project.
+    "\n"
     "0.125\n0.25\n0.375\n0.5\n0.625\n0.75\n0.875\n1.0\n"
     # Keep the new Kaleidoscope and Domain Warp controls at their defaults.
     "\n\n\n\n"
@@ -133,6 +135,7 @@ file(READ "${test_root}/interactive-colors.pvt" interactive_setup)
 foreach(expected_record
         "starting_colors.mode${field_separator}spiral"
         "starting_colors.include_alpha${field_separator}1"
+        "starting_colors.legacy_alpha_outermost${field_separator}0"
         "starting_colors.red_minimum${field_separator}0.125"
         "starting_colors.blue_maximum${field_separator}0.75"
         "starting_colors.alpha_minimum${field_separator}0.875"

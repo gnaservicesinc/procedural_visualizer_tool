@@ -4556,13 +4556,23 @@ Color generated_starting_color(const StartingColorConfig& config,
     }
     const std::uint64_t alpha_levels = config.include_alpha ? levels : 1U;
     const std::uint64_t rgb_capacity = levels * levels * levels;
+    // RGBA is a literal nested Cartesian traversal: alpha is the final and
+    // therefore fastest-changing dimension. This visits each alpha for one RGB
+    // tuple before advancing the hue-major RGB walk, avoiding a full RGB-gamut
+    // restart for every alpha level. Older projects can retain that historical
+    // alpha-outermost order explicitly.
+    const bool alpha_outermost = config.include_alpha
+                                 && config.legacy_alpha_outermost;
+    const std::uint64_t rgb_index = alpha_outermost
+        ? index % rgb_capacity : index / alpha_levels;
     const std::array<std::uint64_t, 3U> rgb =
-        hue_ordered_rgb_indices(index % rgb_capacity, levels);
+        hue_ordered_rgb_indices(rgb_index % rgb_capacity, levels);
     const std::uint64_t red_index = rgb[0];
     const std::uint64_t green_index = rgb[1];
     const std::uint64_t blue_index = rgb[2];
-    const std::uint64_t alpha_index = config.include_alpha
-        ? (index / rgb_capacity) % alpha_levels : 0U;
+    const std::uint64_t alpha_index = !config.include_alpha ? 0U
+        : alpha_outermost ? (index / rgb_capacity) % alpha_levels
+                          : index % alpha_levels;
     const double denominator = levels > 1U
         ? static_cast<double>(levels - 1U) : 1.0;
     const double alpha_denominator = alpha_levels > 1U

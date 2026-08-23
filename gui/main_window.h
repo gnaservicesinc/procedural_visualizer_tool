@@ -860,6 +860,7 @@ private:
     QListWidget* palette_colors_ = nullptr;
     QComboBox* starting_color_mode_ = nullptr;
     QCheckBox* starting_color_include_alpha_ = nullptr;
+    QCheckBox* starting_color_legacy_alpha_outermost_ = nullptr;
     QDoubleSpinBox* starting_red_minimum_ = nullptr;
     QDoubleSpinBox* starting_red_maximum_ = nullptr;
     QDoubleSpinBox* starting_green_minimum_ = nullptr;

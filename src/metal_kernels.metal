@@ -24,7 +24,7 @@ struct FrameConstants {
     float4 pattern0;         // displacement, wave depth, spiral freq, wall freq
     float4 pattern1;         // wall mix, saturation, audio hue, alpha spatial freq
     float4 alpha_quant;      // alpha min/max, alpha phase radians, quant mix
-    uint4 starting_flags;    // mode, include alpha, effective source alpha, dither+1
+    uint4 starting_flags;    // mode, alpha flags (include|legacy-outer), effective source alpha, dither+1
     uint4 starting_reference; // full width/height/block size, auto levels
     float4 starting_minimum; // RGBA range minima
     float4 starting_maximum; // RGBA range maxima
@@ -511,15 +511,20 @@ float4 generated_starting_color(constant FrameConstants& frame,
         }
     }
     const ulong levels = max(1ul, ulong(frame.starting_reference.w));
-    const ulong alpha_levels = frame.starting_flags.y != 0u ? levels : 1ul;
+    const bool include_alpha = (frame.starting_flags.y & 1u) != 0u;
+    const bool alpha_outermost = (frame.starting_flags.y & 2u) != 0u;
+    const ulong alpha_levels = include_alpha ? levels : 1ul;
     const ulong rgb_capacity = levels * levels * levels;
+    const ulong rgb_index = alpha_outermost
+        ? index % rgb_capacity : index / alpha_levels;
     const ulong3 rgb = hue_ordered_rgb_indices(
-        index % rgb_capacity, levels);
+        rgb_index % rgb_capacity, levels);
     const ulong red_index = rgb.x;
     const ulong green_index = rgb.y;
     const ulong blue_index = rgb.z;
-    const ulong alpha_index = frame.starting_flags.y != 0u
-        ? (index / rgb_capacity) % alpha_levels : 0ul;
+    const ulong alpha_index = !include_alpha ? 0ul
+        : alpha_outermost ? (index / rgb_capacity) % alpha_levels
+                          : index % alpha_levels;
     const float denominator = levels > 1ul ? float(levels - 1ul) : 1.0f;
     const float alpha_denominator = alpha_levels > 1ul
         ? float(alpha_levels - 1ul) : 1.0f;
@@ -527,14 +532,14 @@ float4 generated_starting_color(constant FrameConstants& frame,
         float(red_index) / denominator,
         float(green_index) / denominator,
         float(blue_index) / denominator,
-        frame.starting_flags.y != 0u
+        include_alpha
             ? float(alpha_index) / alpha_denominator : 1.0f);
     const float4 ranged = mix(frame.starting_minimum,
                               frame.starting_maximum, unit);
     const float3 source_rgb = mode == 6u ? unit.rgb : ranged.rgb;
     return float4(srgb_to_linear(source_rgb.r), srgb_to_linear(source_rgb.g),
                   srgb_to_linear(source_rgb.b),
-                  frame.starting_flags.y != 0u ? ranged.a : 1.0f);
+                  include_alpha ? ranged.a : 1.0f);
 }
 
 float procedural_alpha(constant FrameConstants& frame,
@@ -673,7 +678,7 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
         base = hsl_to_linear(hue, frame.pattern1.y, lightness);
         base = apply_generated_rgb_range(frame, base);
         base = rotate_linear_hue(base, frame.pattern1.z);
-        if (frame.starting_flags.y != 0u) {
+        if ((frame.starting_flags.y & 1u) != 0u) {
             const ulong color_count = (ulong(frame.quant_values.w) << 32u)
                                       | ulong(frame.quant_values.z);
             const float position = color_count > 1ul

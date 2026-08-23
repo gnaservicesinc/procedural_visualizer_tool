@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **14.0.0**. The version is read from `VERSION` by every
+Current product version: **15.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,29 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## Correct generated-alpha ordering with explicit legacy compatibility
+
+Generated RGBA lattices now use literal nested channel order: alpha is the
+innermost, fastest-changing dimension. Each RGB tuple therefore visits all of
+its generated alpha levels before the hue-major RGB traversal advances, keeping
+one coherent rainbow across the output instead of restarting the entire RGB
+gamut for every alpha level. Both orders are bijections of the same
+automatically sized RGBA Cartesian lattice; a finite canvas consumes its
+nonrepeating traversal prefix. CPU and Metal implement the same integer index
+split.
+
+**Repeat RGB gamut for each alpha level (legacy)** exposes the former
+alpha-outermost ordering in the desktop editor. The interactive CLI, Live
+targets, and `--legacy-alpha-order` / `--corrected-alpha-order` command-line
+overrides expose the same persisted variable. New projects default to the
+corrected order. Setup formats 1–21 and layer formats 1–19 import with the
+legacy option enabled, preserving existing pixels until the user unchecks it.
+Setup format 22 and layer format 20 persist the deliberate choice.
+
+The appended public `StartingColorConfig` field changes the by-value library
+ABI, so the product version and installed shared-library SONAME advance
+together to 15.0.0/15; installed consumers must rebuild.
 
 ## 13.0.1 cross-platform release fix
 
@@ -1456,8 +1479,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-20 remain importable;
-current explicit legacy output is setup format 21. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1-21 remain importable;
+current explicit legacy output is setup format 22. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1487,9 +1510,11 @@ stages. Format 19 adds simultaneous RGBA channel routing and the exact
 eight-stage post-processing order. Format 20 appends the Water effect token.
 Format 21 replaces that unique-stage representation with repeatable stable-ID
 post-effect instances and adds neutral-default offsets/travel/cycles/phase for
-reusable layer-motion paths; project layer records use current layer format 19.
+reusable layer-motion paths. Format 22 persists the generated-alpha ordering
+compatibility switch; project layer records use current layer format 20.
 Older records receive the historical stage order, a disabled identity map,
-neutral reusable-path modifiers, and their unchanged pre-Water vocabulary.
+neutral reusable-path modifiers, their unchanged pre-Water vocabulary, and the
+legacy alpha-outermost generated-color order.
 Import creates a new unsaved
 one-layer project with a new project/layer UUID and clears its save association,
 so normal Save can never overwrite the source `.pvt`. New saves remain bundles.

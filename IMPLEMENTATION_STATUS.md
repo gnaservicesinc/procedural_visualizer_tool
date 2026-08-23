@@ -1,10 +1,33 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-22
+Last updated: 2026-08-23
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## Generated-alpha traversal correction and compatibility
+
+Generated RGBA enumeration now decodes alpha as the innermost,
+fastest-changing mixed-radix digit. The hue-major RGB index advances only after
+all alpha levels for the current tuple, so enabling generated alpha retains one
+coherent RGB gamut instead of repeating that gamut once per alpha level. Both
+orders remain bijections of the same automatically sized RGBA lattice; a finite
+canvas consumes the applicable nonrepeating prefix. CPU and Metal share the
+corrected split and parity coverage.
+
+`StartingColorConfig::legacy_alpha_outermost` preserves the former split. New
+configs default it off. Setup formats through 21 and layer formats through 19
+migrate it on, so opening an existing project preserves its current pixels; the
+desktop **Repeat RGB gamut for each alpha level (legacy)** checkbox can be
+unchecked to adopt the corrected behavior. Interactive CLI editing, explicit
+`--legacy-alpha-order` / `--corrected-alpha-order` overrides, Live targets,
+setup format 22, and layer format 20 expose and persist the same state.
+
+The compatibility field is appended to the public by-value
+`StartingColorConfig`, preserving earlier aggregate field order but growing the
+ABI. Product version and SONAME therefore advance together to 15.0.0/15;
+installed consumers must rebuild.
 
 ## 13.0.1 cross-platform release fix
 

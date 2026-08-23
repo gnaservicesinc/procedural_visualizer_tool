@@ -999,6 +999,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
         add_nested(QStringLiteral("starting.include_alpha"), QObject::tr("Generate alpha"),
                    QObject::tr("Starting Colors"), LiveTargetKind::Boolean, 0, 1,
                    render.starting_colors.include_alpha, [](pvt::RenderData& r, double v) { r.starting_colors.include_alpha = v >= 0.5; });
+        add_nested(QStringLiteral("starting.legacy_alpha_outermost"), QObject::tr("Legacy alpha ordering"),
+                   QObject::tr("Starting Colors"), LiveTargetKind::Boolean, 0, 1,
+                   render.starting_colors.legacy_alpha_outermost, [](pvt::RenderData& r, double v) { r.starting_colors.legacy_alpha_outermost = v >= 0.5; });
         const auto add_starting_range = [&](const QString& channel,
                                             const QString& label,
                                             bool maximum) {

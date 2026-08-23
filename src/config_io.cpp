@@ -90,6 +90,8 @@ namespace {
 // environment-map lighting and loop-safe mesh-construction surface records.
 // Version 21 replaces the unique finishing-stage model with an ordered,
 // independently parameterized collection that permits repeated stage types.
+// Version 22 records whether generated RGBA traversal uses the historical
+// alpha-outermost order or the corrected alpha-innermost Cartesian order.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -101,8 +103,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 21U,
-              "config_io.cpp implements setup format version 21");
+static_assert(kSetupFormatVersion == 22U,
+              "config_io.cpp implements setup format version 22");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -326,6 +328,10 @@ bool setup_v21_record(std::string_view key) {
     return key == "post_process.effects_authoritative"
            || starts_with(key, "post_effects.")
            || starts_with(key, "motion.reusable_path.");
+}
+
+bool setup_v22_record(std::string_view key) {
+    return key == "starting_colors.legacy_alpha_outermost";
 }
 
 void clear_error(std::string* error) {
@@ -2138,6 +2144,8 @@ bool serialize_setup(const RenderConfig& config,
                      kStartingColorModes);
     builder.add_bool("starting_colors.include_alpha",
                      config.starting_colors.include_alpha);
+    builder.add_bool("starting_colors.legacy_alpha_outermost",
+                     config.starting_colors.legacy_alpha_outermost);
     builder.add_integer("starting_colors.red_steps",
                         config.starting_colors.red_steps);
     builder.add_integer("starting_colors.green_steps",
@@ -4003,6 +4011,19 @@ bool deserialize_setup(Records& records,
             return false;
         }
     }
+    if (setup_version >= 22U) {
+        if (!consume_bool(records,
+                          "starting_colors.legacy_alpha_outermost",
+                          candidate.starting_colors.legacy_alpha_outermost,
+                          error)) {
+            return false;
+        }
+    } else {
+        // Every older setup was authored while alpha was decoded as the
+        // outermost generated dimension. Preserve its pixels until the user
+        // deliberately disables the exposed compatibility option.
+        candidate.starting_colors.legacy_alpha_outermost = true;
+    }
     if (setup_version >= 11U) {
         StartingColorConfig& starting = candidate.starting_colors;
         if (!consume_bool(records, "starting_colors.kaleidoscope.enabled",
@@ -4642,7 +4663,8 @@ bool record_belongs_to_version(std::string_view key,
              || (setup_version < 18U && setup_v18_record(key))
              || (setup_version < 19U && setup_v19_record(key))
              || (setup_version < 20U && setup_v20_record(key))
-             || (setup_version < 21U && setup_v21_record(key)));
+             || (setup_version < 21U && setup_v21_record(key))
+             || (setup_version < 22U && setup_v22_record(key)));
 }
 
 bool build_default_records(std::uint32_t setup_version,

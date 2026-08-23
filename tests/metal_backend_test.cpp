@@ -241,6 +241,15 @@ void test_backend_contract() {
         check_close(cpu, gpu, 0.00002, 0.000001,
                     0.00002, 0.000001, label.c_str());
     }
+    generated.starting_colors.mode =
+        pvt::StartingColorMode::HorizontalRainbow;
+    generated.starting_colors.legacy_alpha_outermost = true;
+    CHECK(pvt::render_frame_at_phase(generated, 0.31, cpu_options,
+                                     cpu, nullptr, &error));
+    CHECK(pvt::render_frame_at_phase(generated, 0.31, gpu_options,
+                                     gpu, nullptr, &error));
+    check_close(cpu, gpu, 0.00002, 0.000001,
+                0.00002, 0.000001, "legacy generated-alpha ordering");
 
     // Starting PNGs are decoded once on the host, then fitted and processed
     // by Metal. Every fit mode must retain the reference renderer's linear

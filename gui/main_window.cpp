@@ -4560,8 +4560,17 @@ QWidget* MainWindow::createLayerSettingsPage() {
         tr("When no starting image or palette is active, generated RGBA tuples "
            "differ by alpha as well as RGB. This setting applies directly; the "
            "separate palette/image source-alpha switch does not disable it."));
+    starting_color_legacy_alpha_outermost_ = new QCheckBox(
+        tr("Repeat RGB gamut for each alpha level (legacy)"));
+    starting_color_legacy_alpha_outermost_->setToolTip(tr(
+        "For generated RGB-lattice patterns, preserves the pre-format-22 "
+        "ordering in which alpha changes only after a complete RGB gamut, "
+        "visibly repeating the rainbow. Uncheck this on an imported project "
+        "to use the corrected RGBA order, where alpha changes fastest and the "
+        "RGB gamut is traversed once."));
     starting_colors_form->addRow(tr("Pattern"), starting_color_mode_);
     starting_colors_form->addRow(starting_color_include_alpha_);
+    starting_colors_form->addRow(starting_color_legacy_alpha_outermost_);
     starting_colors_layout->addLayout(starting_colors_form);
 
     auto* channels = new QGridLayout;
@@ -4587,7 +4596,8 @@ QWidget* MainWindow::createLayerSettingsPage() {
         "box obeys its RGB/alpha Min/Max range. Channel resolution scales "
         "automatically with the full-resolution output and block size; ordered "
         "patterns walk an automatically sized RGB or RGBA lattice without "
-        "repetition in broad horizontal, vertical, diagonal, or spiral fields. "
+        "omitting tuples. Corrected RGBA ordering changes alpha fastest so the "
+        "RGB gamut remains one broad horizontal, vertical, diagonal, or spiral field. "
         "Random is the only shuffled color-static pattern. Generated values remain float32 "
         "through effects and compositing; only the chosen output format "
         "quantizes them. Preview and export use the same full-resolution "
@@ -8661,7 +8671,9 @@ void MainWindow::connectEditors() {
                          transform_flip_horizontal_, transform_flip_vertical_,
                          surface_composite_backfaces_, surface_normalize_obj_,
                          palette_enabled_, starting_image_palette_dither_,
-                         starting_color_include_alpha_, alpha_use_source_}) {
+                         starting_color_include_alpha_,
+                         starting_color_legacy_alpha_outermost_,
+                         alpha_use_source_}) {
         connect(editor, &QCheckBox::toggled, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
@@ -12813,6 +12825,8 @@ void MainWindow::loadGlobalEditors() {
     select_enum(starting_color_mode_, config_.starting_colors.mode);
     starting_color_include_alpha_->setChecked(
         config_.starting_colors.include_alpha);
+    starting_color_legacy_alpha_outermost_->setChecked(
+        config_.starting_colors.legacy_alpha_outermost);
     starting_red_minimum_->setValue(config_.starting_colors.red_minimum);
     starting_red_maximum_->setValue(config_.starting_colors.red_maximum);
     starting_green_minimum_->setValue(config_.starting_colors.green_minimum);
@@ -15446,6 +15460,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == starting_color_include_alpha_) {
         config_.starting_colors.include_alpha =
             starting_color_include_alpha_->isChecked();
+    } else if (changed_editor == starting_color_legacy_alpha_outermost_) {
+        config_.starting_colors.legacy_alpha_outermost =
+            starting_color_legacy_alpha_outermost_->isChecked();
     } else if (changed_editor == starting_red_minimum_) {
         config_.starting_colors.red_minimum = starting_red_minimum_->value();
         if (config_.starting_colors.red_maximum
@@ -19647,6 +19664,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || starting_color_mode_->findData(
                static_cast<int>(pvt::StartingColorMode::SquareSpiralRainbow)) < 0
         || starting_color_include_alpha_ == nullptr
+        || starting_color_legacy_alpha_outermost_ == nullptr
         || starting_colors_help == nullptr
         || !starting_colors_help->wordWrap()
         || !starting_colors_help->sizePolicy().hasHeightForWidth()
@@ -20702,6 +20720,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
                != static_cast<int>(expected.palette.colors.size())
         || alpha_use_source_->isChecked()
         || !starting_color_include_alpha_->isChecked()
+        || starting_color_legacy_alpha_outermost_->isChecked()
         || static_cast<pvt::StartingColorMode>(
                starting_color_mode_->currentData().toInt())
                != expected.starting_colors.mode

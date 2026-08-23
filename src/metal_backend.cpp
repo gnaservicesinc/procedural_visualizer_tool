@@ -589,7 +589,8 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         && starting.include_alpha;
     result.starting_flags = {
         static_cast<std::uint32_t>(starting.mode),
-        starting.include_alpha ? 1U : 0U,
+        starting.include_alpha
+            ? (starting.legacy_alpha_outermost ? 3U : 1U) : 0U,
         config.alpha.use_source_alpha || use_generated_alpha ? 1U : 0U,
         source_dither};
     result.starting_reference = {

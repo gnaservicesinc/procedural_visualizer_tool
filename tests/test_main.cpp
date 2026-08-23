@@ -216,7 +216,7 @@ void test_parameter_lfos() {
 
     std::string serialized;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t21\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t22\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -1082,7 +1082,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t21\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t22\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -1487,6 +1487,54 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         CHECK(dominant_channels[0] && dominant_channels[1]
               && dominant_channels[2]);
     }
+
+    // Correct RGBA Cartesian ordering changes alpha fastest: adjacent source
+    // blocks visit every alpha for one RGB tuple before advancing the coherent
+    // hue-major RGB traversal. The compatibility switch reproduces the older
+    // alpha-outermost order exactly, including its repeated RGB gamut.
+    pvt::RenderConfig alpha_order = exhaustive;
+    alpha_order.starting_colors.mode = pvt::StartingColorMode::VerticalRainbow;
+    alpha_order.starting_colors.legacy_alpha_outermost = false;
+    pvt::Image corrected_alpha_order;
+    CHECK(pvt::render_frame_at_phase(
+        alpha_order, 0.0, corrected_alpha_order, &error));
+    const float* corrected_first = corrected_alpha_order.pixel(0, 0);
+    const float* corrected_next = corrected_alpha_order.pixel(4, 0);
+    CHECK(corrected_first != nullptr && corrected_next != nullptr);
+    if (corrected_first != nullptr && corrected_next != nullptr) {
+        CHECK(std::equal(corrected_first, corrected_first + 3,
+                         corrected_next));
+        CHECK(corrected_first[3] != corrected_next[3]);
+    }
+    alpha_order.starting_colors.legacy_alpha_outermost = true;
+    pvt::Image legacy_alpha_order;
+    CHECK(pvt::render_frame_at_phase(
+        alpha_order, 0.0, legacy_alpha_order, &error));
+    const float* legacy_first = legacy_alpha_order.pixel(0, 0);
+    const float* legacy_next = legacy_alpha_order.pixel(4, 0);
+    const float* legacy_next_alpha = legacy_alpha_order.pixel(0, 8);
+    CHECK(legacy_first != nullptr && legacy_next != nullptr
+          && legacy_next_alpha != nullptr);
+    if (legacy_first != nullptr && legacy_next != nullptr
+        && legacy_next_alpha != nullptr) {
+        CHECK(!std::equal(legacy_first, legacy_first + 3, legacy_next));
+        CHECK(legacy_first[3] == legacy_next[3]);
+        CHECK(std::equal(legacy_first, legacy_first + 3,
+                         legacy_next_alpha));
+        CHECK(legacy_first[3] != legacy_next_alpha[3]);
+    }
+    CHECK(mean_absolute_difference(corrected_alpha_order,
+                                   legacy_alpha_order) > 0.0001);
+
+    alpha_order.starting_colors.include_alpha = false;
+    pvt::Image legacy_flag_without_alpha;
+    CHECK(pvt::render_frame_at_phase(
+        alpha_order, 0.0, legacy_flag_without_alpha, &error));
+    alpha_order.starting_colors.legacy_alpha_outermost = false;
+    pvt::Image corrected_without_alpha;
+    CHECK(pvt::render_frame_at_phase(
+        alpha_order, 0.0, corrected_without_alpha, &error));
+    CHECK(legacy_flag_without_alpha.pixels == corrected_without_alpha.pixels);
 
     // Non-square grids exercise the diagonal and square-spiral rank formulas.
     // Every spatial pattern must remain one-to-one there too.
@@ -4545,6 +4593,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.alpha.use_source_alpha = false;
     original.starting_colors.mode = pvt::StartingColorMode::Random;
     original.starting_colors.include_alpha = true;
+    original.starting_colors.legacy_alpha_outermost = true;
     original.starting_colors.red_steps = 11;
     original.starting_colors.green_steps = 12;
     original.starting_colors.blue_steps = 13;
@@ -4885,6 +4934,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(!loaded.alpha.use_source_alpha);
     CHECK(loaded.starting_colors.mode == pvt::StartingColorMode::Random);
     CHECK(loaded.starting_colors.include_alpha);
+    CHECK(loaded.starting_colors.legacy_alpha_outermost);
     CHECK(loaded.starting_colors.red_steps == 11);
     CHECK(loaded.starting_colors.green_steps == 12);
     CHECK(loaded.starting_colors.blue_steps == 13);
@@ -5186,9 +5236,19 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t21\n", 0U) == 0U);
-    std::string version_twenty(current_version_bytes.begin(),
-                               current_version_bytes.end());
+              .rfind("PVT_SETUP\t22\n", 0U) == 0U);
+    std::string version_twenty_one(current_version_bytes.begin(),
+                                   current_version_bytes.end());
+    version_twenty_one.replace(0U, std::string("PVT_SETUP\t22").size(),
+                               "PVT_SETUP\t21");
+    erase_record(version_twenty_one,
+                 "starting_colors.legacy_alpha_outermost");
+    pvt::RenderConfig loaded_version_twenty_one;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_twenty_one, loaded_version_twenty_one, &error));
+    CHECK(loaded_version_twenty_one.starting_colors.legacy_alpha_outermost);
+
+    std::string version_twenty = version_twenty_one;
     version_twenty.replace(0U, std::string("PVT_SETUP\t21").size(),
                            "PVT_SETUP\t20");
     pvt::RenderConfig loaded_version_twenty;

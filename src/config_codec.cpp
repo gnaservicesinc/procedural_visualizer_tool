@@ -288,6 +288,10 @@ bool is_setup_v21_key(std::string_view key) {
            || starts_with(key, "motion.reusable_path.");
 }
 
+bool is_setup_v22_key(std::string_view key) {
+    return key == "starting_colors.legacy_alpha_outermost";
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -312,7 +316,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 15U ? 17U
                     : layer_version == 16U ? 18U
                     : layer_version == 17U ? 19U
-                    : layer_version == 18U ? 20U : 21U;
+                    : layer_version == 18U ? 20U
+                    : layer_version == 19U ? 21U : 22U;
     return true;
 }
 
@@ -594,6 +599,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 21U && is_setup_v21_key(key)) {
+            continue;
+        }
+        if (setup_version < 22U && is_setup_v22_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
