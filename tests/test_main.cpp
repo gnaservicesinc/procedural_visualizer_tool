@@ -140,6 +140,57 @@ void test_parameter_lfos() {
     CHECK(mapped.post_process.channel_map.mix == 0.44);
     CHECK(mapped.parameter_lfos.size() == 1U);
 
+    // Discontinuous and ramp waveforms are deterministic at their edges.
+    pvt::RenderConfig waveform_probe = pvt::default_config();
+    waveform_probe.saturation = 0.44;
+    pvt::ParameterLfo waveform_lfo;
+    waveform_lfo.target_path = "saturation";
+    waveform_lfo.minimum = 0.2;
+    waveform_lfo.maximum = 0.8;
+    waveform_lfo.waveform = pvt::Waveform::Square;
+    waveform_probe.parameter_lfos = {waveform_lfo};
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.0)
+              .saturation == 0.8);
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.5)
+              .saturation == 0.2);
+    waveform_probe.parameter_lfos.front().waveform =
+        pvt::Waveform::SawtoothUp;
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.0)
+              .saturation == 0.2);
+    CHECK(std::fabs(
+              pvt::detail::materialize_parameter_lfos(waveform_probe, 0.25)
+                      .saturation
+              - 0.35) < 1.0e-12);
+    waveform_probe.parameter_lfos.front().waveform =
+        pvt::Waveform::SawtoothDown;
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.0)
+              .saturation == 0.8);
+
+    // cycles_per_loop counts active waves. Delay shortens each active slot,
+    // while skipped slots retain the authored fallback without mutating it.
+    pvt::ParameterLfo& timed_lfo = waveform_probe.parameter_lfos.front();
+    timed_lfo.waveform = pvt::Waveform::Square;
+    timed_lfo.delay_fraction = 0.25;
+    timed_lfo.skip_cycles = 1;
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.0)
+              .saturation == 0.8);
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.4)
+              .saturation == 0.44);
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.75)
+              .saturation == 0.44);
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 1.0)
+              .saturation == 0.8);
+    CHECK(waveform_probe.saturation == 0.44);
+    timed_lfo.delay_fraction = 1.0;
+    CHECK(pvt::validate(waveform_probe).ok);
+    CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.0)
+              .saturation == 0.44);
+    timed_lfo.delay_fraction = 1.01;
+    CHECK(!pvt::validate(waveform_probe).ok);
+    timed_lfo.delay_fraction = 0.0;
+    timed_lfo.skip_cycles = -1;
+    CHECK(!pvt::validate(waveform_probe).ok);
+
     pvt::RenderConfig instance_mapped = pvt::default_config();
     instance_mapped.post_process.effects_authoritative = true;
     pvt::PostProcessEffectConfig red_instance;
@@ -334,8 +385,10 @@ void test_parameter_lfos() {
     CHECK(legacy_cached_phase.pixels == selected_cached_phase.pixels);
 
     std::string serialized;
+    animated.parameter_lfos.front().delay_fraction = 0.125;
+    animated.parameter_lfos.front().skip_cycles = 2;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t23\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t24\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -347,6 +400,8 @@ void test_parameter_lfos() {
         CHECK(recovered.maximum == lfo.maximum);
         CHECK(recovered.cycles_per_loop == lfo.cycles_per_loop);
         CHECK(recovered.phase_degrees == lfo.phase_degrees);
+        CHECK(recovered.delay_fraction == 0.125);
+        CHECK(recovered.skip_cycles == 2);
     }
 
     animated.parameter_lfos.push_back(lfo);
@@ -1257,7 +1312,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t23\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t24\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -2610,6 +2665,19 @@ void test_synchronized_clocks_and_music() {
     pvt::Image frame_smooth;
     CHECK(pvt::render_frame(config, 1, frame_smooth, &error));
     CHECK(frame_smooth.pixels != frame_linear.pixels);
+    config.clock.interpolation = pvt::ClockInterpolation::EaseIn;
+    pvt::Image frame_ease_in;
+    CHECK(pvt::render_frame(config, 1, frame_ease_in, &error));
+    CHECK(frame_ease_in.pixels != frame_linear.pixels);
+    config.clock.interpolation = pvt::ClockInterpolation::EaseOut;
+    pvt::Image frame_ease_out;
+    CHECK(pvt::render_frame(config, 1, frame_ease_out, &error));
+    CHECK(frame_ease_out.pixels != frame_linear.pixels);
+    CHECK(frame_ease_out.pixels != frame_ease_in.pixels);
+    config.clock.interpolation = pvt::ClockInterpolation::Smootherstep;
+    pvt::Image frame_smoother;
+    CHECK(pvt::render_frame(config, 1, frame_smoother, &error));
+    CHECK(frame_smoother.pixels != frame_smooth.pixels);
 
     // Elapsed-time pulses are FPS-independent: both frames below represent
     // the same 125 ms instant in equal-duration sequences.
@@ -3006,6 +3074,12 @@ void test_synchronized_clocks_and_music() {
     CHECK(std::string(pvt::clock_mode_name(pvt::ClockMode::Music)) == "Music");
     CHECK(std::string(pvt::clock_interpolation_name(
               pvt::ClockInterpolation::Smoothstep)) == "Smoothstep");
+    CHECK(std::string(pvt::clock_interpolation_name(
+              pvt::ClockInterpolation::EaseIn)) == "Ease in");
+    CHECK(std::string(pvt::clock_interpolation_name(
+              pvt::ClockInterpolation::EaseOut)) == "Ease out");
+    CHECK(std::string(pvt::clock_interpolation_name(
+              pvt::ClockInterpolation::Smootherstep)) == "Smootherstep");
     CHECK(std::string(pvt::music_feature_name(pvt::MusicFeature::Bass))
           == "Bass");
 }
@@ -4992,7 +5066,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     original.output.dither_method = pvt::DitherMethod::FloydSteinberg;
     original.output.output_directory = "output folder/%safe";
     original.clock.mode = pvt::ClockMode::Music;
-    original.clock.interpolation = pvt::ClockInterpolation::Smoothstep;
+    original.clock.interpolation = pvt::ClockInterpolation::Smootherstep;
     original.clock.fit = pvt::ClockFit::FitSequence;
     original.clock.frame_interval = 7;
     original.clock.time_interval_microseconds = 375000;
@@ -5328,7 +5402,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.transform.flip_horizontal);
     CHECK(loaded.transform.mirror == pvt::MirrorMode::BottomToTop);
     CHECK(loaded.clock.mode == pvt::ClockMode::Music);
-    CHECK(loaded.clock.interpolation == pvt::ClockInterpolation::Smoothstep);
+    CHECK(loaded.clock.interpolation == pvt::ClockInterpolation::Smootherstep);
     CHECK(loaded.clock.fit == pvt::ClockFit::FitSequence);
     CHECK(loaded.clock.meter.expression == "3+2+3/8 | 5/4");
     CHECK(loaded.clock.music_tempo == pvt::MusicTempoMode::Double);
@@ -5503,9 +5577,35 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t23\n", 0U) == 0U);
-    std::string version_twenty_two(current_version_bytes.begin(),
-                                   current_version_bytes.end());
+              .rfind("PVT_SETUP\t24\n", 0U) == 0U);
+    std::string version_twenty_three(current_version_bytes.begin(),
+                                     current_version_bytes.end());
+    version_twenty_three.replace(0U, std::string("PVT_SETUP\t24").size(),
+                                 "PVT_SETUP\t23");
+    erase_records_with_fragment(version_twenty_three, ".delay_fraction");
+    erase_records_with_fragment(version_twenty_three, ".skip_cycles");
+    const std::string smoother_clock_record =
+        "timing.clock.interpolation\tsmootherstep";
+    const std::size_t smoother_clock_position =
+        version_twenty_three.find(smoother_clock_record);
+    CHECK(smoother_clock_position != std::string::npos);
+    if (smoother_clock_position != std::string::npos) {
+        version_twenty_three.replace(
+            smoother_clock_position, smoother_clock_record.size(),
+            "timing.clock.interpolation\tsmoothstep");
+    }
+    pvt::RenderConfig loaded_version_twenty_three;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_twenty_three, loaded_version_twenty_three, &error));
+    CHECK(loaded_version_twenty_three.clock.interpolation
+          == pvt::ClockInterpolation::Smoothstep);
+    for (const pvt::ParameterLfo& loaded_lfo :
+         loaded_version_twenty_three.parameter_lfos) {
+        CHECK(loaded_lfo.delay_fraction == 0.0);
+        CHECK(loaded_lfo.skip_cycles == 0);
+    }
+
+    std::string version_twenty_two = version_twenty_three;
     version_twenty_two.replace(0U, std::string("PVT_SETUP\t23").size(),
                                "PVT_SETUP\t22");
     pvt::RenderConfig loaded_version_twenty_two;

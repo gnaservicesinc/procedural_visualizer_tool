@@ -1,10 +1,30 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-23
+Last updated: 2026-08-27
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 16.0.0 LFO timing and clock-curve expansion
+
+`ParameterLfo` adds a normalized post-wave delay and a nonnegative skipped-slot
+count. Each of its `cycles_per_loop` groups contains one active oscillator slot
+followed by the authored number of equal inactive slots; delay shortens only
+the active slot. Inactive time does not synthesize a replacement value: target
+application is bypassed so the underlying authored numeric field remains the
+render-time fallback. Zero-valued timing fields preserve the original formula.
+
+The shared waveform vocabulary appends Square, Sawtooth up, and Sawtooth down.
+Clock interpolation appends quadratic Ease in/Ease out and quintic
+Smootherstep. Offline frame/time/meter positions, analyzed-music anchors, and
+Live beat routing implement identical curves. GUI and interactive CLI catalogs,
+CLI override parsing, persistence names, validation, and regression coverage
+use the same appended enum values.
+
+Setup 24/layer 21 persist LFO timing with neutral defaults for older records;
+render/output 9 and split render/output 7 gate the clock vocabulary. The public
+by-value record growth advances the product and SONAME to 16.0.0/16.
 
 ## Generated-alpha traversal correction and compatibility
 

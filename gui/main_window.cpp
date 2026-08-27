@@ -3514,7 +3514,10 @@ QWidget* MainWindow::createSynchronizationPage() {
         QStringLiteral("clockInterpolation"));
     for (const auto value : {pvt::ClockInterpolation::Hold,
                              pvt::ClockInterpolation::Linear,
-                             pvt::ClockInterpolation::Smoothstep}) {
+                             pvt::ClockInterpolation::Smoothstep,
+                             pvt::ClockInterpolation::EaseIn,
+                             pvt::ClockInterpolation::EaseOut,
+                             pvt::ClockInterpolation::Smootherstep}) {
         add_enum_item(clock_interpolation_,
                       QString::fromUtf8(pvt::clock_interpolation_name(value)), value);
     }
@@ -3704,7 +3707,10 @@ QWidget* MainWindow::createSynchronizationPage() {
         QStringLiteral("layerClockInterpolation"));
     for (const auto value : {pvt::ClockInterpolation::Hold,
                              pvt::ClockInterpolation::Linear,
-                             pvt::ClockInterpolation::Smoothstep}) {
+                             pvt::ClockInterpolation::Smoothstep,
+                             pvt::ClockInterpolation::EaseIn,
+                             pvt::ClockInterpolation::EaseOut,
+                             pvt::ClockInterpolation::Smootherstep}) {
         add_enum_item(layer_clock_interpolation_,
                       QString::fromUtf8(pvt::clock_interpolation_name(value)), value);
     }
@@ -4062,6 +4068,9 @@ QWidget* MainWindow::createSwingBlock() {
     add_enum_item(swing_waveform_, tr("Triangle"), pvt::Waveform::Triangle);
     add_enum_item(swing_waveform_, tr("Smooth pulse"), pvt::Waveform::SmoothPulse);
     add_enum_item(swing_waveform_, tr("Bounce"), pvt::Waveform::Bounce);
+    add_enum_item(swing_waveform_, tr("Square"), pvt::Waveform::Square);
+    add_enum_item(swing_waveform_, tr("Sawtooth up"), pvt::Waveform::SawtoothUp);
+    add_enum_item(swing_waveform_, tr("Sawtooth down"), pvt::Waveform::SawtoothDown);
     swing_amount_ = real_editor(-kMaximumRenderParameter,
                                 kMaximumRenderParameter, 4, 0.05);
     swing_cycles_ = integer_editor(kMinimumIntegerParameter,
@@ -7616,12 +7625,13 @@ void MainWindow::showParameterLfoEditor() {
     dialog.setWindowTitle(tr("Numeric LFOs — %1")
                               .arg(QString::fromStdString(layer->name)));
     dialog.setObjectName(QStringLiteral("parameterLfoDialog"));
-    dialog.resize(760, 430);
+    dialog.resize(780, 520);
     auto* outer = new QVBoxLayout(&dialog);
     auto* explanation = new QLabel(
         tr("Each LFO replaces its target value only while rendering. The "
            "numeric field remains the authored fallback, and one or more "
-           "whole cycles stay seamless across the project loop."),
+           "whole cycles stay seamless across the project loop. Delay and "
+           "skipped cycles use that authored value during each rest."),
         &dialog);
     explanation->setWordWrap(true);
     outer->addWidget(explanation);
@@ -7652,7 +7662,9 @@ void MainWindow::showParameterLfoEditor() {
     waveform->setObjectName(QStringLiteral("parameterLfoWaveform"));
     for (const pvt::Waveform value : {
              pvt::Waveform::Sine, pvt::Waveform::Triangle,
-             pvt::Waveform::SmoothPulse, pvt::Waveform::Bounce}) {
+             pvt::Waveform::SmoothPulse, pvt::Waveform::Bounce,
+             pvt::Waveform::Square, pvt::Waveform::SawtoothUp,
+             pvt::Waveform::SawtoothDown}) {
         waveform->addItem(
             QString::fromUtf8(pvt::waveform_name(value)),
             static_cast<int>(value));
@@ -7673,6 +7685,17 @@ void MainWindow::showParameterLfoEditor() {
     shape->setObjectName(QStringLiteral("parameterLfoShape"));
     shape->setToolTip(tr(
         "Soft-to-sharp pulse shape. Used only by Smooth pulse."));
+    auto* delay = real_editor(0.0, 100.0, 2, 1.0);
+    delay->setSuffix(tr("%"));
+    delay->setObjectName(QStringLiteral("parameterLfoDelay"));
+    delay->setToolTip(tr(
+        "Portion of each active oscillator slot held at the authored numeric "
+        "value after the wave completes."));
+    auto* skip_cycles = integer_editor(0, kMaximumIntegerParameter);
+    skip_cycles->setObjectName(QStringLiteral("parameterLfoSkipCycles"));
+    skip_cycles->setToolTip(tr(
+        "Whole oscillator slots held at the authored numeric value before "
+        "the next active wave."));
     form->addRow(QString{}, enabled);
     form->addRow(tr("Numeric value"), target);
     form->addRow(tr("Wave type"), waveform);
@@ -7681,6 +7704,8 @@ void MainWindow::showParameterLfoEditor() {
     form->addRow(tr("Cycles per loop"), cycles);
     form->addRow(tr("Phase"), phase);
     form->addRow(tr("Pulse shape"), shape);
+    form->addRow(tr("Delay after wave"), delay);
+    form->addRow(tr("Skip cycles"), skip_cycles);
     body->addWidget(editor, 2);
 
     std::vector<pvt::ParameterLfo> edited = config_.parameter_lfos;
@@ -7734,6 +7759,8 @@ void MainWindow::showParameterLfoEditor() {
         lfo.cycles_per_loop = cycles->value();
         lfo.phase_degrees = phase->value();
         lfo.shape = shape->value();
+        lfo.delay_fraction = delay->value() / 100.0;
+        lfo.skip_cycles = skip_cycles->value();
         shape->setEnabled(lfo.waveform == pvt::Waveform::SmoothPulse);
         refresh_item(row);
     };
@@ -7757,6 +7784,8 @@ void MainWindow::showParameterLfoEditor() {
             cycles->setValue(lfo.cycles_per_loop);
             phase->setValue(lfo.phase_degrees);
             shape->setValue(lfo.shape);
+            delay->setValue(lfo.delay_fraction * 100.0);
+            skip_cycles->setValue(lfo.skip_cycles);
             shape->setEnabled(lfo.waveform == pvt::Waveform::SmoothPulse);
         }
         loading = false;
@@ -7789,6 +7818,10 @@ void MainWindow::showParameterLfoEditor() {
     connect(phase, qOverload<double>(&QDoubleSpinBox::valueChanged),
             &dialog, update_current);
     connect(shape, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(delay, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            &dialog, update_current);
+    connect(skip_cycles, qOverload<int>(&QSpinBox::valueChanged),
             &dialog, update_current);
     connect(add, &QPushButton::clicked, &dialog, [&] {
         std::unordered_set<std::string> used;
@@ -19219,7 +19252,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 dialog->findChild<QListWidget*>(
                     QStringLiteral("parameterLfoList")) != nullptr
                 && target != nullptr && target->count() > 0
-                && waveform != nullptr && waveform->count() == 4
+                && waveform != nullptr && waveform->count() == 7
                 && dialog->findChild<QDoubleSpinBox*>(
                     QStringLiteral("parameterLfoMinimum")) != nullptr
                 && dialog->findChild<QDoubleSpinBox*>(
@@ -19228,6 +19261,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
                     QStringLiteral("parameterLfoCycles")) != nullptr
                 && dialog->findChild<QDoubleSpinBox*>(
                     QStringLiteral("parameterLfoPhase")) != nullptr;
+            inspected_parameter_lfo_editor = inspected_parameter_lfo_editor
+                && dialog->findChild<QDoubleSpinBox*>(
+                    QStringLiteral("parameterLfoDelay")) != nullptr
+                && dialog->findChild<QSpinBox*>(
+                    QStringLiteral("parameterLfoSkipCycles")) != nullptr;
             dialog->reject();
         }
     });

@@ -1,3 +1,9 @@
+procedural-visualizer-tool (16.0.0) stonking; urgency=medium
+
+  * Add LFO rest/skip timing, Square and Sawtooth waves, and expanded clock curves.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 27 Aug 2026 12:30:24 -0400
+
 procedural-visualizer-tool (15.1.0) stonking; urgency=medium
 
   * New upstream release.

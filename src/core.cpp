@@ -67,6 +67,27 @@ double smoothstep(double value) {
     return value * value * (3.0 - 2.0 * value);
 }
 
+double interpolate_clock_fraction(double value,
+                                  ClockInterpolation interpolation) {
+    value = clamp_value(value, 0.0, 1.0);
+    switch (interpolation) {
+        case ClockInterpolation::Hold:
+            return 0.0;
+        case ClockInterpolation::Linear:
+            return value;
+        case ClockInterpolation::Smoothstep:
+            return smoothstep(value);
+        case ClockInterpolation::EaseIn:
+            return value * value;
+        case ClockInterpolation::EaseOut:
+            return value * (2.0 - value);
+        case ClockInterpolation::Smootherstep:
+            return value * value * value
+                   * (value * (value * 6.0 - 15.0) + 10.0);
+    }
+    return value;
+}
+
 double radians(double degrees) {
     return degrees * kPi / 180.0;
 }
@@ -462,6 +483,9 @@ bool valid_enum(Waveform value) {
         case Waveform::Triangle:
         case Waveform::SmoothPulse:
         case Waveform::Bounce:
+        case Waveform::Square:
+        case Waveform::SawtoothUp:
+        case Waveform::SawtoothDown:
             return true;
     }
     return false;
@@ -535,6 +559,9 @@ bool valid_enum(ClockInterpolation value) {
         case ClockInterpolation::Hold:
         case ClockInterpolation::Linear:
         case ClockInterpolation::Smoothstep:
+        case ClockInterpolation::EaseIn:
+        case ClockInterpolation::EaseOut:
+        case ClockInterpolation::Smootherstep:
             return true;
     }
     return false;
@@ -832,15 +859,7 @@ double interpolated_position(double position,
                              ClockInterpolation interpolation) {
     const double whole = std::floor(position);
     const double fraction = position - whole;
-    switch (interpolation) {
-        case ClockInterpolation::Hold:
-            return whole;
-        case ClockInterpolation::Linear:
-            return position;
-        case ClockInterpolation::Smoothstep:
-            return whole + smoothstep(fraction);
-    }
-    return position;
+    return whole + interpolate_clock_fraction(fraction, interpolation);
 }
 
 MusicFeatureSample mix_music_sample(const MusicFeatureSample& first,
@@ -1140,12 +1159,7 @@ TimelineSample evaluate_clock_sample(const ClockConfig& clock,
         double amount = span > 0.0
                             ? (music_time - anchors[first]) / span
                             : 0.0;
-        if (clock.interpolation == ClockInterpolation::Hold) {
-            amount = 0.0;
-        } else if (clock.interpolation
-                   == ClockInterpolation::Smoothstep) {
-            amount = smoothstep(amount);
-        }
+        amount = interpolate_clock_fraction(amount, clock.interpolation);
         phase = (static_cast<double>(first) + amount)
                 / static_cast<double>(anchors.size() - 1U);
         // Beat anchors drive only the base motion clock. The independently
@@ -1640,6 +1654,12 @@ double evaluate_waveform(Waveform waveform, double phase, double shape) {
         }
         case Waveform::Bounce:
             return 1.0 - 2.0 * std::fabs(std::sin(phase * 0.5));
+        case Waveform::Square:
+            return wrap_unit(phase / kTau) < 0.5 ? 1.0 : -1.0;
+        case Waveform::SawtoothUp:
+            return 2.0 * wrap_unit(phase / kTau) - 1.0;
+        case Waveform::SawtoothDown:
+            return 1.0 - 2.0 * wrap_unit(phase / kTau);
     }
     return 0.0;
 }
@@ -1931,14 +1951,33 @@ void materialize_parameter_lfos_in_place(RenderData& render,
                                          double normalized_phase) {
     const std::vector<ParameterLfo> authored = render.parameter_lfos;
     render.parameter_lfos.clear();
-    const double phase = kTau * wrap_unit(normalized_phase);
+    const double loop_position = wrap_unit(normalized_phase);
     for (const ParameterLfo& lfo : authored) {
         if (!lfo.enabled || lfo.target_path.empty()) continue;
+        double waveform_phase = 0.0;
+        if (lfo.delay_fraction == 0.0 && lfo.skip_cycles == 0) {
+            // Preserve the original arithmetic order as well as its
+            // mathematical result for existing projects.
+            waveform_phase = static_cast<double>(lfo.cycles_per_loop)
+                                 * (kTau * loop_position)
+                             + radians(lfo.phase_degrees);
+        } else {
+            const double group_position =
+                static_cast<double>(lfo.cycles_per_loop) * loop_position
+                + lfo.phase_degrees / 360.0;
+            const double slots_per_wave =
+                static_cast<double>(lfo.skip_cycles) + 1.0;
+            const double slot_position =
+                wrap_unit(group_position) * slots_per_wave;
+            const double active_fraction = 1.0 - lfo.delay_fraction;
+            if (slot_position >= 1.0 || active_fraction <= 0.0
+                || slot_position >= active_fraction) {
+                continue;
+            }
+            waveform_phase = kTau * slot_position / active_fraction;
+        }
         const double wave = evaluate_waveform(
-            lfo.waveform,
-            static_cast<double>(lfo.cycles_per_loop) * phase
-                + radians(lfo.phase_degrees),
-            lfo.shape);
+            lfo.waveform, waveform_phase, lfo.shape);
         const double amount = 0.5 + 0.5 * wave;
         const double value = mix_value(lfo.minimum, lfo.maximum, amount);
         (void)apply_lfo_target(render, lfo.target_path, value);
@@ -2623,6 +2662,9 @@ const char* waveform_name(Waveform value) {
         case Waveform::Triangle: return "Triangle";
         case Waveform::SmoothPulse: return "Smooth pulse";
         case Waveform::Bounce: return "Bounce";
+        case Waveform::Square: return "Square";
+        case Waveform::SawtoothUp: return "Sawtooth up";
+        case Waveform::SawtoothDown: return "Sawtooth down";
     }
     return "Unknown";
 }
@@ -3422,11 +3464,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || lfo.minimum > lfo.maximum
             || lfo.cycles_per_loop < 1
             || !finite_render_parameter(lfo.phase_degrees)
-            || !finite_in_range(lfo.shape, 0.0, 1.0)) {
+            || !finite_in_range(lfo.shape, 0.0, 1.0)
+            || !finite_in_range(lfo.delay_fraction, 0.0, 1.0)
+            || lfo.skip_cycles < 0) {
             return invalid_result(
                 "Parameter LFOs need unique target paths, a valid waveform, "
                 "an ordered finite range, positive loop cycles, and a "
-                "normalized pulse shape.");
+                "normalized pulse shape/delay with nonnegative skipped "
+                "cycles.");
         }
     }
     if (config.motion_paths.size() > kMaximumMotionPaths) {

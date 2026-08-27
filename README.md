@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **15.1.0**. The version is read from `VERSION` by every
+Current product version: **16.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,29 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## Expanded LFO timing, waveforms, and clock curves
+
+Numeric LFOs now add Square, Sawtooth up, and Sawtooth down to the existing
+Sine, Triangle, Smooth pulse, and Bounce waveforms. **Delay after wave** leaves
+an authored percentage of each active oscillator slot at the numeric field's
+fallback value, while **Skip cycles** leaves any number of equal-duration slots
+at that fallback before the next active wave. **Cycles per loop** continues to
+count active waves, so pauses remain deterministic and close exactly at the
+project-loop boundary. Zero delay and zero skipped cycles preserve existing
+projects byte-for-byte at render time.
+
+Project, active-layer, analyzed-music, and Live microphone clocks now share six
+between-pulse choices: Hold, Linear, Smoothstep, Ease in, Ease out, and the
+quintic Smootherstep. The desktop editor and interactive CLI expose the same
+curves; `--clock-interpolation` accepts `ease-in`, `ease-out`, and
+`smootherstep` in addition to the existing values.
+
+Setup format 24 and layer format 21 persist the new LFO timing. Render/output
+format 9 and split render/output format 7 mark the expanded clock vocabulary.
+Older LFO records migrate with uninterrupted timing. Appending timing fields to
+the public by-value `ParameterLfo` record advances the product and installed
+shared-library SONAME together to 16.0.0/16; installed consumers must rebuild.
 
 ## Live audio control and EQ workflow
 
@@ -860,8 +883,8 @@ sudo apt install procedural-visualizer-tool
   selected directly.
 - A project-wide base clock with Default, frame-interval, elapsed-time, musical
   meter, and analyzed-music modes. Pulse interpolation can hold, move linearly,
-  or ease with smoothstep; direction, phase, beat offset, and exact/fit-to-
-  sequence behavior are explicit.
+  ease in or out, or use cubic Smoothstep/quintic Smootherstep; direction,
+  phase, beat offset, and exact/fit-to-sequence behavior are explicit.
 - An optional active-layer clock with the same controls. A layer can follow its
   own analyzed clip while the project timeline remains authoritative. Smart
   loop fit, straight fit, play once, play once then fall back to the project
@@ -914,8 +937,9 @@ sudo apt install procedural-visualizer-tool
   coordinates.
 - Transparent, black, white, or reflected out-of-frame handling for coordinate
   effects.
-- Multiple dynamic swing modulators with sine, triangle, smooth-pulse, and
-  bounce variations, including add, remove, edit, and reorder controls. A swing
+- Multiple dynamic swing modulators with sine, triangle, smooth-pulse, bounce,
+  square, and rising/falling sawtooth variations, including add, remove, edit,
+  and reorder controls. A swing
   radius of zero modulates the whole layer; a positive radius localizes its
   clock influence to a feathered circle whose numbered center handle is
   draggable in the preview. Localized Swing timing drives source waves and
@@ -1532,9 +1556,12 @@ eight-stage post-processing order. Format 20 appends the Water effect token.
 Format 21 replaces that unique-stage representation with repeatable stable-ID
 post-effect instances and adds neutral-default offsets/travel/cycles/phase for
 reusable layer-motion paths. Format 22 persists the generated-alpha ordering
-compatibility switch; project layer records use current layer format 20.
+compatibility switch; project layer records through setup format 23 use layer
+format 20.
 Format 23 appends analyzed-audio Live mapping sources; older mapping tokens and
-saved filter choices retain their prior meanings.
+saved filter choices retain their prior meanings. Format 24 adds numeric-LFO
+delay/skip timing, Square/Sawtooth waveforms, and the expanded clock curves;
+project layer records use layer format 21.
 Older records receive the historical stage order, a disabled identity map,
 neutral reusable-path modifiers, their unchanged pre-Water vocabulary, and the
 legacy alpha-outermost generated-color order.
@@ -1622,7 +1649,8 @@ profile.
 
 Clock overrides also include `--clock default|frame|time|meter|music`,
 `--pulse-frames`, `--pulse-ms`, `--meter`, `--bpm`, `--tempo-note`,
-`--clock-interpolation hold|linear|smoothstep`, `--clock-fit exact|sequence`,
+`--clock-interpolation hold|linear|smoothstep|ease-in|ease-out|smootherstep`,
+`--clock-fit exact|sequence`,
 phase/direction/beat-offset controls, and a selected-layer `--swings` master
 toggle. Options are processed left-to-right, so put `--load` before overrides.
 The interactive CLI editor additionally exposes active-layer clocks, their

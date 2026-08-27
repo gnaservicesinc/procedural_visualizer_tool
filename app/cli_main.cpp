@@ -1448,7 +1448,10 @@ bool configure_swing(RenderConfig& config, std::size_t index) {
                           {{pvt::Waveform::Sine, "Sine"},
                            {pvt::Waveform::Triangle, "Triangle"},
                            {pvt::Waveform::SmoothPulse, "Smooth pulse"},
-                           {pvt::Waveform::Bounce, "Bounce"}})
+                           {pvt::Waveform::Bounce, "Bounce"},
+                           {pvt::Waveform::Square, "Square"},
+                           {pvt::Waveform::SawtoothUp, "Sawtooth up"},
+                           {pvt::Waveform::SawtoothDown, "Sawtooth down"}})
            && prompt_real("Swing amount", swing.amount, -2.0, 2.0)
            && prompt_int("Pulses per loop", swing.cycles_per_loop, 0, 1000)
            && prompt_real("Starting phase (degrees)", swing.phase_degrees, -36000.0, 36000.0)
@@ -1656,7 +1659,11 @@ void configure_active_layer_clock(RenderConfig& config,
         || !prompt_enum("Between calculated pulses", clock.interpolation,
                         {{pvt::ClockInterpolation::Hold, "Hold"},
                          {pvt::ClockInterpolation::Linear, "Linear"},
-                         {pvt::ClockInterpolation::Smoothstep, "Smooth eased"}})
+                         {pvt::ClockInterpolation::Smoothstep, "Smooth eased"},
+                         {pvt::ClockInterpolation::EaseIn, "Ease in"},
+                         {pvt::ClockInterpolation::EaseOut, "Ease out"},
+                         {pvt::ClockInterpolation::Smootherstep,
+                          "Smoother eased"}})
         || !prompt_bool("Reverse the layer clock", clock.reverse)
         || !prompt_real("Layer clock phase offset (degrees)",
                         clock.phase_offset_degrees, -36000.0, 36000.0)) return;
@@ -1936,7 +1943,13 @@ void configure_synchronization(RenderConfig& config,
                           "Hold synchronized clock state until the next pulse"},
                          {pvt::ClockInterpolation::Linear, "Linear interpolation"},
                          {pvt::ClockInterpolation::Smoothstep,
-                          "Smooth eased interpolation"}})
+                          "Smooth eased interpolation"},
+                         {pvt::ClockInterpolation::EaseIn,
+                          "Accelerating ease-in interpolation"},
+                         {pvt::ClockInterpolation::EaseOut,
+                          "Decelerating ease-out interpolation"},
+                         {pvt::ClockInterpolation::Smootherstep,
+                          "Quintic smootherstep interpolation"}})
         || !prompt_bool("Reverse the base clock", config.clock.reverse)
         || !prompt_real("Clock phase offset (degrees)",
                         config.clock.phase_offset_degrees, -36000.0, 36000.0)) {
@@ -3318,7 +3331,7 @@ void print_help(const char* program) {
         << "  --render (or --defaults)\n"
         << "  --width N --height N --block-size N --frames N --fps N\n"
         << "  --clock default|frame|time|meter|music\n"
-        << "  --clock-interpolation hold|linear|smoothstep\n"
+        << "  --clock-interpolation hold|linear|smoothstep|ease-in|ease-out|smootherstep\n"
         << "  --clock-fit exact|sequence --pulse-frames N --pulse-ms N\n"
         << "  --meter TEXT --bpm N --tempo-note N --clock-phase N\n"
         << "  --reverse-clock --forward-clock\n"
@@ -3475,6 +3488,14 @@ bool parse_clock_interpolation(const std::string& text,
         interpolation = pvt::ClockInterpolation::Linear;
     } else if (value == "smooth" || value == "smoothstep") {
         interpolation = pvt::ClockInterpolation::Smoothstep;
+    } else if (value == "ease-in" || value == "ease_in"
+               || value == "easein") {
+        interpolation = pvt::ClockInterpolation::EaseIn;
+    } else if (value == "ease-out" || value == "ease_out"
+               || value == "easeout") {
+        interpolation = pvt::ClockInterpolation::EaseOut;
+    } else if (value == "smoother" || value == "smootherstep") {
+        interpolation = pvt::ClockInterpolation::Smootherstep;
     } else {
         return false;
     }
@@ -3878,7 +3899,8 @@ int main(int argc, char** argv) {
         } else if (option == "--clock-interpolation") {
             pvt::ClockInterpolation interpolation;
             if (!parse_clock_interpolation(value, interpolation)) {
-                std::cerr << "Clock interpolation must be hold, linear, or smoothstep.\n";
+                std::cerr << "Clock interpolation must be hold, linear, "
+                             "smoothstep, ease-in, ease-out, or smootherstep.\n";
                 return EXIT_FAILURE;
             }
             mark_changed(state.document.project.canvas.clock.interpolation,

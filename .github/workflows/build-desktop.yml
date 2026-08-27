@@ -488,6 +488,10 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 16.0.0 expands numeric animation with Square and rising/falling Sawtooth waves. LFOs can reserve a percentage of each active slot as a post-wave delay and skip any number of whole oscillator slots before running again; every rest retains the authored numeric fallback, and active-wave counts remain seamless across the project loop. Project, layer, music-anchor, and Live microphone clocks add Ease in, Ease out, and quintic Smootherstep curves alongside Hold, Linear, and Smoothstep.
+
+          Setup/layer formats advance to 24/21 and render-output/split formats to 9/7 with neutral migration for older LFOs. The public `ParameterLfo` layout grows, so the product ABI and SONAME advance together to 16 and installed-library clients must rebuild.
+
           Version 15.1.0 makes live audio shaping easier to discover and read. The audio processor gains six built-in EQ presets, new projects start with protective 20 Hz high-pass and 20 kHz low-pass filters enabled, and the dedicated Live Controls action is named explicitly. Live input now includes a post-processing ten-band spectrum, an optional noise gate with machine-local settings, more analysis sources for control mappings, and a starter mapping that connects bass, onset, and treble to visible project changes.
 
           Audio filtering treats bands above the source Nyquist frequency as exact no-ops, preserving deterministic behavior for low-rate sources. Existing projects retain their authored processing choices, setup persistence advances to format 23, and render-output formats advance to 8 (split format 6) with backwards migration. The public ABI and SONAME remain 15.

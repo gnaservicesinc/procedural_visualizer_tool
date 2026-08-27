@@ -7,10 +7,10 @@
 
 namespace pvt::detail {
 
-inline constexpr std::uint32_t kLayerConfigFormatVersion = 20U;
-inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 8U;
+inline constexpr std::uint32_t kLayerConfigFormatVersion = 21U;
+inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 9U;
 inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 2U;
-inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 6U;
+inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 7U;
 
 // In-memory access to the installed legacy codec. These are exported only so
 // the non-installed bundle helper can reuse the exact parser when the main

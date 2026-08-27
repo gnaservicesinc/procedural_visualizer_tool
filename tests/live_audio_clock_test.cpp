@@ -93,12 +93,24 @@ void test_reference_meter_divisor_does_not_cancel_detected_tempo() {
         2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::Linear);
     const auto smooth = pvt::audio::live_beat_route_phase(
         2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::Smoothstep);
+    const auto ease_in = pvt::audio::live_beat_route_phase(
+        2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::EaseIn);
+    const auto ease_out = pvt::audio::live_beat_route_phase(
+        2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::EaseOut);
+    const auto smoother = pvt::audio::live_beat_route_phase(
+        2U, 1.25, 4.0, 0.0, pvt::ClockInterpolation::Smootherstep);
     CHECK(held.has_value());
     CHECK(linear.has_value());
     CHECK(smooth.has_value());
+    CHECK(ease_in.has_value());
+    CHECK(ease_out.has_value());
+    CHECK(smoother.has_value());
     CHECK(near(*held, 0.25));
     CHECK(near(*linear, 0.3125));
     CHECK(near(*smooth, 0.2890625));
+    CHECK(near(*ease_in, 0.265625));
+    CHECK(near(*ease_out, 0.359375));
+    CHECK(near(*smoother, 0.27587890625));
 
     const auto invalid_interpolation = pvt::audio::live_beat_route_phase(
         1U, 0.25, 4.0, 0.0,

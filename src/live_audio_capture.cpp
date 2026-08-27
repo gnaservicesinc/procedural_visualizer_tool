@@ -182,6 +182,17 @@ std::optional<double> live_beat_route_phase(
             routed_position = whole_beats
                 + fraction * fraction * (3.0 - 2.0 * fraction);
             break;
+        case ClockInterpolation::EaseIn:
+            routed_position = whole_beats + fraction * fraction;
+            break;
+        case ClockInterpolation::EaseOut:
+            routed_position = whole_beats + fraction * (2.0 - fraction);
+            break;
+        case ClockInterpolation::Smootherstep:
+            routed_position = whole_beats
+                + fraction * fraction * fraction
+                      * (fraction * (fraction * 6.0 - 15.0) + 10.0);
+            break;
         default:
             return std::nullopt;
     }

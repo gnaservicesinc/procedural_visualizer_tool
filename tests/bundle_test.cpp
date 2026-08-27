@@ -414,6 +414,8 @@ void test_layer_codec_backward_compatibility() {
     amplitude_lfo.maximum = 1.7;
     amplitude_lfo.cycles_per_loop = 3;
     amplitude_lfo.phase_degrees = 27.0;
+    amplitude_lfo.delay_fraction = 0.2;
+    amplitude_lfo.skip_cycles = 2;
     original.parameter_lfos.push_back(amplitude_lfo);
     CHECK(pvt::parameter_lfo_target_supported(
         original, amplitude_lfo.target_path));
@@ -430,7 +432,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t20\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t21\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -608,15 +610,43 @@ void test_layer_codec_backward_compatibility() {
         CHECK(loaded_lfo.maximum == amplitude_lfo.maximum);
         CHECK(loaded_lfo.cycles_per_loop == amplitude_lfo.cycles_per_loop);
         CHECK(loaded_lfo.phase_degrees == amplitude_lfo.phase_degrees);
+        CHECK(loaded_lfo.delay_fraction == amplitude_lfo.delay_fraction);
+        CHECK(loaded_lfo.skip_cycles == amplitude_lfo.skip_cycles);
         CHECK(pvt::parameter_lfo_target_supported(
             current_round_trip, loaded_lfo.target_path));
     }
 
+    // Layer v20/setup v22 predates LFO rest/skip timing. Existing oscillators
+    // import with uninterrupted playback.
+    std::istringstream current_v21_input(current_layer);
+    std::ostringstream version_twenty_output;
+    std::string version_line;
+    CHECK(static_cast<bool>(std::getline(current_v21_input, version_line)));
+    CHECK(version_line == "PVT_LAYER\t21");
+    version_twenty_output << "PVT_LAYER\t20\n";
+    while (std::getline(current_v21_input, version_line)) {
+        const std::size_t tab = version_line.find('\t');
+        const std::string key = version_line.substr(0U, tab);
+        if (!has_suffix(key, ".delay_fraction")
+            && !has_suffix(key, ".skip_cycles")) {
+            version_twenty_output << version_line << '\n';
+        }
+    }
+    const std::string version_twenty = version_twenty_output.str();
+    pvt::RenderData loaded_version_twenty;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_twenty, loaded_version_twenty, &error, &motion_paths));
+    CHECK(loaded_version_twenty.parameter_lfos.size() == 1U);
+    if (loaded_version_twenty.parameter_lfos.size() == 1U) {
+        CHECK(loaded_version_twenty.parameter_lfos.front().delay_fraction
+              == 0.0);
+        CHECK(loaded_version_twenty.parameter_lfos.front().skip_cycles == 0);
+    }
+
     // Layer v19/setup v21 predates the explicit generated-alpha ordering
     // variable. It imports with the historical alpha-outermost order enabled.
-    std::istringstream current_v20_input(current_layer);
+    std::istringstream current_v20_input(version_twenty);
     std::ostringstream version_nineteen_output;
-    std::string version_line;
     CHECK(static_cast<bool>(std::getline(current_v20_input, version_line)));
     CHECK(version_line == "PVT_LAYER\t20");
     version_nineteen_output << "PVT_LAYER\t19\n";
@@ -702,7 +732,7 @@ void test_layer_codec_backward_compatibility() {
     std::string serialized_water_layer;
     CHECK(pvt::detail::serialize_layer_config(
         water_layer, serialized_water_layer, &error, &motion_paths));
-    CHECK(serialized_water_layer.rfind("PVT_LAYER\t20\n", 0U) == 0U);
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t21\n", 0U) == 0U);
     pvt::RenderData loaded_water_layer;
     CHECK(pvt::detail::deserialize_layer_config(
         serialized_water_layer, loaded_water_layer, &error, &motion_paths));
@@ -1378,7 +1408,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t20");
+    CHECK(line == "PVT_LAYER\t21");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -1487,7 +1517,7 @@ void test_render_output_codec_backward_compatibility() {
     canvas.total_frames = 144;
     canvas.fps = 48.0;
     canvas.clock.mode = pvt::ClockMode::Music;
-    canvas.clock.interpolation = pvt::ClockInterpolation::Smoothstep;
+    canvas.clock.interpolation = pvt::ClockInterpolation::Smootherstep;
     canvas.clock.fit = pvt::ClockFit::FitSequence;
     canvas.clock.frame_interval = 6;
     canvas.clock.time_interval_microseconds = 125000;
@@ -1643,7 +1673,7 @@ void test_render_output_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t8\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t9\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -1651,7 +1681,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(round_trip.width == 320 && round_trip.height == 180);
     CHECK(round_trip.clock.mode == pvt::ClockMode::Music);
     CHECK(round_trip.clock.interpolation
-          == pvt::ClockInterpolation::Smoothstep);
+          == pvt::ClockInterpolation::Smootherstep);
     CHECK(round_trip.clock.music_swing_policy
           == pvt::MusicSwingPolicy::SuppressGlobal);
     CHECK(round_trip.clock.music.source_sha256 == std::string(64U, 'b'));
@@ -1697,10 +1727,31 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(version_two.find("device_uid") == std::string::npos);
     CHECK(version_two.find("captured_stream") == std::string::npos);
 
+    std::string version_eight = version_two;
+    version_eight.replace(
+        0U, std::string("PVT_RENDER_OUTPUT\t9").size(),
+        "PVT_RENDER_OUTPUT\t8");
+    const std::string smoother_clock_record =
+        "timing.clock.interpolation\tsmootherstep";
+    const std::size_t smoother_clock_position =
+        version_eight.find(smoother_clock_record);
+    CHECK(smoother_clock_position != std::string::npos);
+    if (smoother_clock_position != std::string::npos) {
+        version_eight.replace(
+            smoother_clock_position, smoother_clock_record.size(),
+            "timing.clock.interpolation\tsmoothstep");
+    }
+    pvt::CanvasLoopConfig version_eight_canvas;
+    pvt::ExportConfig version_eight_export;
+    CHECK(pvt::detail::deserialize_render_output_config(
+        version_eight, version_eight_canvas, version_eight_export, &error));
+    CHECK(version_eight_canvas.clock.interpolation
+          == pvt::ClockInterpolation::Smoothstep);
+
     // Render/output v5 is setup-v8 data. Loading it must keep the historical
     // project settings and supply a neutral Live block rather than requiring
     // any of the v6 live.* records.
-    std::istringstream version_six_input(version_two);
+    std::istringstream version_six_input(version_eight);
     std::ostringstream version_five_output;
     std::string version_line;
     CHECK(static_cast<bool>(std::getline(version_six_input, version_line)));
@@ -1728,7 +1779,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t2\n", 0U) == 0U);
     CHECK(pvt::detail::serialize_split_render_output_config(
         canvas, output, split_output, &error));
-    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t6\n", 0U) == 0U);
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t7\n", 0U) == 0U);
     CHECK(split_output.find("timing.music.") == std::string::npos);
     CHECK(split_output.size() < version_two.size());
     pvt::CanvasLoopConfig combined_canvas;
@@ -1740,9 +1791,30 @@ void test_render_output_codec_backward_compatibility() {
         combined_canvas, combined_output, combined_canonical, &error));
     CHECK(combined_canonical == version_two);
 
-    // Split v5 corresponds to render/output v7 (setup v14). The new split v6
-    // must not cause existing v5 files to be reinterpreted as setup v23.
-    std::string split_version_five = split_output;
+    // Split v6 corresponds to render/output v8 (setup v23), while split v5
+    // corresponds to render/output v7 (setup v14). Preserve both mappings.
+    std::string split_version_six = split_output;
+    split_version_six.replace(
+        0U, std::string("PVT_RENDER_OUTPUT_SPLIT\t7").size(),
+        "PVT_RENDER_OUTPUT_SPLIT\t6");
+    const std::string smoother_record =
+        "timing.clock.interpolation\tsmootherstep";
+    const std::size_t smoother_position =
+        split_version_six.find(smoother_record);
+    CHECK(smoother_position != std::string::npos);
+    if (smoother_position != std::string::npos) {
+        split_version_six.replace(smoother_position, smoother_record.size(),
+                                  "timing.clock.interpolation\tsmoothstep");
+    }
+    pvt::CanvasLoopConfig split_version_six_canvas;
+    pvt::ExportConfig split_version_six_export;
+    CHECK(pvt::detail::deserialize_split_render_output_config(
+        split_version_six, analysis, split_version_six_canvas,
+        split_version_six_export, &error));
+    CHECK(split_version_six_canvas.clock.interpolation
+          == pvt::ClockInterpolation::Smoothstep);
+
+    std::string split_version_five = split_version_six;
     split_version_five.replace(
         0U, std::string("PVT_RENDER_OUTPUT_SPLIT\t6").size(),
         "PVT_RENDER_OUTPUT_SPLIT\t5");
@@ -1844,7 +1916,7 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t8");
+    CHECK(line == "PVT_RENDER_OUTPUT\t9");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');

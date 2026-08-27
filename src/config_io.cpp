@@ -93,6 +93,8 @@ namespace {
 // Version 22 records whether generated RGBA traversal uses the historical
 // alpha-outermost order or the corrected alpha-innermost Cartesian order.
 // Version 23 adds analyzed Live-audio features as portable Control Map inputs.
+// Version 24 adds LFO rest/skip timing, Square/Sawtooth waveforms, and
+// additional clock interpolation curves.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -104,8 +106,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 23U,
-              "config_io.cpp implements setup format version 23");
+static_assert(kSetupFormatVersion == 24U,
+              "config_io.cpp implements setup format version 24");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -1107,11 +1109,14 @@ constexpr std::array<std::pair<std::string_view, PathHandleMode>, 4U>
         {"symmetric", PathHandleMode::Symmetric},
     }};
 
-constexpr std::array<std::pair<std::string_view, Waveform>, 4U> kWaveforms{{
+constexpr std::array<std::pair<std::string_view, Waveform>, 7U> kWaveforms{{
     {"sine", Waveform::Sine},
     {"triangle", Waveform::Triangle},
     {"smooth_pulse", Waveform::SmoothPulse},
     {"bounce", Waveform::Bounce},
+    {"square", Waveform::Square},
+    {"sawtooth_up", Waveform::SawtoothUp},
+    {"sawtooth_down", Waveform::SawtoothDown},
 }};
 
 constexpr std::array<std::pair<std::string_view, QuantizationMode>, 3U> kQuantizationModes{{
@@ -1160,11 +1165,14 @@ constexpr std::array<std::pair<std::string_view, ClockMode>, 5U> kClockModes{{
     {"music", ClockMode::Music},
 }};
 
-constexpr std::array<std::pair<std::string_view, ClockInterpolation>, 3U>
+constexpr std::array<std::pair<std::string_view, ClockInterpolation>, 6U>
     kClockInterpolations{{
         {"hold", ClockInterpolation::Hold},
         {"linear", ClockInterpolation::Linear},
         {"smoothstep", ClockInterpolation::Smoothstep},
+        {"ease_in", ClockInterpolation::EaseIn},
+        {"ease_out", ClockInterpolation::EaseOut},
+        {"smootherstep", ClockInterpolation::Smootherstep},
     }};
 
 constexpr std::array<std::pair<std::string_view, ClockFit>, 2U> kClockFits{{
@@ -2118,6 +2126,12 @@ bool serialize_setup(const RenderConfig& config,
             lfo.phase_degrees);
         builder.add_double(indexed_key("parameter_lfos", index, "shape"),
                            lfo.shape);
+        builder.add_double(
+            indexed_key("parameter_lfos", index, "delay_fraction"),
+            lfo.delay_fraction);
+        builder.add_integer(
+            indexed_key("parameter_lfos", index, "skip_cycles"),
+            lfo.skip_cycles);
     }
 
     builder.add_bool("rhythm.swings_enabled", config.swings_enabled);
@@ -3698,7 +3712,18 @@ bool deserialize_setup(Records& records,
                 || !consume_double(
                     records,
                     indexed_key("parameter_lfos", index, "shape"),
-                    lfo.shape, error)) {
+                    lfo.shape, error)
+                || (setup_version >= 24U
+                    && (!consume_double(
+                            records,
+                            indexed_key("parameter_lfos", index,
+                                        "delay_fraction"),
+                            lfo.delay_fraction, error)
+                        || !consume_integer(
+                            records,
+                            indexed_key("parameter_lfos", index,
+                                        "skip_cycles"),
+                            lfo.skip_cycles, error)))) {
                 return false;
             }
         }
@@ -5474,6 +5499,9 @@ const char* clock_interpolation_name(ClockInterpolation value) {
         case ClockInterpolation::Hold: return "Hold";
         case ClockInterpolation::Linear: return "Linear";
         case ClockInterpolation::Smoothstep: return "Smoothstep";
+        case ClockInterpolation::EaseIn: return "Ease in";
+        case ClockInterpolation::EaseOut: return "Ease out";
+        case ClockInterpolation::Smootherstep: return "Smootherstep";
     }
     return "Unknown";
 }

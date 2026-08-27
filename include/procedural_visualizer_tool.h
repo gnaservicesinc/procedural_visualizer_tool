@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 23;
+constexpr std::uint32_t kSetupFormatVersion = 24;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -258,8 +258,16 @@ enum class Waveform : std::uint8_t {
     Sine = 0,
     Triangle,
     SmoothPulse,
-    Bounce
+    Bounce,
+    Square,
+    SawtoothUp,
+    SawtoothDown
 };
+
+static_assert(static_cast<std::uint8_t>(Waveform::Sine) == 0U);
+static_assert(static_cast<std::uint8_t>(Waveform::Bounce) == 3U);
+static_assert(static_cast<std::uint8_t>(Waveform::Square) == 4U);
+static_assert(static_cast<std::uint8_t>(Waveform::SawtoothDown) == 6U);
 
 enum class QuantizationMode : std::uint8_t {
     Rgb = 0,
@@ -354,8 +362,16 @@ enum class ClockMode : std::uint8_t {
 enum class ClockInterpolation : std::uint8_t {
     Hold = 0,
     Linear,
-    Smoothstep
+    Smoothstep,
+    EaseIn,
+    EaseOut,
+    Smootherstep
 };
+
+static_assert(static_cast<std::uint8_t>(ClockInterpolation::Hold) == 0U);
+static_assert(static_cast<std::uint8_t>(ClockInterpolation::Smoothstep) == 2U);
+static_assert(static_cast<std::uint8_t>(ClockInterpolation::EaseIn) == 3U);
+static_assert(static_cast<std::uint8_t>(ClockInterpolation::Smootherstep) == 5U);
 
 enum class ClockFit : std::uint8_t {
     Exact = 0,
@@ -1420,6 +1436,13 @@ struct ParameterLfo {
     double phase_degrees = 0.0;
     // Used by Smooth pulse; neutral for the other waveform choices.
     double shape = 0.5;
+    // Fraction of each active oscillator slot spent at the authored fallback
+    // after the wave completes. One means the LFO remains at fallback.
+    double delay_fraction = 0.0;
+    // Equal-duration oscillator slots left at the authored fallback between
+    // active waves. cycles_per_loop still counts active waves, so this remains
+    // deterministic and seamless at the project-loop boundary.
+    int skip_cycles = 0;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live

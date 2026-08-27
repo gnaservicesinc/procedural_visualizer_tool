@@ -317,7 +317,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 16U ? 18U
                     : layer_version == 17U ? 19U
                     : layer_version == 18U ? 20U
-                    : layer_version == 19U ? 21U : 22U;
+                    : layer_version == 19U ? 21U
+                    : layer_version == 20U ? 22U : 24U;
     return true;
 }
 
@@ -337,7 +338,8 @@ bool supported_render_output_version(const std::string& serialized,
                     : output_version == 4U ? 7U
                     : output_version == 5U ? 8U
                     : output_version == 6U ? 12U
-                    : output_version == 7U ? 14U : 23U;
+                    : output_version == 7U ? 14U
+                    : output_version == 8U ? 23U : 24U;
     return true;
 }
 
@@ -1178,6 +1180,7 @@ bool deserialize_split_render_output_config(
             : split_version == 3U ? 5U
             : split_version == 4U ? 6U
             : split_version == 5U ? 7U
+            : split_version == 6U ? 8U
                                   : kRenderOutputConfigFormatVersion));
         combined.push_back('\n');
         for (const std::string_view line : usable_split_records) {
