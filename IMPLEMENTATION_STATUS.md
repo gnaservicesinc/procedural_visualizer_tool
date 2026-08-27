@@ -6,6 +6,26 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.0.0 LFO-to-LFO modulation and destination workflow
+
+`ParameterLfo::id` is a stable layer-local identity. A destination of the form
+`lfo/<id>/<property>` can modulate Enabled, Wave type, Minimum, Maximum, Cycles
+per loop, Phase, Pulse shape, Delay after wave, or Skip cycles on another LFO.
+Identity and destination routing are intentionally not runtime-modulated.
+
+Validation requires unique destinations and nonzero identities for referenced
+LFOs, resolves every reference, and rejects self-links and graph cycles. Frame
+materialization uses an iterative topological pass, so controller semantics are
+independent of list order and hostile deep chains cannot exhaust the call
+stack. Authored state remains unchanged; only the render-time copy is resolved.
+
+The desktop editor provides a destination-category filter and
+case-insensitive contains search. Its LFO category uses visible list numbers,
+hides self-targets, and exposes all supported settings. Setup 25/layer 22
+persist IDs and migrate older LFO records with deterministic nonzero values.
+Appending the ID to the public by-value record advances the product and SONAME
+to 17.0.0/17.
+
 ## 16.0.0 LFO timing and clock-curve expansion
 
 `ParameterLfo` adds a normalized post-wave delay and a nonnegative skipped-slot

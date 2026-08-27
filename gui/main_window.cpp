@@ -29,6 +29,7 @@
 #include <QColorSpace>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCompleter>
 #include <QCoreApplication>
 #include <QDir>
 #include <QDesktopServices>
@@ -7587,6 +7588,7 @@ void MainWindow::showParameterLfoEditor() {
     }
 
     struct TargetChoice {
+        QString group;
         QString path;
         QString label;
         LiveTargetKind kind = LiveTargetKind::Real;
@@ -7594,7 +7596,7 @@ void MainWindow::showParameterLfoEditor() {
         double maximum = 1.0;
         double current = 0.0;
     };
-    std::vector<TargetChoice> choices;
+    std::vector<TargetChoice> base_choices;
     const QString prefix = QStringLiteral("layer/%1/")
                                .arg(QString::fromStdString(layer->uuid));
     for (const LiveTargetDescriptor& target :
@@ -7609,12 +7611,13 @@ void MainWindow::showParameterLfoEditor() {
                 layer->render, relative.toStdString())) {
             continue;
         }
-        choices.push_back(
-            {relative, target.section + QStringLiteral(" — ") + target.label,
+        base_choices.push_back(
+            {target.section, relative,
+             target.section + QStringLiteral(" — ") + target.label,
              target.kind, target.minimum, target.maximum,
              target.current_value});
     }
-    if (choices.empty()) {
+    if (base_choices.empty()) {
         QMessageBox::information(
             this, tr("No numeric targets"),
             tr("This layer does not currently expose a numeric LFO target."));
@@ -7631,7 +7634,9 @@ void MainWindow::showParameterLfoEditor() {
         tr("Each LFO replaces its target value only while rendering. The "
            "numeric field remains the authored fallback, and one or more "
            "whole cycles stay seamless across the project loop. Delay and "
-           "skipped cycles use that authored value during each rest."),
+           "skipped cycles use that authored value during each rest. LFO "
+           "destinations can also modulate every editable setting of another "
+           "LFO; Enabled uses 0/1 and Wave type uses the numbered menu order."),
         &dialog);
     explanation->setWordWrap(true);
     outer->addWidget(explanation);
@@ -7653,11 +7658,25 @@ void MainWindow::showParameterLfoEditor() {
     auto* form = new QFormLayout(editor);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     auto* enabled = new QCheckBox(tr("Enabled"), editor);
+    auto* target_group = new QComboBox(editor);
+    target_group->setObjectName(QStringLiteral("parameterLfoTargetGroup"));
+    target_group->addItem(tr("All destinations"), QString{});
+    std::unordered_set<std::string> target_groups;
+    for (const TargetChoice& choice : base_choices) {
+        if (target_groups.insert(choice.group.toStdString()).second) {
+            target_group->addItem(choice.group, choice.group);
+        }
+    }
+    target_group->addItem(tr("LFOs"), QStringLiteral("LFOs"));
     auto* target = new QComboBox(editor);
     target->setObjectName(QStringLiteral("parameterLfoTarget"));
-    for (const TargetChoice& choice : choices) {
-        target->addItem(choice.label, choice.path);
-    }
+    target->setEditable(true);
+    target->setInsertPolicy(QComboBox::NoInsert);
+    target->setMaxVisibleItems(20);
+    target->lineEdit()->setPlaceholderText(tr("Type to search destinations…"));
+    target->completer()->setCaseSensitivity(Qt::CaseInsensitive);
+    target->completer()->setFilterMode(Qt::MatchContains);
+    target->completer()->setCompletionMode(QCompleter::PopupCompletion);
     auto* waveform = new QComboBox(editor);
     waveform->setObjectName(QStringLiteral("parameterLfoWaveform"));
     for (const pvt::Waveform value : {
@@ -7697,7 +7716,8 @@ void MainWindow::showParameterLfoEditor() {
         "Whole oscillator slots held at the authored numeric value before "
         "the next active wave."));
     form->addRow(QString{}, enabled);
-    form->addRow(tr("Numeric value"), target);
+    form->addRow(tr("Destination group"), target_group);
+    form->addRow(tr("Destination"), target);
     form->addRow(tr("Wave type"), waveform);
     form->addRow(tr("Minimum"), minimum);
     form->addRow(tr("Maximum"), maximum);
@@ -7709,22 +7729,117 @@ void MainWindow::showParameterLfoEditor() {
     body->addWidget(editor, 2);
 
     std::vector<pvt::ParameterLfo> edited = config_.parameter_lfos;
+    const auto allocate_lfo_id = [&edited] {
+        std::unordered_set<std::uint64_t> used;
+        std::uint64_t maximum = 0U;
+        for (const pvt::ParameterLfo& lfo : edited) {
+            if (lfo.id == 0U) continue;
+            used.insert(lfo.id);
+            maximum = std::max(maximum, lfo.id);
+        }
+        if (maximum != (std::numeric_limits<std::uint64_t>::max)()) {
+            return maximum + 1U;
+        }
+        for (std::uint64_t candidate = 1U; candidate != 0U; ++candidate) {
+            if (used.find(candidate) == used.end()) return candidate;
+        }
+        return UINT64_C(0);
+    };
+    for (pvt::ParameterLfo& lfo : edited) {
+        if (lfo.id == 0U) lfo.id = allocate_lfo_id();
+    }
+    std::vector<TargetChoice> choices;
     bool loading = false;
-    const auto choice_index = [&choices](const std::string& path) {
+    const auto make_choices = [&](int source_row,
+                                  const QString& group_filter) {
+        std::vector<TargetChoice> result;
+        const auto accepts_group = [&group_filter](const QString& group) {
+            return group_filter.isEmpty() || group == group_filter;
+        };
+        for (const TargetChoice& choice : base_choices) {
+            if (accepts_group(choice.group)) result.push_back(choice);
+        }
+        if (!accepts_group(QStringLiteral("LFOs"))) return result;
+
+        const double magnitude = kMaximumRenderParameter;
+        const double integer_maximum =
+            static_cast<double>((std::numeric_limits<int>::max)());
+        const auto add_lfo_choice = [&](std::size_t index,
+                                        const char* property,
+                                        const QString& property_label,
+                                        LiveTargetKind kind, double minimum,
+                                        double maximum, double current) {
+            const pvt::ParameterLfo& lfo = edited[index];
+            result.push_back({
+                QStringLiteral("LFOs"),
+                QStringLiteral("lfo/%1/%2")
+                    .arg(static_cast<qulonglong>(lfo.id))
+                    .arg(QString::fromLatin1(property)),
+                tr("LFO %1 — %2").arg(index + 1U).arg(property_label),
+                kind, minimum, maximum, current});
+        };
+        for (std::size_t index = 0U; index < edited.size(); ++index) {
+            if (static_cast<int>(index) == source_row) continue;
+            const pvt::ParameterLfo& lfo = edited[index];
+            add_lfo_choice(index, "enabled", tr("Enabled"),
+                           LiveTargetKind::Integer, 0.0, 1.0,
+                           lfo.enabled ? 1.0 : 0.0);
+            add_lfo_choice(
+                index, "waveform", tr("Wave type"), LiveTargetKind::Integer,
+                0.0, static_cast<double>(pvt::Waveform::SawtoothDown),
+                static_cast<double>(lfo.waveform));
+            add_lfo_choice(index, "minimum", tr("Minimum"),
+                           LiveTargetKind::Real, -magnitude, magnitude,
+                           lfo.minimum);
+            add_lfo_choice(index, "maximum", tr("Maximum"),
+                           LiveTargetKind::Real, -magnitude, magnitude,
+                           lfo.maximum);
+            add_lfo_choice(index, "cycles_per_loop", tr("Cycles per loop"),
+                           LiveTargetKind::Integer, 1.0, integer_maximum,
+                           static_cast<double>(lfo.cycles_per_loop));
+            add_lfo_choice(index, "phase_degrees", tr("Phase"),
+                           LiveTargetKind::Real, -magnitude, magnitude,
+                           lfo.phase_degrees);
+            add_lfo_choice(index, "shape", tr("Pulse shape"),
+                           LiveTargetKind::Real, 0.0, 1.0, lfo.shape);
+            add_lfo_choice(index, "delay_fraction", tr("Delay after wave"),
+                           LiveTargetKind::Real, 0.0, 1.0,
+                           lfo.delay_fraction);
+            add_lfo_choice(index, "skip_cycles", tr("Skip cycles"),
+                           LiveTargetKind::Integer, 0.0, integer_maximum,
+                           static_cast<double>(lfo.skip_cycles));
+        }
+        return result;
+    };
+    const auto rebuild_choices = [&](int source_row,
+                                     const std::string& selected_path) {
+        choices = make_choices(
+            source_row, target_group->currentData().toString());
+        const QSignalBlocker blocker(target);
+        target->clear();
+        for (const TargetChoice& choice : choices) {
+            target->addItem(choice.label, choice.path);
+        }
         const auto found = std::find_if(
-            choices.begin(), choices.end(), [&path](const TargetChoice& item) {
-                return item.path.toStdString() == path;
+            choices.begin(), choices.end(),
+            [&selected_path](const TargetChoice& choice) {
+                return choice.path.toStdString() == selected_path;
             });
-        return found == choices.end()
-                   ? -1 : static_cast<int>(found - choices.begin());
+        target->setCurrentIndex(
+            found == choices.end()
+                ? -1 : static_cast<int>(found - choices.begin()));
     };
     const auto refresh_item = [&](int row) {
         if (row < 0 || row >= static_cast<int>(edited.size())) return;
         const pvt::ParameterLfo& lfo = edited[static_cast<std::size_t>(row)];
-        const int selected = choice_index(lfo.target_path);
-        const QString name = selected >= 0
-            ? choices[static_cast<std::size_t>(selected)].label
-            : QString::fromStdString(lfo.target_path);
+        const std::vector<TargetChoice> all_choices = make_choices(-1, {});
+        const auto named = std::find_if(
+            all_choices.begin(), all_choices.end(),
+            [&lfo](const TargetChoice& choice) {
+                return choice.path.toStdString() == lfo.target_path;
+            });
+        const QString name = named != all_choices.end()
+            ? named->label : QString::fromStdString(lfo.target_path);
         const QString summary = tr("%1 — %2 to %3 (%4)")
             .arg(name)
             .arg(lfo.minimum, 0, 'g', 6)
@@ -7772,9 +7887,11 @@ void MainWindow::showParameterLfoEditor() {
         if (present) {
             const pvt::ParameterLfo& lfo =
                 edited[static_cast<std::size_t>(row)];
-            int selected = choice_index(lfo.target_path);
-            if (selected < 0) selected = 0;
-            target->setCurrentIndex(selected);
+            {
+                const QSignalBlocker blocker(target_group);
+                target_group->setCurrentIndex(0);
+            }
+            rebuild_choices(row, lfo.target_path);
             update_ranges();
             enabled->setChecked(lfo.enabled);
             waveform->setCurrentIndex(std::max(
@@ -7796,6 +7913,16 @@ void MainWindow::showParameterLfoEditor() {
     }
     connect(list, &QListWidget::currentRowChanged, &dialog, load_row);
     connect(enabled, &QCheckBox::toggled, &dialog, update_current);
+    connect(target_group, qOverload<int>(&QComboBox::currentIndexChanged),
+            &dialog, [&](int) {
+                if (loading) return;
+                const int row = list->currentRow();
+                if (row < 0 || row >= static_cast<int>(edited.size())) return;
+                const std::string selected_path =
+                    target->currentData().toString().toStdString();
+                rebuild_choices(row, selected_path);
+                update_ranges();
+            });
     connect(target, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
             [&, update_current](int) {
                 if (!loading) {
@@ -7826,17 +7953,26 @@ void MainWindow::showParameterLfoEditor() {
     connect(add, &QPushButton::clicked, &dialog, [&] {
         std::unordered_set<std::string> used;
         for (const auto& lfo : edited) used.insert(lfo.target_path);
+        const std::vector<TargetChoice> all_choices = make_choices(-1, {});
         const auto available = std::find_if(
-            choices.begin(), choices.end(), [&used](const TargetChoice& item) {
+            all_choices.begin(), all_choices.end(),
+            [&used](const TargetChoice& item) {
                 return used.count(item.path.toStdString()) == 0U;
             });
-        if (available == choices.end()) {
+        if (available == all_choices.end()) {
             QMessageBox::information(
                 &dialog, tr("All targets already have LFOs"),
                 tr("Remove or retarget an existing LFO before adding another."));
             return;
         }
         pvt::ParameterLfo lfo;
+        lfo.id = allocate_lfo_id();
+        if (lfo.id == 0U) {
+            QMessageBox::warning(
+                &dialog, tr("Cannot add LFO"),
+                tr("The layer has exhausted the available LFO identities."));
+            return;
+        }
         lfo.target_path = available->path.toStdString();
         if (available->minimum == 0.0 && available->maximum == 1.0) {
             lfo.minimum = 0.0;
@@ -7859,6 +7995,9 @@ void MainWindow::showParameterLfoEditor() {
         if (row < 0 || row >= static_cast<int>(edited.size())) return;
         edited.erase(edited.begin() + row);
         delete list->takeItem(row);
+        for (int index = 0; index < list->count(); ++index) {
+            refresh_item(index);
+        }
         list->setCurrentRow(std::min(row, list->count() - 1));
         if (list->count() == 0) load_row(-1);
     });
@@ -7895,8 +8034,12 @@ void MainWindow::showParameterLfoEditor() {
         }
         dialog.accept();
     });
-    if (!edited.empty()) list->setCurrentRow(0);
-    else load_row(-1);
+    if (!edited.empty()) {
+        list->setCurrentRow(0);
+    } else {
+        rebuild_choices(-1, {});
+        load_row(-1);
+    }
     if (dialog.exec() != QDialog::Accepted) return;
 
     auto before = captureActiveState();
@@ -19246,12 +19389,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 QStringLiteral("parameterLfoDialog"))) {
             const auto* target = dialog->findChild<QComboBox*>(
                 QStringLiteral("parameterLfoTarget"));
+            const auto* target_group = dialog->findChild<QComboBox*>(
+                QStringLiteral("parameterLfoTargetGroup"));
             const auto* waveform = dialog->findChild<QComboBox*>(
                 QStringLiteral("parameterLfoWaveform"));
             inspected_parameter_lfo_editor =
                 dialog->findChild<QListWidget*>(
                     QStringLiteral("parameterLfoList")) != nullptr
+                && target_group != nullptr && target_group->count() > 1
                 && target != nullptr && target->count() > 0
+                && target->isEditable() && target->completer() != nullptr
+                && target->completer()->filterMode() == Qt::MatchContains
                 && waveform != nullptr && waveform->count() == 7
                 && dialog->findChild<QDoubleSpinBox*>(
                     QStringLiteral("parameterLfoMinimum")) != nullptr

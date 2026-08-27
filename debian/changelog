@@ -1,3 +1,11 @@
+procedural-visualizer-tool (17.0.0) stonking; urgency=medium
+
+  * Add stable, cycle-safe LFO-to-LFO modulation for every editable LFO value.
+  * Add categorized, case-insensitive destination search to the LFO editor.
+  * Advance setup/layer formats to 25/22 and the shared-library ABI to 17.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 27 Aug 2026 15:28:24 -0400
+
 procedural-visualizer-tool (16.0.0) stonking; urgency=medium
 
   * Add LFO rest/skip timing, Square and Sawtooth waves, and expanded clock curves.

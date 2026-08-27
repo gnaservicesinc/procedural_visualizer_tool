@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **16.0.0**. The version is read from `VERSION` by every
+Current product version: **17.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,28 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## LFO-to-LFO modulation and searchable destinations
+
+An LFO can now use any runtime-editable setting of another LFO as its
+destination: Enabled, Wave type, Minimum, Maximum, Cycles per loop, Phase,
+Pulse shape, Delay after wave, or Skip cycles. Each oscillator has a stable
+layer-local ID, so links survive list edits and saved-project round trips.
+Controllers resolve before the LFOs they modify regardless of list order;
+self-links, missing destinations, duplicate IDs, and modulation cycles are
+rejected. Identity and destination routing remain authored rather than
+self-modifying.
+
+The numeric LFO editor replaces its single flat destination wall with a
+category picker and a case-insensitive type-to-search destination field. An
+**LFOs** category labels linked settings by visible LFO number and hides the
+currently edited oscillator, making common routes such as “LFO 2 changes LFO
+1 Maximum” direct to author.
+
+Setup format 25 and layer format 22 persist stable LFO IDs. Older records gain
+deterministic nonzero IDs during migration. Appending identity to the public
+by-value `ParameterLfo` record advances the product and installed shared-library
+SONAME together to 17.0.0/17; installed consumers must rebuild.
 
 ## Expanded LFO timing, waveforms, and clock curves
 
@@ -1561,7 +1583,9 @@ format 20.
 Format 23 appends analyzed-audio Live mapping sources; older mapping tokens and
 saved filter choices retain their prior meanings. Format 24 adds numeric-LFO
 delay/skip timing, Square/Sawtooth waveforms, and the expanded clock curves;
-project layer records use layer format 21.
+project layer records use layer format 21. Format 25 assigns stable identities
+to LFOs for deterministic LFO-to-LFO modulation; project layer records use
+layer format 22.
 Older records receive the historical stage order, a disabled identity map,
 neutral reusable-path modifiers, their unchanged pre-Water vocabulary, and the
 legacy alpha-outermost generated-color order.

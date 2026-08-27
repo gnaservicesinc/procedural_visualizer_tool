@@ -94,7 +94,8 @@ namespace {
 // alpha-outermost order or the corrected alpha-innermost Cartesian order.
 // Version 23 adds analyzed Live-audio features as portable Control Map inputs.
 // Version 24 adds LFO rest/skip timing, Square/Sawtooth waveforms, and
-// additional clock interpolation curves.
+// additional clock interpolation curves. Version 25 assigns stable IDs to
+// LFOs so their numeric settings can themselves be LFO destinations.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -106,8 +107,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 24U,
-              "config_io.cpp implements setup format version 24");
+static_assert(kSetupFormatVersion == 25U,
+              "config_io.cpp implements setup format version 25");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -2102,11 +2103,40 @@ bool serialize_setup(const RenderConfig& config,
             builder, indexed_key("effects", index, "path") + ".", effect.path);
     }
 
-    builder.add_integer("parameter_lfos.count",
-                        config.parameter_lfos.size());
+    std::vector<ParameterLfo> persisted_lfos = config.parameter_lfos;
+    std::set<std::uint64_t> used_lfo_ids;
+    std::uint64_t maximum_lfo_id = 0U;
+    for (const ParameterLfo& lfo : persisted_lfos) {
+        if (lfo.id == 0U) continue;
+        used_lfo_ids.insert(lfo.id);
+        maximum_lfo_id = std::max(maximum_lfo_id, lfo.id);
+    }
+    std::uint64_t available_lfo_id = 1U;
+    for (ParameterLfo& lfo : persisted_lfos) {
+        if (lfo.id != 0U) continue;
+        if (maximum_lfo_id
+            != (std::numeric_limits<std::uint64_t>::max)()) {
+            lfo.id = ++maximum_lfo_id;
+        } else {
+            while (available_lfo_id != 0U
+                   && used_lfo_ids.find(available_lfo_id)
+                          != used_lfo_ids.end()) {
+                ++available_lfo_id;
+            }
+            lfo.id = available_lfo_id;
+            if (available_lfo_id != 0U) ++available_lfo_id;
+        }
+        if (lfo.id == 0U) {
+            return fail(error, "Parameter LFO identity space is exhausted.");
+        }
+        used_lfo_ids.insert(lfo.id);
+    }
+    builder.add_integer("parameter_lfos.count", persisted_lfos.size());
     for (std::size_t index = 0U;
-         index < config.parameter_lfos.size(); ++index) {
-        const ParameterLfo& lfo = config.parameter_lfos[index];
+         index < persisted_lfos.size(); ++index) {
+        const ParameterLfo& lfo = persisted_lfos[index];
+        builder.add_integer(indexed_key("parameter_lfos", index, "id"),
+                            lfo.id);
         builder.add_bool(indexed_key("parameter_lfos", index, "enabled"),
                          lfo.enabled);
         builder.add_string(
@@ -3680,7 +3710,12 @@ bool deserialize_setup(Records& records,
         candidate.parameter_lfos.assign(lfo_count, {});
         for (std::size_t index = 0U; index < lfo_count; ++index) {
             ParameterLfo& lfo = candidate.parameter_lfos[index];
-            if (!consume_bool(
+            if ((setup_version >= 25U
+                 && !consume_integer(
+                     records,
+                     indexed_key("parameter_lfos", index, "id"),
+                     lfo.id, error))
+                || !consume_bool(
                     records,
                     indexed_key("parameter_lfos", index, "enabled"),
                     lfo.enabled, error)
@@ -3725,6 +3760,16 @@ bool deserialize_setup(Records& records,
                                         "skip_cycles"),
                             lfo.skip_cycles, error)))) {
                 return false;
+            }
+        }
+        for (std::size_t index = 0U;
+             index < candidate.parameter_lfos.size(); ++index) {
+            ParameterLfo& lfo = candidate.parameter_lfos[index];
+            if (setup_version < 25U) {
+                lfo.id = static_cast<std::uint64_t>(index) + 1U;
+            } else if (lfo.id == 0U) {
+                return fail(error,
+                            "Parameter LFO IDs must be nonzero in setup format 25.");
             }
         }
     }

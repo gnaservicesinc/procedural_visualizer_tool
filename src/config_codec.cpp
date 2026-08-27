@@ -292,6 +292,11 @@ bool is_setup_v22_key(std::string_view key) {
     return key == "starting_colors.legacy_alpha_outermost";
 }
 
+bool is_setup_v25_key(std::string_view key) {
+    return starts_with(key, "parameter_lfos.")
+           && has_suffix(key, ".id");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -318,7 +323,8 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 17U ? 19U
                     : layer_version == 18U ? 20U
                     : layer_version == 19U ? 21U
-                    : layer_version == 20U ? 22U : 24U;
+                    : layer_version == 20U ? 22U
+                    : layer_version == 21U ? 24U : 25U;
     return true;
 }
 
@@ -605,6 +611,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 22U && is_setup_v22_key(key)) {
+            continue;
+        }
+        if (setup_version < 25U && is_setup_v25_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {

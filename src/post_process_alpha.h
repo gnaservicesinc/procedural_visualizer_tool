@@ -33,9 +33,41 @@ inline PostProcessMixRange post_process_mix_range(
         normalized(authored_value), normalized(authored_value)};
     bool lfo_controls_target = false;
     for (const ParameterLfo& lfo : render.parameter_lfos) {
-        if (!lfo.enabled || lfo.target_path != target_path) continue;
-        const PostProcessMixRange candidate{
-            normalized(lfo.minimum), normalized(lfo.maximum)};
+        if (lfo.target_path != target_path) continue;
+        const std::string setting_prefix =
+            "lfo/" + std::to_string(lfo.id) + "/";
+        bool enabled_controlled = false;
+        bool range_controlled = false;
+        bool rest_controlled = false;
+        if (lfo.id != 0U) {
+            for (const ParameterLfo& controller : render.parameter_lfos) {
+                if (controller.target_path == setting_prefix + "enabled") {
+                    enabled_controlled = true;
+                } else if (controller.target_path
+                               == setting_prefix + "minimum"
+                           || controller.target_path
+                               == setting_prefix + "maximum") {
+                    range_controlled = true;
+                } else if (controller.target_path
+                               == setting_prefix + "delay_fraction"
+                           || controller.target_path
+                               == setting_prefix + "skip_cycles") {
+                    rest_controlled = true;
+                }
+            }
+        }
+        if (!lfo.enabled && !enabled_controlled) continue;
+        PostProcessMixRange candidate = range_controlled
+            ? PostProcessMixRange{0.0, 1.0}
+            : PostProcessMixRange{
+                  normalized(lfo.minimum), normalized(lfo.maximum)};
+        if (lfo.delay_fraction > 0.0 || lfo.skip_cycles > 0
+            || enabled_controlled || rest_controlled) {
+            candidate.minimum = std::min(
+                candidate.minimum, normalized(authored_value));
+            candidate.maximum = std::max(
+                candidate.maximum, normalized(authored_value));
+        }
         if (!lfo_controls_target) {
             result = candidate;
             lfo_controls_target = true;

@@ -488,6 +488,10 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 17.0.0 lets one LFO modulate every runtime-editable setting of another LFO, including enable state, waveform, range, cycles, phase, pulse shape, delay, and skipped cycles. Stable layer-local IDs preserve links across edits and persistence; iterative dependency resolution is list-order independent, while self-links, missing targets, duplicate identities, and cycles are rejected. The LFO editor adds destination categories and case-insensitive type-to-search completion instead of one unbroken destination list.
+
+          Setup/layer formats advance to 25/22 with deterministic ID migration for older oscillators. The public `ParameterLfo` layout grows, so the product ABI and SONAME advance together to 17 and installed-library clients must rebuild.
+
           Version 16.0.0 expands numeric animation with Square and rising/falling Sawtooth waves. LFOs can reserve a percentage of each active slot as a post-wave delay and skip any number of whole oscillator slots before running again; every rest retains the authored numeric fallback, and active-wave counts remain seamless across the project loop. Project, layer, music-anchor, and Live microphone clocks add Ease in, Ease out, and quintic Smootherstep curves alongside Hold, Linear, and Smoothstep.
 
           Setup/layer formats advance to 24/21 and render-output/split formats to 9/7 with neutral migration for older LFOs. The public `ParameterLfo` layout grows, so the product ABI and SONAME advance together to 16 and installed-library clients must rebuild.

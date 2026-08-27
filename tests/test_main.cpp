@@ -166,6 +166,82 @@ void test_parameter_lfos() {
     CHECK(pvt::detail::materialize_parameter_lfos(waveform_probe, 0.0)
               .saturation == 0.8);
 
+    // LFO definitions form a stable-ID modulation graph. Resolve controllers
+    // before their destinations regardless of list order.
+    pvt::RenderConfig nested = pvt::default_config();
+    nested.saturation = 0.44;
+    pvt::ParameterLfo destination_lfo;
+    destination_lfo.id = 11U;
+    destination_lfo.target_path = "saturation";
+    destination_lfo.minimum = 0.2;
+    destination_lfo.maximum = 0.4;
+    destination_lfo.phase_degrees = -90.0;
+    pvt::ParameterLfo maximum_controller;
+    maximum_controller.id = 22U;
+    maximum_controller.target_path = "lfo/11/maximum";
+    maximum_controller.minimum = 0.6;
+    maximum_controller.maximum = 0.9;
+    maximum_controller.phase_degrees = -90.0;
+    nested.parameter_lfos = {destination_lfo, maximum_controller};
+    CHECK(pvt::validate(nested).ok);
+    CHECK(std::fabs(
+              pvt::detail::materialize_parameter_lfos(nested, 0.5)
+                      .saturation
+              - 0.9) < 1.0e-12);
+    std::reverse(nested.parameter_lfos.begin(), nested.parameter_lfos.end());
+    CHECK(pvt::validate(nested).ok);
+    CHECK(std::fabs(
+              pvt::detail::materialize_parameter_lfos(nested, 0.5)
+                      .saturation
+              - 0.9) < 1.0e-12);
+
+    for (const std::string property : {
+             "enabled", "waveform", "minimum", "maximum",
+             "cycles_per_loop", "phase_degrees", "shape",
+             "delay_fraction", "skip_cycles"}) {
+        CHECK(pvt::parameter_lfo_target_supported(
+            nested, "lfo/11/" + property));
+    }
+    CHECK(!pvt::parameter_lfo_target_supported(
+        nested, "lfo/11/target_path"));
+
+    pvt::RenderConfig switched = pvt::default_config();
+    switched.saturation = 0.44;
+    destination_lfo.waveform = pvt::Waveform::Sine;
+    destination_lfo.phase_degrees = 0.0;
+    destination_lfo.minimum = 0.2;
+    destination_lfo.maximum = 0.8;
+    pvt::ParameterLfo waveform_controller;
+    waveform_controller.id = 33U;
+    waveform_controller.target_path = "lfo/11/waveform";
+    waveform_controller.minimum =
+        static_cast<double>(pvt::Waveform::Square);
+    waveform_controller.maximum = waveform_controller.minimum;
+    switched.parameter_lfos = {destination_lfo, waveform_controller};
+    CHECK(pvt::validate(switched).ok);
+    CHECK(pvt::detail::materialize_parameter_lfos(switched, 0.0)
+              .saturation == 0.8);
+    waveform_controller.target_path = "lfo/11/enabled";
+    waveform_controller.minimum = 0.0;
+    waveform_controller.maximum = 0.0;
+    switched.parameter_lfos = {destination_lfo, waveform_controller};
+    CHECK(pvt::validate(switched).ok);
+    CHECK(pvt::detail::materialize_parameter_lfos(switched, 0.0)
+              .saturation == 0.44);
+
+    pvt::RenderConfig cyclic = pvt::default_config();
+    pvt::ParameterLfo first_cycle;
+    first_cycle.id = 1U;
+    first_cycle.target_path = "lfo/2/maximum";
+    pvt::ParameterLfo second_cycle;
+    second_cycle.id = 2U;
+    second_cycle.target_path = "lfo/1/phase_degrees";
+    cyclic.parameter_lfos = {first_cycle, second_cycle};
+    CHECK(!pvt::validate(cyclic).ok);
+    second_cycle.target_path = "lfo/2/minimum";
+    cyclic.parameter_lfos = {second_cycle};
+    CHECK(!pvt::validate(cyclic).ok);
+
     // cycles_per_loop counts active waves. Delay shortens each active slot,
     // while skipped slots retain the authored fallback without mutating it.
     pvt::ParameterLfo& timed_lfo = waveform_probe.parameter_lfos.front();
@@ -231,6 +307,19 @@ void test_parameter_lfos() {
         return result;
     };
     std::string error;
+    std::string nested_serialized;
+    CHECK(pvt::detail::serialize_setup_config(
+        nested, nested_serialized, &error));
+    pvt::RenderConfig nested_round_trip;
+    CHECK(pvt::detail::deserialize_setup_config(
+        nested_serialized, nested_round_trip, &error));
+    CHECK(nested_round_trip.parameter_lfos.size() == 2U);
+    CHECK(pvt::validate(nested_round_trip).ok);
+    CHECK(std::fabs(
+              pvt::detail::materialize_parameter_lfos(
+                  nested_round_trip, 0.5).saturation
+              - 0.9) < 1.0e-12);
+
     pvt::RenderConfig reference = animated;
     reference.parameter_lfos.clear();
     reference.saturation = lfo.minimum;
@@ -388,7 +477,7 @@ void test_parameter_lfos() {
     animated.parameter_lfos.front().delay_fraction = 0.125;
     animated.parameter_lfos.front().skip_cycles = 2;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t24\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t25\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -402,6 +491,7 @@ void test_parameter_lfos() {
         CHECK(recovered.phase_degrees == lfo.phase_degrees);
         CHECK(recovered.delay_fraction == 0.125);
         CHECK(recovered.skip_cycles == 2);
+        CHECK(recovered.id != 0U);
     }
 
     animated.parameter_lfos.push_back(lfo);
@@ -1312,7 +1402,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t24\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t25\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -5577,9 +5667,25 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t24\n", 0U) == 0U);
-    std::string version_twenty_three(current_version_bytes.begin(),
-                                     current_version_bytes.end());
+              .rfind("PVT_SETUP\t25\n", 0U) == 0U);
+    std::string version_twenty_four(current_version_bytes.begin(),
+                                    current_version_bytes.end());
+    version_twenty_four.replace(0U, std::string("PVT_SETUP\t25").size(),
+                                "PVT_SETUP\t24");
+    for (std::size_t index = 0U; index < original.parameter_lfos.size();
+         ++index) {
+        erase_record(version_twenty_four,
+                     "parameter_lfos." + std::to_string(index) + ".id");
+    }
+    pvt::RenderConfig loaded_version_twenty_four;
+    CHECK(pvt::detail::deserialize_setup_config(
+        version_twenty_four, loaded_version_twenty_four, &error));
+    for (const pvt::ParameterLfo& loaded_lfo :
+         loaded_version_twenty_four.parameter_lfos) {
+        CHECK(loaded_lfo.id != 0U);
+    }
+
+    std::string version_twenty_three = version_twenty_four;
     version_twenty_three.replace(0U, std::string("PVT_SETUP\t24").size(),
                                  "PVT_SETUP\t23");
     erase_records_with_fragment(version_twenty_three, ".delay_fraction");

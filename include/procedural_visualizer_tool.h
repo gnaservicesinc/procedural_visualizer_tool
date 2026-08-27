@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 24;
+constexpr std::uint32_t kSetupFormatVersion = 25;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -1421,11 +1421,12 @@ struct CanvasLoopConfig {
     LiveConfig live;
 };
 
-// A layer-local low-frequency oscillator drives one stable numeric target.
-// Target paths use the same reorder-safe keys as Live controls, relative to
-// the owning layer (for example "surface.rotation_y" or
-// "effect/42/intensity"). Integer targets round the evaluated value at the
-// point of use. Integer cycles preserve a seamless project loop.
+// A layer-local low-frequency oscillator drives one stable target. Render
+// paths use the same reorder-safe keys as Live controls, relative to the owning
+// layer (for example "surface.rotation_y" or "effect/42/intensity"). An
+// "lfo/42/maximum" path can instead drive a setting on another LFO. Integer
+// and categorical targets round the evaluated value at the point of use.
+// Integer cycles preserve a seamless project loop.
 struct ParameterLfo {
     bool enabled = true;
     std::string target_path;
@@ -1443,6 +1444,9 @@ struct ParameterLfo {
     // active waves. cycles_per_loop still counts active waves, so this remains
     // deterministic and seamless at the project-loop boundary.
     int skip_cycles = 0;
+    // Stable layer-local identity used when another LFO modulates this LFO.
+    // Appended for aggregate-initializer source compatibility.
+    std::uint64_t id = 0U;
 };
 
 // Per-layer render data. Canvas/loop and export settings deliberately live
@@ -1661,6 +1665,7 @@ PVT_API CubicMotionPath default_ellipse_path(std::uint64_t path_id,
 PVT_API PaletteConfig default_palette(std::size_t index = 0);
 PVT_API std::uint64_t allocate_id(const RenderData& render);
 PVT_API std::uint64_t allocate_id(const RenderConfig& config);
+PVT_API std::uint64_t allocate_parameter_lfo_id(const RenderData& render);
 PVT_API std::uint64_t allocate_layer_file_id(const ProjectConfig& project);
 
 // Materializes a legacy RenderConfig for one layer without retaining stale
@@ -1669,7 +1674,7 @@ PVT_API RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
                                          const ExportConfig& output,
                                          const RenderData& render);
 // True when the current layer contains the stable numeric target referenced by
-// a ParameterLfo path. Dynamic wave/swing/effect paths are resolved by ID.
+// a ParameterLfo path. Dynamic wave/swing/effect/LFO paths are resolved by ID.
 PVT_API bool parameter_lfo_target_supported(const RenderData& render,
                                             const std::string& target_path);
 

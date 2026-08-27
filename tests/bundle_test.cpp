@@ -432,7 +432,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t21\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t22\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -612,15 +612,40 @@ void test_layer_codec_backward_compatibility() {
         CHECK(loaded_lfo.phase_degrees == amplitude_lfo.phase_degrees);
         CHECK(loaded_lfo.delay_fraction == amplitude_lfo.delay_fraction);
         CHECK(loaded_lfo.skip_cycles == amplitude_lfo.skip_cycles);
+        CHECK(loaded_lfo.id != 0U);
         CHECK(pvt::parameter_lfo_target_supported(
             current_round_trip, loaded_lfo.target_path));
     }
 
+    // Layer v21/setup v24 predates stable LFO identities. Existing
+    // oscillators receive deterministic nonzero IDs during migration.
+    std::istringstream current_v22_input(current_layer);
+    std::ostringstream version_twenty_one_output;
+    std::string version_line;
+    CHECK(static_cast<bool>(std::getline(current_v22_input, version_line)));
+    CHECK(version_line == "PVT_LAYER\t22");
+    version_twenty_one_output << "PVT_LAYER\t21\n";
+    while (std::getline(current_v22_input, version_line)) {
+        const std::size_t tab = version_line.find('\t');
+        const std::string key = version_line.substr(0U, tab);
+        if (!has_suffix(key, ".id")
+            || key.rfind("parameter_lfos.", 0U) != 0U) {
+            version_twenty_one_output << version_line << '\n';
+        }
+    }
+    const std::string version_twenty_one = version_twenty_one_output.str();
+    pvt::RenderData loaded_version_twenty_one;
+    CHECK(pvt::detail::deserialize_layer_config(
+        version_twenty_one, loaded_version_twenty_one, &error, &motion_paths));
+    CHECK(loaded_version_twenty_one.parameter_lfos.size() == 1U);
+    if (loaded_version_twenty_one.parameter_lfos.size() == 1U) {
+        CHECK(loaded_version_twenty_one.parameter_lfos.front().id != 0U);
+    }
+
     // Layer v20/setup v22 predates LFO rest/skip timing. Existing oscillators
     // import with uninterrupted playback.
-    std::istringstream current_v21_input(current_layer);
+    std::istringstream current_v21_input(version_twenty_one);
     std::ostringstream version_twenty_output;
-    std::string version_line;
     CHECK(static_cast<bool>(std::getline(current_v21_input, version_line)));
     CHECK(version_line == "PVT_LAYER\t21");
     version_twenty_output << "PVT_LAYER\t20\n";
@@ -732,7 +757,7 @@ void test_layer_codec_backward_compatibility() {
     std::string serialized_water_layer;
     CHECK(pvt::detail::serialize_layer_config(
         water_layer, serialized_water_layer, &error, &motion_paths));
-    CHECK(serialized_water_layer.rfind("PVT_LAYER\t21\n", 0U) == 0U);
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t22\n", 0U) == 0U);
     pvt::RenderData loaded_water_layer;
     CHECK(pvt::detail::deserialize_layer_config(
         serialized_water_layer, loaded_water_layer, &error, &motion_paths));
@@ -1408,7 +1433,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t21");
+    CHECK(line == "PVT_LAYER\t22");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {

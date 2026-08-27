@@ -18,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -1692,10 +1693,55 @@ bool split_lfo_item_target(std::string_view path, std::string_view prefix,
     return true;
 }
 
+bool parameter_lfo_property_supported(std::string_view property) {
+    return property == "enabled" || property == "waveform"
+           || property == "minimum" || property == "maximum"
+           || property == "cycles_per_loop" || property == "phase_degrees"
+           || property == "shape" || property == "delay_fraction"
+           || property == "skip_cycles";
+}
+
+bool split_parameter_lfo_target(std::string_view path, std::uint64_t& id,
+                                std::string_view& property) {
+    return split_lfo_item_target(path, "lfo/", id, property)
+           && parameter_lfo_property_supported(property);
+}
+
 int lfo_integer(double value) {
     return static_cast<int>(std::llround(clamp_value(
         value, static_cast<double>((std::numeric_limits<int>::min)()),
         static_cast<double>((std::numeric_limits<int>::max)()))));
+}
+
+bool apply_parameter_lfo_target(ParameterLfo& lfo,
+                                std::string_view property, double value) {
+    const double magnitude = maximum_render_parameter_magnitude();
+    if (property == "enabled") {
+        lfo.enabled = value >= 0.5;
+    } else if (property == "waveform") {
+        const int last = static_cast<int>(Waveform::SawtoothDown);
+        lfo.waveform = static_cast<Waveform>(
+            std::clamp(lfo_integer(value), 0, last));
+    } else if (property == "minimum") {
+        lfo.minimum = clamp_value(value, -magnitude, magnitude);
+    } else if (property == "maximum") {
+        lfo.maximum = clamp_value(value, -magnitude, magnitude);
+    } else if (property == "cycles_per_loop") {
+        lfo.cycles_per_loop = std::clamp(
+            lfo_integer(value), 1, (std::numeric_limits<int>::max)());
+    } else if (property == "phase_degrees") {
+        lfo.phase_degrees = clamp_value(value, -magnitude, magnitude);
+    } else if (property == "shape") {
+        lfo.shape = clamp_value(value, 0.0, 1.0);
+    } else if (property == "delay_fraction") {
+        lfo.delay_fraction = clamp_value(value, 0.0, 1.0);
+    } else if (property == "skip_cycles") {
+        lfo.skip_cycles = std::clamp(
+            lfo_integer(value), 0, (std::numeric_limits<int>::max)());
+    } else {
+        return false;
+    }
+    return true;
 }
 
 bool apply_lfo_target(RenderData& render, std::string_view path,
@@ -1947,40 +1993,97 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
     return true;
 }
 
+bool evaluate_parameter_lfo(const ParameterLfo& lfo, double loop_position,
+                            double& value) {
+    if (!lfo.enabled || lfo.target_path.empty()) return false;
+    double waveform_phase = 0.0;
+    if (lfo.delay_fraction == 0.0 && lfo.skip_cycles == 0) {
+        // Preserve the original arithmetic order as well as its
+        // mathematical result for existing projects.
+        waveform_phase = static_cast<double>(lfo.cycles_per_loop)
+                             * (kTau * loop_position)
+                         + radians(lfo.phase_degrees);
+    } else {
+        const double group_position =
+            static_cast<double>(lfo.cycles_per_loop) * loop_position
+            + lfo.phase_degrees / 360.0;
+        const double slots_per_wave =
+            static_cast<double>(lfo.skip_cycles) + 1.0;
+        const double slot_position = wrap_unit(group_position) * slots_per_wave;
+        const double active_fraction = 1.0 - lfo.delay_fraction;
+        if (slot_position >= 1.0 || active_fraction <= 0.0
+            || slot_position >= active_fraction) {
+            return false;
+        }
+        waveform_phase = kTau * slot_position / active_fraction;
+    }
+    const double wave = evaluate_waveform(lfo.waveform, waveform_phase,
+                                          lfo.shape);
+    const double amount = 0.5 + 0.5 * wave;
+    value = mix_value(lfo.minimum, lfo.maximum, amount);
+    return true;
+}
+
 void materialize_parameter_lfos_in_place(RenderData& render,
                                          double normalized_phase) {
-    const std::vector<ParameterLfo> authored = render.parameter_lfos;
+    std::vector<ParameterLfo> resolved = std::move(render.parameter_lfos);
     render.parameter_lfos.clear();
     const double loop_position = wrap_unit(normalized_phase);
-    for (const ParameterLfo& lfo : authored) {
-        if (!lfo.enabled || lfo.target_path.empty()) continue;
-        double waveform_phase = 0.0;
-        if (lfo.delay_fraction == 0.0 && lfo.skip_cycles == 0) {
-            // Preserve the original arithmetic order as well as its
-            // mathematical result for existing projects.
-            waveform_phase = static_cast<double>(lfo.cycles_per_loop)
-                                 * (kTau * loop_position)
-                             + radians(lfo.phase_degrees);
-        } else {
-            const double group_position =
-                static_cast<double>(lfo.cycles_per_loop) * loop_position
-                + lfo.phase_degrees / 360.0;
-            const double slots_per_wave =
-                static_cast<double>(lfo.skip_cycles) + 1.0;
-            const double slot_position =
-                wrap_unit(group_position) * slots_per_wave;
-            const double active_fraction = 1.0 - lfo.delay_fraction;
-            if (slot_position >= 1.0 || active_fraction <= 0.0
-                || slot_position >= active_fraction) {
-                continue;
-            }
-            waveform_phase = kTau * slot_position / active_fraction;
+
+    std::unordered_map<std::uint64_t, std::size_t> indexes_by_id;
+    indexes_by_id.reserve(resolved.size());
+    for (std::size_t index = 0U; index < resolved.size(); ++index) {
+        if (resolved[index].id != 0U) {
+            indexes_by_id.emplace(resolved[index].id, index);
         }
-        const double wave = evaluate_waveform(
-            lfo.waveform, waveform_phase, lfo.shape);
-        const double amount = 0.5 + 0.5 * wave;
-        const double value = mix_value(lfo.minimum, lfo.maximum, amount);
-        (void)apply_lfo_target(render, lfo.target_path, value);
+    }
+    std::vector<std::size_t> indegrees(resolved.size(), 0U);
+    std::vector<std::size_t> target_indexes(resolved.size(), resolved.size());
+    std::vector<std::string_view> target_properties(resolved.size());
+    for (std::size_t index = 0U; index < resolved.size(); ++index) {
+        std::uint64_t target_id = 0U;
+        if (!split_parameter_lfo_target(
+                resolved[index].target_path, target_id,
+                target_properties[index])) {
+            continue;
+        }
+        const auto target = indexes_by_id.find(target_id);
+        if (target != indexes_by_id.end()) {
+            target_indexes[index] = target->second;
+            ++indegrees[target->second];
+        }
+    }
+    std::vector<std::size_t> ready;
+    ready.reserve(resolved.size());
+    for (std::size_t index = 0U; index < resolved.size(); ++index) {
+        if (indegrees[index] == 0U) ready.push_back(index);
+    }
+    for (std::size_t next = 0U; next < ready.size(); ++next) {
+        const std::size_t index = ready[next];
+        if (resolved[index].minimum > resolved[index].maximum) {
+            std::swap(resolved[index].minimum, resolved[index].maximum);
+        }
+        const std::size_t target_index = target_indexes[index];
+        if (target_index == resolved.size()) continue;
+        double value = 0.0;
+        if (evaluate_parameter_lfo(resolved[index], loop_position, value)) {
+            (void)apply_parameter_lfo_target(
+                resolved[target_index], target_properties[index], value);
+        }
+        if (--indegrees[target_index] == 0U) {
+            ready.push_back(target_index);
+        }
+    }
+    for (const ParameterLfo& lfo : resolved) {
+        std::uint64_t target_id = 0U;
+        std::string_view property;
+        if (split_parameter_lfo_target(lfo.target_path, target_id, property)) {
+            continue;
+        }
+        double value = 0.0;
+        if (evaluate_parameter_lfo(lfo, loop_position, value)) {
+            (void)apply_lfo_target(render, lfo.target_path, value);
+        }
     }
 }
 
@@ -3050,6 +3153,15 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
 bool parameter_lfo_target_supported(const RenderData& render,
                                     const std::string& target_path) {
     try {
+        std::uint64_t target_id = 0U;
+        std::string_view property;
+        if (split_parameter_lfo_target(target_path, target_id, property)) {
+            return std::any_of(
+                render.parameter_lfos.begin(), render.parameter_lfos.end(),
+                [target_id](const ParameterLfo& lfo) {
+                    return lfo.id == target_id;
+                });
+        }
         RenderData candidate = render;
         return apply_lfo_target(candidate, target_path, 0.0);
     } catch (...) {
@@ -3086,6 +3198,24 @@ std::uint64_t allocate_id(const RenderData& render) {
 
 std::uint64_t allocate_id(const RenderConfig& config) {
     return allocate_id(static_cast<const RenderData&>(config));
+}
+
+std::uint64_t allocate_parameter_lfo_id(const RenderData& render) {
+    std::unordered_set<std::uint64_t> used;
+    used.reserve(render.parameter_lfos.size());
+    std::uint64_t maximum = 0U;
+    for (const ParameterLfo& lfo : render.parameter_lfos) {
+        if (lfo.id == 0U) continue;
+        used.insert(lfo.id);
+        maximum = std::max(maximum, lfo.id);
+    }
+    if (maximum != (std::numeric_limits<std::uint64_t>::max)()) {
+        return maximum + 1U;
+    }
+    for (std::uint64_t candidate = 1U; candidate != 0U; ++candidate) {
+        if (used.find(candidate) == used.end()) return candidate;
+    }
+    return 0U;
 }
 
 std::uint64_t allocate_layer_file_id(const ProjectConfig& project) {
@@ -3454,10 +3584,16 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             "The configuration contains too many parameter LFOs.");
     }
     std::unordered_set<std::string> lfo_targets;
+    std::unordered_map<std::uint64_t, std::size_t> lfo_indexes;
     lfo_targets.reserve(config.parameter_lfos.size());
-    for (const ParameterLfo& lfo : config.parameter_lfos) {
+    lfo_indexes.reserve(config.parameter_lfos.size());
+    for (std::size_t index = 0U; index < config.parameter_lfos.size();
+         ++index) {
+        const ParameterLfo& lfo = config.parameter_lfos[index];
         if (!valid_lfo_target_path(lfo.target_path)
             || !lfo_targets.insert(lfo.target_path).second
+            || (lfo.id != 0U
+                && !lfo_indexes.emplace(lfo.id, index).second)
             || !valid_enum(lfo.waveform)
             || !finite_render_parameter(lfo.minimum)
             || !finite_render_parameter(lfo.maximum)
@@ -3468,11 +3604,52 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !finite_in_range(lfo.delay_fraction, 0.0, 1.0)
             || lfo.skip_cycles < 0) {
             return invalid_result(
-                "Parameter LFOs need unique target paths, a valid waveform, "
+                "Parameter LFOs need unique target paths and identities, a valid waveform, "
                 "an ordered finite range, positive loop cycles, and a "
                 "normalized pulse shape/delay with nonnegative skipped "
                 "cycles.");
         }
+    }
+    std::vector<std::size_t> lfo_target_indexes(
+        config.parameter_lfos.size(), config.parameter_lfos.size());
+    for (std::size_t index = 0U; index < config.parameter_lfos.size();
+         ++index) {
+        const ParameterLfo& lfo = config.parameter_lfos[index];
+        std::uint64_t target_id = 0U;
+        std::string_view property;
+        if (split_parameter_lfo_target(lfo.target_path, target_id, property)) {
+            const auto target = lfo_indexes.find(target_id);
+            if (target == lfo_indexes.end() || target->second == index) {
+                return invalid_result(
+                    "An LFO-to-LFO destination must reference a different existing LFO ID.");
+            }
+            lfo_target_indexes[index] = target->second;
+        } else if (lfo.target_path.rfind("lfo/", 0U) == 0U
+                   || !parameter_lfo_target_supported(
+                       config, lfo.target_path)) {
+            return invalid_result(
+                "A parameter LFO references an unsupported numeric destination.");
+        }
+    }
+    std::vector<std::size_t> lfo_indegrees(config.parameter_lfos.size(), 0U);
+    for (const std::size_t target : lfo_target_indexes) {
+        if (target != config.parameter_lfos.size()) ++lfo_indegrees[target];
+    }
+    std::vector<std::size_t> lfo_ready;
+    lfo_ready.reserve(config.parameter_lfos.size());
+    for (std::size_t index = 0U; index < lfo_indegrees.size(); ++index) {
+        if (lfo_indegrees[index] == 0U) lfo_ready.push_back(index);
+    }
+    for (std::size_t next = 0U; next < lfo_ready.size(); ++next) {
+        const std::size_t target = lfo_target_indexes[lfo_ready[next]];
+        if (target != config.parameter_lfos.size()
+            && --lfo_indegrees[target] == 0U) {
+            lfo_ready.push_back(target);
+        }
+    }
+    if (lfo_ready.size() != config.parameter_lfos.size()) {
+        return invalid_result(
+            "Parameter LFOs cannot form a modulation cycle.");
     }
     if (config.motion_paths.size() > kMaximumMotionPaths) {
         return invalid_result("The reusable motion-path count exceeds the signed-int UI/API limit.");
