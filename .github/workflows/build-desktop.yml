@@ -488,6 +488,10 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 15.1.0 makes live audio shaping easier to discover and read. The audio processor gains six built-in EQ presets, new projects start with protective 20 Hz high-pass and 20 kHz low-pass filters enabled, and the dedicated Live Controls action is named explicitly. Live input now includes a post-processing ten-band spectrum, an optional noise gate with machine-local settings, more analysis sources for control mappings, and a starter mapping that connects bass, onset, and treble to visible project changes.
+
+          Audio filtering treats bands above the source Nyquist frequency as exact no-ops, preserving deterministic behavior for low-rate sources. Existing projects retain their authored processing choices, setup persistence advances to format 23, and render-output formats advance to 8 (split format 6) with backwards migration. The public ABI and SONAME remain 15.
+
           Version 12.0.0 makes post-processing order explicit and layer-local. Artists can reorder all eight finishing stages and route RGBA channels simultaneously from Red, Green, Blue, Alpha, Zero, or One. The routing mix is a numeric LFO target, while routing enable and source choices are Live targets. CPU and Metal render the authored order with matching HDR RGB and clamped-alpha semantics. Setup format 19 and layer format 17 migrate older projects to the historical order with a disabled identity map.
 
           Application Settings now expresses the machine-local render-memory limit as Automatic, MiB, GiB, or a percentage of detected physical memory, while preserving legacy byte-equivalent limits. Still, sequence, and native-video export can suspend editor preview work and restore exactly the playback state that existed before export. New Project returns to the Project page and selects the project name for immediate naming.

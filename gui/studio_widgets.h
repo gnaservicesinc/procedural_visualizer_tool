@@ -3,6 +3,8 @@
 
 #include <QDial>
 #include <QColor>
+#include <QPointF>
+#include <QVector>
 #include <QWidget>
 
 class QPaintEvent;
@@ -47,6 +49,24 @@ private:
     double level_ = 0.0;
     QString caption_;
     bool peak_warning_ = false;
+};
+
+class LiveSpectrumMeter final : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit LiveSpectrumMeter(QWidget* parent = nullptr);
+    QSize sizeHint() const override;
+    // Each point stores frequency in x and normalized post-processing level in y.
+    void setBands(const QVector<QPointF>& bands);
+    void setGateOpen(bool open);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    QVector<QPointF> bands_;
+    bool gate_open_ = true;
 };
 
 class StatusLamp final : public QWidget {

@@ -78,6 +78,11 @@ bool live_audio_callback_within_holdover(
     int holdover_milliseconds) noexcept;
 
 struct LiveAudioSnapshot {
+    struct SpectrumBand {
+        double frequency_hz = 0.0;
+        float level = 0.0F;
+    };
+
     struct FrequencyStream {
         std::string uuid;
         MusicFeatureSample features;
@@ -101,6 +106,8 @@ struct LiveAudioSnapshot {
     double estimated_input_latency_ms = 0.0;
     std::uint64_t callback_dropouts = 0U;
     bool receiving = false;
+    bool gate_open = true;
+    std::vector<SpectrumBand> spectrum;
     std::vector<FrequencyStream> frequency_streams;
 };
 
@@ -127,6 +134,11 @@ public:
     // and stream state before the callback becomes visible to the backend.
     bool set_processing_config(const AudioInputProcessingConfig& config,
                                std::string* error = nullptr);
+    // Machine-local performance calibration. Must be called while stopped.
+    bool set_gate_config(bool enabled, double threshold_db,
+                         double attack_milliseconds,
+                         double release_milliseconds,
+                         std::string* error = nullptr);
 
     // Gain and sensitivity are live-performance controls, not destructive
     // edits to incoming audio. Both are lock-free and callback safe.

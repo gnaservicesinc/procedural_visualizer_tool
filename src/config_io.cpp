@@ -92,6 +92,7 @@ namespace {
 // independently parameterized collection that permits repeated stage types.
 // Version 22 records whether generated RGBA traversal uses the historical
 // alpha-outermost order or the corrected alpha-innermost Cartesian order.
+// Version 23 adds analyzed Live-audio features as portable Control Map inputs.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -103,8 +104,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 22U,
-              "config_io.cpp implements setup format version 22");
+static_assert(kSetupFormatVersion == 23U,
+              "config_io.cpp implements setup format version 23");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -1240,7 +1241,7 @@ constexpr std::array<std::pair<std::string_view, LiveEndpointDirection>, 3U>
         {"bidirectional", LiveEndpointDirection::Bidirectional},
     }};
 
-constexpr std::array<std::pair<std::string_view, LiveControlInput>, 7U>
+constexpr std::array<std::pair<std::string_view, LiveControlInput>, 17U>
     kLiveControlInputs{{
         {"midi_cc", LiveControlInput::MidiControlChange},
         {"midi_note", LiveControlInput::MidiNote},
@@ -1249,6 +1250,16 @@ constexpr std::array<std::pair<std::string_view, LiveControlInput>, 7U>
         {"midi_channel_pressure", LiveControlInput::MidiChannelPressure},
         {"osc_value", LiveControlInput::OscValue},
         {"footswitch", LiveControlInput::Footswitch},
+        {"audio_energy", LiveControlInput::AudioEnergy},
+        {"audio_bass", LiveControlInput::AudioBass},
+        {"audio_midrange", LiveControlInput::AudioMidrange},
+        {"audio_treble", LiveControlInput::AudioTreble},
+        {"audio_onset", LiveControlInput::AudioOnset},
+        {"audio_beat", LiveControlInput::AudioBeat},
+        {"audio_spectral_centroid", LiveControlInput::AudioSpectralCentroid},
+        {"audio_spectral_flatness", LiveControlInput::AudioSpectralFlatness},
+        {"audio_chroma_hue", LiveControlInput::AudioChromaHue},
+        {"audio_chroma_strength", LiveControlInput::AudioChromaStrength},
     }};
 
 constexpr std::array<std::pair<std::string_view, LiveMappingMode>, 5U>

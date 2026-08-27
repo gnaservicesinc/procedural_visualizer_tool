@@ -22,6 +22,9 @@ constexpr ma_uint32 kCaptureChannels = 1U;
 constexpr ma_uint32 kCaptureSampleRate = 48000U;
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr std::string_view kRuntimeDevicePrefix = "miniaudio-device-v1:";
+constexpr std::array<double, 10U> kDefaultSpectrumFrequencies{{
+    31.25, 62.5, 125.0, 250.0, 500.0,
+    1000.0, 2000.0, 4000.0, 8000.0, 16000.0}};
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) *error = std::move(message);
@@ -300,6 +303,32 @@ struct LiveAudioCapture::Impl {
         }
     };
 
+    struct SpectrumBandState {
+        double frequency_hz = 0.0;
+        AudioFrequencyRangeProcessor filter;
+        std::atomic<float> level{0.0F};
+        double squared = 0.0;
+
+        void begin_block() noexcept { squared = 0.0; }
+        void push(float sample) noexcept {
+            const double filtered = static_cast<double>(filter.process(sample));
+            squared += filtered * filtered;
+        }
+        void finish_block(ma_uint32 frame_count, double response,
+                          double normalization) noexcept {
+            const double rms = std::sqrt(
+                squared / static_cast<double>(frame_count));
+            level.store(unit(static_cast<float>(
+                            response * rms / std::max(1.0e-9, normalization))),
+                        std::memory_order_relaxed);
+        }
+        void reset() noexcept {
+            filter.reset();
+            level.store(0.0F, std::memory_order_relaxed);
+            squared = 0.0;
+        }
+    };
+
     ma_context context{};
     ma_device device{};
     bool context_initialized = false;
@@ -326,6 +355,9 @@ struct LiveAudioCapture::Impl {
     std::atomic<double> estimated_latency_ms{0.0};
     AudioInputProcessingConfig processing_config;
     AudioInputProcessor input_processor;
+    AudioNoiseGate gate;
+    std::atomic_bool gate_open{true};
+    std::vector<std::unique_ptr<SpectrumBandState>> spectrum;
     std::vector<std::unique_ptr<FrequencyStreamState>> frequency_streams;
 
     // Callback-thread-only analyzer state.
@@ -356,6 +388,7 @@ struct LiveAudioCapture::Impl {
         for (const auto& stream : self->frequency_streams) {
             stream->begin_block();
         }
+        for (const auto& band : self->spectrum) band->begin_block();
         // One-pole crossovers are cheap enough for the audio callback and make
         // the three controls useful without a block FFT or callback allocation.
         const double bass_alpha = 1.0 - std::exp(
@@ -369,9 +402,14 @@ struct LiveAudioCapture::Impl {
         std::uint32_t zero_crossings = 0U;
         for (ma_uint32 frame = 0U; frame < frame_count; ++frame) {
             const float processed = self->input_processor.process(samples[frame]);
-            const double sample = static_cast<double>(processed) * input_gain;
+            const float gated = self->gate.process(static_cast<float>(
+                static_cast<double>(processed) * input_gain));
+            const double sample = static_cast<double>(gated);
             for (const auto& stream : self->frequency_streams) {
                 stream->push(static_cast<float>(sample));
+            }
+            for (const auto& band : self->spectrum) {
+                band->push(static_cast<float>(sample));
             }
             self->low_state += bass_alpha * (sample - self->low_state);
             self->mid_low_state += mid_alpha * (sample - self->mid_low_state);
@@ -407,6 +445,11 @@ struct LiveAudioCapture::Impl {
         const float normalized_onset = unit(static_cast<float>(
             positive_flux * response * 18.0 / normalization));
         self->previous_energy = rms;
+        self->gate_open.store(self->gate.is_open(),
+                              std::memory_order_relaxed);
+        for (const auto& band : self->spectrum) {
+            band->finish_block(frame_count, response, normalization);
+        }
 
         self->energy.store(normalized_energy, std::memory_order_relaxed);
         self->bass.store(normalized_bass, std::memory_order_relaxed);
@@ -520,6 +563,9 @@ struct LiveAudioCapture::Impl {
         adaptive_peak = 0.02;
         previous_sample = 0.0F;
         input_processor.reset();
+        gate.reset();
+        gate_open.store(gate.is_open(), std::memory_order_relaxed);
+        for (const auto& band : spectrum) band->reset();
         for (const auto& stream : frequency_streams) stream->reset();
     }
 
@@ -722,6 +768,13 @@ LiveAudioSnapshot LiveAudioCapture::snapshot() const {
     value.receiving = is_running()
         && value.last_valid_callback_age_seconds >= 0.0
         && value.last_valid_callback_age_seconds < 0.5;
+    value.gate_open = impl_->gate_open.load(std::memory_order_relaxed);
+    value.spectrum.reserve(impl_->spectrum.size());
+    for (const auto& band : impl_->spectrum) {
+        value.spectrum.push_back({
+            band->frequency_hz,
+            band->level.load(std::memory_order_relaxed)});
+    }
     value.frequency_streams.reserve(impl_->frequency_streams.size());
     for (const auto& stream : impl_->frequency_streams) {
         LiveAudioSnapshot::FrequencyStream item;
@@ -793,9 +846,64 @@ bool LiveAudioCapture::set_processing_config(
         }
         prepared_streams.push_back(std::move(stream));
     }
+    std::vector<double> spectrum_frequencies;
+    spectrum_frequencies.reserve(config.equalizer_bands.empty()
+                                     ? kDefaultSpectrumFrequencies.size()
+                                     : config.equalizer_bands.size());
+    if (config.equalizer_bands.empty()) {
+        spectrum_frequencies.assign(kDefaultSpectrumFrequencies.begin(),
+                                    kDefaultSpectrumFrequencies.end());
+    } else {
+        for (const auto& band : config.equalizer_bands) {
+            if (band.frequency_hz < 0.5 * kCaptureSampleRate) {
+                spectrum_frequencies.push_back(band.frequency_hz);
+            }
+        }
+    }
+    std::vector<std::unique_ptr<Impl::SpectrumBandState>> prepared_spectrum;
+    prepared_spectrum.reserve(spectrum_frequencies.size());
+    for (std::size_t index = 0U; index < spectrum_frequencies.size(); ++index) {
+        const double center = spectrum_frequencies[index];
+        const double lower = index == 0U
+            ? std::max(1.0, center / std::sqrt(
+                  spectrum_frequencies.size() > 1U
+                      ? spectrum_frequencies[1U] / center : 2.0))
+            : std::sqrt(spectrum_frequencies[index - 1U] * center);
+        const double upper = index + 1U < spectrum_frequencies.size()
+            ? std::sqrt(center * spectrum_frequencies[index + 1U])
+            : std::min(0.5 * kCaptureSampleRate - 1.0,
+                       center * std::sqrt(
+                           index > 0U
+                               ? center / spectrum_frequencies[index - 1U]
+                               : 2.0));
+        if (!(upper > lower)) continue;
+        auto band = std::make_unique<Impl::SpectrumBandState>();
+        band->frequency_hz = center;
+        if (!band->filter.configure(lower, upper, kCaptureSampleRate, error)) {
+            return false;
+        }
+        prepared_spectrum.push_back(std::move(band));
+    }
     impl_->processing_config = config;
     impl_->input_processor = std::move(prepared_input);
+    impl_->spectrum = std::move(prepared_spectrum);
     impl_->frequency_streams = std::move(prepared_streams);
+    return true;
+}
+
+bool LiveAudioCapture::set_gate_config(bool enabled, double threshold_db,
+                                       double attack_milliseconds,
+                                       double release_milliseconds,
+                                       std::string* error) {
+    if (is_running()) {
+        return fail(error, "Stop live audio before changing its noise gate.");
+    }
+    if (!impl_->gate.configure(enabled, threshold_db, attack_milliseconds,
+                               release_milliseconds, kCaptureSampleRate,
+                               error)) {
+        return false;
+    }
+    impl_->gate_open.store(impl_->gate.is_open(), std::memory_order_relaxed);
     return true;
 }
 

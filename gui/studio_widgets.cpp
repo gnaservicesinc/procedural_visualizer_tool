@@ -180,6 +180,79 @@ void LiveLevelMeter::paintEvent(QPaintEvent*) {
                      Qt::AlignCenter, value);
 }
 
+LiveSpectrumMeter::LiveSpectrumMeter(QWidget* parent) : QWidget(parent) {
+    setMinimumSize(280, 126);
+    setAccessibleName(tr("Live post-EQ spectrum"));
+    setToolTip(tr(
+        "Real-time frequency energy after the input filters, EQ, gain, and noise gate—the same signal used by Live analysis."));
+}
+
+QSize LiveSpectrumMeter::sizeHint() const { return {520, 150}; }
+
+void LiveSpectrumMeter::setBands(const QVector<QPointF>& bands) {
+    bands_ = bands;
+    update();
+}
+
+void LiveSpectrumMeter::setGateOpen(bool open) {
+    if (gate_open_ == open) return;
+    gate_open_ = open;
+    update();
+}
+
+void LiveSpectrumMeter::paintEvent(QPaintEvent*) {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF face = QRectF(rect()).adjusted(5, 5, -5, -5);
+    QLinearGradient panel(face.topLeft(), face.bottomLeft());
+    panel.setColorAt(0.0, QColor(QStringLiteral("#292f34")));
+    panel.setColorAt(1.0, QColor(QStringLiteral("#111518")));
+    painter.setPen(QPen(QColor(QStringLiteral("#080a0b")), 1.5));
+    painter.setBrush(panel);
+    painter.drawRoundedRect(face, 8, 8);
+
+    const QRectF graph = face.adjusted(12, 22, -12, -28);
+    painter.setPen(QPen(QColor(255, 255, 255, 25), 1.0));
+    for (int line = 1; line < 4; ++line) {
+        const double y = graph.bottom() - graph.height() * line / 4.0;
+        painter.drawLine(QPointF(graph.left(), y), QPointF(graph.right(), y));
+    }
+    if (!bands_.isEmpty()) {
+        const double gap = std::max(2.0, graph.width() * 0.008);
+        const double band_count = static_cast<double>(bands_.size());
+        const double width = std::max(
+            1.0, (graph.width() - gap * (band_count - 1.0)) / band_count);
+        for (int index = 0; index < bands_.size(); ++index) {
+            const double level = std::clamp(bands_[index].y(), 0.0, 1.0);
+            const QRectF bar(graph.left() + index * (width + gap),
+                             graph.bottom() - graph.height() * level,
+                             width, graph.height() * level);
+            QLinearGradient energy(bar.bottomLeft(), bar.topLeft());
+            energy.setColorAt(0.0, QColor(QStringLiteral("#43bfae")));
+            energy.setColorAt(0.72, QColor(QStringLiteral("#78d9ce")));
+            energy.setColorAt(1.0, QColor(QStringLiteral("#e6bd5c")));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(energy);
+            painter.drawRoundedRect(bar, 2.0, 2.0);
+
+            const double hz = bands_[index].x();
+            const QString label = hz >= 1000.0
+                ? QStringLiteral("%1k").arg(hz / 1000.0, 0, 'g', 2)
+                : QString::number(hz, 'g', 3);
+            painter.setPen(QColor(QStringLiteral("#98a6ae")));
+            painter.drawText(QRectF(bar.left() - gap * 0.5, graph.bottom() + 3.0,
+                                    width + gap, 18.0),
+                             Qt::AlignHCenter | Qt::AlignTop, label);
+        }
+    }
+    painter.setPen(gate_open_ ? QColor(QStringLiteral("#9cece0"))
+                              : QColor(QStringLiteral("#e3bc58")));
+    painter.drawText(face.adjusted(10, 3, -10, -3),
+                     Qt::AlignLeft | Qt::AlignTop,
+                     gate_open_ ? tr("POST EQ · GATE OPEN")
+                                : tr("POST EQ · GATE CLOSED"));
+}
+
 StatusLamp::StatusLamp(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(24);
 }

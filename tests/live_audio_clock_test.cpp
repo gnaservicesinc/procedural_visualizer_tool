@@ -1,4 +1,5 @@
 #include "live_audio_capture.h"
+#include "../src/audio_input_processing.h"
 
 #include <cmath>
 #include <cstddef>
@@ -185,6 +186,53 @@ void test_duplicate_device_names_require_opaque_runtime_identity() {
     CHECK(error.find("no longer available") != std::string::npos);
 }
 
+void test_live_noise_gate_and_spectrum_configuration() {
+    pvt::audio::AudioNoiseGate gate;
+    std::string error;
+    CHECK(gate.configure(true, -20.0, 1.0, 10.0, 1000.0, &error));
+    CHECK(error.empty());
+    CHECK(!gate.is_open());
+    for (int sample = 0; sample < 100; ++sample) {
+        CHECK(near(gate.process(0.01F), 0.0));
+    }
+    CHECK(!gate.is_open());
+    CHECK(gate.process(1.0F) > 0.5F);
+    CHECK(gate.is_open());
+    for (int sample = 0; sample < 50; ++sample) {
+        (void)gate.process(0.0F);
+    }
+    CHECK(!gate.is_open());
+    CHECK(!gate.configure(true, -100.0, 1.0, 10.0, 1000.0, &error));
+    CHECK(!error.empty());
+    CHECK(gate.configure(false, -50.0, 5.0, 120.0, 48000.0, &error));
+    CHECK(near(gate.process(0.25F), 0.25));
+    CHECK(gate.is_open());
+
+    pvt::audio::LiveAudioCapture capture;
+    pvt::AudioInputProcessingConfig processing;
+    CHECK(capture.set_processing_config(processing, &error));
+    CHECK(error.empty());
+    const auto snapshot = capture.snapshot();
+    CHECK(snapshot.spectrum.size() == processing.equalizer_bands.size());
+    if (!snapshot.spectrum.empty()) {
+        CHECK(near(snapshot.spectrum.front().frequency_hz,
+                   processing.equalizer_bands.front().frequency_hz));
+        CHECK(near(snapshot.spectrum.front().level, 0.0));
+    }
+    CHECK(capture.set_gate_config(true, -48.0, 5.0, 120.0, &error));
+    CHECK(!capture.snapshot().gate_open);
+
+    // The authored 20 kHz protection/EQ stays portable to a 32 kHz source:
+    // bands outside its 16 kHz Nyquist limit are exact no-ops, not errors.
+    processing.low_pass_enabled = true;
+    processing.low_pass_hz = 20000.0;
+    processing.equalizer_enabled = true;
+    processing.equalizer_bands.back().gain_db = 4.0;
+    pvt::audio::AudioInputProcessor low_rate_processor;
+    CHECK(low_rate_processor.configure(processing, 32000.0, &error));
+    CHECK(error.empty());
+}
+
 } // namespace
 
 int main() {
@@ -193,6 +241,7 @@ int main() {
     test_invalid_beat_routes_stay_unlocked();
     test_null_callbacks_do_not_double_advance_holdover();
     test_duplicate_device_names_require_opaque_runtime_identity();
+    test_live_noise_gate_and_spectrum_configuration();
     if (failures != 0) {
         std::cerr << failures << " live audio clock check(s) failed\n";
         return 1;

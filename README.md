@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **15.0.0**. The version is read from `VERSION` by every
+Current product version: **15.1.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,27 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## Live audio control and EQ workflow
+
+The dedicated **Live Controls** toolbar button opens the performance window.
+Its audio surface now shows a real-time ten-band post-processing spectrum—the
+same filtered, equalized, gained, and gated signal used by causal analysis—and
+provides a machine-local threshold/release noise gate for quiet stages. Input
+processing includes Flat, Bass lift, Warm, Vocal clarity, Bright, and Dance
+smile EQ presets; applying one enables the EQ while leaving every band editable.
+New projects enable gentle 20 Hz high-pass and 20 kHz low-pass protection for
+project, layer, and Live audio sources. Existing projects retain their saved
+filter choices.
+
+The portable Live Control Map can use Energy, Bass, Midrange, Treble, Onset,
+Beat, Brightness, Noisiness, Pitch hue, or Tonality just like MIDI and OSC.
+**Add Audio Starter Map** creates a small editable set for the active layer so
+bass changes wave amplitude, onsets accent an effect, and treble changes color
+saturation. Live feature values and gate state remain ephemeral; projects save
+only logical audio roles and authored mappings, never captured sound or machine
+device identities. This extension advances setup format to 23 and render-output
+format to 8 without changing the public by-value ABI.
 
 ## Correct generated-alpha ordering with explicit legacy compatibility
 
@@ -1512,6 +1533,8 @@ Format 21 replaces that unique-stage representation with repeatable stable-ID
 post-effect instances and adds neutral-default offsets/travel/cycles/phase for
 reusable layer-motion paths. Format 22 persists the generated-alpha ordering
 compatibility switch; project layer records use current layer format 20.
+Format 23 appends analyzed-audio Live mapping sources; older mapping tokens and
+saved filter choices retain their prior meanings.
 Older records receive the historical stage order, a disabled identity map,
 neutral reusable-path modifiers, their unchanged pre-Water vocabulary, and the
 legacy alpha-outermost generated-color order.
@@ -1837,9 +1860,13 @@ kept in local application preferences.
 
 Live audio applies the same authored high-pass, low-pass, and graphical EQ model
 before causal analysis, then analyzes each named frequency range independently.
-Project and layer routes can select those streams explicitly. Choosing **LIVE**
-opens the workspace automatically in a dedicated companion window instead of
-replacing the editor; while it is active, its routed renderer frames also feed
+The post-processing spectrum makes that analyzed signal visible, and a
+machine-local gate can reject room noise before it drives features. Project and
+layer routes can select named streams explicitly, while Control Map routes can
+use the full-band audio features to animate any compatible setting.
+**Live Controls** opens the workspace automatically in a dedicated companion
+window instead of replacing the editor; while it is active, its routed renderer
+frames also feed
 the ordinary editor preview. A portable **Prevent device sleep while Live is
 active** safety option uses the native macOS or Windows power assertion when
 available and releases it immediately when Live stops or its window closes.

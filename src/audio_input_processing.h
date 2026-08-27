@@ -47,6 +47,28 @@ private:
     AudioInputProcessor processor_;
 };
 
+// Lightweight causal gate used by Live capture after filtering/EQ and input
+// gain. Configuration happens off the audio thread; process() is allocation-
+// free and owns all of its detector state.
+class AudioNoiseGate final {
+public:
+    bool configure(bool enabled, double threshold_db,
+                   double attack_milliseconds, double release_milliseconds,
+                   double sample_rate, std::string* error = nullptr);
+    float process(float sample) noexcept;
+    void reset() noexcept;
+    bool is_open() const noexcept { return open_; }
+
+private:
+    bool enabled_ = false;
+    bool open_ = true;
+    double threshold_linear_ = 0.0;
+    double attack_coefficient_ = 0.0;
+    double release_coefficient_ = 0.0;
+    double envelope_ = 0.0;
+    double gain_ = 1.0;
+};
+
 } // namespace pvt::audio
 
 #endif

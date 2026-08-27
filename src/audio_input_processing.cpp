@@ -100,22 +100,30 @@ bool AudioInputProcessor::configure(const AudioInputProcessingConfig& config,
         prepared.push_back(high_pass(config.high_pass_hz, sample_rate));
     }
     if (config.low_pass_enabled) {
-        if (!usable_frequency(config.low_pass_hz, sample_rate)) {
-            return fail(error, "The low-pass cutoff must be below the audio Nyquist frequency.");
+        if (!std::isfinite(config.low_pass_hz) || config.low_pass_hz <= 0.0) {
+            return fail(error, "The low-pass cutoff must be a positive frequency.");
         }
-        prepared.push_back(low_pass(config.low_pass_hz, sample_rate));
+        // A portable cutoff above this source's Nyquist frequency is an exact
+        // no-op: the source cannot contain those frequencies. This keeps the
+        // gentle 20 kHz project default usable with lower-rate audio.
+        if (config.low_pass_hz < 0.5 * sample_rate) {
+            prepared.push_back(low_pass(config.low_pass_hz, sample_rate));
+        }
     }
     if (config.equalizer_enabled) {
         if (config.equalizer_bands.size() > kMaximumAudioEqualizerBands) {
             return fail(error, "The graphical equalizer exceeds its real-time band limit.");
         }
         for (const auto& band : config.equalizer_bands) {
-            if (!usable_frequency(band.frequency_hz, sample_rate)
+            if (!std::isfinite(band.frequency_hz) || band.frequency_hz <= 0.0
                 || !std::isfinite(band.gain_db)
                 || band.gain_db < -24.0 || band.gain_db > 24.0) {
                 return fail(error, "An equalizer band has an unsupported frequency or gain.");
             }
-            if (std::fabs(band.gain_db) > 1.0e-12) {
+            // A band centered outside the source spectrum cannot contribute.
+            // Skip it instead of making portable EQ presets sample-rate-bound.
+            if (band.frequency_hz < 0.5 * sample_rate
+                && std::fabs(band.gain_db) > 1.0e-12) {
                 prepared.push_back(peaking(band.frequency_hz, band.gain_db,
                                            sample_rate));
             }
@@ -158,5 +166,61 @@ float AudioFrequencyRangeProcessor::process(float sample) noexcept {
 }
 
 void AudioFrequencyRangeProcessor::reset() noexcept { processor_.reset(); }
+
+bool AudioNoiseGate::configure(bool enabled, double threshold_db,
+                               double attack_milliseconds,
+                               double release_milliseconds,
+                               double sample_rate, std::string* error) {
+    if (error != nullptr) error->clear();
+    if (!std::isfinite(sample_rate) || sample_rate <= 0.0
+        || !std::isfinite(threshold_db) || threshold_db < -96.0
+        || threshold_db > 0.0
+        || !std::isfinite(attack_milliseconds)
+        || attack_milliseconds < 0.1 || attack_milliseconds > 1000.0
+        || !std::isfinite(release_milliseconds)
+        || release_milliseconds < 1.0 || release_milliseconds > 5000.0) {
+        return fail(error,
+                    "The live gate needs a -96 to 0 dB threshold, a 0.1 to "
+                    "1000 ms attack, and a 1 to 5000 ms release.");
+    }
+    enabled_ = enabled;
+    threshold_linear_ = std::pow(10.0, threshold_db / 20.0);
+    const auto coefficient = [sample_rate](double milliseconds) {
+        return std::exp(-1.0 / (0.001 * milliseconds * sample_rate));
+    };
+    attack_coefficient_ = coefficient(attack_milliseconds);
+    release_coefficient_ = coefficient(release_milliseconds);
+    reset();
+    return true;
+}
+
+float AudioNoiseGate::process(float input) noexcept {
+    if (!enabled_) return input;
+    const double sample = static_cast<double>(input);
+    const double magnitude = std::fabs(sample);
+    const double detector_coefficient = magnitude > envelope_
+        ? attack_coefficient_ : release_coefficient_;
+    envelope_ = detector_coefficient * envelope_
+        + (1.0 - detector_coefficient) * magnitude;
+    const double target = envelope_ >= threshold_linear_ ? 1.0 : 0.0;
+    const double gain_coefficient = target > gain_
+        ? attack_coefficient_ : release_coefficient_;
+    gain_ = gain_coefficient * gain_ + (1.0 - gain_coefficient) * target;
+    open_ = target > 0.5;
+    const double output = sample * gain_;
+    if (!std::isfinite(output)) {
+        reset();
+        return 0.0F;
+    }
+    return static_cast<float>(std::clamp(
+        output, -static_cast<double>((std::numeric_limits<float>::max)()),
+        static_cast<double>((std::numeric_limits<float>::max)())));
+}
+
+void AudioNoiseGate::reset() noexcept {
+    envelope_ = 0.0;
+    gain_ = enabled_ ? 0.0 : 1.0;
+    open_ = !enabled_;
+}
 
 } // namespace pvt::audio

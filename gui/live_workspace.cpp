@@ -52,6 +52,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -249,6 +250,47 @@ bool direction_has_output(pvt::LiveEndpointDirection direction) {
         || direction == pvt::LiveEndpointDirection::Bidirectional;
 }
 
+bool is_audio_control_input(pvt::LiveControlInput input) {
+    switch (input) {
+        case pvt::LiveControlInput::AudioEnergy:
+        case pvt::LiveControlInput::AudioBass:
+        case pvt::LiveControlInput::AudioMidrange:
+        case pvt::LiveControlInput::AudioTreble:
+        case pvt::LiveControlInput::AudioOnset:
+        case pvt::LiveControlInput::AudioBeat:
+        case pvt::LiveControlInput::AudioSpectralCentroid:
+        case pvt::LiveControlInput::AudioSpectralFlatness:
+        case pvt::LiveControlInput::AudioChromaHue:
+        case pvt::LiveControlInput::AudioChromaStrength:
+            return true;
+        default:
+            return false;
+    }
+}
+
+double audio_control_value(pvt::LiveControlInput input,
+                           const pvt::MusicFeatureSample& features) {
+    switch (input) {
+        case pvt::LiveControlInput::AudioEnergy: return features.energy;
+        case pvt::LiveControlInput::AudioBass: return features.bass;
+        case pvt::LiveControlInput::AudioMidrange: return features.midrange;
+        case pvt::LiveControlInput::AudioTreble: return features.treble;
+        case pvt::LiveControlInput::AudioOnset: return features.onset;
+        case pvt::LiveControlInput::AudioBeat: return features.beat;
+        case pvt::LiveControlInput::AudioSpectralCentroid:
+            return features.spectral_centroid;
+        case pvt::LiveControlInput::AudioSpectralFlatness:
+            return features.spectral_flatness;
+        case pvt::LiveControlInput::AudioChromaHue:
+            return static_cast<double>(features.chroma_hue)
+                * features.chroma_strength;
+        case pvt::LiveControlInput::AudioChromaStrength:
+            return features.chroma_strength;
+        default:
+            return 0.0;
+    }
+}
+
 QString mapping_mode_name(pvt::LiveMappingMode mode) {
     switch (mode) {
         case pvt::LiveMappingMode::Absolute: return QObject::tr("Absolute");
@@ -269,6 +311,20 @@ QString input_name(pvt::LiveControlInput input) {
         case pvt::LiveControlInput::MidiChannelPressure: return QObject::tr("MIDI pressure");
         case pvt::LiveControlInput::OscValue: return QObject::tr("OSC value");
         case pvt::LiveControlInput::Footswitch: return QObject::tr("Footswitch");
+        case pvt::LiveControlInput::AudioEnergy: return QObject::tr("Audio energy");
+        case pvt::LiveControlInput::AudioBass: return QObject::tr("Audio bass");
+        case pvt::LiveControlInput::AudioMidrange: return QObject::tr("Audio midrange");
+        case pvt::LiveControlInput::AudioTreble: return QObject::tr("Audio treble");
+        case pvt::LiveControlInput::AudioOnset: return QObject::tr("Audio onset");
+        case pvt::LiveControlInput::AudioBeat: return QObject::tr("Audio beat");
+        case pvt::LiveControlInput::AudioSpectralCentroid:
+            return QObject::tr("Audio brightness");
+        case pvt::LiveControlInput::AudioSpectralFlatness:
+            return QObject::tr("Audio noisiness");
+        case pvt::LiveControlInput::AudioChromaHue:
+            return QObject::tr("Audio pitch hue");
+        case pvt::LiveControlInput::AudioChromaStrength:
+            return QObject::tr("Audio tonality");
     }
     return {};
 }
@@ -290,6 +346,7 @@ QString mapping_source(const pvt::LiveControlMapping& mapping) {
     if (mapping.input == pvt::LiveControlInput::OscValue) {
         return value + QStringLiteral("  ") + qtext(mapping.osc_address);
     }
+    if (is_audio_control_input(mapping.input)) return value;
     if (mapping.input == pvt::LiveControlInput::MidiPitchBend
         || mapping.input == pvt::LiveControlInput::MidiChannelPressure) {
         return mapping.midi_channel == 0
@@ -459,6 +516,7 @@ struct LiveWorkspace::Impl {
     StatusLamp* audio_lamp = nullptr;
     StatusLamp* midi_lamp = nullptr;
     LiveLevelMeter* audio_meter = nullptr;
+    LiveSpectrumMeter* audio_spectrum = nullptr;
     QPushButton* live_button = nullptr;
     QPushButton* output_button = nullptr;
     QPushButton* freeze_button = nullptr;
@@ -492,6 +550,9 @@ struct LiveWorkspace::Impl {
     QDoubleSpinBox* sensitivity_value = nullptr;
     QSpinBox* audio_period = nullptr;
     QPushButton* audio_processing = nullptr;
+    QCheckBox* gate_enabled = nullptr;
+    QDoubleSpinBox* gate_threshold = nullptr;
+    QSpinBox* gate_release = nullptr;
     QSpinBox* latency = nullptr;
     QSpinBox* device_latency = nullptr;
     QLabel* detected_tempo = nullptr;
@@ -610,6 +671,7 @@ struct LiveWorkspace::Impl {
     QString sourceEndpoint(pvt::LiveEndpointProtocol protocol,
                            const QString& runtimeSource) const;
     void createStarterRig();
+    void addAudioStarterMappings();
     void addLogicalRole();
     void calibrateLatency();
     void tapTempo();
@@ -933,6 +995,39 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     knob_layout->addWidget(sensitivity_value);
     knob_layout->addWidget(audio_meter, 1);
     audio_form->addRow(knob_row);
+    audio_spectrum = new LiveSpectrumMeter;
+    audio_spectrum->setObjectName(QStringLiteral("liveAudioSpectrum"));
+    audio_form->addRow(q->tr("Incoming sound"), audio_spectrum);
+    gate_enabled = new QCheckBox(q->tr("Enable noise gate"));
+    gate_enabled->setObjectName(QStringLiteral("liveNoiseGateEnabled"));
+    gate_enabled->setChecked(QSettings().value(
+        QStringLiteral("live/noiseGateEnabled"), false).toBool());
+    gate_threshold = new QDoubleSpinBox;
+    gate_threshold->setObjectName(QStringLiteral("liveNoiseGateThreshold"));
+    gate_threshold->setRange(-96.0, 0.0);
+    gate_threshold->setDecimals(1);
+    gate_threshold->setSingleStep(1.0);
+    gate_threshold->setSuffix(q->tr(" dBFS"));
+    gate_threshold->setValue(QSettings().value(
+        QStringLiteral("live/noiseGateThresholdDb"), -50.0).toDouble());
+    gate_release = new QSpinBox;
+    gate_release->setObjectName(QStringLiteral("liveNoiseGateRelease"));
+    gate_release->setRange(1, 5000);
+    gate_release->setSuffix(q->tr(" ms release"));
+    gate_release->setValue(QSettings().value(
+        QStringLiteral("live/noiseGateReleaseMs"), 120).toInt());
+    auto* gate_row = new QWidget;
+    auto* gate_layout = new QHBoxLayout(gate_row);
+    gate_layout->setContentsMargins(0, 0, 0, 0);
+    gate_layout->addWidget(gate_enabled);
+    gate_layout->addWidget(gate_threshold);
+    gate_layout->addWidget(gate_release);
+    gate_layout->addStretch(1);
+    gate_row->setToolTip(q->tr(
+        "Machine-local calibration after filters, EQ, and input gain. The "
+        "5 ms attack preserves transients; release controls how gently the "
+        "signal closes below threshold."));
+    audio_form->addRow(q->tr("Quiet input"), gate_row);
     latency = new QSpinBox;
     latency->setRange((std::numeric_limits<int>::min)(), kMaximumUiInteger);
     latency->setSuffix(q->tr(" ms"));
@@ -1197,6 +1292,23 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
         next.audio_processing = dialog.processing();
         commitConfig(std::move(next), q->tr("Change live audio input processing"));
     });
+    const auto apply_gate_calibration = [this] {
+        if (rebuilding) return;
+        QSettings settings;
+        settings.setValue(QStringLiteral("live/noiseGateEnabled"),
+                          gate_enabled->isChecked());
+        settings.setValue(QStringLiteral("live/noiseGateThresholdDb"),
+                          gate_threshold->value());
+        settings.setValue(QStringLiteral("live/noiseGateReleaseMs"),
+                          gate_release->value());
+        if (active) restartAudio();
+    };
+    QObject::connect(gate_enabled, &QCheckBox::toggled, q,
+                     [apply_gate_calibration] { apply_gate_calibration(); });
+    QObject::connect(gate_threshold, &QDoubleSpinBox::editingFinished, q,
+                     [apply_gate_calibration] { apply_gate_calibration(); });
+    QObject::connect(gate_release, &QSpinBox::editingFinished, q,
+                     [apply_gate_calibration] { apply_gate_calibration(); });
     QObject::connect(project_clock, qOverload<int>(&QComboBox::currentIndexChanged), q,
                      [this] { editClockRoute(false); });
     QObject::connect(project_clock_role, qOverload<int>(&QComboBox::currentIndexChanged), q,
@@ -1266,17 +1378,22 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(10, 10, 10, 10);
     auto* intro = new QLabel(q->tr(
-        "Map a logical MIDI, OSC, or foot-controller input to any render-safe "
+        "Map analyzed audio, MIDI, OSC, or a foot-controller input to any render-safe "
         "setting, performance action, or scene. Live values are an ephemeral "
-        "overlay—moving a pedal does not flood project history."));
+        "overlay—sound and controller motion do not flood project history."));
     intro->setWordWrap(true);
     layout->addWidget(intro);
     auto* tools = new QHBoxLayout;
     auto* add = new QPushButton(q->tr("Add Mapping…"));
+    auto* audio_starter = new QPushButton(q->tr("Add Audio Starter Map"));
+    audio_starter->setObjectName(QStringLiteral("addAudioStarterMap"));
+    audio_starter->setToolTip(q->tr(
+        "Add editable bass, onset, and treble mappings for the active layer so incoming sound visibly changes more than its clock."));
     auto* edit = new QPushButton(q->tr("Edit…"));
     auto* remove = new QPushButton(q->tr("Remove"));
     learn_button = new QPushButton(q->tr("MIDI Learn"));
     tools->addWidget(add);
+    tools->addWidget(audio_starter);
     tools->addWidget(edit);
     tools->addWidget(remove);
     tools->addWidget(learn_button);
@@ -1303,6 +1420,8 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
     hint->setWordWrap(true);
     layout->addWidget(hint);
     QObject::connect(add, &QPushButton::clicked, q, [this] { editMapping(-1); });
+    QObject::connect(audio_starter, &QPushButton::clicked, q,
+                     [this] { addAudioStarterMappings(); });
     QObject::connect(edit, &QPushButton::clicked, q, [this] {
         editMapping(mapping_table->currentRow());
     });
@@ -2318,6 +2437,15 @@ void LiveWorkspace::Impl::restartAudio() {
                 .arg(qtext(error)));
         return;
     }
+    if (!audio.set_gate_config(
+            gate_enabled->isChecked(), gate_threshold->value(), 5.0,
+            static_cast<double>(gate_release->value()), &error)) {
+        audio_lamp->setState(StatusLamp::State::Fault);
+        audio_lamp->setToolTip(qtext(error));
+        emit q->runtimeStatusChanged(
+            q->tr("Live noise gate could not start: %1").arg(qtext(error)));
+        return;
+    }
     const int period = std::clamp(
         QSettings().value(QStringLiteral("live/audioPeriodFrames"), 128).toInt(),
         1, kMaximumUiInteger);
@@ -2505,6 +2633,10 @@ void LiveWorkspace::Impl::showStandbyState() {
     midi_lamp->setToolTip({});
     audio_meter->setLevel(0.0);
     audio_meter->setPeakWarning(false);
+    if (audio_spectrum != nullptr) {
+        audio_spectrum->setBands({});
+        audio_spectrum->setGateOpen(true);
+    }
     detected_tempo->setText(q->tr("Waiting for audio…"));
     fps_readout->setText(q->tr("— fps"));
     frame_readout->setText(q->tr("No frame"));
@@ -2728,6 +2860,33 @@ void LiveWorkspace::Impl::runtimeTick() {
     audio_snapshot = audio.snapshot();
     audio_meter->setLevel(audio_snapshot.features.energy);
     audio_meter->setPeakWarning(audio_snapshot.features.energy > 0.97F);
+    QVector<QPointF> spectrum_bands;
+    spectrum_bands.reserve(static_cast<qsizetype>(audio_snapshot.spectrum.size()));
+    for (const auto& band : audio_snapshot.spectrum) {
+        spectrum_bands.push_back(QPointF(band.frequency_hz, band.level));
+    }
+    audio_spectrum->setBands(spectrum_bands);
+    audio_spectrum->setGateOpen(audio_snapshot.gate_open);
+    const QString audio_endpoint = audio_role->currentData().toString();
+    if (!audio_endpoint.isEmpty()) {
+        constexpr std::array<pvt::LiveControlInput, 10U> audio_inputs{{
+            pvt::LiveControlInput::AudioEnergy,
+            pvt::LiveControlInput::AudioBass,
+            pvt::LiveControlInput::AudioMidrange,
+            pvt::LiveControlInput::AudioTreble,
+            pvt::LiveControlInput::AudioOnset,
+            pvt::LiveControlInput::AudioBeat,
+            pvt::LiveControlInput::AudioSpectralCentroid,
+            pvt::LiveControlInput::AudioSpectralFlatness,
+            pvt::LiveControlInput::AudioChromaHue,
+            pvt::LiveControlInput::AudioChromaStrength,
+        }};
+        for (const auto input : audio_inputs) {
+            processControl(input, 0, 0,
+                           audio_control_value(input, audio_snapshot.features),
+                           audio_endpoint);
+        }
+    }
     if (effectiveAudioClockReceiving()) {
         audio_lamp->setState(StatusLamp::State::Ready);
     } else if (audio.is_running()) {
@@ -2913,6 +3072,147 @@ void LiveWorkspace::Impl::createStarterRig() {
     commitConfig(std::move(next), q->tr("Create portable live starter rig"));
 }
 
+void LiveWorkspace::Impl::addAudioStarterMappings() {
+    std::string endpoint_uuid = narrow(audio_role->currentData().toString());
+    if (endpoint_uuid.empty()) {
+        const auto endpoint_item = std::find_if(
+            config.endpoints.begin(), config.endpoints.end(),
+            [](const pvt::LiveEndpointConfig& endpoint) {
+                return endpoint.protocol == pvt::LiveEndpointProtocol::Audio
+                    && direction_has_input(endpoint.direction);
+            });
+        if (endpoint_item != config.endpoints.end()) {
+            endpoint_uuid = endpoint_item->uuid;
+        }
+    }
+    if (endpoint_uuid.empty()) {
+        QMessageBox::information(
+            q, q->tr("Audio starter map"),
+            q->tr("Create or add an Audio input role on the Rig tab first."));
+        return;
+    }
+
+    const pvt::ProjectConfig project = project_provider
+        ? project_provider() : pvt::default_project();
+    std::string layer_uuid = active_layer_provider
+        ? active_layer_provider() : std::string{};
+    auto layer = std::find_if(
+        project.layers.begin(), project.layers.end(),
+        [&layer_uuid](const pvt::LayerConfig& item) {
+            return item.uuid == layer_uuid;
+        });
+    if (layer == project.layers.end() && !project.layers.empty()) {
+        layer = project.layers.begin();
+        layer_uuid = layer->uuid;
+    }
+    if (layer == project.layers.end()) return;
+
+    const auto registry = buildLiveTargetRegistry(project);
+    const QString prefix = QStringLiteral("layer/%1/")
+                               .arg(qtext(layer_uuid));
+    const auto target = [&registry](const QString& path)
+        -> const LiveTargetDescriptor* {
+        const auto found = std::find_if(
+            registry.begin(), registry.end(),
+            [&path](const LiveTargetDescriptor& item) {
+                return item.path == path;
+            });
+        return found == registry.end() ? nullptr : &*found;
+    };
+
+    struct Starter {
+        pvt::LiveControlInput input;
+        QString name;
+        QString path;
+        double minimum;
+        double maximum;
+        double dead_zone;
+        int smoothing_ms;
+    };
+    std::vector<Starter> starters;
+    if (!layer->render.waves.empty()) {
+        const auto& wave = layer->render.waves.front();
+        const QString path = prefix + QStringLiteral("wave/%1/amplitude")
+                                          .arg(wave.id);
+        if (const auto* descriptor = target(path)) {
+            const double span = std::max(0.35, std::fabs(descriptor->current_value) * 1.25);
+            starters.push_back({
+                pvt::LiveControlInput::AudioBass,
+                q->tr("Bass → %1 wave amplitude").arg(qtext(layer->name)),
+                path,
+                std::clamp(descriptor->current_value - span * 0.35,
+                           descriptor->minimum, descriptor->maximum),
+                std::clamp(descriptor->current_value + span,
+                           descriptor->minimum, descriptor->maximum),
+                0.04, 80});
+        }
+    }
+    if (!layer->render.effects.empty()) {
+        const auto& effect = layer->render.effects.front();
+        const QString path = prefix + QStringLiteral("effect/%1/intensity")
+                                          .arg(effect.id);
+        if (const auto* descriptor = target(path)) {
+            const double upper = std::clamp(
+                std::max(descriptor->current_value * 1.8,
+                         descriptor->current_value + 0.35),
+                descriptor->minimum, descriptor->maximum);
+            starters.push_back({
+                pvt::LiveControlInput::AudioOnset,
+                q->tr("Onset → %1 effect strength").arg(qtext(layer->name)),
+                path,
+                std::clamp(descriptor->current_value * 0.4,
+                           descriptor->minimum, descriptor->maximum),
+                upper, 0.08, 35});
+        }
+    }
+    const QString saturation_path = prefix + QStringLiteral("saturation");
+    if (target(saturation_path) != nullptr) {
+        starters.push_back({
+            pvt::LiveControlInput::AudioTreble,
+            q->tr("Treble → %1 saturation").arg(qtext(layer->name)),
+            saturation_path, 0.25, 1.0, 0.03, 140});
+    }
+
+    pvt::LiveConfig next = config;
+    std::size_t added = 0U;
+    for (const Starter& starter : starters) {
+        if (next.mappings.size() >= pvt::kMaximumLiveMappings) break;
+        if (!(starter.maximum > starter.minimum)) continue;
+        const bool duplicate = std::any_of(
+            next.mappings.begin(), next.mappings.end(),
+            [&starter, &endpoint_uuid](const pvt::LiveControlMapping& mapping) {
+                return mapping.endpoint_uuid == endpoint_uuid
+                    && mapping.input == starter.input
+                    && qtext(mapping.target_path) == starter.path;
+            });
+        if (duplicate) continue;
+        pvt::LiveControlMapping mapping;
+        mapping.name = narrow(starter.name);
+        mapping.endpoint_uuid = endpoint_uuid;
+        mapping.input = starter.input;
+        mapping.target = pvt::LiveMappingTarget::Setting;
+        mapping.target_path = narrow(starter.path);
+        mapping.mode = pvt::LiveMappingMode::Absolute;
+        mapping.output_minimum = starter.minimum;
+        mapping.output_maximum = starter.maximum;
+        mapping.dead_zone = starter.dead_zone;
+        mapping.smoothing_milliseconds = starter.smoothing_ms;
+        next.mappings.push_back(std::move(mapping));
+        ++added;
+    }
+    if (added == 0U) {
+        QMessageBox::information(
+            q, q->tr("Audio starter map"),
+            q->tr("The available starter routes already exist, or this layer has no compatible wave/effect/color targets."));
+        return;
+    }
+    commitConfig(std::move(next), q->tr("Add live audio starter mappings"));
+    tabs->setCurrentWidget(mapping_table->parentWidget());
+    emit q->runtimeStatusChanged(
+        q->tr("Added %1 editable audio mappings. Bass, onsets, and treble now drive visible layer settings.")
+            .arg(static_cast<qulonglong>(added)));
+}
+
 void LiveWorkspace::Impl::addLogicalRole() {
     QDialog dialog(q);
     dialog.setWindowTitle(q->tr("Add Logical Live Role"));
@@ -3060,7 +3360,17 @@ void LiveWorkspace::Impl::editMapping(int index) {
         pvt::LiveControlInput::MidiPitchBend,
         pvt::LiveControlInput::MidiChannelPressure,
         pvt::LiveControlInput::OscValue,
-        pvt::LiveControlInput::Footswitch};
+        pvt::LiveControlInput::Footswitch,
+        pvt::LiveControlInput::AudioEnergy,
+        pvt::LiveControlInput::AudioBass,
+        pvt::LiveControlInput::AudioMidrange,
+        pvt::LiveControlInput::AudioTreble,
+        pvt::LiveControlInput::AudioOnset,
+        pvt::LiveControlInput::AudioBeat,
+        pvt::LiveControlInput::AudioSpectralCentroid,
+        pvt::LiveControlInput::AudioSpectralFlatness,
+        pvt::LiveControlInput::AudioChromaHue,
+        pvt::LiveControlInput::AudioChromaStrength};
     for (const auto value : inputs) input->addItem(input_name(value), static_cast<int>(value));
     input->setCurrentIndex(std::max(0, input->findData(static_cast<int>(initial.input))));
     auto* endpoint_combo = new QComboBox;
@@ -3230,11 +3540,14 @@ void LiveWorkspace::Impl::editMapping(int index) {
     const auto refresh_source = [this, input, endpoint_combo, channel, number,
                                  address, &initial, editing] {
         const auto selected = static_cast<pvt::LiveControlInput>(input->currentData().toInt());
-        const pvt::LiveEndpointProtocol protocol = selected == pvt::LiveControlInput::OscValue
-            ? pvt::LiveEndpointProtocol::Osc
-            : (selected == pvt::LiveControlInput::Footswitch
-                   ? pvt::LiveEndpointProtocol::FootController
-                   : pvt::LiveEndpointProtocol::Midi);
+        const pvt::LiveEndpointProtocol protocol =
+            is_audio_control_input(selected)
+                ? pvt::LiveEndpointProtocol::Audio
+                : (selected == pvt::LiveControlInput::OscValue
+                       ? pvt::LiveEndpointProtocol::Osc
+                       : (selected == pvt::LiveControlInput::Footswitch
+                              ? pvt::LiveEndpointProtocol::FootController
+                              : pvt::LiveEndpointProtocol::Midi));
         const QString before = endpoint_combo->currentData().toString();
         endpoint_combo->clear();
         for (const auto& role : config.endpoints) {
@@ -3247,7 +3560,8 @@ void LiveWorkspace::Impl::editMapping(int index) {
         const int role_index = endpoint_combo->findData(wanted);
         if (role_index >= 0) endpoint_combo->setCurrentIndex(role_index);
         const bool osc_input = selected == pvt::LiveControlInput::OscValue;
-        const bool midi_input = selected != pvt::LiveControlInput::Footswitch && !osc_input;
+        const bool midi_input = !is_audio_control_input(selected)
+            && selected != pvt::LiveControlInput::Footswitch && !osc_input;
         const bool numbered = selected == pvt::LiveControlInput::MidiControlChange
             || selected == pvt::LiveControlInput::MidiNote
             || selected == pvt::LiveControlInput::MidiProgramChange
@@ -3314,10 +3628,12 @@ void LiveWorkspace::Impl::editMapping(int index) {
     mapping.endpoint_uuid = narrow(endpoint_combo->currentData().toString());
     const bool osc_input = mapping.input == pvt::LiveControlInput::OscValue;
     const bool foot_input = mapping.input == pvt::LiveControlInput::Footswitch;
+    const bool audio_input = is_audio_control_input(mapping.input);
     const bool numbered = mapping.input == pvt::LiveControlInput::MidiControlChange
         || mapping.input == pvt::LiveControlInput::MidiNote
         || mapping.input == pvt::LiveControlInput::MidiProgramChange || foot_input;
-    mapping.midi_channel = (!osc_input && !foot_input) ? channel->value() : 0;
+    mapping.midi_channel = (!osc_input && !foot_input && !audio_input)
+        ? channel->value() : 0;
     mapping.control_number = numbered ? number->value() : 0;
     mapping.osc_address = osc_input ? narrow(address->text().trimmed()) : std::string{};
     mapping.target = static_cast<pvt::LiveMappingTarget>(target_kind->currentData().toInt());

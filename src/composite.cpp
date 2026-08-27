@@ -508,6 +508,16 @@ bool valid_live_enum(LiveControlInput value) {
         case LiveControlInput::MidiChannelPressure:
         case LiveControlInput::OscValue:
         case LiveControlInput::Footswitch:
+        case LiveControlInput::AudioEnergy:
+        case LiveControlInput::AudioBass:
+        case LiveControlInput::AudioMidrange:
+        case LiveControlInput::AudioTreble:
+        case LiveControlInput::AudioOnset:
+        case LiveControlInput::AudioBeat:
+        case LiveControlInput::AudioSpectralCentroid:
+        case LiveControlInput::AudioSpectralFlatness:
+        case LiveControlInput::AudioChromaHue:
+        case LiveControlInput::AudioChromaStrength:
             return true;
     }
     return false;
@@ -1571,6 +1581,17 @@ ValidationResult validate(const LiveConfig& live) {
                 mapping.input == LiveControlInput::MidiControlChange
                 || mapping.input == LiveControlInput::MidiNote
                 || mapping.input == LiveControlInput::MidiProgramChange;
+            const bool audio =
+                mapping.input == LiveControlInput::AudioEnergy
+                || mapping.input == LiveControlInput::AudioBass
+                || mapping.input == LiveControlInput::AudioMidrange
+                || mapping.input == LiveControlInput::AudioTreble
+                || mapping.input == LiveControlInput::AudioOnset
+                || mapping.input == LiveControlInput::AudioBeat
+                || mapping.input == LiveControlInput::AudioSpectralCentroid
+                || mapping.input == LiveControlInput::AudioSpectralFlatness
+                || mapping.input == LiveControlInput::AudioChromaHue
+                || mapping.input == LiveControlInput::AudioChromaStrength;
             if ((midi && !mapping.osc_address.empty())
                 || (!midi && mapping.input != LiveControlInput::OscValue
                     && mapping.midi_channel != 0)
@@ -1625,7 +1646,9 @@ ValidationResult validate(const LiveConfig& live) {
                                != LiveEndpointProtocol::Osc)
                     || (mapping.input == LiveControlInput::Footswitch
                         && found->second->protocol
-                               != LiveEndpointProtocol::FootController)) {
+                               != LiveEndpointProtocol::FootController)
+                    || (audio && found->second->protocol
+                               != LiveEndpointProtocol::Audio)) {
                     return invalid_result(
                         "An enabled Live mapping requires a compatible logical input endpoint.");
                 }
@@ -2257,6 +2280,19 @@ const char* live_control_input_name(LiveControlInput value) {
             return "MIDI channel pressure";
         case LiveControlInput::OscValue: return "OSC value";
         case LiveControlInput::Footswitch: return "Footswitch";
+        case LiveControlInput::AudioEnergy: return "Audio energy";
+        case LiveControlInput::AudioBass: return "Audio bass";
+        case LiveControlInput::AudioMidrange: return "Audio midrange";
+        case LiveControlInput::AudioTreble: return "Audio treble";
+        case LiveControlInput::AudioOnset: return "Audio onset";
+        case LiveControlInput::AudioBeat: return "Audio beat";
+        case LiveControlInput::AudioSpectralCentroid:
+            return "Audio spectral brightness";
+        case LiveControlInput::AudioSpectralFlatness:
+            return "Audio spectral flatness";
+        case LiveControlInput::AudioChromaHue: return "Audio pitch hue";
+        case LiveControlInput::AudioChromaStrength:
+            return "Audio tonal strength";
     }
     return "Unknown";
 }

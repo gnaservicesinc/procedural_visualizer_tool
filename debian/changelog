@@ -1,3 +1,9 @@
+procedural-visualizer-tool (15.1.0) stonking; urgency=medium
+
+  * New upstream release.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 27 Aug 2026 11:48:47 -0400
+
 procedural-visualizer-tool (15.0.0) stonking; urgency=medium
 
   * Correct generated RGBA traversal while preserving an exposed legacy order.

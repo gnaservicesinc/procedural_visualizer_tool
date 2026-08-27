@@ -1,6 +1,7 @@
 #include "audio_processing_dialog.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -17,6 +18,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace {
@@ -30,6 +32,49 @@ QString newUuid() {
     return QUuid::createUuid().toString(QUuid::WithoutBraces).toLower();
 }
 
+struct EqualizerPreset {
+    const char* name;
+    std::array<double, 10U> gains_db;
+};
+
+constexpr std::array<double, 10U> kPresetFrequencies{{
+    31.25, 62.5, 125.0, 250.0, 500.0,
+    1000.0, 2000.0, 4000.0, 8000.0, 16000.0}};
+
+constexpr std::array<EqualizerPreset, 6U> kEqualizerPresets{{
+    {QT_TRANSLATE_NOOP("AudioProcessingDialog", "Flat"),
+     {{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}}},
+    {QT_TRANSLATE_NOOP("AudioProcessingDialog", "Bass lift"),
+     {{6.0, 5.0, 4.0, 2.5, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0}}},
+    {QT_TRANSLATE_NOOP("AudioProcessingDialog", "Warm"),
+     {{3.0, 3.0, 2.5, 2.0, 1.0, 0.0, -0.5, -1.0, -1.0, -1.5}}},
+    {QT_TRANSLATE_NOOP("AudioProcessingDialog", "Vocal clarity"),
+     {{-4.0, -3.0, -2.0, -1.0, 0.5, 2.0, 3.0, 2.0, 1.0, 0.0}}},
+    {QT_TRANSLATE_NOOP("AudioProcessingDialog", "Bright"),
+     {{-2.0, -1.5, -1.0, -0.5, 0.0, 1.0, 2.0, 3.0, 4.0, 4.0}}},
+    {QT_TRANSLATE_NOOP("AudioProcessingDialog", "Dance smile"),
+     {{5.0, 4.0, 2.0, 0.0, -2.0, -1.0, 1.0, 3.0, 4.0, 4.0}}},
+}};
+
+double presetGain(const EqualizerPreset& preset, double frequency_hz) {
+    if (frequency_hz <= kPresetFrequencies.front()) {
+        return preset.gains_db.front();
+    }
+    if (frequency_hz >= kPresetFrequencies.back()) {
+        return preset.gains_db.back();
+    }
+    const double requested = std::log(frequency_hz);
+    for (std::size_t index = 1U; index < kPresetFrequencies.size(); ++index) {
+        if (frequency_hz > kPresetFrequencies[index]) continue;
+        const double first = std::log(kPresetFrequencies[index - 1U]);
+        const double second = std::log(kPresetFrequencies[index]);
+        const double amount = (requested - first) / (second - first);
+        return preset.gains_db[index - 1U]
+            + amount * (preset.gains_db[index] - preset.gains_db[index - 1U]);
+    }
+    return 0.0;
+}
+
 } // namespace
 
 AudioProcessingDialog::AudioProcessingDialog(
@@ -41,7 +86,8 @@ AudioProcessingDialog::AudioProcessingDialog(
     auto* root = new QVBoxLayout(this);
     auto* intro = new QLabel(tr(
         "This chain runs before beat detection, envelopes, spectrum, chroma, or "
-        "named frequency splits. Everything is bypassed by default. Music "
+        "named frequency splits. New sources begin with gentle 20 Hz–20 kHz "
+        "input protection; every stage remains independently bypassable. Music "
         "changes are committed only after a successful reanalysis."));
     intro->setWordWrap(true);
     root->addWidget(intro);
@@ -81,6 +127,24 @@ AudioProcessingDialog::AudioProcessingDialog(
     equalizer_enabled_ = new QCheckBox(tr("Enable multi-band EQ"));
     equalizer_enabled_->setChecked(initial.equalizer_enabled);
     equalizer_layout->addWidget(equalizer_enabled_);
+    auto* preset_row = new QWidget;
+    auto* preset_layout = new QHBoxLayout(preset_row);
+    preset_layout->setContentsMargins(0, 0, 0, 0);
+    auto* preset = new QComboBox;
+    preset->setObjectName(QStringLiteral("audioEqualizerPreset"));
+    for (std::size_t index = 0U; index < kEqualizerPresets.size(); ++index) {
+        preset->addItem(tr(kEqualizerPresets[index].name),
+                        static_cast<int>(index));
+    }
+    auto* apply_preset = new QPushButton(tr("Apply Preset"));
+    apply_preset->setObjectName(QStringLiteral("applyAudioEqualizerPreset"));
+    apply_preset->setToolTip(tr(
+        "Replace the visible EQ gains with this built-in starting point. The "
+        "sliders remain fully editable afterward."));
+    preset_layout->addWidget(new QLabel(tr("Preset")));
+    preset_layout->addWidget(preset, 1);
+    preset_layout->addWidget(apply_preset);
+    equalizer_layout->addWidget(preset_row);
     auto* eq_scroll = new QScrollArea;
     eq_scroll->setWidgetResizable(true);
     eq_scroll->setFrameShape(QFrame::NoFrame);
@@ -122,6 +186,9 @@ AudioProcessingDialog::AudioProcessingDialog(
     eq_scroll->setWidget(eq_body);
     eq_scroll->setMinimumHeight(250);
     equalizer_layout->addWidget(eq_scroll);
+    connect(apply_preset, &QPushButton::clicked, this, [this, preset] {
+        applyEqualizerPreset(preset->currentData().toInt());
+    });
     root->addWidget(equalizer, 1);
 
     auto* stream_group = new QGroupBox(tr("Named post-filter frequency streams"));
@@ -163,6 +230,17 @@ AudioProcessingDialog::AudioProcessingDialog(
             this, &AudioProcessingDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected,
             this, &QDialog::reject);
+}
+
+void AudioProcessingDialog::applyEqualizerPreset(int preset) {
+    if (preset < 0
+        || preset >= static_cast<int>(kEqualizerPresets.size())) return;
+    const auto& selected = kEqualizerPresets[static_cast<std::size_t>(preset)];
+    for (std::size_t index = 0U; index < equalizer_gains_.size(); ++index) {
+        equalizer_gains_[index]->setValue(
+            presetGain(selected, equalizer_frequencies_[index]));
+    }
+    equalizer_enabled_->setChecked(true);
 }
 
 void AudioProcessingDialog::addFrequencyStream(

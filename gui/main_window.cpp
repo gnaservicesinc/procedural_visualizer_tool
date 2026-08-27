@@ -7346,7 +7346,7 @@ void MainWindow::createToolbar() {
     edit_menu->addAction(redo_action_);
 
     edit_mode_action_ = new QAction(tr("Edit Workbench"), this);
-    live_mode_action_ = new QAction(tr("LIVE"), this);
+    live_mode_action_ = new QAction(tr("Live Controls"), this);
     edit_mode_action_->setObjectName(QStringLiteral("editModeAction"));
     live_mode_action_->setObjectName(QStringLiteral("liveModeAction"));
     edit_mode_action_->setCheckable(true);
@@ -17863,6 +17863,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const auto* live_audio_sensitivity = live_workspace_ != nullptr
         ? live_workspace_->findChild<QDoubleSpinBox*>(
               QStringLiteral("liveAudioSensitivityValue")) : nullptr;
+    const auto* live_audio_spectrum = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QWidget*>(
+              QStringLiteral("liveAudioSpectrum")) : nullptr;
+    const auto* live_noise_gate = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QCheckBox*>(
+              QStringLiteral("liveNoiseGateEnabled")) : nullptr;
+    const auto* live_noise_gate_threshold = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QDoubleSpinBox*>(
+              QStringLiteral("liveNoiseGateThreshold")) : nullptr;
+    const auto* live_noise_gate_release = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QSpinBox*>(
+              QStringLiteral("liveNoiseGateRelease")) : nullptr;
+    const auto* add_audio_starter_map = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QPushButton*>(
+              QStringLiteral("addAudioStarterMap")) : nullptr;
     auto* live_stage_output = live_workspace_ != nullptr
         ? live_workspace_->findChild<QPushButton*>(
               QStringLiteral("liveStageOutputButton")) : nullptr;
@@ -17904,6 +17919,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !mode_menu->actions().contains(live_mode_action_)
         || !project_toolbar->actions().contains(live_mode_action_)
         || live_mode_action_->isCheckable()
+        || live_mode_action_->text() != tr("Live Controls")
         || live_preview_output_action_ == nullptr
         || !live_preview_output_action_->isCheckable()
         || !project_toolbar->actions().contains(live_preview_output_action_)
@@ -17938,6 +17954,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_audio_sensitivity == nullptr
         || live_audio_sensitivity->minimum() != 0.0
         || live_audio_sensitivity->maximum() <= 400.0
+        || live_audio_spectrum == nullptr
+        || live_noise_gate == nullptr
+        || live_noise_gate_threshold == nullptr
+        || live_noise_gate_threshold->minimum() > -96.0
+        || live_noise_gate_threshold->maximum() < 0.0
+        || live_noise_gate_release == nullptr
+        || live_noise_gate_release->minimum() > 1
+        || live_noise_gate_release->maximum() < 5000
+        || add_audio_starter_map == nullptr
         || live_freeze == nullptr || !live_freeze->isCheckable()
         || live_blackout == nullptr || !live_blackout->isCheckable()
         || live_stage_output == nullptr || !live_stage_output->isCheckable()
@@ -17953,6 +17978,33 @@ bool MainWindow::runSmokeChecks(QString* error) {
             *error = tr("The toolbar, Edit/LIVE mode host, or guarded settings actions are incomplete or exposed in the wrong place.");
         }
         return false;
+    }
+
+    {
+        AudioProcessingDialog processing_dialog(
+            pvt::default_config().clock.audio_processing,
+            tr("Smoke test"), this);
+        auto* preset = processing_dialog.findChild<QComboBox*>(
+            QStringLiteral("audioEqualizerPreset"));
+        auto* apply = processing_dialog.findChild<QPushButton*>(
+            QStringLiteral("applyAudioEqualizerPreset"));
+        if (preset == nullptr || preset->count() < 6 || apply == nullptr) {
+            if (error != nullptr) {
+                *error = tr("The built-in audio EQ preset controls are incomplete.");
+            }
+            return false;
+        }
+        preset->setCurrentIndex(1);
+        apply->click();
+        const pvt::AudioInputProcessingConfig applied =
+            processing_dialog.processing();
+        if (!applied.equalizer_enabled || applied.equalizer_bands.empty()
+            || applied.equalizer_bands.front().gain_db <= 0.0) {
+            if (error != nullptr) {
+                *error = tr("Applying an audio EQ preset did not update the editable EQ state.");
+            }
+            return false;
+        }
     }
 
     const auto stage_output_window = []() -> QWidget* {

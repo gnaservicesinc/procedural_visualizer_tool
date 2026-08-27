@@ -22,6 +22,7 @@ protected:
 
 private:
     void addFrequencyStream(const pvt::AudioFrequencyStreamConfig* stream = nullptr);
+    void applyEqualizerPreset(int preset);
 
     QCheckBox* high_pass_enabled_ = nullptr;
     QDoubleSpinBox* high_pass_hz_ = nullptr;

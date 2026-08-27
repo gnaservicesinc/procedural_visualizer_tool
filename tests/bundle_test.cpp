@@ -1643,7 +1643,7 @@ void test_render_output_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t7\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t8\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -1728,7 +1728,7 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(analysis.rfind("PVT_MUSIC_ANALYSIS\t2\n", 0U) == 0U);
     CHECK(pvt::detail::serialize_split_render_output_config(
         canvas, output, split_output, &error));
-    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t5\n", 0U) == 0U);
+    CHECK(split_output.rfind("PVT_RENDER_OUTPUT_SPLIT\t6\n", 0U) == 0U);
     CHECK(split_output.find("timing.music.") == std::string::npos);
     CHECK(split_output.size() < version_two.size());
     pvt::CanvasLoopConfig combined_canvas;
@@ -1739,6 +1739,21 @@ void test_render_output_codec_backward_compatibility() {
     CHECK(pvt::detail::serialize_render_output_config(
         combined_canvas, combined_output, combined_canonical, &error));
     CHECK(combined_canonical == version_two);
+
+    // Split v5 corresponds to render/output v7 (setup v14). The new split v6
+    // must not cause existing v5 files to be reinterpreted as setup v23.
+    std::string split_version_five = split_output;
+    split_version_five.replace(
+        0U, std::string("PVT_RENDER_OUTPUT_SPLIT\t6").size(),
+        "PVT_RENDER_OUTPUT_SPLIT\t5");
+    pvt::CanvasLoopConfig split_version_five_canvas;
+    pvt::ExportConfig split_version_five_export;
+    CHECK(pvt::detail::deserialize_split_render_output_config(
+        split_version_five, analysis, split_version_five_canvas,
+        split_version_five_export, &error));
+    CHECK(split_version_five_canvas.live.audio_processing.low_pass_enabled);
+    CHECK(split_version_five_canvas.live.audio_processing.low_pass_hz == 16000.0);
+    CHECK(split_version_five_canvas.live.mappings.size() == 3U);
 
     std::istringstream split_version_four_input(split_output);
     std::ostringstream split_version_three_output;
@@ -1829,7 +1844,7 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t7");
+    CHECK(line == "PVT_RENDER_OUTPUT\t8");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');

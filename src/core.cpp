@@ -2917,6 +2917,16 @@ PaletteConfig default_palette(std::size_t index) {
 
 RenderConfig default_config() {
     RenderConfig config;
+    // New projects start with inaudible infrasonic and near-Nyquist content
+    // removed before analysis. The public config type retains its historical
+    // bypass defaults so old/missing setup records and direct aggregate users
+    // do not silently change semantics.
+    config.clock.audio_processing.high_pass_enabled = true;
+    config.clock.audio_processing.low_pass_enabled = true;
+    config.layer_clock.clock.audio_processing.high_pass_enabled = true;
+    config.layer_clock.clock.audio_processing.low_pass_enabled = true;
+    config.live.audio_processing.high_pass_enabled = true;
+    config.live.audio_processing.low_pass_enabled = true;
     config.waves.reserve(3);
     for (std::size_t index = 0; index < 3; ++index) {
         WaveConfig wave = default_wave(index);

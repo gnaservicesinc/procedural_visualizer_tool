@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 22;
+constexpr std::uint32_t kSetupFormatVersion = 23;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -419,7 +419,17 @@ enum class LiveControlInput : std::uint8_t {
     MidiPitchBend,
     MidiChannelPressure,
     OscValue,
-    Footswitch
+    Footswitch,
+    AudioEnergy,
+    AudioBass,
+    AudioMidrange,
+    AudioTreble,
+    AudioOnset,
+    AudioBeat,
+    AudioSpectralCentroid,
+    AudioSpectralFlatness,
+    AudioChromaHue,
+    AudioChromaStrength
 };
 
 enum class LiveMappingMode : std::uint8_t {
