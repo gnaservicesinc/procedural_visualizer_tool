@@ -699,6 +699,7 @@ private:
     QComboBox* effect_audio_response_ = nullptr;
     QComboBox* effect_type_ = nullptr;
     QComboBox* effect_space_ = nullptr;
+    QLabel* effect_placement_help_ = nullptr;
     QSpinBox* effect_cycles_ = nullptr;
     QDoubleSpinBox* effect_phase_ = nullptr;
     QComboBox* effect_edge_ = nullptr;

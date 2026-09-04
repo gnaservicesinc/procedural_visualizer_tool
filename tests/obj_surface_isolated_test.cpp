@@ -91,6 +91,22 @@ bool apply_classic_obj_surface(const pvt::Image& source,
         source, destination, path, surface, loop_phase, error, cancel);
 }
 
+bool apply_neutral_obj_surface(const pvt::Image& source,
+                               pvt::Image& destination,
+                               const std::string& path,
+                               std::string* error) {
+    pvt::SurfaceConfig surface;
+    surface.enabled = true;
+    surface.mapping = pvt::SurfaceMapping::CustomObj;
+    surface.projection = pvt::SurfaceProjection::Orthographic;
+    surface.sizing = pvt::SurfaceSizing::Contain;
+    surface.outside = pvt::SurfaceOutside::Transparent;
+    surface.curvature = 1.0;
+    surface.lighting = 0.0;
+    return pvt::detail::apply_obj_surface_mapping(
+        source, destination, path, surface, 0.0, error, nullptr);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -101,6 +117,8 @@ int main(int argc, char** argv) {
         (source_root / "tests" / "assets" / "obj" / "layered_uv_cube.obj").string();
     const std::string right_edge =
         (source_root / "tests" / "assets" / "obj" / "uv_right_edge.obj").string();
+    const std::string multi_part =
+        (source_root / "tests" / "assets" / "obj" / "multi_part_assembly.obj").string();
     std::string error;
 
     // A half-alpha closed shell must retain its exit surface. Two equal layers
@@ -220,6 +238,23 @@ int main(int argc, char** argv) {
     const float* corner = pixel(nearest, 0, 0);
     if (opaque_center[3] < 0.999F || corner[3] > 1.0e-6F) {
         return fail(5, "opaque nearest/exterior coverage is incorrect");
+    }
+
+    // Standard o/g records may divide one file into disconnected named parts.
+    // Both parts must survive import and share one normalization/projection;
+    // a loader that stops at or replaces on the second object fails this.
+    pvt::Image multi_part_result;
+    if (!apply_neutral_obj_surface(
+            opaque, multi_part_result, multi_part, &error)) {
+        return fail(24, "multi-part OBJ render failed: " + error);
+    }
+    const float* left_part = pixel(multi_part_result, 12, 32);
+    const float* part_gap = pixel(multi_part_result, 32, 32);
+    const float* right_part = pixel(multi_part_result, 51, 32);
+    if (left_part[3] < 0.999F || right_part[3] < 0.999F
+        || part_gap[3] > 1.0e-6F) {
+        return fail(25,
+                    "disconnected OBJ parts were not rendered as one assembly");
     }
 
     // Custom OBJ lighting must honor authored values above the former hidden

@@ -12,6 +12,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
 class QShowEvent;
+class QResizeEvent;
 
 class ApplicationSettingsDialog final : public QDialog {
 public:
@@ -34,7 +35,13 @@ public:
     int recentProjectLimit() const;
     NewProjectDefaultsAction newProjectDefaultsAction() const;
 
+protected:
+    void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
+    void scheduleResponsiveLabelLayout();
+
     QSpinBox* undo_limit_ = nullptr;
     QComboBox* render_backend_ = nullptr;
     QSpinBox* preview_live_cpu_workers_ = nullptr;
@@ -49,9 +56,7 @@ private:
     QLabel* defaults_status_ = nullptr;
     NewProjectDefaultsAction defaults_action_ =
         NewProjectDefaultsAction::Keep;
-
-protected:
-    void showEvent(QShowEvent* event) override;
+    bool responsive_label_layout_pending_ = false;
 };
 
 #endif

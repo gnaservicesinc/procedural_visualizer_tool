@@ -5,19 +5,24 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
 #include <QPushButton>
 #include <QGuiApplication>
+#include <QLayout>
 #include <QScreen>
 #include <QScrollArea>
 #include <QShowEvent>
+#include <QResizeEvent>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QTabWidget>
 #include <QThread>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -31,6 +36,8 @@ constexpr int kMaximumUndoLimit = (std::numeric_limits<int>::max)();
 constexpr int kMaximumRecentProjectLimit = (std::numeric_limits<int>::max)();
 constexpr std::size_t kMebibyte = std::size_t{1024U} * 1024U;
 constexpr std::size_t kGibibyte = kMebibyte * 1024U;
+constexpr int kPreferredDialogWidth = 860;
+constexpr int kPreferredDialogHeight = 640;
 
 int spin_box_maximum(std::size_t value) {
     return static_cast<int>((std::min)(
@@ -55,11 +62,50 @@ QString memory_size_text(std::size_t bytes) {
     return QObject::tr("%1 MiB").arg(mebibytes, 0, 'f', 0);
 }
 
-QLabel* explanatory_label(const QString& text, QWidget* parent) {
+QLabel* explanatory_label(const QString& text, QWidget* parent,
+                          const QString& details = {}) {
     auto* label = new QLabel(text, parent);
     label->setWordWrap(true);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    QSizePolicy policy = label->sizePolicy();
+    policy.setHorizontalPolicy(QSizePolicy::Preferred);
+    policy.setVerticalPolicy(QSizePolicy::Minimum);
+    policy.setHeightForWidth(true);
+    label->setSizePolicy(policy);
+    if (!details.isEmpty()) {
+        label->setToolTip(details);
+        label->setAccessibleDescription(details);
+    }
     return label;
+}
+
+void configure_form(QFormLayout* form) {
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    form->setFormAlignment(Qt::AlignTop);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->setHorizontalSpacing(12);
+    form->setVerticalSpacing(7);
+}
+
+void configure_section(QGroupBox* group) {
+    group->setFlat(true);
+    QSizePolicy policy = group->sizePolicy();
+    policy.setHorizontalPolicy(QSizePolicy::Preferred);
+    policy.setVerticalPolicy(QSizePolicy::Maximum);
+    group->setSizePolicy(policy);
+}
+
+QScrollArea* scrollable_settings_page(QWidget* content, QWidget* parent,
+                                      const QString& object_name) {
+    auto* scroll = new QScrollArea(parent);
+    scroll->setObjectName(object_name);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setWidget(content);
+    return scroll;
 }
 
 class CompactDoubleSpinBox final : public QDoubleSpinBox {
@@ -92,28 +138,29 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     setModal(true);
 
     auto* root = new QVBoxLayout(this);
-    auto* scroll = new QScrollArea(this);
-    scroll->setObjectName(QStringLiteral("applicationSettingsScroll"));
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    auto* content = new QWidget(scroll);
-    auto* content_layout = new QVBoxLayout(content);
-    content_layout->addWidget(explanatory_label(
+    root->setContentsMargins(16, 16, 16, 12);
+    root->setSpacing(12);
+    auto* scope_note = explanatory_label(
         tr("These settings apply to every project and persist after the "
            "application is closed."),
-        content));
+        this);
+    scope_note->setObjectName(QStringLiteral("applicationSettingsScopeNote"));
+    root->addWidget(scope_note);
 
-    auto* tabs = new QTabWidget(content);
+    auto* tabs = new QTabWidget(this);
     tabs->setObjectName(QStringLiteral("applicationSettingsTabs"));
+    tabs->setUsesScrollButtons(true);
 
-    auto* general_page = new QWidget(tabs);
+    auto* general_page = new QWidget;
     auto* general_layout = new QVBoxLayout(general_page);
+    general_layout->setContentsMargins(12, 12, 12, 12);
+    general_layout->setSpacing(12);
+    auto* general_preferences = new QHBoxLayout;
+    general_preferences->setSpacing(12);
     auto* history_group = new QGroupBox(tr("Editing History"), general_page);
+    configure_section(history_group);
     auto* history_form = new QFormLayout(history_group);
-    history_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    history_form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    configure_form(history_form);
     undo_limit_ = new QSpinBox(history_group);
     undo_limit_->setObjectName(QStringLiteral("undoLimitPreference"));
     undo_limit_->setRange(kMinimumUndoLimit, kMaximumUndoLimit);
@@ -124,14 +171,18 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     history_form->addRow(tr("Maximum undo steps (0 = unlimited)"), undo_limit_);
     history_form->addRow(
         explanatory_label(
+            tr("Changing this clears the current session's undo and redo "
+               "history. A value of 0 keeps commands until memory is exhausted."),
+            history_group,
             tr("Changing this limit clears the current session's undo and redo "
                "history. The maximum follows Qt's signed-int command index; "
-               "available memory is the practical limit."),
-            history_group));
-    general_layout->addWidget(history_group);
+               "available memory is the practical limit.")));
+    general_preferences->addWidget(history_group, 1, Qt::AlignTop);
 
     auto* recent_group = new QGroupBox(tr("Recent Projects"), general_page);
+    configure_section(recent_group);
     auto* recent_form = new QFormLayout(recent_group);
+    configure_form(recent_form);
     recent_project_limit_ = new QSpinBox(recent_group);
     recent_project_limit_->setObjectName(QStringLiteral("recentProjectLimitPreference"));
     recent_project_limit_->setRange(0, kMaximumRecentProjectLimit);
@@ -140,21 +191,27 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     recent_form->addRow(tr("Projects shown (0 = disabled)"),
                         recent_project_limit_);
     recent_form->addRow(explanatory_label(
+        tr("Controls File > Recent Projects. This machine-local preference is "
+           "never stored inside a project."),
+        recent_group,
         tr("The File menu shows each project's name and full path. This is a local "
            "application preference and is not stored inside projects; its only "
-           "upper bound is Qt's signed-int menu index."),
-        recent_group));
-    general_layout->addWidget(recent_group);
+           "upper bound is Qt's signed-int menu index.")));
+    general_preferences->addWidget(recent_group, 1, Qt::AlignTop);
+    general_layout->addLayout(general_preferences);
 
     auto* defaults_group = new QGroupBox(tr("New Projects"), general_page);
+    configure_section(defaults_group);
     auto* defaults_layout = new QVBoxLayout(defaults_group);
     defaults_layout->addWidget(explanatory_label(
+        tr("Use the open project as the starting point for New Project and its "
+           "selected layer as the Add Layer template. New identities are created."),
+        defaults_group,
         tr("Save the complete project currently open behind this dialog as a "
            "new-project template. New projects receive fresh project and layer "
            "identities; the template may include layers and embedded assets. "
            "The currently selected layer also becomes the template used by "
-           "Add Layer."),
-        defaults_group));
+           "Add Layer.")));
     auto* defaults_buttons = new QHBoxLayout;
     auto* save_defaults = new QPushButton(
         tr("Use Current Project as Default"), defaults_group);
@@ -186,14 +243,22 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     });
     general_layout->addWidget(defaults_group);
     general_layout->addStretch(1);
-    tabs->addTab(general_page, tr("General"));
+    auto* general_scroll = scrollable_settings_page(
+        general_page, tabs, QStringLiteral("applicationSettingsScroll"));
+    tabs->addTab(general_scroll, tr("General"));
 
-    auto* rendering_page = new QWidget(tabs);
+    auto* rendering_page = new QWidget;
     auto* rendering_layout = new QVBoxLayout(rendering_page);
+    rendering_layout->setContentsMargins(12, 12, 12, 12);
+    rendering_layout->setSpacing(12);
+    auto* rendering_columns = new QHBoxLayout;
+    rendering_columns->setSpacing(12);
+    auto* rendering_summary = new QVBoxLayout;
+    rendering_summary->setSpacing(12);
     auto* backend_group = new QGroupBox(tr("Acceleration"), rendering_page);
+    configure_section(backend_group);
     auto* backend_form = new QFormLayout(backend_group);
-    backend_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    backend_form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    configure_form(backend_form);
     const pvt::RendererCapabilities capabilities =
         capabilitiesOverride == nullptr ? pvt::renderer_capabilities()
                                         : *capabilitiesOverride;
@@ -239,18 +304,20 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     backend_form->addRow(tr("Acceleration"), capability_label);
     backend_form->addRow(
         explanatory_label(
+            tr("Used for preview, LIVE, and export. Automatic keeps supported "
+               "work on the GPU and uses bounded CPU lanes for independent work."),
+            backend_group,
             tr("This machine-local backend is used for preview, LIVE, and export. "
                "Automatic is recommended for maximum throughput. On Windows and Linux, "
                "Qt OpenGL admits every valid layer and accelerates supported "
                "generated and surface stages. Ordered dependencies continue on "
-               "bounded CPU lanes."),
-            backend_group));
-    rendering_layout->addWidget(backend_group);
+               "bounded CPU lanes.")));
+    rendering_summary->addWidget(backend_group);
 
     auto* threading_group = new QGroupBox(tr("Concurrency"), rendering_page);
+    configure_section(threading_group);
     auto* threading_form = new QFormLayout(threading_group);
-    threading_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    threading_form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    configure_form(threading_form);
     const int maximum_cpu_workers =
         spin_box_maximum(pvt::kMaximumSequenceWorkers);
     preview_live_cpu_workers_ = new QSpinBox(threading_group);
@@ -559,30 +626,40 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
         threading_group);
     host_status->setObjectName(QStringLiteral("performanceHostStatus"));
     threading_form->addRow(host_status);
-    rendering_layout->addWidget(threading_group);
 
     auto* precision_group = new QGroupBox(
         tr("Working Color Precision"), rendering_page);
+    configure_section(precision_group);
     auto* precision_form = new QFormLayout(precision_group);
+    configure_form(precision_form);
     auto* precision_value = explanatory_label(
         tr("Automatic — native linear RGBA float32"), precision_group);
     precision_value->setObjectName(
         QStringLiteral("workingPrecisionStatus"));
     precision_form->addRow(tr("Internal precision"), precision_value);
     precision_form->addRow(explanatory_label(
+        tr("CPU and GPU processing stays linear float32. Export bit depth remains "
+           "a reproducible, project-local output choice."),
+        precision_group,
         tr("The current CPU and GPU pipelines store and process colors as native "
            "32-bit floating-point RGBA. Simulating 1/2/4-bit precision by "
            "quantizing those buffers would add work and reduce quality, so it "
            "is not presented as a performance option. Export bit depth remains "
-           "an authored, project-local choice for reproducible output."),
-        precision_group));
-    rendering_layout->addWidget(precision_group);
+           "an authored, project-local choice for reproducible output.")));
+    rendering_summary->addWidget(precision_group);
+    rendering_summary->addStretch(1);
+    rendering_columns->addLayout(rendering_summary, 2);
+    rendering_columns->addWidget(threading_group, 3, Qt::AlignTop);
+    rendering_layout->addLayout(rendering_columns);
     rendering_layout->addStretch(1);
-    tabs->addTab(rendering_page, tr("Performance"));
+    auto* rendering_scroll = scrollable_settings_page(
+        rendering_page, tabs,
+        QStringLiteral("applicationSettingsPerformanceScroll"));
+    tabs->addTab(rendering_scroll, tr("Performance"));
 
-    content_layout->addWidget(tabs, 1);
-    scroll->setWidget(content);
-    root->addWidget(scroll, 1);
+    connect(tabs, &QTabWidget::currentChanged, this,
+            [this](int) { scheduleResponsiveLabelLayout(); });
+    root->addWidget(tabs, 1);
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -599,10 +676,45 @@ void ApplicationSettingsDialog::showEvent(QShowEvent* event) {
     const int maximum_width = (std::max)(360, available.width() - 32);
     const int maximum_height = (std::max)(320, available.height() - 32);
     setMaximumSize(maximum_width, maximum_height);
-    setMinimumWidth((std::min)(520, maximum_width));
-    const QSize desired = sizeHint().expandedTo(QSize(520, 560));
-    resize((std::min)(desired.width(), maximum_width),
-           (std::min)(desired.height(), maximum_height));
+    setMinimumWidth((std::min)(680, maximum_width));
+    resize((std::min)(kPreferredDialogWidth, maximum_width),
+           (std::min)(kPreferredDialogHeight, maximum_height));
+    scheduleResponsiveLabelLayout();
+}
+
+void ApplicationSettingsDialog::resizeEvent(QResizeEvent* event) {
+    QDialog::resizeEvent(event);
+    scheduleResponsiveLabelLayout();
+}
+
+void ApplicationSettingsDialog::scheduleResponsiveLabelLayout() {
+    if (responsive_label_layout_pending_) return;
+    responsive_label_layout_pending_ = true;
+    QTimer::singleShot(0, this, [this] {
+        responsive_label_layout_pending_ = false;
+        const QList<QLabel*> labels = findChildren<QLabel*>();
+        for (QLabel* label : labels) {
+            if (!label->wordWrap()) continue;
+            label->setMinimumHeight(0);
+            QSizePolicy policy = label->sizePolicy();
+            policy.setHorizontalPolicy(QSizePolicy::Preferred);
+            policy.setVerticalPolicy(QSizePolicy::Minimum);
+            policy.setHeightForWidth(true);
+            label->setSizePolicy(policy);
+            label->updateGeometry();
+        }
+        if (layout() != nullptr) {
+            layout()->invalidate();
+            layout()->activate();
+        }
+        for (QLabel* label : labels) {
+            if (!label->wordWrap() || !label->hasHeightForWidth()) continue;
+            const int width = label->contentsRect().width();
+            if (width <= 0) continue;
+            const int required = label->heightForWidth(width);
+            if (required > 0) label->setMinimumHeight(required);
+        }
+    });
 }
 
 int ApplicationSettingsDialog::undoLimit() const {

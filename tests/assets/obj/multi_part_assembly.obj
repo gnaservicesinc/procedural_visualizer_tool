@@ -1,0 +1,32 @@
+# Two disconnected named parts in one standard Wavefront OBJ assembly.
+# Position, texture-coordinate, and normal indexes remain file-global.
+mtllib deliberately_ignored.mtl
+
+o Left_Panel
+g Left_Panel_Front
+v -2 -1 0
+v -0.5 -1 0
+v -0.5 1 0
+v -2 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vn 0 0 1
+usemtl Left_Material
+s 1
+f 1/1/1 2/2/1 3/3/1 4/4/1
+
+o Right_Panel
+g Right_Panel_Front
+v 0.5 -1 0
+v 2 -1 0
+v 2 1 0
+v 0.5 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+usemtl Right_Material
+s off
+f 5/5/1 6/6/1 7/7/1 8/8/1

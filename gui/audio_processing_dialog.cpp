@@ -91,6 +91,16 @@ AudioProcessingDialog::AudioProcessingDialog(
         "changes are committed only after a successful reanalysis."));
     intro->setWordWrap(true);
     root->addWidget(intro);
+    auto* order = new QLabel(tr(
+        "Portable order: high-pass → low-pass → 10-band EQ → named ranges → "
+        "analysis. In Live, machine-local Input trim runs first and the gate "
+        "follows EQ, before every analyzer and named range."));
+    order->setObjectName(QStringLiteral("audioProcessingSignalPath"));
+    order->setWordWrap(true);
+    order->setToolTip(tr(
+        "The explicit order avoids ambiguous channel-strip routing. Disabled "
+        "stages are exact bypasses."));
+    root->addWidget(order);
 
     auto* filters = new QGroupBox(tr("Input filters"));
     auto* filter_form = new QFormLayout(filters);
@@ -99,15 +109,25 @@ AudioProcessingDialog::AudioProcessingDialog(
     high_pass_hz_ = new QDoubleSpinBox;
     high_pass_hz_->setRange(0.001, 192000.0);
     high_pass_hz_->setDecimals(3);
+    high_pass_hz_->setSingleStep(1.0);
     high_pass_hz_->setSuffix(tr(" Hz"));
     high_pass_hz_->setValue(initial.high_pass_hz);
+    high_pass_hz_->setToolTip(tr(
+        "Frequencies below this cutoff are attenuated before EQ. Use it to "
+        "remove rumble or DC-like movement; 20 Hz is gentle full-range protection."));
     low_pass_enabled_ = new QCheckBox(tr("Enable low-pass"));
     low_pass_enabled_->setChecked(initial.low_pass_enabled);
     low_pass_hz_ = new QDoubleSpinBox;
     low_pass_hz_->setRange(0.001, 192000.0);
     low_pass_hz_->setDecimals(3);
+    low_pass_hz_->setSingleStep(10.0);
     low_pass_hz_->setSuffix(tr(" Hz"));
     low_pass_hz_->setValue(initial.low_pass_hz);
+    low_pass_hz_->setToolTip(tr(
+        "Frequencies above this cutoff are attenuated before EQ. A cutoff at "
+        "or above the source Nyquist frequency is an exact no-op."));
+    high_pass_enabled_->setToolTip(high_pass_hz_->toolTip());
+    low_pass_enabled_->setToolTip(low_pass_hz_->toolTip());
     auto* high_row = new QWidget;
     auto* high_layout = new QHBoxLayout(high_row);
     high_layout->setContentsMargins(0, 0, 0, 0);
@@ -118,14 +138,17 @@ AudioProcessingDialog::AudioProcessingDialog(
     low_layout->setContentsMargins(0, 0, 0, 0);
     low_layout->addWidget(low_pass_enabled_);
     low_layout->addWidget(low_pass_hz_, 1);
-    filter_form->addRow(tr("Remove lows"), high_row);
-    filter_form->addRow(tr("Remove highs"), low_row);
+    filter_form->addRow(tr("High-pass (remove lows)"), high_row);
+    filter_form->addRow(tr("Low-pass (remove highs)"), low_row);
     root->addWidget(filters);
 
     auto* equalizer = new QGroupBox(tr("Graphical equalizer"));
     auto* equalizer_layout = new QVBoxLayout(equalizer);
     equalizer_enabled_ = new QCheckBox(tr("Enable multi-band EQ"));
     equalizer_enabled_->setChecked(initial.equalizer_enabled);
+    equalizer_enabled_->setToolTip(tr(
+        "Tone-shape the signal after the high/low-pass filters. Each band is a "
+        "fixed-width peaking filter; 0 dB is an exact bypass for that band."));
     equalizer_layout->addWidget(equalizer_enabled_);
     auto* preset_row = new QWidget;
     auto* preset_layout = new QHBoxLayout(preset_row);
@@ -158,6 +181,8 @@ AudioProcessingDialog::AudioProcessingDialog(
         auto* value = new QDoubleSpinBox;
         value->setRange(-24.0, 24.0);
         value->setDecimals(1);
+        value->setSingleStep(0.1);
+        value->setAccelerated(true);
         value->setSuffix(tr(" dB"));
         value->setValue(band.gain_db);
         value->setAlignment(Qt::AlignCenter);

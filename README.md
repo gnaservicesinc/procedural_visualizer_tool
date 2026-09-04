@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.0.0**. The version is read from `VERSION` by every
+Current product version: **17.1.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,29 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.1.0 artist workflow and control refinement
+
+The artist-facing desktop workflow is more compact and explicit without
+changing existing projects. Application Settings now uses a wider,
+screen-clamped layout with compact sections and per-tab scrolling, the LFO
+toolbar action has a palette-aware waveform icon, and effect placement uses
+effect-specific labels and explanations. Choosing an after-surface placement on
+an unmapped layer can enable a neutral default Plane in one undoable step, or
+retain the flat layer while preserving the placement choice.
+
+Live audio calibration now provides linked percentage and decibel input trim,
+fine Response entry, a pre-gate dBFS peak meter, and an explicit signal-path
+display. The gate adds return hysteresis, attack, hold, and release controls
+with historical timing retained as the compatibility default, while adaptive
+normalization is now independent of capture callback size. OBJ regression
+coverage also guarantees that named objects, groups, and disconnected parts
+remain one normalized imported surface.
+
+CPU + GPU scheduling remains GPU-primary with bounded CPU work for independent
+unsupported layers, preserving additive hybrid throughput without adding a
+whole-frame fallback or synchronization point. This refinement does not change
+the project format, public renderer ABI, or SONAME 17.
 
 ## LFO-to-LFO modulation and searchable destinations
 
@@ -58,11 +81,21 @@ shared-library SONAME together to 16.0.0/16; installed consumers must rebuild.
 ## Live audio control and EQ workflow
 
 The dedicated **Live Controls** toolbar button opens the performance window.
-Its audio surface now shows a real-time ten-band post-processing spectrum—the
-same filtered, equalized, gained, and gated signal used by causal analysis—and
-provides a machine-local threshold/release noise gate for quiet stages. Input
-processing includes Flat, Bass lift, Warm, Vocal clarity, Bright, and Dance
-smile EQ presets; applying one enables the EQ while leaving every band editable.
+Its signal path is shown directly in the UI: **Input trim → high/low-pass
+filters → ten-band EQ → gate → adaptive level → response → analysis and
+routes**. Input trim has synchronized percentage and 0.1 dB editors, while
+Response remains a separate fine-step post-normalization control so gain staging
+does not unexpectedly change the gate threshold. A pre-gate peak meter reports
+dBFS before gating, making threshold setup observable instead of trial and error.
+
+The machine-local noise gate exposes threshold, return hysteresis, attack, hold,
+and release. Existing installations retain the historical 5 ms attack, no hold,
+no hysteresis, and 120 ms release until those new controls are changed. The
+real-time spectrum and every named range receive the same gated signal used by
+causal analysis. Input processing includes Flat, Bass lift, Warm, Vocal clarity,
+Bright, and Dance smile EQ presets; applying one enables the EQ while leaving
+every band editable. These calibration additions are machine-local and do not
+change the project schema or its authored audio defaults.
 New projects enable gentle 20 Hz high-pass and 20 kHz low-pass protection for
 project, layer, and Live audio sources. Existing projects retain their saved
 filter choices.
@@ -1072,9 +1105,13 @@ The GUI uses seven focused Flow Workbench categories—Project, Starting Colors,
 Modifiers, Movement, Layer Effects, Post Effects, and Export—alongside a
 topmost-first Layers & Groups dock. Surface mapping is an advanced Modifiers
 section rather than a primary workspace. The Layer Effects workspace filters
-the single ordered effect stack into five type-based catalogs; Texture versus
-mapped-surface placement remains editable on each effect without duplicating
-the stack into separate windows.
+the single ordered effect stack into five type-based catalogs. The same stored
+Texture/Surface placement values remain compatible, but the editor describes
+them in effect-specific terms: movement can affect artwork or the completed
+layer/object, particles can stay on artwork or overlay the layer canvas, and
+stylization can run before or after mapping. Choosing an after-surface placement
+on a flat layer offers to enable a pixel-identical neutral Plane as part of the
+same undoable edit; declining keeps both the placement choice and the flat layer.
 An Edit/LIVE mode switch keeps those seven authoring categories intact while
 opening a purpose-built performance surface. A matte charcoal studio theme,
 familiar action icons, teal/amber/red operating states, and original scalable
@@ -1726,9 +1763,11 @@ the complete OBJ has been generated successfully.
 The OBJ loader accepts ASCII/UTF-8 `v`, `vt`, `vn`, and `f` records,
 including positive or negative indices and the standard `v`, `v/vt`, `v//vn`,
 and `v/vt/vn` face-corner forms. Simple polygon faces are validated and
-triangulated while preserving winding and per-corner attributes. Object/group,
-smoothing, and material metadata is ignored: the procedural frame is the sole
-surface image, and no `.mtl` or sibling file is opened.
+triangulated while preserving winding and per-corner attributes. All faces in
+the file are combined into one normalized surface, including models made from
+many disconnected parts or named with multiple `o`/`g` records. Object/group,
+smoothing, and material metadata is otherwise ignored: the procedural frame is
+the sole surface image, and no `.mtl` or sibling file is opened.
 
 Meshes are uniformly normalized from their referenced bounds and rendered with
 perspective-correct texture/normal interpolation. A triangle uses its authored
@@ -1910,12 +1949,13 @@ workspace without stopping that runtime; returning to Live shows the same
 uninterrupted session. Machine-only audio, MIDI, OSC, and screen bindings are
 kept in local application preferences.
 
-Live audio applies the same authored high-pass, low-pass, and graphical EQ model
-before causal analysis, then analyzes each named frequency range independently.
-The post-processing spectrum makes that analyzed signal visible, and a
-machine-local gate can reject room noise before it drives features. Project and
-layer routes can select named streams explicitly, while Control Map routes can
-use the full-band audio features to animate any compatible setting.
+Live audio applies input trim before the authored high-pass, low-pass, and
+graphical EQ model; the machine-local gate follows EQ and precedes adaptive
+level, response, causal analysis, and independently analyzed named ranges. The
+pre-gate dBFS meter, explicit signal-path label, and threshold/hysteresis/
+attack/hold/release controls make that routing and its operating levels visible.
+Project and layer routes can select named streams explicitly, while Control Map
+routes can use the full-band audio features to animate any compatible setting.
 **Live Controls** opens the workspace automatically in a dedicated companion
 window instead of replacing the editor; while it is active, its routed renderer
 frames also feed

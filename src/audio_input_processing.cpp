@@ -171,25 +171,50 @@ bool AudioNoiseGate::configure(bool enabled, double threshold_db,
                                double attack_milliseconds,
                                double release_milliseconds,
                                double sample_rate, std::string* error) {
+    return configure_advanced(enabled, threshold_db, attack_milliseconds,
+                              0.0, release_milliseconds, 0.0, sample_rate,
+                              error);
+}
+
+bool AudioNoiseGate::configure_advanced(
+    bool enabled, double threshold_db, double attack_milliseconds,
+    double hold_milliseconds, double release_milliseconds,
+    double hysteresis_db, double sample_rate, std::string* error) {
     if (error != nullptr) error->clear();
     if (!std::isfinite(sample_rate) || sample_rate <= 0.0
         || !std::isfinite(threshold_db) || threshold_db < -96.0
         || threshold_db > 0.0
         || !std::isfinite(attack_milliseconds)
         || attack_milliseconds < 0.1 || attack_milliseconds > 1000.0
+        || !std::isfinite(hold_milliseconds)
+        || hold_milliseconds < 0.0 || hold_milliseconds > 5000.0
         || !std::isfinite(release_milliseconds)
-        || release_milliseconds < 1.0 || release_milliseconds > 5000.0) {
+        || release_milliseconds < 1.0 || release_milliseconds > 5000.0
+        || !std::isfinite(hysteresis_db)
+        || hysteresis_db < 0.0 || hysteresis_db > 24.0) {
         return fail(error,
                     "The live gate needs a -96 to 0 dB threshold, a 0.1 to "
-                    "1000 ms attack, and a 1 to 5000 ms release.");
+                    "1000 ms attack, a 0 to 5000 ms hold, a 1 to 5000 ms "
+                    "release, and 0 to 24 dB hysteresis.");
     }
-    enabled_ = enabled;
-    threshold_linear_ = std::pow(10.0, threshold_db / 20.0);
+    const double hold_sample_count = hold_milliseconds * 0.001 * sample_rate;
+    if (!std::isfinite(hold_sample_count)
+        || hold_sample_count
+               > static_cast<double>((std::numeric_limits<std::uint64_t>::max)())) {
+        return fail(error,
+                    "The live gate hold duration exceeds its sample counter.");
+    }
     const auto coefficient = [sample_rate](double milliseconds) {
         return std::exp(-1.0 / (0.001 * milliseconds * sample_rate));
     };
+    enabled_ = enabled;
+    open_threshold_linear_ = std::pow(10.0, threshold_db / 20.0);
+    close_threshold_linear_ = std::pow(
+        10.0, (threshold_db - hysteresis_db) / 20.0);
     attack_coefficient_ = coefficient(attack_milliseconds);
     release_coefficient_ = coefficient(release_milliseconds);
+    hold_samples_ = static_cast<std::uint64_t>(std::ceil(
+        hold_sample_count));
     reset();
     return true;
 }
@@ -202,11 +227,22 @@ float AudioNoiseGate::process(float input) noexcept {
         ? attack_coefficient_ : release_coefficient_;
     envelope_ = detector_coefficient * envelope_
         + (1.0 - detector_coefficient) * magnitude;
-    const double target = envelope_ >= threshold_linear_ ? 1.0 : 0.0;
+    if (!open_) {
+        if (envelope_ >= open_threshold_linear_) {
+            open_ = true;
+            hold_remaining_ = hold_samples_;
+        }
+    } else if (envelope_ >= close_threshold_linear_) {
+        hold_remaining_ = hold_samples_;
+    } else if (hold_remaining_ > 0U) {
+        --hold_remaining_;
+    } else {
+        open_ = false;
+    }
+    const double target = open_ ? 1.0 : 0.0;
     const double gain_coefficient = target > gain_
         ? attack_coefficient_ : release_coefficient_;
     gain_ = gain_coefficient * gain_ + (1.0 - gain_coefficient) * target;
-    open_ = target > 0.5;
     const double output = sample * gain_;
     if (!std::isfinite(output)) {
         reset();
@@ -221,6 +257,7 @@ void AudioNoiseGate::reset() noexcept {
     envelope_ = 0.0;
     gain_ = enabled_ ? 0.0 : 1.0;
     open_ = !enabled_;
+    hold_remaining_ = 0U;
 }
 
 } // namespace pvt::audio

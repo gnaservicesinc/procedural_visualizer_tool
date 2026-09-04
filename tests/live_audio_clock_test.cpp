@@ -167,6 +167,17 @@ void test_null_callbacks_do_not_double_advance_holdover() {
     CHECK(pvt::audio::live_audio_callback_within_holdover(0.500, 500));
     CHECK(!pvt::audio::live_audio_callback_within_holdover(0.501, 500));
     CHECK(!pvt::audio::live_audio_callback_within_holdover(-1.0, 500));
+
+    // Adaptive normalization must decay by elapsed sample time, not by the
+    // user's callback-buffer choice. The legacy/default 128-frame result is
+    // retained exactly while equivalent durations compose identically.
+    const double decay_64 = pvt::audio::live_audio_adaptive_peak_decay(64U);
+    const double decay_128 = pvt::audio::live_audio_adaptive_peak_decay(128U);
+    const double decay_256 = pvt::audio::live_audio_adaptive_peak_decay(256U);
+    CHECK(near(decay_128, 0.9992));
+    CHECK(near(decay_64 * decay_64, decay_128));
+    CHECK(near(decay_128 * decay_128, decay_256));
+    CHECK(near(pvt::audio::live_audio_adaptive_peak_decay(0U), 1.0));
 }
 
 void test_duplicate_device_names_require_opaque_runtime_identity() {
@@ -220,6 +231,50 @@ void test_live_noise_gate_and_spectrum_configuration() {
     CHECK(near(gate.process(0.25F), 0.25));
     CHECK(gate.is_open());
 
+    // The advanced path retains the legacy state/output when its new controls
+    // use their compatibility defaults.
+    pvt::audio::AudioNoiseGate legacy_gate;
+    pvt::audio::AudioNoiseGate compatible_gate;
+    CHECK(legacy_gate.configure(true, -18.0, 2.0, 25.0, 1000.0,
+                                &error));
+    CHECK(compatible_gate.configure_advanced(
+        true, -18.0, 2.0, 0.0, 25.0, 0.0, 1000.0, &error));
+    const std::vector<float> gate_samples{
+        0.0F, 0.02F, 0.7F, 0.7F, 0.1F, 0.0F, 0.0F, 0.5F};
+    for (float sample : gate_samples) {
+        CHECK(legacy_gate.process(sample) == compatible_gate.process(sample));
+        CHECK(legacy_gate.is_open() == compatible_gate.is_open());
+    }
+
+    // Hold keeps an opened gate stable for the authored duration. Hysteresis
+    // then lets a signal below the open threshold but above the quieter close
+    // threshold sustain it instead of chattering.
+    pvt::audio::AudioNoiseGate held_gate;
+    CHECK(held_gate.configure_advanced(
+        true, -6.0, 0.1, 5.0, 1.0, 0.0, 1000.0, &error));
+    CHECK(held_gate.process(1.0F) > 0.9F);
+    CHECK(held_gate.is_open());
+    for (int sample = 0; sample < 5; ++sample) {
+        (void)held_gate.process(0.0F);
+        CHECK(held_gate.is_open());
+    }
+    (void)held_gate.process(0.0F);
+    CHECK(!held_gate.is_open());
+
+    pvt::audio::AudioNoiseGate hysteresis_gate;
+    CHECK(hysteresis_gate.configure_advanced(
+        true, -6.0, 0.1, 0.0, 10.0, 6.0, 1000.0, &error));
+    (void)hysteresis_gate.process(1.0F);
+    CHECK(hysteresis_gate.is_open());
+    for (int sample = 0; sample < 50; ++sample) {
+        (void)hysteresis_gate.process(0.4F);
+    }
+    CHECK(hysteresis_gate.is_open());
+    CHECK(!hysteresis_gate.configure_advanced(
+        true, -50.0, 5.0, -1.0, 120.0, 0.0, 48000.0, &error));
+    CHECK(!hysteresis_gate.configure_advanced(
+        true, -50.0, 5.0, 0.0, 120.0, 25.0, 48000.0, &error));
+
     pvt::audio::LiveAudioCapture capture;
     pvt::AudioInputProcessingConfig processing;
     CHECK(capture.set_processing_config(processing, &error));
@@ -232,6 +287,9 @@ void test_live_noise_gate_and_spectrum_configuration() {
         CHECK(near(snapshot.spectrum.front().level, 0.0));
     }
     CHECK(capture.set_gate_config(true, -48.0, 5.0, 120.0, &error));
+    CHECK(!capture.snapshot().gate_open);
+    CHECK(capture.set_gate_config_advanced(
+        true, -48.0, 3.0, 40.0, 180.0, 4.0, &error));
     CHECK(!capture.snapshot().gate_open);
 
     // The authored 20 kHz protection/EQ stays portable to a 32 kHz source:

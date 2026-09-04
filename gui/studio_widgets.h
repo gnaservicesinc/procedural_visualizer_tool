@@ -41,6 +41,7 @@ public:
     void setLevel(double level);
     void setCaption(const QString& caption);
     void setPeakWarning(bool warning);
+    void setDecibelScale(bool enabled);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -49,6 +50,7 @@ private:
     double level_ = 0.0;
     QString caption_;
     bool peak_warning_ = false;
+    bool decibel_scale_ = false;
 };
 
 class LiveSpectrumMeter final : public QWidget {

@@ -82,6 +82,19 @@ int main(int argc, char** argv) {
         return fail(10, "disconnected triangle components were not deterministic: "
                             + error);
     }
+    ObjMesh named_assembly;
+    if (!load_obj_mesh((assets / "multi_part_assembly.obj").string(),
+                       named_assembly, &error)
+        || named_assembly.positions.size() != 8U
+        || named_assembly.triangles.size() != 4U
+        || named_assembly.connected_component_count != 2U
+        || named_assembly.triangle_components
+               != std::vector<std::size_t>{0U, 0U, 1U, 1U}
+        || std::fabs(named_assembly.bounds_min.x + 2.0) > 1.0e-12
+        || std::fabs(named_assembly.bounds_max.x - 2.0) > 1.0e-12) {
+        return fail(14, "named multi-part OBJ was not imported as one mesh: "
+                            + error);
+    }
     const std::size_t metadata_bytes =
         disconnected_mesh.triangle_components.capacity()
         * sizeof(std::size_t);

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -124,7 +125,17 @@ QSize LiveLevelMeter::sizeHint() const { return {150, 106}; }
 void LiveLevelMeter::setLevel(double requested) {
     if (!std::isfinite(requested)) return;
     const double bounded = std::clamp(requested, 0.0, 1.0);
-    if (std::fabs(bounded - level_) < 0.002) return;
+    if (decibel_scale_) {
+        const auto display_db = [](double level) {
+            return level > 0.0
+                ? std::max(-96.0, 20.0 * std::log10(level)) : -96.0;
+        };
+        if (std::fabs(display_db(bounded) - display_db(level_)) < 0.1) {
+            return;
+        }
+    } else if (std::fabs(bounded - level_) < 0.002) {
+        return;
+    }
     level_ = bounded;
     update();
 }
@@ -135,6 +146,11 @@ void LiveLevelMeter::setCaption(const QString& caption) {
 void LiveLevelMeter::setPeakWarning(bool warning) {
     if (peak_warning_ == warning) return;
     peak_warning_ = warning;
+    update();
+}
+void LiveLevelMeter::setDecibelScale(bool enabled) {
+    if (decibel_scale_ == enabled) return;
+    decibel_scale_ = enabled;
     update();
 }
 
@@ -154,7 +170,13 @@ void LiveLevelMeter::paintEvent(QPaintEvent*) {
     const double gap = 2.0;
     const double segment_width = (channel.width() - gap * (segments - 1))
                                  / segments;
-    const int active = static_cast<int>(std::lround(level_ * segments));
+    const double level_db = level_ > 0.0
+        ? 20.0 * std::log10(level_)
+        : -std::numeric_limits<double>::infinity();
+    const double meter_amount = decibel_scale_
+        ? std::clamp((level_db + 60.0) / 60.0, 0.0, 1.0)
+        : level_;
+    const int active = static_cast<int>(std::lround(meter_amount * segments));
     for (int index = 0; index < segments; ++index) {
         const QRectF segment(channel.left() + index * (segment_width + gap),
                              channel.top(), segment_width, channel.height());
@@ -173,9 +195,13 @@ void LiveLevelMeter::paintEvent(QPaintEvent*) {
     display.setPixelSize(std::max(10, fontMetrics().height()));
     painter.setFont(display);
     painter.setPen(QColor(QStringLiteral("#9cece0")));
-    const QString value = QStringLiteral("%1  %2")
-        .arg(QString::number(level_ * 100.0, 'f', 0) + QLatin1Char('%'),
-             caption_);
+    const QString level_text = decibel_scale_
+        ? (std::isfinite(level_db)
+               ? QString::number(std::max(-96.0, level_db), 'f', 1)
+                     + QStringLiteral(" dBFS")
+               : QStringLiteral("−∞ dBFS"))
+        : QString::number(level_ * 100.0, 'f', 0) + QLatin1Char('%');
+    const QString value = QStringLiteral("%1  %2").arg(level_text, caption_);
     painter.drawText(face.adjusted(8, face.height() - 30, -8, -4),
                      Qt::AlignCenter, value);
 }
@@ -184,7 +210,8 @@ LiveSpectrumMeter::LiveSpectrumMeter(QWidget* parent) : QWidget(parent) {
     setMinimumSize(280, 126);
     setAccessibleName(tr("Live post-EQ spectrum"));
     setToolTip(tr(
-        "Real-time frequency energy after the input filters, EQ, gain, and noise gate—the same signal used by Live analysis."));
+        "Real-time frequency energy after Input trim, filters, EQ, and the "
+        "noise gate—the same signal used by Live analysis."));
 }
 
 QSize LiveSpectrumMeter::sizeHint() const { return {520, 150}; }

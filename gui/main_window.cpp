@@ -26,6 +26,7 @@
 #include <QByteArray>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QColor>
 #include <QColorSpace>
 #include <QColorDialog>
 #include <QComboBox>
@@ -54,6 +55,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QInputDialog>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -62,10 +64,14 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPalette>
 #include <QPushButton>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QProcess>
+#include <QPixmap>
 #include <QRandomGenerator>
 #include <QScrollArea>
 #include <QSaveFile>
@@ -127,6 +133,45 @@ constexpr std::size_t kGibibyte = kMebibyte * 1024U;
 constexpr int kReusableMotionPathIdRole = Qt::UserRole + 1;
 constexpr auto kNewLayerTemplateIndexKey =
     "preferences/customNewLayerTemplateIndex";
+
+QIcon lfo_waveform_icon(const QPalette& palette) {
+    QIcon icon;
+    QColor waveform = palette.color(QPalette::ButtonText);
+    if (!waveform.isValid()) waveform = QColor(Qt::white);
+    for (const int size : {16, 20, 24, 32, 48, 64}) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        QColor guide = waveform;
+        guide.setAlphaF(0.28F);
+        QPen guide_pen(guide, std::max(1.0, size * 0.045));
+        guide_pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(guide_pen);
+        const qreal center = size * 0.5;
+        painter.drawLine(QPointF(size * 0.10, center),
+                         QPointF(size * 0.90, center));
+
+        QPen waveform_pen(waveform, std::max(1.5, size * 0.095));
+        waveform_pen.setCapStyle(Qt::RoundCap);
+        waveform_pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(waveform_pen);
+        QPainterPath wave;
+        wave.moveTo(size * 0.08, center);
+        wave.cubicTo(size * 0.17, center, size * 0.18, size * 0.20,
+                     size * 0.30, size * 0.20);
+        wave.cubicTo(size * 0.42, size * 0.20, size * 0.42, size * 0.80,
+                     size * 0.54, size * 0.80);
+        wave.cubicTo(size * 0.66, size * 0.80, size * 0.67, size * 0.20,
+                     size * 0.79, size * 0.20);
+        wave.cubicTo(size * 0.88, size * 0.20, size * 0.89, center,
+                     size * 0.92, center);
+        painter.drawPath(wave);
+        icon.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+    }
+    return icon;
+}
 
 bool post_process_stage_enabled(const pvt::RenderConfig& config,
                                 pvt::PostProcessStage stage) {
@@ -893,6 +938,110 @@ pvt::EffectConfig new_effect_for_ui(pvt::EffectType type) {
     // invariant independent of any renderer or project-file defaults.
     effect.space = pvt::EffectSpace::Texture;
     return effect;
+}
+
+struct EffectPlacementPresentation {
+    QString field_label;
+    QString texture_label;
+    QString surface_label;
+    QString texture_help;
+    QString surface_help;
+};
+
+EffectPlacementPresentation effect_placement_presentation(
+    pvt::EffectType type) {
+    switch (type) {
+        case pvt::EffectType::ParticleField:
+            return {
+                QObject::tr("Particle placement"),
+                QObject::tr("Artwork (before surface)"),
+                QObject::tr("Layer canvas (after surface)"),
+                QObject::tr(
+                    "Particles are generated on the artwork first, then wrap, "
+                    "clip, move, and rotate with any mapped surface."),
+                QObject::tr(
+                    "Particles are generated after surface mapping and whole-layer "
+                    "motion. They overlay the layer canvas instead of being clipped "
+                    "or wrapped to the object."),
+            };
+        case pvt::EffectType::EndlessZoom:
+        case pvt::EffectType::Ripple:
+        case pvt::EffectType::Shake:
+        case pvt::EffectType::FlagWave:
+        case pvt::EffectType::LensDistortion:
+        case pvt::EffectType::Twirl:
+        case pvt::EffectType::Water:
+            return {
+                QObject::tr("Movement placement"),
+                QObject::tr("Artwork (before surface)"),
+                QObject::tr("Layer / object (after surface)"),
+                QObject::tr(
+                    "The effect moves or deforms pixels inside the artwork before "
+                    "surface wrapping. Any mapped object then carries that result."),
+                QObject::tr(
+                    "The effect runs after surface mapping and whole-layer motion, so "
+                    "it moves or deforms the completed layer/object and its silhouette."),
+            };
+        case pvt::EffectType::Glitch:
+        case pvt::EffectType::Starburst:
+        case pvt::EffectType::EdgeDetect:
+            return {
+                QObject::tr("Effect placement"),
+                QObject::tr("Artwork (before surface)"),
+                QObject::tr("Mapped result (after surface)"),
+                QObject::tr(
+                    "The stylization is painted into the artwork before it is wrapped "
+                    "onto a surface or moved as a layer."),
+                QObject::tr(
+                    "The stylization is applied in canvas coordinates after surface "
+                    "mapping and whole-layer motion."),
+            };
+        case pvt::EffectType::Glow:
+        case pvt::EffectType::BlockScale:
+        case pvt::EffectType::Blur:
+            return {
+                QObject::tr("Effect placement"),
+                QObject::tr("Artwork (before surface)"),
+                QObject::tr("Mapped result (after surface)"),
+                QObject::tr(
+                    "The effect is applied before surface wrapping, so it becomes part "
+                    "of the artwork carried by the mapped object."),
+                QObject::tr(
+                    "The effect is applied to the completed canvas result after surface "
+                    "mapping and whole-layer motion."),
+            };
+    }
+    return {};
+}
+
+pvt::SurfaceConfig neutral_surface_for_effect_placement(
+    const pvt::SurfaceConfig& current) {
+    // Enabling the neutral Plane must be visually lossless, while keeping any
+    // already embedded sources available if the artist later rebuilds the
+    // authored surface. Undo still restores every prior setting as one edit.
+    const std::string obj_path = current.obj_path;
+    const std::string obj_sha256 = current.obj_sha256;
+    const std::string obj_basename = current.obj_basename;
+    const std::string displacement_path = current.plane_displacement.path;
+    const std::string displacement_sha256 = current.plane_displacement.sha256;
+    const std::string displacement_basename =
+        current.plane_displacement.basename;
+    const std::string environment_path = current.environment_map.path;
+    const std::string environment_sha256 = current.environment_map.sha256;
+    const std::string environment_basename = current.environment_map.basename;
+
+    pvt::SurfaceConfig neutral;
+    neutral.enabled = true;
+    neutral.obj_path = obj_path;
+    neutral.obj_sha256 = obj_sha256;
+    neutral.obj_basename = obj_basename;
+    neutral.plane_displacement.path = displacement_path;
+    neutral.plane_displacement.sha256 = displacement_sha256;
+    neutral.plane_displacement.basename = displacement_basename;
+    neutral.environment_map.path = environment_path;
+    neutral.environment_map.sha256 = environment_sha256;
+    neutral.environment_map.basename = environment_basename;
+    return neutral;
 }
 
 void populate_audio_response_combo(QComboBox* combo) {
@@ -4167,9 +4316,10 @@ QWidget* MainWindow::createEffectPage() {
     layout->addWidget(effect_stage_summary_);
     auto* explanation = new QLabel(
         tr("Each effect appears in exactly one category based on its type. New effects "
-           "start on Texture, which is the useful default. Mapped-surface placement remains "
-           "an advanced per-effect option; it does not create a duplicate effects window. "
-           "Centers and local radii remain draggable in the preview."));
+           "start before surface mapping, which is the useful default. Placement wording "
+           "adapts to the selected effect: it describes whether movement, particles, or "
+           "styling belongs to the artwork or to the completed layer/object. Centers and "
+           "local radii remain draggable in the preview."));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
 
@@ -4219,10 +4369,19 @@ QWidget* MainWindow::createEffectPage() {
     effect_type_ = new QComboBox;
     populate_effect_types(effect_type_, effect_category_filter_);
     effect_space_ = new QComboBox;
+    effect_space_->setObjectName(QStringLiteral("effectPlacement"));
+    effect_space_->setAccessibleName(tr("Effect placement stage"));
     add_enum_item(effect_space_, tr("Texture (default)"),
                   pvt::EffectSpace::Texture);
     add_enum_item(effect_space_, tr("Mapped surface (advanced)"),
                   pvt::EffectSpace::Surface);
+    effect_placement_help_ = new QLabel;
+    effect_placement_help_->setObjectName(
+        QStringLiteral("effectPlacementExplanation"));
+    effect_placement_help_->setAccessibleName(tr("Placement explanation"));
+    effect_placement_help_->setWordWrap(true);
+    effect_placement_help_->setSizePolicy(
+        QSizePolicy::Preferred, QSizePolicy::Minimum);
     effect_cycles_ = integer_editor(kMinimumIntegerParameter,
                                     kMaximumIntegerParameter);
     effect_phase_ = real_editor(-kMaximumRenderParameter,
@@ -4302,6 +4461,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_form_->addRow(tr("Audio response"), effect_audio_response_);
     effect_form_->addRow(tr("Type"), effect_type_);
     effect_form_->addRow(tr("Placement"), effect_space_);
+    effect_form_->addRow(effect_placement_help_);
     effect_form_->addRow(tr("Cycles per loop"), effect_cycles_);
     effect_form_->addRow(tr("Phase (degrees)"), effect_phase_);
     effect_form_->addRow(tr("Blank-space handling"), effect_edge_);
@@ -4363,8 +4523,6 @@ QWidget* MainWindow::createEffectPage() {
         tr("Creates a new deterministic layout without changing the other authored controls."));
     effect_particle_orientation_->setToolTip(
         tr("Fixed preserves the authored travel-angle alignment. Follow motion makes trails point behind the actual orbit. Random keeps motion-following trails and rotates each silhouette independently."));
-    effect_space_->setToolTip(
-        tr("Texture is the normal choice and works whether surface mapping is on or off. Mapped surface is an advanced after-mapping placement for the uncommon cases that need it."));
     effect_blur_type_->setToolTip(
         tr("Gaussian and Box use separable passes; Directional follows the authored angle; Radial rotates samples around the center; Zoom pulls samples toward the center."));
     effect_blur_passes_->setToolTip(
@@ -4868,8 +5026,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     surface_obj_path_->setPlaceholderText(tr("Path to a Wavefront .obj file"));
     surface_obj_path_->setToolTip(
         tr("Custom OBJ surfaces use authored texture coordinates when present, "
-           "or automatic box projection otherwise. Relative paths start from "
-           "the application's working directory."));
+           "or automatic box projection otherwise. Every named object, group, "
+           "and disconnected part in the file is kept together as one surface. "
+           "Relative paths start from the application's working directory."));
     surface_obj_browse_ = new QPushButton(tr("Browse…"));
     obj_path_layout->addWidget(surface_obj_path_, 1);
     obj_path_layout->addWidget(surface_obj_browse_);
@@ -7301,6 +7460,7 @@ void MainWindow::createToolbar() {
     settings_menu->addAction(randomize_mix_action_);
     auto* lfo_action = new QAction(tr("LFOs…"), this);
     lfo_action->setObjectName(QStringLiteral("parameterLfoAction"));
+    lfo_action->setIcon(lfo_waveform_icon(palette()));
     lfo_action->setToolTip(tr(
         "Animate numeric values between an authored minimum and maximum with "
         "a seamless low-frequency oscillator."));
@@ -12363,7 +12523,8 @@ void MainWindow::loadSelectedSwing() {
 }
 
 void MainWindow::updateEffectEditorVisibility() {
-    if (effect_form_ == nullptr || effect_type_ == nullptr) {
+    if (effect_form_ == nullptr || effect_type_ == nullptr
+        || effect_space_ == nullptr || effect_placement_help_ == nullptr) {
         return;
     }
     const auto type = static_cast<pvt::EffectType>(effect_type_->currentData().toInt());
@@ -12387,6 +12548,41 @@ void MainWindow::updateEffectEditorVisibility() {
         effect_blur_type_->currentData().toInt());
     const auto particle_profile = static_cast<pvt::ParticleRenderProfile>(
         effect_particle_profile_->currentData().toInt());
+
+    const EffectPlacementPresentation placement =
+        effect_placement_presentation(type);
+    const int texture_placement = effect_space_->findData(
+        static_cast<int>(pvt::EffectSpace::Texture));
+    const int surface_placement = effect_space_->findData(
+        static_cast<int>(pvt::EffectSpace::Surface));
+    if (texture_placement >= 0) {
+        effect_space_->setItemText(texture_placement,
+                                   placement.texture_label);
+        effect_space_->setItemData(texture_placement,
+                                   placement.texture_help,
+                                   Qt::ToolTipRole);
+    }
+    if (surface_placement >= 0) {
+        effect_space_->setItemText(surface_placement,
+                                   placement.surface_label);
+        effect_space_->setItemData(surface_placement,
+                                   placement.surface_help,
+                                   Qt::ToolTipRole);
+    }
+    set_form_label(effect_form_, effect_space_, placement.field_label);
+    const auto selected_space = static_cast<pvt::EffectSpace>(
+        effect_space_->currentData().toInt());
+    QString placement_help = selected_space == pvt::EffectSpace::Surface
+                                 ? placement.surface_help
+                                 : placement.texture_help;
+    if (selected_space == pvt::EffectSpace::Surface
+        && !config_.surface.enabled) {
+        placement_help += tr(
+            " 3D surface mapping is currently off; this stage still runs on "
+            "the flat layer after whole-layer motion.");
+    }
+    effect_space_->setToolTip(placement_help);
+    effect_placement_help_->setText(placement_help);
 
     effect_form_->setRowVisible(effect_edge_, coordinate_effect || is_blur);
     effect_form_->setRowVisible(effect_intensity_, !is_blur);
@@ -12696,7 +12892,7 @@ void MainWindow::loadSelectedEffect() {
     const bool enabled = index.has_value();
     for (auto* widget : std::initializer_list<QWidget*>{
              effect_name_, effect_enabled_, effect_sync_, effect_audio_response_,
-             effect_type_, effect_space_,
+             effect_type_, effect_space_, effect_placement_help_,
              effect_cycles_,
              effect_phase_, effect_edge_, effect_intensity_, effect_magnitude_,
              effect_frequency_, effect_secondary_, effect_center_x_, effect_center_y_,
@@ -15240,8 +15436,54 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
         effect.audio_response = static_cast<pvt::AudioResponseMode>(
             effect_audio_response_->currentData().toInt());
     } else if (changed_editor == effect_space_) {
-        effect.space = static_cast<pvt::EffectSpace>(
+        const auto selected_space = static_cast<pvt::EffectSpace>(
             effect_space_->currentData().toInt());
+        const bool entered_surface_stage =
+            effect.space != pvt::EffectSpace::Surface
+            && selected_space == pvt::EffectSpace::Surface;
+        effect.space = selected_space;
+        if (entered_surface_stage && !config_.surface.enabled) {
+            QMessageBox prompt(this);
+            prompt.setObjectName(
+                QStringLiteral("effectPlacementSurfacePrompt"));
+            prompt.setIcon(QMessageBox::Question);
+            prompt.setWindowTitle(tr("Enable surface mapping?"));
+            prompt.setText(tr(
+                "This effect will run after the layer's surface and motion stage."));
+            prompt.setInformativeText(tr(
+                "3D surface mapping is off for this layer. Enable a neutral Plane "
+                "now? The neutral Plane is visually identical to the flat artwork "
+                "until you shape or move it. Embedded surface source files remain "
+                "available, and the placement choice is kept either way."));
+            QAbstractButton* enable_surface = prompt.addButton(
+                tr("Enable Neutral Plane"), QMessageBox::AcceptRole);
+            QAbstractButton* keep_disabled = prompt.addButton(
+                tr("Keep Surface Off"), QMessageBox::RejectRole);
+            enable_surface->setObjectName(
+                QStringLiteral("enableNeutralSurfaceForEffect"));
+            keep_disabled->setObjectName(
+                QStringLiteral("keepSurfaceOffForEffect"));
+            enable_surface->setToolTip(tr(
+                "Enable visually neutral surface defaults as part of this effect edit."));
+            keep_disabled->setToolTip(tr(
+                "Keep the after-surface placement on the current flat layer."));
+            prompt.setDefaultButton(
+                qobject_cast<QPushButton*>(enable_surface));
+            prompt.setEscapeButton(keep_disabled);
+            prompt.exec();
+            if (prompt.clickedButton() == enable_surface) {
+                config_.surface = neutral_surface_for_effect_placement(
+                    config_.surface);
+                loadGlobalEditors();
+                status_->setText(tr(
+                    "Enabled a neutral Plane surface. The artwork stays flat "
+                    "until you change its surface controls."));
+            } else {
+                status_->setText(tr(
+                    "Kept 3D surface mapping off. This effect still runs after "
+                    "whole-layer motion on the flat layer."));
+            }
+        }
     } else if (changed_editor == effect_type_) {
         const auto old_type = effect.type;
         const auto new_type =
@@ -18036,9 +18278,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const auto* live_audio_gain = live_workspace_ != nullptr
         ? live_workspace_->findChild<QDoubleSpinBox*>(
               QStringLiteral("liveAudioGainValue")) : nullptr;
+    const auto* live_audio_gain_decibels = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QDoubleSpinBox*>(
+              QStringLiteral("liveAudioGainDecibels")) : nullptr;
     const auto* live_audio_sensitivity = live_workspace_ != nullptr
         ? live_workspace_->findChild<QDoubleSpinBox*>(
               QStringLiteral("liveAudioSensitivityValue")) : nullptr;
+    const auto* live_audio_signal_path = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QLabel*>(
+              QStringLiteral("liveAudioSignalPath")) : nullptr;
+    const auto* live_pre_gate_meter = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QWidget*>(
+              QStringLiteral("livePreGateMeter")) : nullptr;
     const auto* live_audio_spectrum = live_workspace_ != nullptr
         ? live_workspace_->findChild<QWidget*>(
               QStringLiteral("liveAudioSpectrum")) : nullptr;
@@ -18048,6 +18299,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
     const auto* live_noise_gate_threshold = live_workspace_ != nullptr
         ? live_workspace_->findChild<QDoubleSpinBox*>(
               QStringLiteral("liveNoiseGateThreshold")) : nullptr;
+    const auto* live_noise_gate_hysteresis = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QDoubleSpinBox*>(
+              QStringLiteral("liveNoiseGateHysteresis")) : nullptr;
+    const auto* live_noise_gate_attack = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QDoubleSpinBox*>(
+              QStringLiteral("liveNoiseGateAttack")) : nullptr;
+    const auto* live_noise_gate_hold = live_workspace_ != nullptr
+        ? live_workspace_->findChild<QSpinBox*>(
+              QStringLiteral("liveNoiseGateHold")) : nullptr;
     const auto* live_noise_gate_release = live_workspace_ != nullptr
         ? live_workspace_->findChild<QSpinBox*>(
               QStringLiteral("liveNoiseGateRelease")) : nullptr;
@@ -18127,14 +18387,33 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_audio_period->minimum() != 1
         || live_audio_period->maximum() <= 2048
         || live_audio_gain == nullptr || live_audio_gain->maximum() <= 400.0
+        || live_audio_gain->singleStep() > 0.1
+        || live_audio_gain_decibels == nullptr
+        || live_audio_gain_decibels->minimum() > -60.0
+        || live_audio_gain_decibels->maximum() < 24.0
+        || live_audio_gain_decibels->singleStep() > 0.1
         || live_audio_sensitivity == nullptr
         || live_audio_sensitivity->minimum() != 0.0
         || live_audio_sensitivity->maximum() <= 400.0
+        || live_audio_sensitivity->singleStep() > 0.1
+        || live_audio_signal_path == nullptr
+        || !live_audio_signal_path->text().contains(tr("Input trim"))
+        || !live_audio_signal_path->text().contains(tr("gate"))
+        || live_pre_gate_meter == nullptr
         || live_audio_spectrum == nullptr
         || live_noise_gate == nullptr
         || live_noise_gate_threshold == nullptr
         || live_noise_gate_threshold->minimum() > -96.0
         || live_noise_gate_threshold->maximum() < 0.0
+        || live_noise_gate_hysteresis == nullptr
+        || live_noise_gate_hysteresis->minimum() > 0.0
+        || live_noise_gate_hysteresis->maximum() < 24.0
+        || live_noise_gate_attack == nullptr
+        || live_noise_gate_attack->minimum() > 0.1
+        || live_noise_gate_attack->maximum() < 1000.0
+        || live_noise_gate_hold == nullptr
+        || live_noise_gate_hold->minimum() > 0
+        || live_noise_gate_hold->maximum() < 5000
         || live_noise_gate_release == nullptr
         || live_noise_gate_release->minimum() > 1
         || live_noise_gate_release->maximum() < 5000
@@ -18960,6 +19239,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || !supplied_memory_text_compact
             || !memory_unit_conversion_preserved
             || lfo_action == nullptr || lfo_action->text() != tr("LFOs…")
+            || lfo_action->icon().isNull()
             || save_defaults == nullptr || restore_defaults == nullptr
             || settings_scroll == nullptr || !settings_scroll->widgetResizable()
             || capability_status == nullptr
@@ -20277,6 +20557,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     bool glow_ranges_valid = false;
     bool blur_ranges_valid = false;
     bool block_ranges_valid = false;
+    bool placement_copy_valid = false;
     {
         const QSignalBlocker type_blocker(effect_type_);
         const QSignalBlocker intensity_blocker(effect_intensity_);
@@ -20294,6 +20575,40 @@ bool MainWindow::runSmokeChecks(QString* error) {
                                 && effect_radius_->minimum() > 0.0
                                 && effect_threshold_->minimum() == 0.0
                                 && effect_threshold_->maximum() == 1.0;
+        const int texture_placement = effect_space_->findData(
+            static_cast<int>(pvt::EffectSpace::Texture));
+        const int surface_placement = effect_space_->findData(
+            static_cast<int>(pvt::EffectSpace::Surface));
+        const QString particle_surface_label = surface_placement >= 0
+            ? effect_space_->itemText(surface_placement) : QString{};
+        placement_copy_valid = texture_placement >= 0
+            && surface_placement >= 0
+            && effect_space_->itemText(texture_placement)
+                   == tr("Artwork (before surface)")
+            && particle_surface_label
+                   == tr("Layer canvas (after surface)")
+            && effect_space_->itemData(surface_placement, Qt::ToolTipRole)
+                   .toString().contains(tr("instead of being clipped"))
+            && effect_placement_help_ != nullptr
+            && effect_placement_help_->objectName()
+                   == QStringLiteral("effectPlacementExplanation");
+
+        populate_effect_types(effect_type_, MovementEffects);
+        const int shake_type = effect_type_->findData(
+            static_cast<int>(pvt::EffectType::Shake));
+        effect_type_->setCurrentIndex(shake_type);
+        updateEffectEditorVisibility();
+        auto* placement_label = qobject_cast<QLabel*>(
+            effect_form_->labelForField(effect_space_));
+        placement_copy_valid = placement_copy_valid && shake_type >= 0
+            && effect_space_->itemText(texture_placement)
+                   == tr("Artwork (before surface)")
+            && effect_space_->itemText(surface_placement)
+                   == tr("Layer / object (after surface)")
+            && effect_space_->itemText(surface_placement)
+                   != particle_surface_label
+            && placement_label != nullptr
+            && placement_label->text() == tr("Movement placement");
 
         populate_effect_types(effect_type_, LightAndEnergyEffects);
         const int glow_type = effect_type_->findData(
@@ -20330,16 +20645,131 @@ bool MainWindow::runSmokeChecks(QString* error) {
         block_ranges_valid = block_ranges_valid
                              && effect_frequency_->minimum() == 0.25;
         effect_ranges_valid = particle_ranges_valid && glow_ranges_valid
-                              && blur_ranges_valid && block_ranges_valid;
+                              && blur_ranges_valid && block_ranges_valid
+                              && placement_copy_valid;
     }
     setEffectCategory(previous_effect_category);
     if (!effect_ranges_valid) {
         if (error != nullptr) {
-            *error = tr("Effect editor ranges do not match validation (particle %1, glow %2, blur %3, block %4).")
+            *error = tr("Effect editor ranges or placement guidance do not match validation (particle %1, glow %2, blur %3, block %4, placement %5).")
                 .arg(particle_ranges_valid)
                 .arg(glow_ranges_valid)
                 .arg(blur_ranges_valid)
-                .arg(block_ranges_valid);
+                .arg(block_ranges_valid)
+                .arg(placement_copy_valid);
+        }
+        return false;
+    }
+
+    // Selecting an after-surface stage on a flat layer offers, but does not
+    // silently force, a 3D setup. Accepting the offer is one undoable edit and
+    // starts from a pixel-identical Plane even if inactive authored controls
+    // previously contained a visibly transformed surface.
+    bool placement_offer_valid = false;
+    {
+        const ActiveDocumentState placement_state = captureActiveState();
+        const std::string placement_layer = active_layer_uuid_;
+        const int placement_category = effect_category_filter_;
+        config_.effects.clear();
+        auto placement_particle =
+            pvt::default_effect(pvt::EffectType::ParticleField);
+        placement_particle.id = pvt::allocate_id(config_);
+        placement_particle.enabled = true;
+        placement_particle.space = pvt::EffectSpace::Texture;
+        const std::uint64_t particle_id = placement_particle.id;
+        config_.effects.push_back(std::move(placement_particle));
+        config_.surface = pvt::SurfaceConfig{};
+        config_.surface.enabled = false;
+        config_.surface.mapping = pvt::SurfaceMapping::Sphere;
+        config_.surface.projection = pvt::SurfaceProjection::Perspective;
+        config_.surface.sizing = pvt::SurfaceSizing::ShortSide;
+        config_.surface.rotation_y_degrees = 37.0;
+        config_.surface.size_percent = 82.0;
+        config_.surface.position_x_percent = 11.0;
+        config_.surface.lighting = 0.6;
+        syncActiveRender();
+        loadGlobalEditors();
+        setEffectCategory(ParticleEffects);
+        refreshEffectList(particle_id);
+
+        bool prompt_seen = false;
+        QTimer::singleShot(0, this, [&prompt_seen] {
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* message = qobject_cast<QMessageBox*>(widget);
+                if (message == nullptr
+                    || message->objectName()
+                           != QStringLiteral("effectPlacementSurfacePrompt")) {
+                    continue;
+                }
+                if (auto* button = message->findChild<QPushButton*>(
+                        QStringLiteral("enableNeutralSurfaceForEffect"))) {
+                    prompt_seen = true;
+                    button->click();
+                }
+                return;
+            }
+        });
+        const int surface_placement = effect_space_->findData(
+            static_cast<int>(pvt::EffectSpace::Surface));
+        const int undo_before = undo_stack_->index();
+        effect_space_->setCurrentIndex(surface_placement);
+        QCoreApplication::processEvents();
+        const bool neutral_enabled = prompt_seen && surface_placement >= 0
+            && config_.effects.size() == 1U
+            && config_.effects.front().space == pvt::EffectSpace::Surface
+            && activeLayer() != nullptr
+            && activeLayer()->render.effects.size() == 1U
+            && activeLayer()->render.effects.front().space
+                   == pvt::EffectSpace::Surface
+            && config_.surface.enabled
+            && config_.surface.mapping == pvt::SurfaceMapping::Plane
+            && config_.surface.projection
+                   == pvt::SurfaceProjection::Orthographic
+            && config_.surface.sizing == pvt::SurfaceSizing::Contain
+            && config_.surface.rotation_x_turns_per_loop == 0
+            && config_.surface.rotation_y_turns_per_loop == 0
+            && config_.surface.rotation_z_turns_per_loop == 0
+            && config_.surface.rotation_x_degrees == 0.0
+            && config_.surface.rotation_y_degrees == 0.0
+            && config_.surface.rotation_z_degrees == 0.0
+            && config_.surface.size_percent == 100.0
+            && config_.surface.scale_x == 1.0
+            && config_.surface.scale_y == 1.0
+            && config_.surface.scale_z == 1.0
+            && config_.surface.position_x_percent == 0.0
+            && config_.surface.position_y_percent == 0.0
+            && config_.surface.position_z == 0.0
+            && config_.surface.camera_distance == 3.4
+            && config_.surface.focal_length == 3.4
+            && config_.surface.curvature == 1.0
+            && config_.surface.lighting == 0.0
+            && !config_.surface.plane_displacement.enabled
+            && !config_.surface.environment_map.enabled
+            && config_.surface.mesh_construction.mode
+                   == pvt::MeshConstructionMode::None
+            && undo_stack_->index() == undo_before + 1;
+        undo_stack_->undo();
+        const bool undo_restored = !config_.surface.enabled
+            && config_.surface.mapping == pvt::SurfaceMapping::Sphere
+            && config_.surface.projection
+                   == pvt::SurfaceProjection::Perspective
+            && config_.surface.rotation_y_degrees == 37.0
+            && config_.surface.size_percent == 82.0
+            && config_.surface.position_x_percent == 11.0
+            && config_.surface.lighting == 0.6
+            && config_.effects.size() == 1U
+            && config_.effects.front().space == pvt::EffectSpace::Texture;
+        placement_offer_valid = neutral_enabled && undo_restored;
+        restoreActiveState(placement_layer, placement_state);
+        setEffectCategory(placement_category);
+        clearUndoHistory(false);
+        undo_stack_->setClean();
+    }
+    if (!placement_offer_valid) {
+        if (error != nullptr) {
+            *error = tr(
+                "Mapped placement did not offer a neutral, visually lossless "
+                "surface setup as one undoable edit.");
         }
         return false;
     }

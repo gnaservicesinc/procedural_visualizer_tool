@@ -235,6 +235,15 @@ bool live_audio_callback_within_holdover(
         <= static_cast<double>(allowed_milliseconds);
 }
 
+double live_audio_adaptive_peak_decay(
+    std::uint32_t callback_frames) noexcept {
+    constexpr double kLegacyDecayPerDefaultBlock = 0.9992;
+    constexpr double kDefaultCallbackFrames = 128.0;
+    return std::pow(kLegacyDecayPerDefaultBlock,
+                    static_cast<double>(callback_frames)
+                        / kDefaultCallbackFrames);
+}
+
 struct LiveAudioCapture::Impl {
     struct FrequencyStreamState {
         std::string uuid;
@@ -261,10 +270,10 @@ struct LiveAudioCapture::Impl {
         }
 
         void finish_block(std::uint64_t now_frame, ma_uint32 frame_count,
-                          double response) noexcept {
+                          double response, double adaptive_decay) noexcept {
             const double rms = std::sqrt(
                 squared / static_cast<double>(frame_count));
-            adaptive_peak = std::max(rms, adaptive_peak * 0.9992);
+            adaptive_peak = std::max(rms, adaptive_peak * adaptive_decay);
             const double normalization = std::max(0.015, adaptive_peak);
             const float normalized = unit(static_cast<float>(
                 response * rms / normalization));
@@ -356,6 +365,8 @@ struct LiveAudioCapture::Impl {
     std::atomic<float> flatness{0.0F};
     std::atomic<float> chroma_hue{0.0F};
     std::atomic<float> chroma_strength{0.0F};
+    std::atomic<float> pre_gate_rms{0.0F};
+    std::atomic<float> pre_gate_peak{0.0F};
     std::atomic<double> bpm{0.0};
     std::atomic<std::uint64_t> received_frames{0U};
     std::atomic<std::uint64_t> beat_generation{0U};
@@ -407,14 +418,28 @@ struct LiveAudioCapture::Impl {
         const double mid_alpha = 1.0 - std::exp(
             -2.0 * kPi * 2400.0 / static_cast<double>(kCaptureSampleRate));
         double total_squared = 0.0;
+        double pre_gate_squared = 0.0;
+        double pre_gate_peak = 0.0;
         double bass_squared = 0.0;
         double mid_squared = 0.0;
         double treble_squared = 0.0;
         std::uint32_t zero_crossings = 0U;
         for (ma_uint32 frame = 0U; frame < frame_count; ++frame) {
-            const float processed = self->input_processor.process(samples[frame]);
-            const float gated = self->gate.process(static_cast<float>(
-                static_cast<double>(processed) * input_gain));
+            // Console-style order: input trim first, then conditioning and
+            // tone shaping. The gate listens to that post-EQ signal before
+            // adaptive response normalization. The scalar trim and linear
+            // filters commute, so existing settings retain their sound while
+            // the order now matches the controls musicians expect.
+            const float trimmed = static_cast<float>(std::clamp(
+                static_cast<double>(samples[frame]) * input_gain,
+                -static_cast<double>((std::numeric_limits<float>::max)()),
+                static_cast<double>((std::numeric_limits<float>::max)())));
+            const float processed = self->input_processor.process(trimmed);
+            const double detector_sample = static_cast<double>(processed);
+            pre_gate_squared += detector_sample * detector_sample;
+            pre_gate_peak = std::max(pre_gate_peak,
+                                     std::fabs(detector_sample));
+            const float gated = self->gate.process(processed);
             const double sample = static_cast<double>(gated);
             for (const auto& stream : self->frequency_streams) {
                 stream->push(static_cast<float>(sample));
@@ -440,9 +465,20 @@ struct LiveAudioCapture::Impl {
 
         const double divisor = static_cast<double>(frame_count);
         const double rms = std::sqrt(total_squared / divisor);
+        // Compute the time-scaled release once per hardware callback and
+        // share it with every named stream. This keeps the real-time path
+        // bounded when a project uses many frequency ranges.
+        const double adaptive_decay = live_audio_adaptive_peak_decay(
+            frame_count);
+        self->pre_gate_rms.store(unit(static_cast<float>(
+                                      std::sqrt(pre_gate_squared / divisor))),
+                                 std::memory_order_relaxed);
+        self->pre_gate_peak.store(unit(static_cast<float>(pre_gate_peak)),
+                                  std::memory_order_relaxed);
         // A slowly falling peak keeps response useful for both quiet line input
         // and hot microphones without an authoring-time normalization pass.
-        self->adaptive_peak = std::max(rms, self->adaptive_peak * 0.9992);
+        self->adaptive_peak = std::max(
+            rms, self->adaptive_peak * adaptive_decay);
         const double normalization = std::max(0.015, self->adaptive_peak);
         const float normalized_energy = unit(static_cast<float>(
             response * rms / normalization));
@@ -501,7 +537,8 @@ struct LiveAudioCapture::Impl {
 
         const std::uint64_t now_frame = first_frame + frame_count;
         for (const auto& stream : self->frequency_streams) {
-            stream->finish_block(now_frame, frame_count, response);
+            stream->finish_block(now_frame, frame_count, response,
+                                 adaptive_decay);
         }
         const std::uint64_t previous_beat_frame = self->last_beat_frame.load(
             std::memory_order_relaxed);
@@ -560,6 +597,8 @@ struct LiveAudioCapture::Impl {
         flatness.store(0.0F, std::memory_order_relaxed);
         chroma_hue.store(0.0F, std::memory_order_relaxed);
         chroma_strength.store(0.0F, std::memory_order_relaxed);
+        pre_gate_rms.store(0.0F, std::memory_order_relaxed);
+        pre_gate_peak.store(0.0F, std::memory_order_relaxed);
         received_frames.store(0U, std::memory_order_relaxed);
         beat_generation.fetch_add(1U, std::memory_order_acq_rel);
         bpm.store(0.0, std::memory_order_relaxed);
@@ -780,6 +819,9 @@ LiveAudioSnapshot LiveAudioCapture::snapshot() const {
         && value.last_valid_callback_age_seconds >= 0.0
         && value.last_valid_callback_age_seconds < 0.5;
     value.gate_open = impl_->gate_open.load(std::memory_order_relaxed);
+    value.pre_gate_rms = impl_->pre_gate_rms.load(std::memory_order_relaxed);
+    value.pre_gate_peak = impl_->pre_gate_peak.load(
+        std::memory_order_relaxed);
     value.spectrum.reserve(impl_->spectrum.size());
     for (const auto& band : impl_->spectrum) {
         value.spectrum.push_back({
@@ -906,12 +948,21 @@ bool LiveAudioCapture::set_gate_config(bool enabled, double threshold_db,
                                        double attack_milliseconds,
                                        double release_milliseconds,
                                        std::string* error) {
+    return set_gate_config_advanced(
+        enabled, threshold_db, attack_milliseconds, 0.0,
+        release_milliseconds, 0.0, error);
+}
+
+bool LiveAudioCapture::set_gate_config_advanced(
+    bool enabled, double threshold_db, double attack_milliseconds,
+    double hold_milliseconds, double release_milliseconds,
+    double hysteresis_db, std::string* error) {
     if (is_running()) {
         return fail(error, "Stop live audio before changing its noise gate.");
     }
-    if (!impl_->gate.configure(enabled, threshold_db, attack_milliseconds,
-                               release_milliseconds, kCaptureSampleRate,
-                               error)) {
+    if (!impl_->gate.configure_advanced(
+            enabled, threshold_db, attack_milliseconds, hold_milliseconds,
+            release_milliseconds, hysteresis_db, kCaptureSampleRate, error)) {
         return false;
     }
     impl_->gate_open.store(impl_->gate.is_open(), std::memory_order_relaxed);

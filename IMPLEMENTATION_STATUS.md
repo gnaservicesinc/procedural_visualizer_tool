@@ -1,10 +1,48 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-08-27
+Last updated: 2026-09-04
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 17.1.0 artist workflow and control refinement
+
+The CPU + GPU renderer contract is unchanged: supported layers remain GPU-owned,
+bounded CPU workers handle independent unsupported work, and ordered CPU stages
+remain inside an otherwise accelerated layer. This preserves the additive hybrid
+throughput observed on complex projects without introducing a whole-frame CPU
+retry or a new synchronization point.
+
+The desktop toolbar now gives LFOs a scalable, palette-aware waveform icon. The
+Application Settings dialog uses a wider screen-clamped professional layout,
+compact top-aligned sections, two-column organization where space permits, and
+per-tab scrolling; short visible explanations retain their full detail in
+tooltips and accessibility descriptions.
+
+Effect placement keeps the existing persisted Texture/Surface values and render
+order, but presents effect-specific wording and inline explanations. Movement,
+particle, stylize, and finishing effects each describe what their two stages do.
+Selecting the after-surface stage while mapping is disabled offers to enable the
+pixel-identical default Plane, or to retain the flat layer; either choice keeps
+the placement edit, and accepting the offer is one undoable state change.
+
+Live audio now exposes a fixed, visible channel path: Input trim, filters, EQ,
+gate, adaptive level, Response, analysis and routes. Input trim has linked percent
+and 0.1 dB entry, Response has fine-step exact entry, and a pre-gate dBFS peak
+meter makes gain and threshold calibration observable. The machine-local gate
+adds return hysteresis, attack, and hold alongside threshold/release, with zero
+hysteresis/hold and the prior 5 ms/120 ms timing as compatibility defaults.
+Adaptive normalization release is sample-time based, so changing the capture
+callback size no longer changes response behavior while 128-frame behavior stays
+exact.
+
+Wavefront OBJ import is explicitly covered for files containing multiple named
+objects, groups, and disconnected components. All faces retain file-global
+indices, share one normalization, and render as one surface; parser and rendered-
+coverage fixtures prevent future loaders from replacing or stopping at a later
+`o`/`g` record. No project format, public renderer ABI, or authored default was
+changed by this refinement.
 
 ## 17.0.0 LFO-to-LFO modulation and destination workflow
 
@@ -1656,6 +1694,20 @@ consumers do not inherit minizip requirements.
   state, and no-op normalized edits do not create commands.
 
 ## Validation record
+
+The 2026-09-04 unreleased artist-workflow refinement passed the complete local
+Qt-enabled suite 25/25. Coverage includes legacy/advanced gate equivalence,
+hysteresis and hold behavior, callback-size-independent adaptive release,
+effect-specific placement copy, the optional neutral-Plane prompt as one
+undoable edit, the LFO toolbar icon, compact Application Settings reachability,
+and parser/render coverage for a named two-part disconnected OBJ. CPU core,
+project composite, Metal, OpenGL, bundle, CLI, audio analysis, native video, and
+GUI smoke tests all remained green. A post-build Layer Effects screenshot
+confirmed the palette-aware toolbar icon and adaptive placement label; native
+desktop capture was unavailable, so Application Settings visual verification
+is represented by its real Qt layout plus the screen-fit GUI smoke path.
+`git diff --check` passed. The only linker diagnostic is the already-known local
+beta-SDK `libc++` deployment-version warning.
 
 The 2026-08-17 2.0.1 correctness and security-hardening release passed the
 complete Qt-enabled Release suite 21/21, the independent C++20 suite 20/20,

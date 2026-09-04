@@ -68,8 +68,22 @@ constexpr double kMaximumLiveMappingMagnitude =
     static_cast<double>((std::numeric_limits<float>::max)());
 constexpr double kMaximumAudioPercent =
     kMaximumLiveMappingMagnitude * 100.0;
+constexpr double kMinimumInputTrimDecibels = -60.0;
+constexpr double kMaximumInputTrimDecibels = 24.0;
+constexpr double kPeakWarningLinear = 0.8912509381337456; // -1 dBFS
 
 constexpr double kDefaultRealtimeFps = 60.0;
+
+double audioPercentToDecibels(double percent) {
+    return percent > 0.0
+        ? 20.0 * std::log10(percent / 100.0)
+        : kMinimumInputTrimDecibels;
+}
+
+double audioDecibelsToPercent(double decibels) {
+    if (decibels <= kMinimumInputTrimDecibels) return 0.0;
+    return 100.0 * std::pow(10.0, decibels / 20.0);
+}
 
 QString screen_base_identifier(const QScreen* screen) {
     if (screen == nullptr) return {};
@@ -546,12 +560,16 @@ struct LiveWorkspace::Impl {
     QCheckBox* prevent_sleep = nullptr;
     StudioKnob* gain = nullptr;
     QDoubleSpinBox* gain_value = nullptr;
+    QDoubleSpinBox* gain_decibels = nullptr;
     StudioKnob* sensitivity = nullptr;
     QDoubleSpinBox* sensitivity_value = nullptr;
     QSpinBox* audio_period = nullptr;
     QPushButton* audio_processing = nullptr;
     QCheckBox* gate_enabled = nullptr;
     QDoubleSpinBox* gate_threshold = nullptr;
+    QDoubleSpinBox* gate_hysteresis = nullptr;
+    QDoubleSpinBox* gate_attack = nullptr;
+    QSpinBox* gate_hold = nullptr;
     QSpinBox* gate_release = nullptr;
     QSpinBox* latency = nullptr;
     QSpinBox* device_latency = nullptr;
@@ -934,6 +952,16 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
 
     QFormLayout* audio_form = nullptr;
     QWidget* analysis = titled_group(q->tr("AUDIO ANALYSIS + CALIBRATION"), audio_form);
+    auto* signal_path = new QLabel(q->tr(
+        "Input trim  →  high/low-pass filters  →  10-band EQ  →  gate  →  "
+        "adaptive level  →  response  →  analysis + routes"));
+    signal_path->setObjectName(QStringLiteral("liveAudioSignalPath"));
+    signal_path->setWordWrap(true);
+    signal_path->setToolTip(q->tr(
+        "The fixed order matches a conventional channel-strip starting point. "
+        "The gate listens to the trimmed, filtered, and equalized signal; "
+        "Response is applied later and cannot change the gate threshold."));
+    audio_form->addRow(q->tr("Signal path"), signal_path);
     audio_period = new QSpinBox;
     audio_period->setObjectName(QStringLiteral("liveAudioPeriodFrames"));
     audio_period->setRange(1, kMaximumUiInteger);
@@ -964,10 +992,25 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gain_value = new QDoubleSpinBox;
     gain_value->setObjectName(QStringLiteral("liveAudioGainValue"));
     gain_value->setDecimals(3);
+    gain_value->setSingleStep(0.1);
+    gain_value->setAccelerated(true);
     gain_value->setRange(0.0, kMaximumAudioPercent);
     gain_value->setSuffix(QStringLiteral("%"));
     gain_value->setValue(stored_gain);
     gain_value->setMaximumWidth(145);
+    gain_decibels = new QDoubleSpinBox;
+    gain_decibels->setObjectName(QStringLiteral("liveAudioGainDecibels"));
+    gain_decibels->setRange(kMinimumInputTrimDecibels,
+                            kMaximumInputTrimDecibels);
+    gain_decibels->setDecimals(1);
+    gain_decibels->setSingleStep(0.1);
+    gain_decibels->setAccelerated(true);
+    gain_decibels->setSuffix(q->tr(" dB"));
+    gain_decibels->setSpecialValueText(q->tr("Mute"));
+    gain_decibels->setValue(std::clamp(
+        audioPercentToDecibels(stored_gain), kMinimumInputTrimDecibels,
+        kMaximumInputTrimDecibels));
+    gain_decibels->setMaximumWidth(105);
     sensitivity = new StudioKnob;
     sensitivity->setRange(0, 400);
     sensitivity->setValue(static_cast<int>(std::lround(
@@ -977,19 +1020,40 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     sensitivity_value->setObjectName(
         QStringLiteral("liveAudioSensitivityValue"));
     sensitivity_value->setDecimals(3);
+    sensitivity_value->setSingleStep(0.1);
+    sensitivity_value->setAccelerated(true);
     sensitivity_value->setRange(0.0, kMaximumAudioPercent);
     sensitivity_value->setSuffix(QStringLiteral("%"));
     sensitivity_value->setValue(stored_sensitivity);
     sensitivity_value->setMaximumWidth(145);
-    const QString direct_value_tooltip = q->tr(
-        "The knob provides a fast 0–400% performance range. Enter any larger finite value here when the input or response needs it.");
-    gain_value->setToolTip(direct_value_tooltip);
-    sensitivity_value->setToolTip(direct_value_tooltip);
+    gain->setToolTip(q->tr(
+        "Input trim before filters, EQ, and the gate. Use the dB field for "
+        "familiar 0.1 dB adjustments or enter an exact percentage."));
+    gain_value->setToolTip(q->tr(
+        "Exact input-trim multiplier. 100% is unity gain. Values beyond the "
+        "knob's quick 0–400% range remain supported here."));
+    gain_decibels->setToolTip(q->tr(
+        "A synchronized dB view of Input trim. Mute is 0%; 0 dB is 100%. "
+        "The percentage field retains values outside this quick ±dB range."));
+    sensitivity->setToolTip(q->tr(
+        "Analysis response after the gate and adaptive level stage. Lower it "
+        "for more visual headroom; raise it for stronger movement."));
+    sensitivity_value->setToolTip(q->tr(
+        "Exact post-normalization response multiplier. It changes visual "
+        "features and beat sensitivity, but not input level or gate threshold. "
+        "Values beyond the knob's quick 0–400% range remain supported."));
     audio_meter = new LiveLevelMeter;
-    audio_meter->setCaption(q->tr("INPUT"));
-    knob_layout->addWidget(new QLabel(q->tr("GAIN")));
+    audio_meter->setObjectName(QStringLiteral("livePreGateMeter"));
+    audio_meter->setAccessibleName(q->tr("Pre-gate input peak meter"));
+    audio_meter->setCaption(q->tr("PRE-GATE PEAK"));
+    audio_meter->setDecibelScale(true);
+    audio_meter->setToolTip(q->tr(
+        "Peak dBFS after Input trim, high/low-pass filters, and EQ, before the "
+        "gate. Set trim so normal peaks stay below the red region."));
+    knob_layout->addWidget(new QLabel(q->tr("INPUT TRIM")));
     knob_layout->addWidget(gain);
     knob_layout->addWidget(gain_value);
+    knob_layout->addWidget(gain_decibels);
     knob_layout->addWidget(new QLabel(q->tr("RESPONSE")));
     knob_layout->addWidget(sensitivity);
     knob_layout->addWidget(sensitivity_value);
@@ -1010,24 +1074,72 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_threshold->setSuffix(q->tr(" dBFS"));
     gate_threshold->setValue(QSettings().value(
         QStringLiteral("live/noiseGateThresholdDb"), -50.0).toDouble());
+    gate_threshold->setToolTip(q->tr(
+        "The post-EQ dBFS level that opens the gate. Compare it with the "
+        "pre-gate meter while the wanted source is playing."));
+    gate_hysteresis = new QDoubleSpinBox;
+    gate_hysteresis->setObjectName(
+        QStringLiteral("liveNoiseGateHysteresis"));
+    gate_hysteresis->setRange(0.0, 24.0);
+    gate_hysteresis->setDecimals(1);
+    gate_hysteresis->setSingleStep(0.5);
+    gate_hysteresis->setSuffix(q->tr(" dB return"));
+    gate_hysteresis->setValue(QSettings().value(
+        QStringLiteral("live/noiseGateHysteresisDb"), 0.0).toDouble());
+    gate_hysteresis->setToolTip(q->tr(
+        "How much quieter the signal must become before the gate may close. "
+        "A few dB prevents chatter near the opening threshold."));
+    gate_attack = new QDoubleSpinBox;
+    gate_attack->setObjectName(QStringLiteral("liveNoiseGateAttack"));
+    gate_attack->setRange(0.1, 1000.0);
+    gate_attack->setDecimals(1);
+    gate_attack->setSingleStep(0.1);
+    gate_attack->setSuffix(q->tr(" ms attack"));
+    gate_attack->setValue(QSettings().value(
+        QStringLiteral("live/noiseGateAttackMs"), 5.0).toDouble());
+    gate_attack->setToolTip(q->tr(
+        "How quickly the gate opens. Short attack preserves drum and pick "
+        "transients; a longer attack rejects brief clicks."));
+    gate_hold = new QSpinBox;
+    gate_hold->setObjectName(QStringLiteral("liveNoiseGateHold"));
+    gate_hold->setRange(0, 5000);
+    gate_hold->setSuffix(q->tr(" ms hold"));
+    gate_hold->setValue(QSettings().value(
+        QStringLiteral("live/noiseGateHoldMs"), 0).toInt());
+    gate_hold->setToolTip(q->tr(
+        "Minimum time the gate stays open after the signal falls below its "
+        "return level. Hold prevents rapid open/close chatter."));
     gate_release = new QSpinBox;
     gate_release->setObjectName(QStringLiteral("liveNoiseGateRelease"));
     gate_release->setRange(1, 5000);
     gate_release->setSuffix(q->tr(" ms release"));
     gate_release->setValue(QSettings().value(
         QStringLiteral("live/noiseGateReleaseMs"), 120).toInt());
+    gate_release->setToolTip(q->tr(
+        "How gradually the gate closes after hold. Longer release preserves "
+        "natural decays; shorter release makes a tighter rhythmic cut."));
     auto* gate_row = new QWidget;
     auto* gate_layout = new QHBoxLayout(gate_row);
     gate_layout->setContentsMargins(0, 0, 0, 0);
     gate_layout->addWidget(gate_enabled);
     gate_layout->addWidget(gate_threshold);
-    gate_layout->addWidget(gate_release);
+    gate_layout->addWidget(gate_hysteresis);
     gate_layout->addStretch(1);
     gate_row->setToolTip(q->tr(
-        "Machine-local calibration after filters, EQ, and input gain. The "
-        "5 ms attack preserves transients; release controls how gently the "
-        "signal closes below threshold."));
-    audio_form->addRow(q->tr("Quiet input"), gate_row);
+        "Machine-local post-EQ gate. Threshold opens it; Return hysteresis "
+        "sets a quieter closing level."));
+    audio_form->addRow(q->tr("Gate threshold"), gate_row);
+    auto* gate_timing_row = new QWidget;
+    auto* gate_timing_layout = new QHBoxLayout(gate_timing_row);
+    gate_timing_layout->setContentsMargins(0, 0, 0, 0);
+    gate_timing_layout->addWidget(gate_attack);
+    gate_timing_layout->addWidget(gate_hold);
+    gate_timing_layout->addWidget(gate_release);
+    gate_timing_layout->addStretch(1);
+    gate_timing_row->setToolTip(q->tr(
+        "Machine-local gate timing. Existing installations retain 5 ms "
+        "attack, no hold, and 120 ms release until changed."));
+    audio_form->addRow(q->tr("Gate timing"), gate_timing_row);
     latency = new QSpinBox;
     latency->setRange((std::numeric_limits<int>::min)(), kMaximumUiInteger);
     latency->setSuffix(q->tr(" ms"));
@@ -1228,7 +1340,11 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     });
     QObject::connect(gain, &QDial::valueChanged, q, [this](int value) {
         const QSignalBlocker blocker(gain_value);
+        const QSignalBlocker decibel_blocker(gain_decibels);
         gain_value->setValue(static_cast<double>(value));
+        gain_decibels->setValue(std::clamp(
+            audioPercentToDecibels(static_cast<double>(value)),
+            kMinimumInputTrimDecibels, kMaximumInputTrimDecibels));
         QSettings().setValue(QStringLiteral("live/audioGain"),
                              static_cast<double>(value));
         audio.set_gain(static_cast<double>(value) / 100.0);
@@ -1236,11 +1352,20 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QObject::connect(gain_value, qOverload<double>(&QDoubleSpinBox::valueChanged),
                      q, [this](double value) {
         const QSignalBlocker blocker(gain);
+        const QSignalBlocker decibel_blocker(gain_decibels);
         gain->setValue(static_cast<int>(std::lround(
             std::min(value, 400.0))));
+        gain_decibels->setValue(std::clamp(
+            audioPercentToDecibels(value), kMinimumInputTrimDecibels,
+            kMaximumInputTrimDecibels));
         QSettings().setValue(QStringLiteral("live/audioGain"), value);
         audio.set_gain(value / 100.0);
     });
+    QObject::connect(
+        gain_decibels, qOverload<double>(&QDoubleSpinBox::valueChanged), q,
+        [this](double value) {
+            gain_value->setValue(audioDecibelsToPercent(value));
+        });
     QObject::connect(sensitivity, &QDial::valueChanged, q, [this](int value) {
         const QSignalBlocker blocker(sensitivity_value);
         sensitivity_value->setValue(static_cast<double>(value));
@@ -1299,6 +1424,12 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
                           gate_enabled->isChecked());
         settings.setValue(QStringLiteral("live/noiseGateThresholdDb"),
                           gate_threshold->value());
+        settings.setValue(QStringLiteral("live/noiseGateHysteresisDb"),
+                          gate_hysteresis->value());
+        settings.setValue(QStringLiteral("live/noiseGateAttackMs"),
+                          gate_attack->value());
+        settings.setValue(QStringLiteral("live/noiseGateHoldMs"),
+                          gate_hold->value());
         settings.setValue(QStringLiteral("live/noiseGateReleaseMs"),
                           gate_release->value());
         if (active) restartAudio();
@@ -1306,6 +1437,12 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QObject::connect(gate_enabled, &QCheckBox::toggled, q,
                      [apply_gate_calibration] { apply_gate_calibration(); });
     QObject::connect(gate_threshold, &QDoubleSpinBox::editingFinished, q,
+                     [apply_gate_calibration] { apply_gate_calibration(); });
+    QObject::connect(gate_hysteresis, &QDoubleSpinBox::editingFinished, q,
+                     [apply_gate_calibration] { apply_gate_calibration(); });
+    QObject::connect(gate_attack, &QDoubleSpinBox::editingFinished, q,
+                     [apply_gate_calibration] { apply_gate_calibration(); });
+    QObject::connect(gate_hold, &QSpinBox::editingFinished, q,
                      [apply_gate_calibration] { apply_gate_calibration(); });
     QObject::connect(gate_release, &QSpinBox::editingFinished, q,
                      [apply_gate_calibration] { apply_gate_calibration(); });
@@ -2437,9 +2574,11 @@ void LiveWorkspace::Impl::restartAudio() {
                 .arg(qtext(error)));
         return;
     }
-    if (!audio.set_gate_config(
-            gate_enabled->isChecked(), gate_threshold->value(), 5.0,
-            static_cast<double>(gate_release->value()), &error)) {
+    if (!audio.set_gate_config_advanced(
+            gate_enabled->isChecked(), gate_threshold->value(),
+            gate_attack->value(), static_cast<double>(gate_hold->value()),
+            static_cast<double>(gate_release->value()),
+            gate_hysteresis->value(), &error)) {
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
         emit q->runtimeStatusChanged(
@@ -2858,8 +2997,9 @@ void LiveWorkspace::Impl::frameFinished(
 void LiveWorkspace::Impl::runtimeTick() {
     if (!active) return;
     audio_snapshot = audio.snapshot();
-    audio_meter->setLevel(audio_snapshot.features.energy);
-    audio_meter->setPeakWarning(audio_snapshot.features.energy > 0.97F);
+    audio_meter->setLevel(audio_snapshot.pre_gate_peak);
+    audio_meter->setPeakWarning(
+        audio_snapshot.pre_gate_peak >= kPeakWarningLinear);
     QVector<QPointF> spectrum_bands;
     spectrum_bands.reserve(static_cast<qsizetype>(audio_snapshot.spectrum.size()));
     for (const auto& band : audio_snapshot.spectrum) {

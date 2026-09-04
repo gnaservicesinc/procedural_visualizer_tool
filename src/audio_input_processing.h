@@ -3,6 +3,7 @@
 
 #include "procedural_visualizer_tool.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,16 @@ public:
     bool configure(bool enabled, double threshold_db,
                    double attack_milliseconds, double release_milliseconds,
                    double sample_rate, std::string* error = nullptr);
+    // Extended channel-strip controls. The legacy configure() overload is
+    // retained and delegates here with zero hold and zero hysteresis, so
+    // existing callers preserve their current behavior.
+    bool configure_advanced(bool enabled, double threshold_db,
+                            double attack_milliseconds,
+                            double hold_milliseconds,
+                            double release_milliseconds,
+                            double hysteresis_db,
+                            double sample_rate,
+                            std::string* error = nullptr);
     float process(float sample) noexcept;
     void reset() noexcept;
     bool is_open() const noexcept { return open_; }
@@ -62,11 +73,14 @@ public:
 private:
     bool enabled_ = false;
     bool open_ = true;
-    double threshold_linear_ = 0.0;
+    double open_threshold_linear_ = 0.0;
+    double close_threshold_linear_ = 0.0;
     double attack_coefficient_ = 0.0;
     double release_coefficient_ = 0.0;
     double envelope_ = 0.0;
     double gain_ = 1.0;
+    std::uint64_t hold_samples_ = 0U;
+    std::uint64_t hold_remaining_ = 0U;
 };
 
 } // namespace pvt::audio

@@ -76,6 +76,11 @@ inline constexpr int kLiveAudioNormalCallbackToleranceMilliseconds = 100;
 bool live_audio_callback_within_holdover(
     double last_valid_callback_age_seconds,
     int holdover_milliseconds) noexcept;
+// Converts the legacy 0.9992-per-128-frame normalization release into a
+// duration-based coefficient. This keeps the default 128-frame response exact
+// while making other capture buffer sizes react at the same rate.
+double live_audio_adaptive_peak_decay(
+    std::uint32_t callback_frames) noexcept;
 
 struct LiveAudioSnapshot {
     struct SpectrumBand {
@@ -107,6 +112,12 @@ struct LiveAudioSnapshot {
     std::uint64_t callback_dropouts = 0U;
     bool receiving = false;
     bool gate_open = true;
+    // Linear full-scale-relative levels after input trim and filters/EQ,
+    // immediately before the gate. These are deliberately independent of
+    // adaptive visual response normalization so gain staging and gate
+    // threshold are legible; consumers may convert them to dBFS for display.
+    float pre_gate_rms = 0.0F;
+    float pre_gate_peak = 0.0F;
     std::vector<SpectrumBand> spectrum;
     std::vector<FrequencyStream> frequency_streams;
 };
@@ -139,6 +150,12 @@ public:
                          double attack_milliseconds,
                          double release_milliseconds,
                          std::string* error = nullptr);
+    bool set_gate_config_advanced(bool enabled, double threshold_db,
+                                  double attack_milliseconds,
+                                  double hold_milliseconds,
+                                  double release_milliseconds,
+                                  double hysteresis_db,
+                                  std::string* error = nullptr);
 
     // Gain and sensitivity are live-performance controls, not destructive
     // edits to incoming audio. Both are lock-free and callback safe.

@@ -488,6 +488,10 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 17.1.0 refines the artist-facing desktop workflow without changing existing projects. Application Settings uses a wider screen-clamped layout with compact sections and per-tab scrolling, the LFO toolbar action has a palette-aware waveform icon, and effect placement uses effect-specific labels and explanations. Choosing an after-surface placement on an unmapped layer can enable a neutral default Plane in one undoable step or retain the flat layer while preserving the placement choice.
+
+          Live audio calibration adds linked percentage and decibel input trim, fine Response entry, a pre-gate dBFS peak meter, an explicit signal-path display, and gate hysteresis/attack/hold/release controls with compatibility defaults. Adaptive normalization is now independent of capture callback size, and OBJ regression coverage guarantees that named objects, groups, and disconnected parts remain one normalized imported surface. CPU + GPU scheduling remains GPU-primary with bounded CPU work for independent unsupported layers. Project formats, the public renderer ABI, and SONAME 17 are unchanged.
+
           Version 17.0.0 lets one LFO modulate every runtime-editable setting of another LFO, including enable state, waveform, range, cycles, phase, pulse shape, delay, and skipped cycles. Stable layer-local IDs preserve links across edits and persistence; iterative dependency resolution is list-order independent, while self-links, missing targets, duplicate identities, and cycles are rejected. The LFO editor adds destination categories and case-insensitive type-to-search completion instead of one unbroken destination list.
 
           Setup/layer formats advance to 25/22 with deterministic ID migration for older oscillators. The public `ParameterLfo` layout grows, so the product ABI and SONAME advance together to 17 and installed-library clients must rebuild.

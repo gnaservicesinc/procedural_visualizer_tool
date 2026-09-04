@@ -85,7 +85,9 @@ struct ObjLoadLimits {
 };
 
 // Parses v, vt, vn and f records. Faces may use v, v/vt, v//vn or v/vt/vn
-// corners, including negative relative indices. Simple convex or concave
+// corners, including negative relative indices. Every face across every OBJ
+// object/group record is retained in one mesh, so disconnected multi-part
+// assemblies import and render as one surface. Simple convex or concave
 // polygons are validated and triangulated with winding-preserving projected
 // ear clipping; self-intersecting faces are rejected explicitly. Common
 // metadata records are ignored; no MTL or sibling file is opened.

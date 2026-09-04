@@ -666,9 +666,12 @@ bool parse_obj_mesh(std::string_view contents,
                         return false;
                     }
                 }
-                // o/g/s/usemtl/mtllib and unsupported geometry records are
-                // intentionally ignored. In particular, mtllib never causes a
-                // second file to be opened.
+                // o/g records are boundaries for authoring tools, not separate
+                // imports: retaining all file-global faces deliberately makes
+                // disconnected multi-part assemblies one renderable mesh.
+                // s/usemtl/mtllib and unsupported geometry records are also
+                // ignored. In particular, mtllib never causes a second file to
+                // be opened.
             }
             if (newline == std::string_view::npos) {
                 break;
