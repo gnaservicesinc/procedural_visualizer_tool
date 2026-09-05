@@ -5343,6 +5343,10 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     CHECK(loaded.surface.environment_map.basename == "studio.exr");
     CHECK(loaded.swings.back().radius == original.swings.back().radius);
     CHECK(loaded.effects.back().space == pvt::EffectSpace::Surface);
+    CHECK(original.effects.back().edge_mode == pvt::EdgeMode::Automatic);
+    CHECK(loaded.effects.back().edge_mode == pvt::EdgeMode::Automatic);
+    CHECK(pvt::effective_effect_edge_mode(loaded.effects.back())
+          == pvt::EdgeMode::Alpha);
     CHECK(loaded.effects.back().area_radius == original.effects.back().area_radius);
     const auto loaded_particles = std::find_if(
         loaded.effects.begin(), loaded.effects.end(), [](const auto& effect) {

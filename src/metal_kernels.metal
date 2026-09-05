@@ -397,6 +397,16 @@ ulong square_spiral_traversal_index(ulong x, ulong y,
     return prefix + offset;
 }
 
+// Preview reference coordinates often need integer rescaling, but using a
+// wide divide unconditionally makes this more expensive than the hue itself.
+ulong generated_reference_coordinate(uint coordinate, uint reference,
+                                     uint rendered) {
+    if (reference == rendered) return ulong(coordinate);
+    const ulong product = ulong(coordinate) * ulong(reference);
+    return product <= 0xfffffffful ? ulong(uint(product) / rendered)
+                                  : product / ulong(rendered);
+}
+
 ulong generated_starting_index(constant FrameConstants& frame,
                                uint block_x, uint block_y) {
     const ulong reference_width = ulong(frame.starting_reference.x);
@@ -404,12 +414,12 @@ ulong generated_starting_index(constant FrameConstants& frame,
     const ulong reference_block = ulong(frame.starting_reference.z);
     const ulong reference_x = min(
         reference_width - 1ul,
-        ulong(block_x) * reference_width
-            / ulong(frame.dimensions_counts.x));
+        generated_reference_coordinate(block_x, frame.starting_reference.x,
+                                       frame.dimensions_counts.x));
     const ulong reference_y = min(
         reference_height - 1ul,
-        ulong(block_y) * reference_height
-            / ulong(frame.dimensions_counts.y));
+        generated_reference_coordinate(block_y, frame.starting_reference.y,
+                                       frame.dimensions_counts.y));
     const ulong blocks_across =
         (reference_width + reference_block - 1ul) / reference_block;
     const ulong blocks_down =
@@ -428,59 +438,72 @@ ulong generated_starting_index(constant FrameConstants& frame,
     return y * blocks_across + x;
 }
 
-ulong hue_sector_prefix(ulong maximum) {
-    return (maximum - 1ul) * maximum * (maximum + 1ul) / 6ul;
+template <typename Integer>
+Integer hue_sector_prefix(Integer maximum) {
+    return (maximum - Integer(1)) * maximum * (maximum + Integer(1)) / Integer(6);
 }
 
-ulong hue_minimum_prefix(ulong maximum, ulong minimum) {
-    return minimum * (2ul * maximum - minimum + 1ul) / 2ul;
+template <typename Integer>
+Integer hue_minimum_prefix(Integer maximum, Integer minimum) {
+    return minimum * (Integer(2) * maximum - minimum + Integer(1)) / Integer(2);
 }
 
-ulong3 hue_ordered_rgb_indices(ulong index, ulong levels) {
-    if (levels <= 1ul) return ulong3(0ul);
+template <typename Integer>
+vec<Integer, 3> hue_ordered_rgb_indices_impl(Integer index, Integer levels) {
+    if (levels <= Integer(1)) return vec<Integer, 3>(Integer(0));
 
-    const ulong rgb_capacity = levels * levels * levels;
+    const Integer rgb_capacity = levels * levels * levels;
     index %= rgb_capacity;
-    const ulong non_gray_count = rgb_capacity - levels;
+    const Integer non_gray_count = rgb_capacity - levels;
     if (index >= non_gray_count) {
-        const ulong gray = index - non_gray_count;
-        return ulong3(gray);
+        const Integer gray = index - non_gray_count;
+        return vec<Integer, 3>(gray);
     }
 
-    const ulong sector_size = non_gray_count / 6ul;
-    const ulong sector = index / sector_size;
-    ulong local = index % sector_size;
-    if ((sector & 1ul) != 0ul) local = sector_size - 1ul - local;
-    ulong maximum_low = 1ul;
-    ulong maximum_high = levels;
-    while (maximum_low + 1ul < maximum_high) {
-        const ulong middle =
-            maximum_low + (maximum_high - maximum_low) / 2ul;
+    const Integer sector_size = non_gray_count / Integer(6);
+    const Integer sector = index / sector_size;
+    Integer local = index % sector_size;
+    if ((sector & Integer(1)) != Integer(0)) local = sector_size - Integer(1) - local;
+    Integer maximum_low = Integer(1);
+    Integer maximum_high = levels;
+    while (maximum_low + Integer(1) < maximum_high) {
+        const Integer middle =
+            maximum_low + (maximum_high - maximum_low) / Integer(2);
         if (hue_sector_prefix(middle) <= local) maximum_low = middle;
         else maximum_high = middle;
     }
-    const ulong maximum = maximum_low;
-    const ulong within_maximum = local - hue_sector_prefix(maximum);
-    ulong minimum_low = 0ul;
-    ulong minimum_high = maximum;
-    while (minimum_low + 1ul < minimum_high) {
-        const ulong middle =
-            minimum_low + (minimum_high - minimum_low) / 2ul;
+    const Integer maximum = maximum_low;
+    const Integer within_maximum = local - hue_sector_prefix(maximum);
+    Integer minimum_low = Integer(0);
+    Integer minimum_high = maximum;
+    while (minimum_low + Integer(1) < minimum_high) {
+        const Integer middle =
+            minimum_low + (minimum_high - minimum_low) / Integer(2);
         if (hue_minimum_prefix(maximum, middle) <= within_maximum) {
             minimum_low = middle;
         } else {
             minimum_high = middle;
         }
     }
-    const ulong minimum = minimum_low;
-    const ulong offset = within_maximum
+    const Integer minimum = minimum_low;
+    const Integer offset = within_maximum
                          - hue_minimum_prefix(maximum, minimum);
-    if (sector == 0ul) return ulong3(maximum, minimum + offset, minimum);
-    if (sector == 1ul) return ulong3(maximum - offset, maximum, minimum);
-    if (sector == 2ul) return ulong3(minimum, maximum, minimum + offset);
-    if (sector == 3ul) return ulong3(minimum, maximum - offset, maximum);
-    if (sector == 4ul) return ulong3(minimum + offset, minimum, maximum);
-    return ulong3(maximum, minimum, maximum - offset);
+    if (sector == Integer(0)) return vec<Integer, 3>(maximum, minimum + offset, minimum);
+    if (sector == Integer(1)) return vec<Integer, 3>(maximum - offset, maximum, minimum);
+    if (sector == Integer(2)) return vec<Integer, 3>(minimum, maximum, minimum + offset);
+    if (sector == Integer(3)) return vec<Integer, 3>(minimum, maximum - offset, maximum);
+    if (sector == Integer(4)) return vec<Integer, 3>(minimum + offset, minimum, maximum);
+    return vec<Integer, 3>(maximum, minimum, maximum - offset);
+}
+
+// The common RGB lattice fits in 32 bits. Keep every prefix/search exact,
+// but avoid emulated 64-bit division and multiplication for every pixel.
+// Larger reference canvases retain the original wide-integer calculation.
+ulong3 hue_ordered_rgb_indices(ulong index, ulong levels) {
+    if (levels <= 1024ul && index <= 0xfffffffful) {
+        return ulong3(hue_ordered_rgb_indices_impl(uint(index), uint(levels)));
+    }
+    return hue_ordered_rgb_indices_impl(index, levels);
 }
 
 float4 generated_starting_color(constant FrameConstants& frame,
@@ -518,7 +541,7 @@ float4 generated_starting_color(constant FrameConstants& frame,
     const ulong rgb_index = alpha_outermost
         ? index % rgb_capacity : index / alpha_levels;
     const ulong3 rgb = hue_ordered_rgb_indices(
-        rgb_index % rgb_capacity, levels);
+        rgb_index, levels);
     const ulong red_index = rgb.x;
     const ulong green_index = rgb.y;
     const ulong blue_index = rgb.z;
@@ -602,10 +625,10 @@ float4 generated_base_color(constant FrameConstants& frame,
         ulong(frame.starting_reference.y);
     const ulong starting_reference_x = min(
         starting_reference_width - 1ul,
-        ulong(block_x) * starting_reference_width / ulong(width));
+        generated_reference_coordinate(block_x, frame.starting_reference.x, width));
     const ulong starting_reference_y = min(
         starting_reference_height - 1ul,
-        ulong(block_y) * starting_reference_height / ulong(height));
+        generated_reference_coordinate(block_y, frame.starting_reference.y, height));
     const float2 starting_delta = shaped_source
         ? float2(
             (pattern_x / max(1.0f, float(width - 1u)) - 0.5f)

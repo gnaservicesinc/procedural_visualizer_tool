@@ -1118,7 +1118,8 @@ EffectType choose_effect_type() {
 
 bool configure_edge_mode(pvt::EdgeMode& mode) {
     return prompt_enum("Out-of-frame fill", mode,
-                       {{pvt::EdgeMode::Alpha, "Transparent alpha"},
+                       {{pvt::EdgeMode::Automatic, "Follow placement"},
+                        {pvt::EdgeMode::Alpha, "Transparent alpha"},
                         {pvt::EdgeMode::Black, "Black"},
                         {pvt::EdgeMode::White, "White"},
                         {pvt::EdgeMode::Reflect, "Reflected pattern"}});

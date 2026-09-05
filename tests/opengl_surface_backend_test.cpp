@@ -710,7 +710,7 @@ int main(int argc, char** argv) {
     water.area_radius = 0.64;
     water.cycles_per_loop = -3;
     water.phase_degrees = 19.0;
-    water.edge_mode = pvt::EdgeMode::Alpha;
+    water.edge_mode = pvt::EdgeMode::Automatic;
     water_config.effects.push_back(water);
     pvt::RenderConfig no_water = water_config;
     no_water.effects.clear();

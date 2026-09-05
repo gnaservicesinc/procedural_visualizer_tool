@@ -2,9 +2,12 @@
 #define PVT_MAIN_WINDOW_H
 
 #include "performance_settings.h"
+#include "playback_timeline.h"
+#include "delivered_frame_rate.h"
 #include "procedural_visualizer_tool.h"
 #include "../src/project_bundle.h"
 
+#include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QImage>
 #include <QMainWindow>
@@ -410,6 +413,12 @@ private:
     bool resume_editor_playback_after_export_ = false;
     bool close_after_export_ = false;
     bool playback_preview_advanced_ = false;
+    bool advancing_playback_timeline_ = false;
+    QElapsedTimer playback_clock_;
+    pvt::display::PlaybackTimeline playback_timeline_;
+    QElapsedTimer preview_delivery_clock_;
+    pvt::display::DeliveredFrameRate preview_delivery_rate_;
+    std::optional<double> preview_delivered_fps_;
     bool suppress_realtime_preview_resume_ = false;
     PerformanceSettings performance_settings_;
     pvt::RenderBackend render_backend_ = pvt::RenderBackend::CpuAndGpu;

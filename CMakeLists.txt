@@ -760,6 +760,20 @@ if(BUILD_TESTING)
     pvt_enable_warnings(pvt_display_color_tests)
     add_test(NAME pvt_display_color COMMAND pvt_display_color_tests)
 
+    add_executable(pvt_delivered_frame_rate_tests
+        tests/delivered_frame_rate_test.cpp)
+    target_compile_features(pvt_delivered_frame_rate_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_delivered_frame_rate_tests PROPERTIES
+        CXX_EXTENSIONS NO)
+    pvt_enable_warnings(pvt_delivered_frame_rate_tests)
+    add_test(NAME pvt_delivered_frame_rate COMMAND pvt_delivered_frame_rate_tests)
+
+    add_executable(pvt_playback_timeline_tests tests/playback_timeline_test.cpp)
+    target_compile_features(pvt_playback_timeline_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_playback_timeline_tests PROPERTIES CXX_EXTENSIONS NO)
+    pvt_enable_warnings(pvt_playback_timeline_tests)
+    add_test(NAME pvt_playback_timeline COMMAND pvt_playback_timeline_tests)
+
     add_executable(pvt_project_composite_tests
         tests/project_composite_test.cpp)
     target_compile_features(pvt_project_composite_tests PRIVATE cxx_std_17)

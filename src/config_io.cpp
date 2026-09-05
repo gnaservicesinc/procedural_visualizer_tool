@@ -865,11 +865,12 @@ bool consume_count(Records& records,
     return true;
 }
 
-constexpr std::array<std::pair<std::string_view, EdgeMode>, 4U> kEdgeModes{{
+constexpr std::array<std::pair<std::string_view, EdgeMode>, 5U> kEdgeModes{{
     {"alpha", EdgeMode::Alpha},
     {"black", EdgeMode::Black},
     {"white", EdgeMode::White},
     {"reflect", EdgeMode::Reflect},
+    {"automatic", EdgeMode::Automatic},
 }};
 
 constexpr std::array<std::pair<std::string_view, EffectType>, 7U> kEffectTypesV9{{

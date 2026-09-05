@@ -874,6 +874,46 @@ void test_project_layer_worker_policy() {
     CHECK(sentinel.pixels == preserved.pixels);
 }
 
+void test_first_layer_backend_compositing() {
+    auto project = pvt::default_project();
+    make_small(project);
+    project.output.write_alpha = true;
+    project.layers.front().render.alpha.enabled = true;
+    project.layers.front().render.alpha.minimum = 0.0;
+    project.layers.front().render.alpha.maximum = 0.7;
+    auto hidden = pvt::default_layer(1U);
+    hidden.enabled = false;
+    project.layers.insert(project.layers.begin(), hidden);
+    pvt::FrameRenderOptions options;
+    options.backend = pvt::RenderBackend::Cpu;
+    options.cpu_memory_budget_bytes = 1U;
+    std::string error;
+    for (auto mode : {pvt::BlendMode::Normal, pvt::BlendMode::Overlay,
+                      pvt::BlendMode::Difference, pvt::BlendMode::Erase,
+                      pvt::BlendMode::ColorEraseTones,
+                      pvt::BlendMode::ColorEraseBrightness}) {
+        project.layers.back().blend_mode = mode;
+        for (auto alpha : {pvt::AlphaMode::AlphaOver,
+                           pvt::AlphaMode::AlphaUnder}) {
+            project.layers.back().alpha_mode = alpha;
+            for (double opacity : {0.0, 0.37, 1.0}) {
+                project.layers.back().opacity = opacity;
+                for (double maximum_alpha : {0.0, 0.7, 1.0}) {
+                    project.layers.back().render.alpha.maximum = maximum_alpha;
+                    pvt::Image reference, actual;
+                    // The reference entry point retains ordinary compositing
+                    // onto an explicitly empty canvas.
+                    CHECK(pvt::render_project_frame_at_phase(
+                        project, 0.317, reference, nullptr, &error));
+                    CHECK(pvt::render_project_frame_at_phase(
+                        project, 0.317, options, actual, nullptr, &error));
+                    CHECK(actual.pixels == reference.pixels);
+                }
+            }
+        }
+    }
+}
+
 void test_project_sequence() {
     pvt::ProjectConfig project = pvt::default_project();
     make_small(project);
@@ -1041,6 +1081,7 @@ int main() {
     test_layer_groups();
     test_project_cancellation_during_layer_render();
     test_project_layer_worker_policy();
+    test_first_layer_backend_compositing();
     test_project_sequence();
     test_active_layer_clock_mappings();
 

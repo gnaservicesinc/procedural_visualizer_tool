@@ -207,6 +207,7 @@ bool valid_enum(EdgeMode value) {
         case EdgeMode::Black:
         case EdgeMode::White:
         case EdgeMode::Reflect:
+        case EdgeMode::Automatic:
             return true;
     }
     return false;
@@ -2304,6 +2305,7 @@ Color edge_color(EdgeMode mode) {
         case EdgeMode::White:
             return {1.0, 1.0, 1.0, 1.0};
         case EdgeMode::Reflect:
+        case EdgeMode::Automatic:
             break;
     }
     return {0.0, 0.0, 0.0, 0.0};
@@ -2672,6 +2674,7 @@ const char* edge_mode_name(EdgeMode value) {
         case EdgeMode::Black: return "Black";
         case EdgeMode::White: return "White";
         case EdgeMode::Reflect: return "Reflected pattern";
+        case EdgeMode::Automatic: return "Follow placement";
     }
     return "Unknown";
 }
@@ -2867,9 +2870,29 @@ SwingConfig default_swing(std::size_t index) {
     return swing;
 }
 
+EdgeMode effective_effect_edge_mode(const EffectConfig& effect) {
+    if (effect.edge_mode != EdgeMode::Automatic) return effect.edge_mode;
+    if (effect.space == EffectSpace::Surface) {
+        switch (effect.type) {
+            case EffectType::EndlessZoom:
+            case EffectType::Ripple:
+            case EffectType::Shake:
+            case EffectType::FlagWave:
+            case EffectType::LensDistortion:
+            case EffectType::Twirl:
+            case EffectType::Water:
+                return EdgeMode::Alpha;
+            default:
+                break;
+        }
+    }
+    return EdgeMode::Reflect;
+}
+
 EffectConfig default_effect(EffectType type) {
     EffectConfig effect;
     effect.type = type;
+    effect.edge_mode = EdgeMode::Automatic;
     effect.name = effect_type_name(type);
     effect.enabled = false;
     switch (type) {
@@ -3874,7 +3897,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         has_transparent_edge_effect = has_transparent_edge_effect
                                       || (active_effect
                                           && effect_uses_edge_mode(effect.type)
-                                          && effect.edge_mode == EdgeMode::Alpha);
+                                          && effective_effect_edge_mode(effect) == EdgeMode::Alpha);
         if (active_glow || active_particles) {
             double maximum_intensity = effect.intensity;
             if (resolve_item_audio_response(
@@ -7904,6 +7927,7 @@ bool render_frame_at_timeline_sample_cancellable(
                     continue;
                 }
                 EffectConfig effect = authored_effect;
+                effect.edge_mode = effective_effect_edge_mode(authored_effect);
                 const double phase = effect_phase(
                     render, effect, independent_loop_phase, motion_clock);
                 if (effect.type == EffectType::Blur) {
@@ -8186,7 +8210,7 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
             continue;
         }
         candidate.effects.push_back(
-            {effect.id, effect.type, effect.space, effect.edge_mode,
+            {effect.id, effect.type, effect.space, effective_effect_edge_mode(effect),
              phase,
              effect.intensity, effect.magnitude, effect.frequency,
              effect.secondary, effect.center_x, effect.center_y,

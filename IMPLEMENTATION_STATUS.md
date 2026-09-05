@@ -1,10 +1,46 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-04
+Last updated: 2026-09-05
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 17.3.0 FPS, playback, and movement placement
+
+Local validation before release preparation passed all 31 native test targets,
+including Metal, OpenGL, project composition, persistence, CLI, video export,
+and Cocoa GUI smoke. The user explicitly accepted that evidence and requested
+that the local tests not be repeated during release. Five-platform main and
+tagged CI, publication, and downloaded artifact verification are the remaining
+release gates. The pre-existing dirty `examples/Projects/Joy Fire.zip` and
+`tests/.DS_Store` remain outside the release commit.
+
+Generated rainbow patterns now use exact 32-bit integer work when their color
+lattice fits, retaining the wide path for large authored references. The first
+project layer can become the accumulator without a second full-frame clear and
+copy, and a single contributing CPU + GPU layer avoids worker-thread creation.
+Supported work remains GPU-owned and GPU errors remain visible. On the supplied
+animated FPS project at 1920x1080, Apple M2 Max Release measurements reduced
+horizontal and spiral rainbow render time by 43.9% and 42.3%; including the
+same display conversion used by the UI reduced total measured time by about 23%.
+
+Delivered-FPS readouts now aggregate nanosecond intervals over a quarter second
+instead of dividing by one whole-millisecond interval. Editor playback derives
+its frame from elapsed time, so delayed timer callbacks skip expired frames
+rather than slowing high-FPS projects. This fixes the supplied 6000 FPS Bad
+Chimp project, whose 300-frame loop lasts 50 ms. Editor and Live expose their
+actual rendered dimensions and delivered FPS; the Live maximum is labeled
+100% of output size to distinguish it from adaptive resolution.
+
+New effects default to **Blank-space handling > Follow placement**. Movement
+and distortion before surface mapping retain reflected texture samples; after
+surface mapping they expose transparent pixels as the object's outline moves,
+including on a full-size Plane. Explicit boundary modes and old saved projects
+retain their behavior. CPU, Metal, OpenGL Water, GUI, Live, CLI, persistence,
+and alpha validation share the resolved mode. The new enumerator and resolver
+are additive: public structure layout, existing enum values, project formats,
+and SONAME 17 remain unchanged.
 
 ## 17.2.0 creative controls and portable performance
 

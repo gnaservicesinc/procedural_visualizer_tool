@@ -1,3 +1,4 @@
+#include "delivered_frame_rate.h"
 #include "live_workspace.h"
 
 #include "audio_processing_dialog.h"
@@ -507,6 +508,7 @@ struct LiveWorkspace::Impl {
     QElapsedTimer audio_dropout_clock;
     QElapsedTimer frame_schedule_clock;
     QElapsedTimer presented_frame_clock;
+    pvt::display::DeliveredFrameRate delivered_frame_rate;
     QImage last_image;
     pvt::audio::LiveAudioSnapshot audio_snapshot;
     std::vector<pvt::audio::LiveAudioDevice> audio_devices;
@@ -840,6 +842,9 @@ void LiveWorkspace::Impl::buildUi() {
     midi_lamp = new StatusLamp;
     midi_lamp->setText(q->tr("MIDI"));
     fps_readout = new QLabel(q->tr("— fps"));
+    fps_readout->setToolTip(q->tr(
+        "Completed frames per second, measured over a quarter-second window. "
+        "This measures frame delivery to the UI, not the display refresh rate."));
     frame_readout = new QLabel(q->tr("No frame"));
     scene_readout = new QLabel(q->tr("Scene: —"));
     telemetry_layout->addWidget(audio_lamp);
@@ -1221,10 +1226,14 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     quality = new QComboBox;
     quality->setObjectName(QStringLiteral("liveOutputQuality"));
     quality->addItem(q->tr("Auto · watchdog managed"), 0.0);
-    quality->addItem(q->tr("Full resolution"), 1.0);
+    quality->addItem(q->tr("100% of output size"), 1.0);
     quality->addItem(q->tr("75%"), 0.75);
     quality->addItem(q->tr("50%"), 0.5);
     quality->addItem(q->tr("25%"), 0.25);
+    quality->setToolTip(q->tr(
+        "Fits the project to the output window's pixels, capped at project resolution. "
+        "Auto reduces resolution when frames miss their deadline. Choose a fixed "
+        "percentage for performance comparisons and compare the delivered dimensions."));
     const double stored_quality = QSettings().value(QStringLiteral("live/resolutionScale"), 0.0).toDouble();
     const int quality_index = quality->findData(stored_quality);
     quality->setCurrentIndex(quality_index < 0 ? 0 : quality_index);
@@ -2960,18 +2969,19 @@ void LiveWorkspace::Impl::frameFinished(
     last_good_clock.restart();
     if (presentation_active || !user_freeze) stage.setFrame(result.image);
     if (!user_blackout && !safety_blackout) updateMonitor();
-    frame_readout->setText(q->tr("%1 ms · %2 dropped")
+    frame_readout->setText(q->tr("%1 × %2 · %3 ms · %4 dropped")
+                               .arg(result.image.width()).arg(result.image.height())
                                .arg(result.render_milliseconds, 0, 'f', 1)
                                .arg(result.dropped_requests));
-    double delivered_fps = 0.0;
-    if (presented_frame_clock.isValid()) {
-        const qint64 elapsed = presented_frame_clock.restart();
-        if (elapsed > 0) delivered_fps = 1000.0 / static_cast<double>(elapsed);
-    } else {
+    if (!presented_frame_clock.isValid()) {
         presented_frame_clock.start();
+        delivered_frame_rate.reset();
     }
-    fps_readout->setText(q->tr("%1 fps delivered")
-                              .arg(delivered_fps, 0, 'f', 1));
+    if (const auto delivered_fps = delivered_frame_rate.record(
+            presented_frame_clock.nsecsElapsed())) {
+        fps_readout->setText(q->tr("%1 fps delivered")
+                                  .arg(*delivered_fps, 0, 'f', 1));
+    }
     if (result.late) {
         ++late_streak;
         good_streak = 0;

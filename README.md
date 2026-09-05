@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.2.0**. The version is read from `VERSION` by every
+Current product version: **17.3.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,37 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.3.0 FPS and movement-placement improvements
+
+New effects use **Blank-space handling > Follow placement**. For movement
+and distortion effects, **Artwork (before surface)** reflects the texture at
+its edges; **Layer / object (after surface)** exposes transparent space as the
+completed object's outline moves. This also works on a full-size, unrotated
+Plane. Other effect types use reflected samples in this mode. Explicit
+Transparent, Black, White, and Reflected pattern settings remain available.
+Existing saved boundary choices retain their behavior; choose Follow placement
+to opt an existing effect into the new default. In a Difference comparison,
+movement of the outline appears as color along the exposed edges.
+
+Live's delivered-FPS readout counts completed intervals with nanosecond timing
+across a quarter-second window, avoiding the previous 500/333/250 jumps from
+rounding individual intervals to milliseconds. It measures delivery to the UI,
+not physical display refresh. Generated rainbow colors use exact 32-bit integer
+math where the lattice fits, retaining the wide path for large references.
+Single-layer CPU + GPU rendering avoids starting a worker thread each frame,
+and project compositing adopts the first layer's image buffer while preserving
+opacity, erasers, and transparent RGB. These paths render every requested frame
+and apply equally to animated content.
+
+Editor playback now derives the timeline frame from elapsed time, matching Live's
+wall-clock behavior when timers or rendering cannot keep up. It skips expired
+frames instead of slowing the animation, and reanchors after seeking or pausing.
+Editor and Live readouts show actual rendered dimensions and measured delivery
+FPS. Editor preview fits inside 720×480 pixels; Live fits the output window and
+can reduce that resolution in Auto. Compare dimensions and use a fixed Live
+quality when comparing throughput. **100% of output size** describes the full
+window-sized render; it is still capped at project resolution.
 
 ## 17.2.0 creative phase control and portable rendering improvements
 

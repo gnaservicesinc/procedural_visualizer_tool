@@ -40,6 +40,7 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QScopedValueRollback>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
@@ -981,7 +982,10 @@ EffectPlacementPresentation effect_placement_presentation(
                     "surface wrapping. Any mapped object then carries that result."),
                 QObject::tr(
                     "The effect runs after surface mapping and whole-layer motion, so "
-                    "it moves or deforms the completed layer/object and its silhouette."),
+                    "it moves or deforms the completed layer/object and its silhouette. "
+                    "Follow placement leaves newly exposed space transparent, "
+                    "including around a full-size Plane. Reflected pattern "
+                    "instead fills exposed canvas and can hide the outline's movement."),
             };
         case pvt::EffectType::Glitch:
         case pvt::EffectType::Starburst:
@@ -1657,7 +1661,7 @@ bool configuration_requires_alpha(const pvt::RenderConfig& config) {
                && effect.type != pvt::EffectType::Glow
                && effect.type != pvt::EffectType::BlockScale
                && effect.type != pvt::EffectType::ParticleField
-               && effect.edge_mode == pvt::EdgeMode::Alpha;
+               && pvt::effective_effect_edge_mode(effect) == pvt::EdgeMode::Alpha;
     })) {
         return true;
     }
@@ -2654,28 +2658,42 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(preview_timer_, &QTimer::timeout, this, &MainWindow::startPreview);
     connect(playback_timer_, &QTimer::timeout, this, [this] {
+        const QScopedValueRollback<bool> advancing(advancing_playback_timeline_, true);
         if (audio_playback_ != nullptr && audio_playback_->is_playing()) {
             const double position = audio_playback_->position_seconds();
-            const int raw_frame = static_cast<int>(
-                std::floor(position * config_.fps));
+            const double raw_frame = std::floor(position * config_.fps);
             if (raw_frame > timeline_->maximum()) {
                 timeline_->setValue(0);
                 startProjectAudioPlayback();
                 return;
             }
-            const int synchronized_frame = std::clamp(raw_frame,
-                timeline_->minimum(), timeline_->maximum());
-            timeline_->setValue(synchronized_frame);
+            timeline_->setValue(static_cast<int>(std::clamp(
+                raw_frame, static_cast<double>(timeline_->minimum()),
+                static_cast<double>(timeline_->maximum()))));
             return;
         }
-        int next = timeline_->value() + 1;
-        if (next > timeline_->maximum()) {
-            next = 0;
-            timeline_->setValue(next);
+        if (!playback_clock_.isValid()) startProjectAudioPlayback();
+        const auto sample = playback_timeline_.sample(playback_clock_.nsecsElapsed());
+        timeline_->setValue(sample.frame);
+        const bool has_music_clock = config_.clock.mode == pvt::ClockMode::Music
+            || std::any_of(project_.layers.begin(), project_.layers.end(),
+                           [](const pvt::LayerConfig& layer) {
+                               return layer.render.layer_clock.enabled
+                                   && layer.render.layer_clock.clock.mode
+                                          == pvt::ClockMode::Music;
+                           });
+        if (sample.looped && has_music_clock && audio_playback_ != nullptr) {
+            // A Play Once source may have fallen silent before the master loop
+            // ended. Offer it again on the next loop, retaining subframe time
+            // when there is no audible track to restart.
+            const QElapsedTimer previous_clock = playback_clock_;
+            const auto previous_timeline = playback_timeline_;
             startProjectAudioPlayback();
-            return;
+            if (!audio_playback_->is_playing()) {
+                playback_clock_ = previous_clock;
+                playback_timeline_ = previous_timeline;
+            }
         }
-        timeline_->setValue(next);
     });
     connect(preview_watcher_, &QFutureWatcher<PreviewResult>::finished, this, [this] {
         PreviewResult result;
@@ -2704,9 +2722,25 @@ MainWindow::MainWindow(QWidget* parent)
                 if (!realtime_output) {
                     preview_->setPreview(result.image);
                     const int frame_count = std::max(1, effectiveFrameCount());
-                    status_->setText(tr("Preview frame %1/%2")
-                                         .arg(result.frame + 1)
-                                         .arg(frame_count));
+                    if (playback_timer_->isActive()) {
+                        if (!preview_delivery_clock_.isValid()) {
+                            preview_delivery_clock_.start();
+                            preview_delivery_rate_.reset();
+                            preview_delivered_fps_.reset();
+                        }
+                        if (const auto fps = preview_delivery_rate_.record(
+                                preview_delivery_clock_.nsecsElapsed())) {
+                            preview_delivered_fps_ = *fps;
+                        }
+                    }
+                    QString summary = tr("Preview %1 × %2 · frame %3/%4")
+                        .arg(result.image.width()).arg(result.image.height())
+                        .arg(result.frame + 1).arg(frame_count);
+                    if (playback_timer_->isActive() && preview_delivered_fps_) {
+                        summary += tr(" · %1 fps delivered")
+                            .arg(*preview_delivered_fps_, 0, 'f', 1);
+                    }
+                    status_->setText(summary);
                 }
             } else {
                 if (live_workspace_ == nullptr
@@ -4377,6 +4411,7 @@ QWidget* MainWindow::createEffectPage() {
     effect_phase_ = real_editor(-kMaximumRenderParameter,
                                 kMaximumRenderParameter, 3, 1.0);
     effect_edge_ = new QComboBox;
+    add_enum_item(effect_edge_, tr("Follow placement"), pvt::EdgeMode::Automatic);
     add_enum_item(effect_edge_, tr("Transparent alpha"), pvt::EdgeMode::Alpha);
     add_enum_item(effect_edge_, tr("Black"), pvt::EdgeMode::Black);
     add_enum_item(effect_edge_, tr("White"), pvt::EdgeMode::White);
@@ -6179,10 +6214,14 @@ QWidget* MainWindow::createOutputPage() {
     live_preview_quality_->setObjectName(
         QStringLiteral("livePreviewOutputQuality"));
     live_preview_quality_->addItem(tr("Auto · frame-budget managed"), 0.0);
-    live_preview_quality_->addItem(tr("Full resolution"), 1.0);
+    live_preview_quality_->addItem(tr("100% of output size"), 1.0);
     live_preview_quality_->addItem(tr("75%"), 0.75);
     live_preview_quality_->addItem(tr("50%"), 0.5);
     live_preview_quality_->addItem(tr("25%"), 0.25);
+    live_preview_quality_->setToolTip(tr(
+        "Fits the project to the output window's pixels, capped at project resolution. "
+        "Auto reduces resolution when frames miss their deadline. Choose a fixed "
+        "percentage for performance comparisons and compare the delivered dimensions."));
     live_preview_fullscreen_ = new QCheckBox(tr("Full-screen output"));
     live_preview_fullscreen_->setObjectName(
         QStringLiteral("livePreviewOutputFullscreen"));
@@ -7034,12 +7073,11 @@ QWidget* MainWindow::createTimeline() {
     connect(timeline_, &QSlider::valueChanged, this, [this](int frame) {
         Q_UNUSED(frame);
         updateTimelineReadout();
-        schedulePreview();
-    });
-    connect(timeline_, &QSlider::sliderReleased, this, [this] {
-        if (playback_timer_ != nullptr && playback_timer_->isActive()) {
+        if (!advancing_playback_timeline_
+            && playback_timer_ != nullptr && playback_timer_->isActive()) {
             startProjectAudioPlayback();
         }
+        schedulePreview();
     });
     connect(previous_beat_, &QPushButton::clicked, this,
             [this] { navigateToBeat(-1); });
@@ -7080,6 +7118,9 @@ void MainWindow::togglePlayback() {
         stopPlayback();
     } else {
         playback_preview_advanced_ = false;
+        preview_delivery_clock_.start();
+        preview_delivery_rate_.reset();
+        preview_delivered_fps_.reset();
         startProjectAudioPlayback();
         playback_timer_->start(std::max(
             1, static_cast<int>(std::lround(1000.0 / config_.fps))));
@@ -7090,11 +7131,19 @@ void MainWindow::togglePlayback() {
 
 void MainWindow::stopPlayback() {
     if (playback_timer_ != nullptr) playback_timer_->stop();
+    playback_clock_.invalidate();
+    preview_delivery_clock_.invalidate();
+    preview_delivered_fps_.reset();
     if (audio_playback_ != nullptr) audio_playback_->stop();
     if (play_button_ != nullptr) play_button_->setText(tr("Play"));
 }
 
 void MainWindow::startProjectAudioPlayback() {
+    if (timeline_ != nullptr) {
+        playback_timeline_.reset(timeline_->value(), config_.fps,
+                                 timeline_->maximum() + 1);
+        playback_clock_.start();
+    }
     if (audio_playback_ == nullptr) return;
     // This function is also the authoritative resynchronization point. Stop a
     // formerly valid Music source before checking the current clock so a mode
@@ -12807,7 +12856,10 @@ void MainWindow::updateEffectEditorVisibility() {
         0.0, is_particles ? 1.0 : kMaximumRenderParameter);
 
     effect_edge_->setToolTip(
-        tr("Controls samples that move beyond the source image boundary."));
+        tr("Follow placement uses reflected artwork for texture movement and "
+           "transparent edges for movement of the completed layer/object. "
+           "Other effect types use reflected samples. Explicit Transparent, "
+           "Black, White, or Reflected pattern choices override this behavior."));
     effect_center_x_->setToolTip(tr("Normalized horizontal center; 0 is left and 1 is right."));
     effect_center_y_->setToolTip(tr("Normalized vertical center; 0 is top and 1 is bottom."));
     effect_radius_->setToolTip(
@@ -17690,7 +17742,9 @@ void MainWindow::startPreview() {
         preview_deferred_ = true;
         return;
     }
-    status_->setText(tr("Rendering preview…"));
+    if (playback_timer_ == nullptr || !playback_timer_->isActive()) {
+        status_->setText(tr("Rendering preview…"));
+    }
     try {
         auto project = previewProjectSnapshot();
         const int frame = timeline_->value();
@@ -22206,6 +22260,39 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    // Bad Chimp's 6000 FPS transport must catch up after a delayed callback,
+    // rather than advancing only one authored frame. Exercise the real timer
+    // slot, then scrub while playing and verify that its clock reanchors.
+    const int saved_timing_frames = config_.total_frames;
+    const double saved_timing_fps = config_.fps;
+    frames_->setValue(30000);
+    fps_->setValue(6000.0);
+    timeline_->setValue(0);
+    play_button_->click();
+    if (audio_playback_ != nullptr) audio_playback_->stop();
+    QThread::msleep(20);
+    const qint64 before_tick = playback_clock_.nsecsElapsed();
+    QMetaObject::invokeMethod(playback_timer_, "timeout", Qt::DirectConnection);
+    const qint64 after_tick = playback_clock_.nsecsElapsed();
+    const int advanced_frame = timeline_->value();
+    const bool caught_up = advanced_frame >= static_cast<int>(
+        static_cast<double>(before_tick) * 6000.0 / 1.0e9)
+        && advanced_frame <= static_cast<int>(
+            static_cast<double>(after_tick) * 6000.0 / 1.0e9);
+    timeline_->setValue(4321);
+    if (audio_playback_ != nullptr) audio_playback_->stop();
+    const bool scrub_reanchored = playback_timeline_.sample(0).frame == 4321;
+    stopPlayback();
+    const bool paused_clock = !playback_clock_.isValid();
+    frames_->setValue(saved_timing_frames);
+    fps_->setValue(saved_timing_fps);
+    if (!caught_up || !scrub_reanchored || !paused_clock) {
+        if (error != nullptr) {
+            *error = tr("Editor playback did not follow elapsed time or reanchor after a seek.");
+        }
+        return false;
+    }
+
     auto cancelled_preview_token = std::make_shared<std::atomic_bool>(true);
     const PreviewResult cancelled_preview = generatePreview(
         previewProjectSnapshot(), 0, preview_generation_, document_revision_, 25,

@@ -2693,7 +2693,7 @@ private:
         gl->glUniform2i(water_uniforms_.image_size,
                         source.width, source.height);
         gl->glUniform1i(water_uniforms_.edge_mode,
-                        static_cast<int>(effect.edge_mode));
+                        static_cast<int>(effective_effect_edge_mode(effect)));
         gl->glUniform1f(water_uniforms_.phase, static_cast<float>(phase));
         gl->glUniform1f(water_uniforms_.intensity,
                         static_cast<float>(effect.intensity));

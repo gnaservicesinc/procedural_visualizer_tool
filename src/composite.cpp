@@ -735,7 +735,7 @@ bool effect_can_create_transparency(const EffectConfig& effect) {
         || effect.type == EffectType::Glow
         || effect.type == EffectType::BlockScale
         || effect.type == EffectType::ParticleField
-        || effect.edge_mode != EdgeMode::Alpha) {
+        || effective_effect_edge_mode(effect) != EdgeMode::Alpha) {
         return false;
     }
     if (effect.type == EffectType::Blur) return effect.radius_pixels > 0.0;
@@ -1186,7 +1186,6 @@ bool render_project_with_backend_validated(
     Image accumulator;
     accumulator.width = project.canvas.width;
     accumulator.height = project.canvas.height;
-    accumulator.pixels.assign(component_count, 0.0F);
 
     ExportConfig layer_output = project.output;
     layer_output.write_alpha = true;
@@ -1197,6 +1196,15 @@ bool render_project_with_backend_validated(
             && project.layers[index].opacity > 0.0) {
             contributing.push_back(index);
         }
+    }
+
+    if (contributing.empty()) {
+        if (cancelled(cancel)) {
+            return fail(error, "Project rendering was cancelled between layers.");
+        }
+        accumulator.pixels.assign(component_count, 0.0F);
+        destination = std::move(accumulator);
+        return true;
     }
 
     const auto materialize = [&](std::size_t index) {
@@ -1225,6 +1233,43 @@ bool render_project_with_backend_validated(
                         "Project rendering was cancelled between layers.");
         }
         const LayerConfig& layer = project.layers[index];
+        if (accumulator.pixels.empty()) {
+            const bool erases = layer.blend_mode == BlendMode::Erase
+                || layer.blend_mode == BlendMode::ColorEraseTones
+                || layer.blend_mode == BlendMode::ColorEraseBrightness;
+            if (!erases) {
+                // Painting the first layer onto an empty canvas needs only
+                // opacity and transparent-RGB handling. Adopt its storage
+                // instead of allocating, clearing, and copying a second frame.
+                for (std::size_t offset = 0U; offset < component_count;
+                     offset += 4U) {
+                    if ((offset & 4095U) == 0U && cancelled(cancel)) {
+                        return fail(error,
+                                    "Project rendering was cancelled while compositing the first layer.");
+                    }
+                    const double alpha = static_cast<double>(
+                        image.pixels[offset + 3U]) * layer.opacity;
+                    if (alpha <= 0.0
+                        && layer.alpha_mode == AlphaMode::AlphaOver) {
+                        // Over leaves the empty backdrop's transparent black;
+                        // Under retains the source's useful transparent RGB.
+                        image.pixels[offset] = 0.0F;
+                        image.pixels[offset + 1U] = 0.0F;
+                        image.pixels[offset + 2U] = 0.0F;
+                        image.pixels[offset + 3U] = 0.0F;
+                    } else {
+                        image.pixels[offset + 3U] = static_cast<float>(alpha);
+                    }
+                }
+                if (cancelled(cancel)) {
+                    return fail(error,
+                                "Project rendering was cancelled between layers.");
+                }
+                accumulator = std::move(image);
+                return true;
+            }
+            accumulator.pixels.assign(component_count, 0.0F);
+        }
         if (!composite_layer_pixels(image, accumulator,
                                     layer.blend_mode, layer.alpha_mode,
                                     layer.opacity, cancel)) {
@@ -1352,6 +1397,23 @@ bool render_project_with_backend_validated(
 
     const FrameRenderOptions& selected_cpu_options = metal_available
         ? cpu_options : options;
+    // One contributing layer has no independent rendering/compositing to
+    // overlap. Avoid creating and joining a worker thread on every Live frame,
+    // while retaining the same ownership decision for unsupported GPU work.
+    if (dispatch.size() == 1U) {
+        const LayerDispatch& layer = dispatch.front();
+        Image image;
+        std::string layer_error;
+        const FrameRenderOptions& selected = layer.gpu_owned
+            ? gpu_options : selected_cpu_options;
+        if (!render_one(layer.index, selected, image, layer_error, cancel)) {
+            return contextual_failure(layer.index, layer_error);
+        }
+        if (!composite_one(layer.index, image)) return false;
+        destination = std::move(accumulator);
+        return true;
+    }
+
     LayerMemoryAdmission layer_memory(cpu_memory_budget, cancel);
     LayerRenderPool cpu_pool(
         std::move(cpu_tasks), dispatch.size(), cpu_worker_count,

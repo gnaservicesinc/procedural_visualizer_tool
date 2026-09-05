@@ -242,6 +242,42 @@ void test_backend_contract() {
                     0.00002, 0.000001, label.c_str());
     }
 
+    // Downscaled Live preserves source-canvas traversal. Exercise the narrow
+    // integer lattice boundary, its wide fallback, wide coordinate products,
+    // partial reference blocks, both alpha orders, and every generated mode.
+    pvt::RenderConfig reference_config = generated;
+    reference_config.width = 97;
+    reference_config.height = 65;
+    reference_config.block_size = 1;
+    for (const int reference_size : {1920, 32768, 32769, 100000000}) {
+        reference_config.starting_colors.reference_width = reference_size;
+        reference_config.starting_colors.reference_height = reference_size;
+        for (const int reference_block : {1, 7}) {
+            reference_config.starting_colors.reference_block_size = reference_block;
+            for (int alpha_order = 0; alpha_order < 3; ++alpha_order) {
+                reference_config.starting_colors.include_alpha = alpha_order != 0;
+                reference_config.starting_colors.legacy_alpha_outermost = alpha_order == 2;
+                for (const auto mode : {
+                         pvt::StartingColorMode::ContinuousHue,
+                         pvt::StartingColorMode::HorizontalRainbow,
+                         pvt::StartingColorMode::VerticalRainbow,
+                         pvt::StartingColorMode::DiagonalRainbow,
+                         pvt::StartingColorMode::SpiralRainbow,
+                         pvt::StartingColorMode::SquareSpiralRainbow,
+                         pvt::StartingColorMode::Random}) {
+                    reference_config.starting_colors.mode = mode;
+                    CHECK(pvt::render_frame_at_phase(reference_config, 0.31, cpu_options,
+                                                     cpu, nullptr, &error));
+                    CHECK(pvt::render_frame_at_phase(reference_config, 0.31, gpu_options,
+                                                     gpu, nullptr, &error));
+                    check_close(cpu, gpu, 0.00002, 0.000001,
+                                0.00002, 0.000001,
+                                "generated reference integer widths");
+                }
+            }
+        }
+    }
+
     // Generated base colors are produced once per block, then expanded by a
     // per-pixel Metal pass so large authored blocks do not serialize an entire
     // image behind one GPU thread. Cover exact and partial block grids while
@@ -1127,6 +1163,133 @@ void test_backend_contract() {
                              &error));
 }
 
+void test_automatic_movement_boundary() {
+    auto config = pvt::default_config();
+    config.width = 48;
+    config.height = 32;
+    config.block_size = 1;
+    config.output.write_alpha = true;
+    config.effects.clear();
+    std::string error;
+    const bool metal = pvt::renderer_capabilities().metal_available;
+    for (const auto type : {pvt::EffectType::EndlessZoom,
+                           pvt::EffectType::Ripple,
+                           pvt::EffectType::Shake,
+                           pvt::EffectType::FlagWave,
+                           pvt::EffectType::LensDistortion,
+                           pvt::EffectType::Twirl,
+                           pvt::EffectType::Water}) {
+        auto effect = pvt::default_effect(type);
+        CHECK(effect.edge_mode == pvt::EdgeMode::Automatic);
+        effect.id = pvt::allocate_id(config);
+        effect.enabled = true;
+        config.effects = {effect};
+        for (const auto space : {pvt::EffectSpace::Texture,
+                                 pvt::EffectSpace::Surface}) {
+            config.effects.front().space = space;
+            for (const auto backend : {pvt::RenderBackend::Cpu,
+                                       pvt::RenderBackend::Gpu}) {
+                if (backend == pvt::RenderBackend::Gpu && !metal) continue;
+                pvt::FrameRenderOptions options;
+                options.backend = backend;
+                pvt::Image automatic, explicit_boundary;
+                config.effects.front().edge_mode = pvt::EdgeMode::Automatic;
+                CHECK(pvt::render_frame_at_phase(config, 0.317, options,
+                                                 automatic, nullptr, &error));
+                CHECK(config.effects.front().edge_mode == pvt::EdgeMode::Automatic);
+                config.effects.front().edge_mode = space == pvt::EffectSpace::Texture
+                    ? pvt::EdgeMode::Reflect : pvt::EdgeMode::Alpha;
+                CHECK(pvt::render_frame_at_phase(config, 0.317, options,
+                                                 explicit_boundary, nullptr, &error));
+                CHECK(automatic.pixels == explicit_boundary.pixels);
+            }
+        }
+    }
+    pvt::EffectConfig legacy;
+    legacy.space = pvt::EffectSpace::Surface;
+    CHECK(legacy.edge_mode == pvt::EdgeMode::Reflect);
+    CHECK(pvt::effective_effect_edge_mode(legacy) == pvt::EdgeMode::Reflect);
+}
+
+void test_plane_effect_placement() {
+    pvt::RenderConfig config = pvt::default_config();
+    config.width = 96;
+    config.height = 64;
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.palette.enabled = false;
+    config.lighting_enabled = false;
+    config.displacement_enabled = false;
+    // A spatial rainbow makes movement visible without mixing in the
+    // continuous-hue source's independent procedural spiral calculations.
+    config.starting_colors.mode = pvt::StartingColorMode::HorizontalRainbow;
+    config.spiral_enabled = false;
+    config.wall_reflection_enabled = false;
+    config.output.write_alpha = true;
+    config.surface.enabled = true;
+    config.surface.mapping = pvt::SurfaceMapping::Plane;
+    auto effect = pvt::default_effect(pvt::EffectType::FlagWave);
+    effect.id = pvt::allocate_id(config);
+    effect.enabled = true;
+    effect.intensity = 0.6;
+    effect.magnitude = 0.03;
+    effect.frequency = 3.0;
+    effect.secondary = 0.35;
+    effect.edge_mode = pvt::EdgeMode::Reflect;
+    config.effects.push_back(effect);
+    const bool metal = pvt::renderer_capabilities().metal_available;
+    std::string error;
+    for (const auto boundary : {pvt::EdgeMode::Reflect,
+                                pvt::EdgeMode::Automatic}) {
+        config.effects.front().edge_mode = boundary;
+        for (int variant = 0; variant < 3; ++variant) {
+            config.surface.size_percent = variant == 1 ? 65.0 : 100.0;
+            config.surface.rotation_y_degrees = variant == 2 ? 35.0 : 0.0;
+            for (const double phase : {0.0, 0.137, 0.371}) {
+                pvt::Image cpu_texture, cpu_surface;
+                config.effects.front().space = pvt::EffectSpace::Texture;
+                CHECK(pvt::render_frame_at_phase(
+                    config, phase, cpu_texture, &error));
+                config.effects.front().space = pvt::EffectSpace::Surface;
+                CHECK(pvt::render_frame_at_phase(
+                    config, phase, cpu_surface, &error));
+                if (variant == 0 && boundary == pvt::EdgeMode::Reflect) {
+                    CHECK(cpu_texture.pixels == cpu_surface.pixels);
+                } else {
+                    if (variant == 0) {
+                        CHECK(difference(cpu_texture, cpu_surface).mean_alpha > 0.0001);
+                    }
+                    CHECK(difference(cpu_texture, cpu_surface).mean_rgb > 0.0001);
+                }
+                if (!metal) continue;
+                pvt::FrameRenderOptions options;
+                options.backend = pvt::RenderBackend::Gpu;
+                pvt::Image gpu_texture, gpu_surface;
+                config.effects.front().space = pvt::EffectSpace::Texture;
+                CHECK(pvt::render_frame_at_phase(
+                    config, phase, options, gpu_texture, nullptr, &error));
+                config.effects.front().space = pvt::EffectSpace::Surface;
+                CHECK(pvt::render_frame_at_phase(
+                    config, phase, options, gpu_surface, nullptr, &error));
+                check_close(cpu_texture, gpu_texture, 0.0035, 0.0001,
+                            0.0035, 0.0001, ("plane artwork placement " + std::to_string(variant)).c_str());
+                check_close(cpu_surface, gpu_surface, 0.0035, 0.0001,
+                            0.0035, 0.0001, ("plane object placement " + std::to_string(variant)).c_str());
+                if (variant == 0 && boundary == pvt::EdgeMode::Reflect) {
+                    CHECK(gpu_texture.pixels == gpu_surface.pixels);
+                } else {
+                    if (variant == 0) {
+                        CHECK(difference(gpu_texture, gpu_surface).mean_alpha > 0.0001);
+                    }
+                    CHECK(difference(gpu_texture, gpu_surface).mean_rgb > 0.0001);
+                }
+            }
+        }
+    }
+}
+
 void test_hybrid_project_parity() {
     const auto capabilities = pvt::renderer_capabilities();
     if (!capabilities.metal_available) return;
@@ -1173,6 +1336,8 @@ void test_hybrid_project_parity() {
 int main() {
     test_backend_contract();
     test_hybrid_project_parity();
+    test_automatic_movement_boundary();
+    test_plane_effect_placement();
     if (failures != 0) {
         std::cerr << failures << " Metal backend test(s) failed.\n";
         return EXIT_FAILURE;

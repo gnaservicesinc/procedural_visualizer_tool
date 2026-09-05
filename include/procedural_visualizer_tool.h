@@ -95,7 +95,10 @@ enum class EdgeMode : std::uint8_t {
     Alpha = 0,
     Black,
     White,
-    Reflect
+    Reflect,
+    // Movement effects reflect artwork before mapping and expose transparent
+    // space when moving the completed object after mapping.
+    Automatic
 };
 
 enum class EffectType : std::uint8_t {
@@ -863,6 +866,8 @@ struct EffectConfig {
     bool synchronized = true;
     int cycles_per_loop = 1;
     double phase_degrees = 0.0;
+    // Preserve legacy records with no boundary field. New effects made by
+    // default_effect() use Automatic so movement placement controls the outline.
     EdgeMode edge_mode = EdgeMode::Reflect;
 
     double intensity = 0.5;
@@ -1656,6 +1661,7 @@ PVT_API std::string generate_uuid();
 PVT_API WaveConfig default_wave(std::size_t index = 0);
 PVT_API SwingConfig default_swing(std::size_t index = 0);
 PVT_API EffectConfig default_effect(EffectType type);
+PVT_API EdgeMode effective_effect_edge_mode(const EffectConfig& effect);
 // Creates the standard four-node cubic approximation of an ellipse. Callers
 // provide stable nonzero path/node IDs before inserting it into a project.
 PVT_API CubicMotionPath default_ellipse_path(std::uint64_t path_id,
