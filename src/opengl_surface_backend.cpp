@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -159,7 +160,9 @@ float circularInfluence(float x, float y) {
 
 void main() {
     int xIndex = int(gl_FragCoord.x);
-    int yIndex = imageSize.y - 1 - int(gl_FragCoord.y);
+    // Offscreen textures use the same row order as Image. No display-space
+    // vertical inversion is needed, including during the final readback.
+    int yIndex = int(gl_FragCoord.y);
     float x = float(xIndex);
     float y = float(yIndex);
     vec4 original = texelFetch(sourceImage, ivec2(xIndex, yIndex), 0);
@@ -694,7 +697,7 @@ vec4 sampleCubeHit(Hit hit, vec3 worldDirection) {
 
 void main() {
     int x = int(gl_FragCoord.x);
-    int y = imageSize.y - 1 - int(gl_FragCoord.y);
+    int y = int(gl_FragCoord.y);
     vec4 planar = loadPixel(x, y);
     if (exactCopy != 0) {
         outputColor = planar;
@@ -812,6 +815,8 @@ void main() {
 constexpr const char* kGeneratedBaseFragmentShader = R"PVT_GLSL(#version 330 core
 uniform ivec2 imageSize;
 uniform int blockSize;
+uniform int expandBlocks;
+uniform sampler2D blockImage;
 uniform int waveCount;
 uniform int swingCount;
 uniform sampler2D waveData;
@@ -993,9 +998,18 @@ float proceduralAlpha(int x, int y) {
 
 void main() {
     int x = int(gl_FragCoord.x);
-    int y = imageSize.y - 1 - int(gl_FragCoord.y);
-    int blockX = (x / blockSize) * blockSize;
-    int blockY = (y / blockSize) * blockSize;
+    int y = int(gl_FragCoord.y);
+    if (expandBlocks != 0) {
+        // RGB is shared by the authored block; procedural alpha is evaluated
+        // at every output pixel and must remain smooth across block interiors.
+        vec3 rgb = texelFetch(blockImage,
+                              ivec2(x / blockSize, y / blockSize), 0).rgb;
+        outputColor = vec4(rgb, clampUnit(proceduralAlpha(x, y)));
+        return;
+    }
+    // This pass shades one fragment per block, including partial edge blocks.
+    int blockX = x * blockSize;
+    int blockY = y * blockSize;
     float sourceX = float(blockX);
     float sourceY = float(blockY);
     float motion = motionPhaseAt(sourceX, sourceY);
@@ -1351,6 +1365,8 @@ struct GeneratedBaseUniformLocations {
     GLint swing_data = -1;
     GLint image_size = -1;
     GLint block_size = -1;
+    GLint expand_blocks = -1;
+    GLint block_image = -1;
     GLint wave_count = -1;
     GLint swing_count = -1;
     GLint loop_phase = -1;
@@ -1449,6 +1465,8 @@ GeneratedBaseUniformLocations load_generated_base_uniform_locations(
     result.swing_data = gl->glGetUniformLocation(program, "swingData");
     result.image_size = gl->glGetUniformLocation(program, "imageSize");
     result.block_size = gl->glGetUniformLocation(program, "blockSize");
+    result.expand_blocks = gl->glGetUniformLocation(program, "expandBlocks");
+    result.block_image = gl->glGetUniformLocation(program, "blockImage");
     result.wave_count = gl->glGetUniformLocation(program, "waveCount");
     result.swing_count = gl->glGetUniformLocation(program, "swingCount");
     result.loop_phase = gl->glGetUniformLocation(program, "loopPhase");
@@ -1771,6 +1789,7 @@ private:
         std::string vendor;
         std::string renderer;
         std::string version;
+        GLint maximum_texture_size = 0;
         const auto discard_candidate = [this] {
             delete surface_;
             surface_ = nullptr;
@@ -1845,6 +1864,8 @@ private:
             vendor = gl_text(functions->glGetString(GL_VENDOR));
             renderer = gl_text(functions->glGetString(GL_RENDERER));
             version = gl_text(functions->glGetString(GL_VERSION));
+            functions->glGetIntegerv(GL_MAX_TEXTURE_SIZE,
+                                     &maximum_texture_size);
             context_->doneCurrent();
             selected_attempt = attempt.name;
             break;
@@ -1877,9 +1898,29 @@ private:
             render_thread_ = QThread::currentThread();
         }
         ready_ = true;
-        status_ = "OpenGL generated-source and surface acceleration is ready on "
+        status_ = "OpenGL generated-source, Water, and surface rendering is ready on "
                   + device_name_;
-        if (!version.empty()) status_ += " (" + version + ")";
+        if (!vendor.empty()) status_ += "; vendor: " + vendor;
+        if (!version.empty()) status_ += "; OpenGL version: " + version;
+        if (maximum_texture_size > 0) {
+            status_ += "; maximum texture size: "
+                       + std::to_string(maximum_texture_size);
+        }
+        std::string renderer_lower = renderer;
+        std::transform(renderer_lower.begin(), renderer_lower.end(),
+                       renderer_lower.begin(), [](unsigned char value) {
+                           return static_cast<char>(std::tolower(value));
+                       });
+        if (renderer_lower.find("llvmpipe") != std::string::npos
+            || renderer_lower.find("softpipe") != std::string::npos
+            || renderer_lower.find("swrast") != std::string::npos
+            || renderer_lower.find("swiftshader") != std::string::npos
+            || renderer_lower.find("software rasterizer") != std::string::npos
+            || renderer_lower.find("software renderer") != std::string::npos
+            || renderer_lower.find("gdi generic") != std::string::npos) {
+            status_ += "; software rasterizer detected (CPU execution, "
+                       "without hardware GPU acceleration)";
+        }
         if (selected_attempt != "core profile") {
             status_ += " using the " + selected_attempt + " fallback";
         }
@@ -2694,16 +2735,6 @@ private:
                                    + std::to_string(render_status) + ".");
         }
 
-        const std::size_t row_values =
-            static_cast<std::size_t>(source.width) * 4U;
-        for (int top = 0, bottom = source.height - 1; top < bottom;
-             ++top, --bottom) {
-            float* first = pixels.data()
-                           + static_cast<std::size_t>(top) * row_values;
-            float* second = pixels.data()
-                            + static_cast<std::size_t>(bottom) * row_values;
-            std::swap_ranges(first, first + row_values, second);
-        }
         destination.width = source.width;
         destination.height = source.height;
         destination.pixels.swap(pixels);
@@ -2721,7 +2752,7 @@ private:
             && (pixel_count = static_cast<std::size_t>(config.width)
                                   * static_cast<std::size_t>(config.height))
                    <= (std::numeric_limits<std::size_t>::max)() / 4U;
-        if (!dimensions_fit) {
+        if (!dimensions_fit || config.block_size <= 0) {
             return fail(error,
                         "OpenGL received invalid generated-source dimensions.");
         }
@@ -2734,6 +2765,9 @@ private:
             1U, prepared.waves.size() * 3U);
         const std::size_t swing_texels = std::max<std::size_t>(
             1U, prepared.spatial_swings.size());
+        const int block_columns = 1 + (config.width - 1) / config.block_size;
+        const int block_rows = 1 + (config.height - 1) / config.block_size;
+        const bool expand_blocks = config.block_size > 1;
 
         if (!context_->makeCurrent(surface_)) {
             return fail(error,
@@ -2747,14 +2781,16 @@ private:
         GLint maximum_texture_size = 0;
         gl->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum_texture_size);
         if (maximum_texture_size <= 0
+            || config.width > maximum_texture_size
+            || config.height > maximum_texture_size
             || wave_texels
                    > static_cast<std::size_t>(maximum_texture_size)
             || swing_texels
                    > static_cast<std::size_t>(maximum_texture_size)) {
             context_->doneCurrent();
             return fail(error,
-                        "OpenGL generated-source controls exceed this GPU's "
-                        "texture-backed input limit.");
+                        "OpenGL generated-source dimensions or controls "
+                        "exceed this GPU's texture size limit.");
         }
         if (!ensure_base_program(gl, error)) {
             context_->doneCurrent();
@@ -2789,6 +2825,7 @@ private:
 
         GLuint wave_texture = 0U;
         GLuint swing_texture = 0U;
+        GLuint block_texture = 0U;
         GLuint destination_texture = 0U;
         GLuint framebuffer = 0U;
         const auto cleanup = [&] {
@@ -2797,6 +2834,7 @@ private:
             if (destination_texture != 0U) {
                 gl->glDeleteTextures(1, &destination_texture);
             }
+            if (block_texture != 0U) gl->glDeleteTextures(1, &block_texture);
             if (swing_texture != 0U) gl->glDeleteTextures(1, &swing_texture);
             if (wave_texture != 0U) gl->glDeleteTextures(1, &wave_texture);
         };
@@ -2825,10 +2863,24 @@ private:
         gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, config.width,
                          config.height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        if (expand_blocks) {
+            // The block grid includes partial edge blocks. All RGB expansion
+            // stays on the GPU; only the completed frame is read.
+            gl->glGenTextures(1, &block_texture);
+            gl->glBindTexture(GL_TEXTURE_2D, block_texture);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_NEAREST);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                GL_NEAREST);
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, block_columns,
+                             block_rows, 0, GL_RGBA, GL_FLOAT, nullptr);
+        }
         gl->glGenFramebuffers(1, &framebuffer);
         gl->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
         gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                   GL_TEXTURE_2D, destination_texture, 0);
+                                   GL_TEXTURE_2D,
+                                   expand_blocks ? block_texture
+                                                 : destination_texture, 0);
         if (gl->glCheckFramebufferStatus(GL_FRAMEBUFFER)
             != GL_FRAMEBUFFER_COMPLETE) {
             cleanup();
@@ -2838,7 +2890,7 @@ private:
                         "generated-source framebuffer.");
         }
 
-        gl->glViewport(0, 0, config.width, config.height);
+        gl->glViewport(0, 0, block_columns, block_rows);
         gl->glDisable(GL_BLEND);
         gl->glDisable(GL_DEPTH_TEST);
         gl->glUseProgram(base_program_);
@@ -2852,6 +2904,12 @@ private:
                         config.width, config.height);
         gl->glUniform1i(base_uniforms_.block_size,
                         config.block_size);
+        gl->glUniform1i(base_uniforms_.expand_blocks, 0);
+        gl->glUniform1i(base_uniforms_.block_image, 2);
+        gl->glActiveTexture(GL_TEXTURE2);
+        // Keep even an inactive branch's sampler complete on strict drivers.
+        // This read-only dummy is distinct from the current color attachment.
+        gl->glBindTexture(GL_TEXTURE_2D, wave_texture);
         gl->glUniform1i(base_uniforms_.wave_count,
                         static_cast<GLint>(prepared.waves.size()));
         gl->glUniform1i(base_uniforms_.swing_count,
@@ -2926,6 +2984,23 @@ private:
                         static_cast<float>(config.alpha.spatial_frequency));
         gl->glBindVertexArray(base_vertex_array_);
         gl->glDrawArrays(GL_TRIANGLES, 0, 3);
+        if (expand_blocks) {
+            gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, destination_texture, 0);
+            if (gl->glCheckFramebufferStatus(GL_FRAMEBUFFER)
+                != GL_FRAMEBUFFER_COMPLETE) {
+                cleanup();
+                context_->doneCurrent();
+                return fail(error,
+                            "OpenGL could not create a complete float-RGBA "
+                            "block-expansion framebuffer.");
+            }
+            gl->glViewport(0, 0, config.width, config.height);
+            gl->glActiveTexture(GL_TEXTURE2);
+            gl->glBindTexture(GL_TEXTURE_2D, block_texture);
+            gl->glUniform1i(base_uniforms_.expand_blocks, 1);
+            gl->glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
 
         destination.width = config.width;
         destination.height = config.height;
@@ -2942,16 +3017,6 @@ private:
                             + std::to_string(render_status) + ".");
         }
 
-        const std::size_t row_values =
-            static_cast<std::size_t>(config.width) * 4U;
-        for (int top = 0, bottom = config.height - 1; top < bottom;
-             ++top, --bottom) {
-            float* first = destination.pixels.data()
-                           + static_cast<std::size_t>(top) * row_values;
-            float* second = destination.pixels.data()
-                            + static_cast<std::size_t>(bottom) * row_values;
-            std::swap_ranges(first, first + row_values, second);
-        }
         return true;
     }
 
@@ -3198,16 +3263,6 @@ private:
                                    + std::to_string(render_status) + ".");
         }
 
-        const std::size_t row_values =
-            static_cast<std::size_t>(source.width) * 4U;
-        for (int top = 0, bottom = source.height - 1; top < bottom;
-             ++top, --bottom) {
-            float* first = candidate.pixels.data()
-                           + static_cast<std::size_t>(top) * row_values;
-            float* second = candidate.pixels.data()
-                            + static_cast<std::size_t>(bottom) * row_values;
-            std::swap_ranges(first, first + row_values, second);
-        }
         destination = std::move(candidate);
         return true;
     }

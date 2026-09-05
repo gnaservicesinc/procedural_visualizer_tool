@@ -7,6 +7,7 @@ Exec=procedural-visualizer-tool %f
 Terminal=false
 Type=Application
 StartupNotify=true
+PrefersNonDefaultGPU=true
 MimeType=application/x-procedural-visualizer-tool-project;
 Icon=procedural-visualizer-tool
 Categories=Graphics;2DGraphics;Qt;

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.1.0**. The version is read from `VERSION` by every
+Current product version: **17.2.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,31 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.2.0 creative phase control and portable rendering improvements
+
+In **Numeric LFOs > Arrange phases…**, choose a subset and preview its current
+and proposed phases before applying evenly spaced waves, signed phase steps,
+synchronized phases, or seeded random phases. The seed is tied to stable LFO
+identity, so changing the selection does not reshuffle the remaining oscillators.
+The existing LFO editor accepts the whole change as one undoable operation;
+canceling either dialog leaves the original project intact. Phase-targeting
+LFOs still modulate these authored values during rendering.
+
+Preview and LIVE display conversion now uses exact sRGB quantization thresholds
+instead of a power function for every RGB sample. Straight alpha and export
+precision are unchanged. The portable OpenGL renderer computes block-constant
+generated color once per authored block and expands it on the GPU while retaining
+per-pixel alpha. Generated, Water, and analytic passes also avoid a CPU row-flip
+after readback. These improvements keep the OpenGL 3.3 baseline.
+
+Use **Application Settings > Performance > Copy renderer report** or
+`pvt-render --renderer-info` to inspect the actual renderer, driver status,
+compiled backends, and CPU architecture. Windows executables request the
+high-performance GPU through NVIDIA/AMD driver hints; the Linux desktop launcher
+advertises the equivalent preference. OS and user graphics preferences still
+control device selection. See [the portability notes](PORTABILITY_ROADMAP.md)
+for multi-GPU selection and CUDA/HIP tradeoffs.
 
 ## 17.1.0 artist workflow and control refinement
 
@@ -49,6 +74,17 @@ category picker and a case-insensitive type-to-search destination field. An
 **LFOs** category labels linked settings by visible LFO number and hides the
 currently edited oscillator, making common routes such as “LFO 2 changes LFO
 1 Maximum” direct to author.
+
+**Arrange phases…** coordinates any checked subset of a layer's LFOs. Use
+even spacing for traveling color or motion patterns, a positive or negative
+fixed step for a phase progression, the same phase to synchronize parameters,
+or seeded random phases for repeatable variations. A table previews current
+and proposed phases before applying them; disabled LFOs are initially excluded
+and can be selected explicitly. Random phases follow stable LFO IDs, so
+changing the selection does not reshuffle other oscillators. These are normal
+authored phase values: they save with the project, remain individually editable,
+and commit with the LFO dialog as one undoable edit. Existing phase-modulation
+links continue to take effect while rendering.
 
 Setup format 25 and layer format 22 persist stable LFO IDs. Older records gain
 deterministic nonzero IDs during migration. Appending identity to the public
@@ -1797,7 +1833,7 @@ dithering.
 
 ## Library build and API
 
-The core has no Qt dependency. Build only `libProceduralVisualizerTool`, without
+The default core build has no Qt dependency. Build only `libProceduralVisualizerTool`, without
 any executable containing `main`:
 
 ```sh
@@ -1809,6 +1845,27 @@ cmake -S . -B build-library -G Ninja \
   -DBUILD_SHARED_LIBS=ON
 cmake --build build-library --parallel
 ```
+
+For an accelerated Windows/Linux CLI without the desktop editor, opt into Qt's
+Gui module (Widgets is not required):
+
+```sh
+cmake -S . -B build-cli-gpu -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPVT_BUILD_QT_GUI=OFF \
+  -DPVT_ENABLE_QT_OPENGL_WITHOUT_GUI=ON \
+  -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/kit
+cmake --build build-cli-gpu --parallel
+./build-cli-gpu/pvt-render --renderer-info
+```
+
+Qt Gui and its platform plugins must be installed on the target machine. This
+option deliberately requires Qt when requested; it cannot silently produce an
+unaccelerated build if Qt is missing. An offscreen surface still needs a working
+driver/context, and a headless Linux session may need EGL or Xvfb. Explicit
+`--backend cpu` rendering does not initialize Qt graphics. Library hosts that
+opt in must supply a `QGuiApplication` and service its GUI thread. macOS CLI
+builds continue to use Metal without Qt; the Apple OpenGL switch is for testing.
 
 The public header is `include/procedural_visualizer_tool.h`. It exposes:
 

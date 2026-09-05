@@ -6,6 +6,90 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.2.0 creative controls and portable performance
+
+Local validation before release preparation passed the full 28-test native
+suite, then the six affected tests after the final sampler fix and added
+headless-CPU regression. Separate Metal-disabled OpenGL parity, native display
+ASan/UBSan, x86-64 display checks under Rosetta, CLI-only GPU installation, and
+an installed CMake consumer also passed. Release preparation preserves the
+pre-existing dirty `tests/.DS_Store` outside the release changes. The public
+version is now 17.2.0; five-platform main/tagged CI and published artifact checks
+are the release gates.
+
+GitHub GPU access was tried through the authenticated account. The repository
+belongs to the personal account `gnaservicesinc`; its organization
+`GNA-SERVICES-INC` reports the Free plan. Both hosted-runner listing and available
+machine-size requests returned HTTP 404 with GitHub's explicit response:
+"GitHub hosted runners are not supported for this organization". No runner or
+billing configuration was changed. The user's screenshots show standard public
+Actions usage fully discounted; this does not establish larger-runner access.
+Physical NVIDIA/AMD testing remains pending hardware access. The current
+macOS distribution libpng hardware-optimization setting remains a separate
+future investigation rather than an unvalidated release change.
+
+Numeric LFOs now includes **Arrange phases…** with a selectable subset,
+current/proposed phase preview, evenly spaced, signed-step, same-phase, and
+seeded-random modes. Random assignment uses the stable LFO ID and explicit
+integer mixing; selection changes preserve the remaining random phases.
+Values wrap into the half-open cycle and retain the editor's four-decimal
+precision. The dialog can scroll on small displays. Both cancel levels are
+transactional, and acceptance of the parent editor creates one undo step.
+IDs, destinations, enabled state, and project formats remain unchanged.
+
+Editor and LIVE convert float RGB into display bytes through a shared exact
+sRGB threshold table, initialized once and then read-only. This removes three
+per-pixel `pow` calls while retaining straight alpha and scanline cancellation.
+Export color/bit-depth semantics are unchanged. Portable OpenGL generated color
+now shades one fragment per authored block and expands RGB on GPU, with alpha
+still evaluated at every full-resolution pixel. Generated, Water, and analytic
+passes read back directly in Image row order, removing CPU vertical swaps.
+All samplers remain complete even for untaken shader branches. OpenGL stays at
+the existing 3.3 baseline; runtime failures still propagate without CPU retry.
+
+The CLI adds standalone `--renderer-info`, and Performance adds **Copy renderer
+report**. Reports include architecture, host CPU workers, compiled/available
+backends, device, GL vendor/version/texture limit, and recognized software
+rasterizers. Windows application executables export NVIDIA Optimus and AMD
+PowerXpress performance hints; Linux's launcher prefers a non-default GPU.
+These hints respect driver/OS/user selection. The opt-in
+`PVT_ENABLE_QT_OPENGL_WITHOUT_GUI` requires Qt Gui for CLI/library acceleration
+without Widgets or the editor. Default core builds remain Qt-free. Explicit
+CLI CPU rendering works even with an unavailable Qt graphics platform.
+
+Measured on Apple M2 Max, Release, median of nine warmed conversions/renders:
+
+| Work | Before | After | Evidence |
+| --- | ---: | ---: | --- |
+| 1080p RGBA display conversion | 30.36 ms | 7.79 ms | Identical display bytes |
+| 4K RGBA display conversion | 119.91 ms | 29.69 ms | Identical display bytes |
+| OpenGL 1024², 24 waves, block 1 | 7.51 ms | 6.00 ms | Identical float hash |
+| OpenGL 1024², 24 waves, block 8 | 7.34 ms | 3.87 ms | Identical float hash |
+| OpenGL 1024², 24 waves, block 64 | 7.31 ms | 3.89 ms | Identical float hash |
+| OpenGL 1024², 24 waves, block 1024 | 7.66 ms | 4.03 ms | Identical float hash |
+
+Display timing covers conversion only, not complete preview latency. OpenGL
+timing includes frame preparation, GPU completion, and float readback, with
+Metal disabled. The comparison substitutes unchanged `d2036eb` OpenGL source
+into the same Release library and uses identical input/driver conditions.
+Reproduce with `pvt_display_color_tests --benchmark` and, in a Metal-disabled
+OpenGL build, `pvt_opengl_surface_backend_tests --benchmark`.
+
+Validation covers native CTest/GUI smoke, separate Metal-disabled OpenGL parity,
+non-divisible block grids and per-pixel alpha, display rounding boundaries and
+random floats, x86-64 display conversion under Rosetta, native ASan/UBSan,
+CLI-only OpenGL rendering, and CPU CLI execution with an intentionally invalid
+Qt platform. The display test also has an explicit `--exhaustive` mode; the
+native sweep verified all 1,065,353,217 positive float32 patterns in [0,1].
+Windows x64 and ARM64 hint objects were cross-compiled and their export
+directives verified. These are not physical Windows/NVIDIA/AMD driver results.
+
+GitHub's existing five-platform workflow retains its build/package coverage
+and now requires OpenGL runtime execution on Linux Mesa/Xvfb through
+`PVT_REQUIRE_OPENGL=1`. Physical NVIDIA/AMD runs remain pending. No CUDA/HIP
+backend or paid GPU runner is included. The current equipment and GitHub
+GPU-runner options are documented in `PORTABILITY_ROADMAP.md`.
+
 ## 17.1.0 artist workflow and control refinement
 
 The CPU + GPU renderer contract is unchanged: supported layers remain GPU-owned,

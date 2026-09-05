@@ -1,4 +1,5 @@
 #include "live_frame_controller.h"
+#include "display_color.h"
 
 #include <QtConcurrent>
 
@@ -10,14 +11,6 @@
 #include <exception>
 
 namespace {
-
-float linear_to_srgb(float value) {
-    if (!std::isfinite(value)) return 0.0F;
-    const float encoded = value <= 0.0031308F
-        ? 12.92F * value
-        : 1.055F * std::pow(value, 1.0F / 2.4F) - 0.055F;
-    return std::clamp(encoded, 0.0F, 1.0F);
-}
 
 void scale_project_for_stage(pvt::ProjectConfig& project,
                              const QSize& display_pixels,
@@ -226,17 +219,9 @@ LiveFrameController::Result LiveFrameController::render(
                         break;
                     }
                     auto* row = result.image.scanLine(y);
-                    for (int x = 0; x < image.width; ++x) {
-                        const float* pixel = image.pixel(x, y);
-                        row[x * 4] = static_cast<unsigned char>(std::lround(
-                            linear_to_srgb(pixel[0]) * 255.0F));
-                        row[x * 4 + 1] = static_cast<unsigned char>(std::lround(
-                            linear_to_srgb(pixel[1]) * 255.0F));
-                        row[x * 4 + 2] = static_cast<unsigned char>(std::lround(
-                            linear_to_srgb(pixel[2]) * 255.0F));
-                        row[x * 4 + 3] = static_cast<unsigned char>(std::lround(
-                            std::clamp(pixel[3], 0.0F, 1.0F) * 255.0F));
-                    }
+                    pvt::display::convert_rgba_row(
+                        image.pixel(0, y), row,
+                        static_cast<std::size_t>(image.width));
                 }
             }
         }

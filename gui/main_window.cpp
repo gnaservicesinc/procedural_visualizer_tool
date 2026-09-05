@@ -2,6 +2,7 @@
 
 #include "application_settings_dialog.h"
 #include "audio_processing_dialog.h"
+#include "display_color.h"
 #include "live_target_registry.h"
 #include "live_workspace.h"
 #include "preview_widget.h"
@@ -1177,17 +1178,6 @@ std::uint64_t allocate_motion_path_id(
         if (used.find(candidate) == used.end()) return candidate;
     }
     return 0U;
-}
-
-float linear_to_srgb(float value) {
-    if (!std::isfinite(value)) {
-        return 0.0F;
-    }
-    value = std::clamp(value, 0.0F, 1.0F);
-    if (value <= 0.0031308F) {
-        return value * 12.92F;
-    }
-    return 1.055F * std::pow(value, 1.0F / 2.4F) - 0.055F;
 }
 
 QString formatted_time(double seconds) {
@@ -7812,6 +7802,12 @@ void MainWindow::showParameterLfoEditor() {
     list_buttons->addWidget(add);
     list_buttons->addWidget(remove);
     left->addLayout(list_buttons);
+    auto* arrange_phases = new QPushButton(tr("Arrange phases…"), &dialog);
+    arrange_phases->setObjectName(QStringLiteral("parameterLfoArrangePhases"));
+    arrange_phases->setToolTip(tr(
+        "Coordinate any selection of LFOs with evenly spaced, stepped, "
+        "synchronized, or reproducible random phases."));
+    left->addWidget(arrange_phases);
     body->addLayout(left, 1);
 
     auto* editor = new QGroupBox(tr("Selected LFO"), &dialog);
@@ -8044,6 +8040,7 @@ void MainWindow::showParameterLfoEditor() {
         const bool present = row >= 0 && row < static_cast<int>(edited.size());
         editor->setEnabled(present);
         remove->setEnabled(present);
+        arrange_phases->setEnabled(!edited.empty());
         if (present) {
             const pvt::ParameterLfo& lfo =
                 edited[static_cast<std::size_t>(row)];
@@ -8160,6 +8157,192 @@ void MainWindow::showParameterLfoEditor() {
         }
         list->setCurrentRow(std::min(row, list->count() - 1));
         if (list->count() == 0) load_row(-1);
+    });
+
+    connect(arrange_phases, &QPushButton::clicked, &dialog, [&] {
+        QDialog arrangement(&dialog);
+        arrangement.setObjectName(QStringLiteral("parameterLfoPhaseDialog"));
+        arrangement.setWindowTitle(tr("Arrange LFO phases"));
+        arrangement.resize(860, 540);
+        auto* arrangement_outer = new QVBoxLayout(&arrangement);
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto* contents = new QWidget;
+        auto* layout = new QVBoxLayout(contents);
+        layout->setContentsMargins(0, 0, 0, 0);
+        scroll->setWidget(contents);
+        arrangement_outer->addWidget(scroll, 1);
+        auto* description = new QLabel(tr(
+            "Choose the LFOs to coordinate. Spacing follows list order. "
+            "Random phases use stable LFO identities and the seed, so "
+            "changing the selection preserves each LFO's random phase. "
+            "LFOs that modulate Phase still override these authored values "
+            "while rendering."));
+        description->setWordWrap(true);
+        layout->addWidget(description);
+
+        auto* settings = new QFormLayout;
+        auto* method = new QComboBox;
+        method->setObjectName(QStringLiteral("parameterLfoPhaseMethod"));
+        method->addItem(tr("Evenly spaced around a cycle"));
+        method->addItem(tr("Fixed phase step"));
+        method->addItem(tr("Same phase"));
+        method->addItem(tr("Seeded random"));
+        auto* offset = real_editor(-kMaximumRenderParameter,
+                                   kMaximumRenderParameter, 4, 1.0);
+        offset->setObjectName(QStringLiteral("parameterLfoPhaseOffset"));
+        offset->setSuffix(tr("°"));
+        offset->setValue(phase->value());
+        auto* step = real_editor(-360.0, 360.0, 4, 1.0);
+        step->setObjectName(QStringLiteral("parameterLfoPhaseStep"));
+        step->setSuffix(tr("°"));
+        step->setValue(90.0);
+        step->setToolTip(tr("A negative step reverses the phase progression."));
+        auto* seed = integer_editor(0, kMaximumIntegerParameter);
+        seed->setObjectName(QStringLiteral("parameterLfoPhaseSeed"));
+        seed->setValue(1);
+        settings->addRow(tr("Arrangement"), method);
+        settings->addRow(tr("Starting phase / offset"), offset);
+        settings->addRow(tr("Step between LFOs"), step);
+        settings->addRow(tr("Random seed"), seed);
+        layout->addLayout(settings);
+
+        auto* selection_buttons = new QHBoxLayout;
+        auto* select_all = new QPushButton(tr("Select all"));
+        auto* select_enabled = new QPushButton(tr("Enabled only"));
+        select_enabled->setObjectName(QStringLiteral("parameterLfoPhaseEnabledOnly"));
+        auto* clear_selection = new QPushButton(tr("Clear selection"));
+        clear_selection->setObjectName(QStringLiteral("parameterLfoPhaseClear"));
+        selection_buttons->addWidget(select_all);
+        selection_buttons->addWidget(select_enabled);
+        selection_buttons->addWidget(clear_selection);
+        selection_buttons->addStretch(1);
+        layout->addLayout(selection_buttons);
+
+        auto* preview = new QTableWidget(static_cast<int>(edited.size()), 3);
+        preview->setObjectName(QStringLiteral("parameterLfoPhasePreview"));
+        preview->setHorizontalHeaderLabels(
+            {tr("LFO"), tr("Current phase"), tr("New phase")});
+        preview->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+        preview->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        preview->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+        preview->verticalHeader()->setVisible(false);
+        preview->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        preview->setAlternatingRowColors(true);
+        preview->setMinimumHeight(140);
+        for (int row = 0; row < preview->rowCount(); ++row) {
+            auto* item = new QTableWidgetItem(
+                tr("%1. %2").arg(row + 1).arg(list->item(row)->text()));
+            item->setCheckState(edited[static_cast<std::size_t>(row)].enabled
+                                    ? Qt::Checked : Qt::Unchecked);
+            preview->setItem(row, 0, item);
+            preview->setItem(row, 1, new QTableWidgetItem);
+            preview->setItem(row, 2, new QTableWidgetItem);
+        }
+        layout->addWidget(preview, 1);
+        auto* summary = new QLabel;
+        layout->addWidget(summary);
+        auto* arrangement_buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        arrangement_buttons->button(QDialogButtonBox::Ok)->setText(tr("Apply phases"));
+        arrangement_outer->addWidget(arrangement_buttons);
+
+        std::vector<double> arranged(edited.size());
+        const auto refresh_preview = [&] {
+            const QSignalBlocker blocker(preview);
+            std::size_t count = 0U;
+            for (int row = 0; row < preview->rowCount(); ++row) {
+                if (preview->item(row, 0)->checkState() == Qt::Checked) ++count;
+            }
+            step->setEnabled(method->currentIndex() == 1);
+            seed->setEnabled(method->currentIndex() == 3);
+            arrangement_buttons->button(QDialogButtonBox::Ok)->setEnabled(count != 0U);
+            summary->setText(tr("%1 of %2 LFOs selected. New phases wrap into 0–360°.")
+                                 .arg(count).arg(edited.size()));
+            std::size_t position = 0U;
+            for (int row = 0; row < preview->rowCount(); ++row) {
+                const std::size_t index = static_cast<std::size_t>(row);
+                const pvt::ParameterLfo& lfo = edited[index];
+                const bool selected = preview->item(row, 0)->checkState() == Qt::Checked;
+                arranged[index] = lfo.phase_degrees;
+                if (selected) {
+                    double shift = 0.0;
+                    if (method->currentIndex() == 0) {
+                        // A full cycle is half-open: avoid duplicating the first phase.
+                        shift = 360.0 * static_cast<double>(position)
+                            / static_cast<double>(count);
+                    } else if (method->currentIndex() == 1) {
+                        shift = step->value() * static_cast<double>(position);
+                    } else if (method->currentIndex() == 3) {
+                        // Explicit SplitMix64 avoids library-dependent random distributions.
+                        // Stable identities keep a seed's result independent of selection.
+                        std::uint64_t hash = lfo.id
+                            + static_cast<std::uint64_t>(seed->value())
+                                  * UINT64_C(0x9e3779b97f4a7c15);
+                        hash = (hash ^ (hash >> 30U)) * UINT64_C(0xbf58476d1ce4e5b9);
+                        hash = (hash ^ (hash >> 27U)) * UINT64_C(0x94d049bb133111eb);
+                        hash ^= hash >> 31U;
+                        shift = static_cast<double>(hash >> 11U)
+                            * (360.0 / 9007199254740992.0);
+                    }
+                    double value = std::fmod(offset->value() + shift, 360.0);
+                    if (value < 0.0) value += 360.0;
+                    // Keep the authored value identical to the four-decimal editor.
+                    value = std::round(value * 10000.0) / 10000.0;
+                    arranged[index] = value >= 360.0 || value == 0.0 ? 0.0 : value;
+                    ++position;
+                }
+                preview->item(row, 1)->setText(tr("%1°").arg(lfo.phase_degrees, 0, 'f', 4));
+                preview->item(row, 2)->setText(
+                    selected ? tr("%1°").arg(arranged[index], 0, 'f', 4)
+                             : tr("Unchanged"));
+                preview->item(row, 2)->setData(Qt::UserRole, arranged[index]);
+            }
+        };
+        const auto select_rows = [&](int selection) {
+            {
+                const QSignalBlocker blocker(preview);
+                for (int row = 0; row < preview->rowCount(); ++row) {
+                    const bool checked = selection == 0
+                        || (selection == 1
+                            && edited[static_cast<std::size_t>(row)].enabled);
+                    preview->item(row, 0)->setCheckState(
+                        checked ? Qt::Checked : Qt::Unchecked);
+                }
+            }
+            refresh_preview();
+        };
+        connect(select_all, &QPushButton::clicked, &arrangement, [&] { select_rows(0); });
+        connect(select_enabled, &QPushButton::clicked, &arrangement, [&] { select_rows(1); });
+        connect(clear_selection, &QPushButton::clicked, &arrangement, [&] { select_rows(2); });
+        connect(preview, &QTableWidget::itemChanged, &arrangement, refresh_preview);
+        connect(method, qOverload<int>(&QComboBox::currentIndexChanged),
+                &arrangement, refresh_preview);
+        connect(offset, qOverload<double>(&QDoubleSpinBox::valueChanged),
+                &arrangement, refresh_preview);
+        connect(step, qOverload<double>(&QDoubleSpinBox::valueChanged),
+                &arrangement, refresh_preview);
+        connect(seed, qOverload<int>(&QSpinBox::valueChanged),
+                &arrangement, refresh_preview);
+        connect(arrangement_buttons, &QDialogButtonBox::rejected,
+                &arrangement, &QDialog::reject);
+        connect(arrangement_buttons, &QDialogButtonBox::accepted,
+                &arrangement, &QDialog::accept);
+        refresh_preview();
+        if (const QScreen* target_screen = dialog.screen()) {
+            const QSize available = target_screen->availableGeometry().size();
+            const QSize maximum(std::max(1, available.width() - 32),
+                                std::max(1, available.height() - 64));
+            arrangement.setMaximumSize(maximum);
+            arrangement.resize(arrangement.size().boundedTo(maximum));
+        }
+        if (arrangement.exec() != QDialog::Accepted) return;
+        for (std::size_t index = 0U; index < edited.size(); ++index) {
+            edited[index].phase_degrees = arranged[index];
+            refresh_item(static_cast<int>(index));
+        }
+        load_row(list->currentRow());
     });
 
     auto* buttons = new QDialogButtonBox(
@@ -17615,17 +17798,9 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
                 return result;
             }
             auto* row = result.image.scanLine(y);
-            for (int x = 0; x < image.width; ++x) {
-                const float* pixel = image.pixel(x, y);
-                row[x * 4] = static_cast<unsigned char>(
-                    std::lround(linear_to_srgb(pixel[0]) * 255.0F));
-                row[x * 4 + 1] = static_cast<unsigned char>(
-                    std::lround(linear_to_srgb(pixel[1]) * 255.0F));
-                row[x * 4 + 2] = static_cast<unsigned char>(
-                    std::lround(linear_to_srgb(pixel[2]) * 255.0F));
-                row[x * 4 + 3] = static_cast<unsigned char>(
-                    std::lround(std::clamp(pixel[3], 0.0F, 1.0F) * 255.0F));
-            }
+            pvt::display::convert_rgba_row(
+                image.pixel(0, y), row,
+                static_cast<std::size_t>(image.width));
         }
     } catch (const std::exception& exception) {
         result.image = {};
@@ -19693,7 +19868,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 && dialog->findChild<QDoubleSpinBox*>(
                     QStringLiteral("parameterLfoDelay")) != nullptr
                 && dialog->findChild<QSpinBox*>(
-                    QStringLiteral("parameterLfoSkipCycles")) != nullptr;
+                    QStringLiteral("parameterLfoSkipCycles")) != nullptr
+                && dialog->findChild<QPushButton*>(
+                    QStringLiteral("parameterLfoArrangePhases")) != nullptr;
             dialog->reject();
         }
     });
@@ -19701,6 +19878,173 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (!inspected_parameter_lfo_editor) {
         if (error != nullptr) {
             *error = tr("The numeric LFO editor is incomplete or malformed.");
+        }
+        return false;
+    }
+    const ActiveDocumentState before_phase_arrangement = captureActiveState();
+    const std::string phase_arrangement_layer = active_layer_uuid_;
+    pvt::ParameterLfo phase_first;
+    phase_first.id = 11U;
+    phase_first.target_path = "saturation";
+    phase_first.phase_degrees = 13.0;
+    pvt::ParameterLfo phase_second = phase_first;
+    phase_second.id = 22U;
+    phase_second.target_path = "lfo/11/maximum";
+    phase_second.phase_degrees = 26.0;
+    pvt::ParameterLfo phase_third = phase_first;
+    phase_third.id = 33U;
+    phase_third.target_path = "lfo/22/phase_degrees";
+    phase_third.phase_degrees = 39.0;
+    phase_third.enabled = false;
+    config_.parameter_lfos = {phase_first, phase_second, phase_third};
+    syncActiveRender();
+    const auto phase_fixture_matches = [&](double first, double second) {
+        return config_.parameter_lfos.size() == 3U
+            && config_.parameter_lfos[0].phase_degrees == first
+            && config_.parameter_lfos[1].phase_degrees == second
+            && config_.parameter_lfos[2].phase_degrees == 39.0
+            && config_.parameter_lfos[0].id == 11U
+            && config_.parameter_lfos[1].id == 22U
+            && config_.parameter_lfos[2].id == 33U
+            && config_.parameter_lfos[1].target_path == "lfo/11/maximum"
+            && config_.parameter_lfos[2].target_path == "lfo/22/phase_degrees"
+            && !config_.parameter_lfos[2].enabled;
+    };
+    const auto exercise_phase_arrangement = [&](bool accept_phases,
+                                                bool accept_editor) {
+        bool valid = true;
+        bool inspected = false;
+        QTimer::singleShot(0, this, [&, accept_phases, accept_editor] {
+            auto* dialog = findChild<QDialog*>(QStringLiteral("parameterLfoDialog"));
+            if (dialog == nullptr) { valid = false; return; }
+            auto* launch = dialog->findChild<QPushButton*>(
+                QStringLiteral("parameterLfoArrangePhases"));
+            if (launch == nullptr || !launch->isEnabled()) {
+                valid = false;
+                dialog->reject();
+                return;
+            }
+            QTimer::singleShot(0, dialog, [&, dialog, accept_phases] {
+                auto* arrangement = dialog->findChild<QDialog*>(
+                    QStringLiteral("parameterLfoPhaseDialog"));
+                if (arrangement == nullptr) { valid = false; return; }
+                auto* method = arrangement->findChild<QComboBox*>(
+                    QStringLiteral("parameterLfoPhaseMethod"));
+                auto* offset = arrangement->findChild<QDoubleSpinBox*>(
+                    QStringLiteral("parameterLfoPhaseOffset"));
+                auto* step = arrangement->findChild<QDoubleSpinBox*>(
+                    QStringLiteral("parameterLfoPhaseStep"));
+                auto* seed = arrangement->findChild<QSpinBox*>(
+                    QStringLiteral("parameterLfoPhaseSeed"));
+                auto* preview = arrangement->findChild<QTableWidget*>(
+                    QStringLiteral("parameterLfoPhasePreview"));
+                auto* clear = arrangement->findChild<QPushButton*>(
+                    QStringLiteral("parameterLfoPhaseClear"));
+                auto* enabled_only = arrangement->findChild<QPushButton*>(
+                    QStringLiteral("parameterLfoPhaseEnabledOnly"));
+                auto* buttons = arrangement->findChild<QDialogButtonBox*>();
+                if (method == nullptr || offset == nullptr || step == nullptr
+                    || seed == nullptr || preview == nullptr || clear == nullptr
+                    || enabled_only == nullptr || buttons == nullptr
+                    || preview->rowCount() != 3) {
+                    valid = false;
+                    arrangement->reject();
+                    return;
+                }
+                inspected = true;
+                const auto phase_value = [&](int row) {
+                    return preview->item(row, 2)->data(Qt::UserRole).toDouble();
+                };
+                offset->setValue(30.0);
+                valid = valid && phase_value(0) == 30.0 && phase_value(1) == 210.0
+                    && phase_value(2) == 39.0;
+                clear->click();
+                valid = valid && !buttons->button(QDialogButtonBox::Ok)->isEnabled();
+                preview->item(0, 0)->setCheckState(Qt::Checked);
+                valid = valid && phase_value(0) == 30.0 && phase_value(1) == 26.0
+                    && buttons->button(QDialogButtonBox::Ok)->isEnabled();
+                preview->item(1, 0)->setCheckState(Qt::Checked);
+                preview->item(2, 0)->setCheckState(Qt::Checked);
+                method->setCurrentIndex(1);
+                offset->setValue(-30.0);
+                step->setValue(-90.0);
+                valid = valid && step->isEnabled() && !seed->isEnabled()
+                    && phase_value(0) == 330.0 && phase_value(1) == 240.0
+                    && phase_value(2) == 150.0;
+                method->setCurrentIndex(3);
+                seed->setValue(41);
+                const std::array<double, 3> random_phases = {
+                    phase_value(0), phase_value(1), phase_value(2)};
+                preview->item(0, 0)->setCheckState(Qt::Unchecked);
+                valid = valid && !step->isEnabled() && seed->isEnabled()
+                    && phase_value(0) == 13.0
+                    && phase_value(1) == random_phases[1]
+                    && phase_value(2) == random_phases[2];
+                seed->setValue(42);
+                valid = valid && phase_value(1) != random_phases[1];
+                seed->setValue(41);
+                preview->item(0, 0)->setCheckState(Qt::Checked);
+                for (int row = 0; row < 3; ++row) {
+                    valid = valid && phase_value(row) == random_phases[static_cast<std::size_t>(row)]
+                        && phase_value(row) >= 0.0 && phase_value(row) < 360.0;
+                }
+                method->setCurrentIndex(2);
+                offset->setValue(390.0);
+                valid = valid && phase_value(0) == 30.0 && phase_value(1) == 30.0
+                    && phase_value(2) == 30.0;
+                enabled_only->click();
+                method->setCurrentIndex(0);
+                offset->setValue(30.0);
+                valid = valid && phase_value(0) == 30.0 && phase_value(1) == 210.0
+                    && phase_value(2) == 39.0 && phase_fixture_matches(13.0, 26.0);
+                if (valid && accept_phases) buttons->button(QDialogButtonBox::Ok)->click();
+                else arrangement->reject();
+            });
+            launch->click();
+            const auto* phase_editor = dialog->findChild<QDoubleSpinBox*>(
+                QStringLiteral("parameterLfoPhase"));
+            valid = valid && phase_editor != nullptr
+                && phase_editor->value() == (accept_phases ? 30.0 : 13.0)
+                && phase_fixture_matches(13.0, 26.0);
+            if (valid && accept_editor) {
+                dialog->findChild<QDialogButtonBox*>(
+                    QString{}, Qt::FindDirectChildrenOnly)->button(QDialogButtonBox::Ok)->click();
+            } else {
+                dialog->reject();
+            }
+        });
+        showParameterLfoEditor();
+        return valid && inspected;
+    };
+    const int undo_before_phases = undo_stack_->index();
+    bool phase_arrangement_valid = exercise_phase_arrangement(false, false)
+        && phase_fixture_matches(13.0, 26.0)
+        && exercise_phase_arrangement(true, false)
+        && phase_fixture_matches(13.0, 26.0)
+        && undo_stack_->index() == undo_before_phases
+        && exercise_phase_arrangement(true, true)
+        && phase_fixture_matches(30.0, 210.0)
+        && undo_stack_->index() == undo_before_phases + 1;
+    if (phase_arrangement_valid) {
+        std::string serialized_phases;
+        pvt::RenderData reloaded_phases;
+        phase_arrangement_valid = pvt::detail::serialize_layer_config(
+            config_, serialized_phases, nullptr, &config_.motion_paths)
+            && pvt::detail::deserialize_layer_config(
+                serialized_phases, reloaded_phases, nullptr, &config_.motion_paths)
+            && render_data_equal(config_, reloaded_phases,
+                                 &config_.motion_paths, &config_.motion_paths);
+        undo_stack_->undo();
+        phase_arrangement_valid = phase_arrangement_valid && phase_fixture_matches(13.0, 26.0);
+        undo_stack_->redo();
+        phase_arrangement_valid = phase_arrangement_valid && phase_fixture_matches(30.0, 210.0);
+    }
+    restoreActiveState(phase_arrangement_layer, before_phase_arrangement);
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    if (!phase_arrangement_valid) {
+        if (error != nullptr) {
+            *error = tr("LFO phase arrangement failed selection, reproducibility, cancellation, persistence, or undo/redo checks.");
         }
         return false;
     }

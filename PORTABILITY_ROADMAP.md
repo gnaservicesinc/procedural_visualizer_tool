@@ -6,6 +6,94 @@ it compiles in a software-rendered virtual machine.
 
 ## Selected direction
 
+### Current acceleration work (17.2.0)
+
+OpenGL remains a vendor-neutral path for Windows/Linux GPUs with a suitable
+OpenGL 3.3 driver. Generated RGB now shades the block grid and expands on GPU;
+alpha remains per pixel. Direct row-order readback removes CPU row swaps from
+generated, Water, and analytic passes. This reduces work without requiring
+compute shaders, new SDKs, or an architecture-specific binary.
+
+`PVT_ENABLE_QT_OPENGL_WITHOUT_GUI=ON` enables the same renderer for a CLI or
+library build using Qt Gui without compiling the editor or requiring Widgets.
+The default core build remains free of Qt. Runtime context availability is
+separate from compilation: `pvt-render --renderer-info` and Performance's
+**Copy renderer report** expose both. Software OpenGL is still usable for
+validation but is not evidence of physical GPU acceleration.
+
+Windows GPU-enabled GUI and CLI executables export the driver-recognized
+`NvOptimusEnablement` and `AmdPowerXpressRequestHighPerformance` hints. Linux's
+desktop entry sets `PrefersNonDefaultGPU=true`. These are preferences, not a
+device-selection guarantee; user/OS/driver policy may override them. Change
+Windows per-application Graphics preferences and restart when a laptop selects
+the wrong device. On Linux, a desktop's discrete-GPU launch option or the
+driver's PRIME settings can select a different device. For Mesa use, for example,
+`DRI_PRIME=1 pvt-render --renderer-info`; NVIDIA GLX offload commonly uses
+`__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia pvt-render --renderer-info`.
+Always inspect the returned renderer to verify selection.
+
+References: [NVIDIA Optimus policy](https://developer.download.nvidia.com/devzone/devcenter/gamegraphics/files/OptimusRenderingPolicies.pdf),
+[AMD switchable graphics](https://gpuopen.com/learn/amdpowerxpressrequesthighperformance/),
+[desktop GPU preference](https://specifications.freedesktop.org/desktop-entry/latest/recognized-keys.html),
+[Mesa selection](https://docs.mesa3d.org/envvars.html),
+[NVIDIA PRIME offload](https://download.nvidia.com/XFree86/Linux-x86_64/570.86.16/README/primerenderoffload.html).
+
+### CUDA, HIP, and modern CPU features
+
+NVIDIA CUDA and AMD ROCm/HIP are real options for future compute backends. CUDA
+requires a supported NVIDIA GPU/toolchain. AMD HIP support varies by GPU and OS;
+its Windows support is not a substitute for the full range of x64 and ARM64
+targets PVT ships. A backend would need explicit ownership, residency, error,
+memory, cancellation, parity, and packaging contracts, plus physical-device
+measurements. This change adds no CUDA or HIP kernels and makes no claim of
+CUDA/HIP acceleration. First reduce repeated shading and host/device transfers
+in the existing backend; a new API alone does not make those costs disappear.
+
+Official references: [CUDA on Windows](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html),
+[CUDA on Linux](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html),
+[HIP](https://rocm.docs.amd.com/projects/HIP/en/latest/what_is_hip.html),
+[AMD Windows support matrix](https://rocm.docs.amd.com/projects/install-on-windows/en/develop/reference/system-requirements.html).
+Consult current vendor matrices before selecting hardware.
+
+CPU work stays bounded by workers and memory. Exact lookup-based display
+conversion removes per-channel transcendental work on both x64 and ARM64;
+release builds retain the compiler's target-baseline vectorization without
+global fast-math, AVX-only, or `-march=native` requirements. Additional SIMD
+dispatch must prove a workload benefit and preserve image semantics. Tensor,
+ray-tracing, and low-precision hardware have no automatic benefit for the
+current float32 procedural pipeline. No claim is made that every CPU/GPU
+instruction set is used.
+
+### Validation with only a Mac Studio available
+
+Use the Mac Studio for native Metal and a separate Metal-disabled OpenGL test
+build. The five-platform GitHub Actions matrix covers compilation and package
+tests; Linux Mesa under Xvfb also executes portable shader parity. CI now sets
+`PVT_REQUIRE_OPENGL=1` so a missing Linux context fails instead of skipping the
+shader tests. Mesa software execution verifies semantics, not vendor performance.
+
+GitHub retired GPU machine types in Codespaces in August 2025. GitHub Actions
+does offer NVIDIA Tesla T4 larger runners on Ubuntu and Windows, but larger
+runners require a Team/Enterprise Cloud organization and are billed separately,
+including for public repositories. The published GPU runner table does not list
+AMD GPUs. The authenticated hosted-runner and machine-size API requests for the user's
+`GNA-SERVICES-INC` organization returned HTTP 404: "GitHub hosted runners are not
+supported for this organization"; its plan reports Free. No paid runner or
+billing change was provisioned. The PVT repository is personally owned by
+`gnaservicesinc`, whose student Pro discount applies to the supplied standard
+Actions billing examples, not proof of larger-runner eligibility.
+
+An NVIDIA runner could supply additional evidence after checking that its
+driver exposes a working OpenGL graphics context; having CUDA access alone does
+not establish that. AMD driver qualification remains pending access to AMD
+hardware or an appropriate external runner. Capture `--renderer-info`, run the
+parity suite, and compare `pvt_opengl_surface_backend_tests --benchmark` on the
+same machine and driver before making performance claims.
+
+Sources: [Codespaces GPU retirement](https://github.blog/changelog/2025-08-01-upcoming-deprecation-of-gpu-machine-type-in-codespaces/),
+[GitHub GPU runner specifications](https://docs.github.com/en/actions/reference/runners/larger-runners),
+[eligibility and billing](https://docs.github.com/en/actions/concepts/runners/larger-runners).
+
 PVT 5.0.0 begins the OpenGL renderer for Linux and Windows using the context,
 surface, and function-loading APIs already supplied by Qt. PVT 8.0.3 adds the
 first generated-source pass for ordinary Continuous hue layers. Keep Metal on

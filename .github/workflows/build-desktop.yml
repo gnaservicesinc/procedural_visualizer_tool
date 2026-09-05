@@ -283,6 +283,9 @@ jobs:
       - name: Run Linux tests
         if: runner.os == 'Linux'
         shell: bash
+        env:
+          # Mesa/Xvfb must execute shader parity, not pass by skipping it.
+          PVT_REQUIRE_OPENGL: "1"
         run: xvfb-run --auto-servernum ctest --test-dir build --output-on-failure --timeout 300
 
       - name: Run macOS tests
@@ -488,6 +491,12 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 17.2.0 adds an Arrange phases workflow for any selection of numeric LFOs: evenly spaced cycles, signed phase steps, synchronization, and repeatable seeded random phases. A current/proposed preview, both cancellation levels, stable identities, persistence, and one-step undo/redo keep coordinated animation edits predictable.
+
+          Editor and LIVE display conversion replaces per-channel power functions with exact sRGB thresholds. On Apple M2 Max, median 1080p conversion fell from 30.36 ms to 7.79 ms and 4K from 119.91 ms to 29.69 ms, with identical display bytes. Portable OpenGL shades generated RGB once per authored block, retains per-pixel alpha, and avoids CPU row-flips after generated, Water, and analytic passes. A 1024-square, 24-wave, block-8 frame improved from 7.34 ms to 3.87 ms on the same Mac OpenGL driver with identical float output hashes; these are workload-specific measurements, not NVIDIA/AMD hardware results.
+
+          Performance settings adds Copy renderer report and the CLI adds --renderer-info. Reports expose the actual device, OpenGL vendor/version/texture limit, backend availability, CPU architecture, and recognized software renderers. Windows executables request the high-performance NVIDIA/AMD GPU and the Linux launcher advertises the corresponding preference; user/OS/driver policy remains authoritative. An explicit CMake option enables Qt Gui-only CLI/library acceleration without the editor or Widgets, and CPU CLI rendering no longer initializes graphics. Linux CI now requires its Mesa OpenGL parity checks to execute. Project formats, the public renderer ABI, and SONAME 17 remain unchanged. No CUDA or HIP backend is claimed.
+
           Version 17.1.0 refines the artist-facing desktop workflow without changing existing projects. Application Settings uses a wider screen-clamped layout with compact sections and per-tab scrolling, the LFO toolbar action has a palette-aware waveform icon, and effect placement uses effect-specific labels and explanations. Choosing an after-surface placement on an unmapped layer can enable a neutral default Plane in one undoable step or retain the flat layer while preserving the placement choice.
 
           Live audio calibration adds linked percentage and decibel input trim, fine Response entry, a pre-gate dBFS peak meter, an explicit signal-path display, and gate hysteresis/attack/hold/release controls with compatibility defaults. Adaptive normalization is now independent of capture callback size, and OBJ regression coverage guarantees that named objects, groups, and disconnected parts remain one normalized imported surface. CPU + GPU scheduling remains GPU-primary with bounded CPU work for independent unsupported layers. Project formats, the public renderer ABI, and SONAME 17 are unchanged.

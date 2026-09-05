@@ -2,6 +2,7 @@
 #include "audio_analysis.h"
 #include "project_bundle.h"
 #include "source_image.h"
+#include "renderer_diagnostics.h"
 
 #ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
 #  include <QByteArray>
@@ -3344,6 +3345,7 @@ void print_help(const char* program) {
         << "  --workers 0.." << pvt::kMaximumSequenceWorkers
         << "  (0 auto, 1 sequential)\n"
         << "  --backend cpu|cpu+gpu|gpu          Rendering policy (default cpu+gpu)\n"
+        << "  --renderer-info                    Show runtime devices and backend status; use alone\n"
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
         << "  (0 uses the bounded default of 2)\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping)\n"
@@ -3677,6 +3679,19 @@ int main(int argc, char** argv) {
                 return EXIT_FAILURE;
             }
             return quick_self_test();
+        }
+        if (option == "--renderer-info") {
+            if (argc != 2) {
+                std::cerr << "Option '--renderer-info' must be used by itself.\n";
+                return EXIT_FAILURE;
+            }
+#ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
+            graphics_application = make_graphics_application(argc, argv);
+#endif
+            std::cout << "Procedural Visualizer Tool " << PVT_PROGRAM_VERSION << '\n'
+                      << pvt::app::renderer_diagnostic_report(
+                             pvt::renderer_capabilities());
+            return EXIT_SUCCESS;
         }
         if (option == "--render" || option == "--defaults") {
             render_now = true;
@@ -4317,7 +4332,9 @@ int main(int argc, char** argv) {
     }
 
 #ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
-    graphics_application = make_graphics_application(argc, argv);
+    if (render_options.frame.backend != pvt::RenderBackend::Cpu) {
+        graphics_application = make_graphics_application(argc, argv);
+    }
 #endif
     const auto render_sequence = [&] {
         return pvt::render_project_sequence(
@@ -4330,7 +4347,8 @@ int main(int argc, char** argv) {
             nullptr, &error);
     };
 #ifdef PVT_CLI_HAS_QT_OPENGL_SURFACE
-    const bool rendered = render_while_servicing_graphics(render_sequence);
+    const bool rendered = graphics_application
+        ? render_while_servicing_graphics(render_sequence) : render_sequence();
 #else
     const bool rendered = render_sequence();
 #endif

@@ -5,10 +5,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -100,6 +103,58 @@ pvt::RenderConfig analytic_config(pvt::SurfaceMapping mapping) {
     return config;
 }
 
+int benchmark_generated_blocks() {
+    // Invoke explicitly with --benchmark in an OpenGL build with Metal off.
+    // Include CPU preparation, GPU completion and float readback in the timing.
+    pvt::FrameRenderOptions options;
+    options.backend = pvt::RenderBackend::Gpu;
+    for (int block_size : {1, 8, 64, 1024}) {
+        pvt::RenderConfig config = pvt::default_config();
+        config.width = 1024;
+        config.height = 1024;
+        config.block_size = block_size;
+        config.starting_colors.mode = pvt::StartingColorMode::ContinuousHue;
+        config.alpha.enabled = true;
+        config.alpha.minimum = 0.1;
+        config.alpha.maximum = 0.9;
+        config.output.write_alpha = true;
+        config.waves.clear();
+        for (std::size_t index = 0; index < 24; ++index) {
+            auto wave = pvt::default_wave(index);
+            wave.id = pvt::allocate_id(config);
+            config.waves.push_back(wave);
+        }
+        pvt::Image frame;
+        std::string error;
+        std::vector<double> elapsed;
+        for (int iteration = 0; iteration < 11; ++iteration) {
+            const auto start = std::chrono::steady_clock::now();
+            if (!pvt::render_frame_at_phase(config, 0.37, options, frame,
+                                             nullptr, &error)) {
+                std::cerr << error << '\n';
+                return EXIT_FAILURE;
+            }
+            const auto stop = std::chrono::steady_clock::now();
+            if (iteration >= 2) {
+                elapsed.push_back(std::chrono::duration<double, std::milli>(
+                    stop - start).count());
+            }
+        }
+        std::sort(elapsed.begin(), elapsed.end());
+        std::uint64_t hash = UINT64_C(14695981039346656037);
+        for (float value : frame.pixels) {
+            std::uint32_t bits = 0;
+            static_assert(sizeof(bits) == sizeof(value), "Expected float32");
+            std::memcpy(&bits, &value, sizeof(bits));
+            hash = (hash ^ bits) * UINT64_C(1099511628211);
+        }
+        std::cout << "1024x1024, 24 waves, block=" << block_size
+                  << ", median9=" << elapsed[4] << " ms, float hash="
+                  << std::hex << hash << std::dec << '\n';
+    }
+    return EXIT_SUCCESS;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -112,9 +167,26 @@ int main(int argc, char** argv) {
         std::cout << "OpenGL backend compiled; runtime context unavailable on "
                      "this hosted machine: "
                   << capabilities.opengl_surface_status << '\n';
+        if (std::getenv("PVT_REQUIRE_OPENGL") != nullptr
+            || (argc == 2 && std::string(argv[1]) == "--benchmark")) {
+            return EXIT_FAILURE;
+        }
         return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
+    if (argc == 2 && std::string(argv[1]) == "--benchmark") {
+        if (capabilities.metal_available) {
+            std::cerr << "Disable Metal when benchmarking the OpenGL backend.\n";
+            return EXIT_FAILURE;
+        }
+        return benchmark_generated_blocks();
+    }
     CHECK(!capabilities.opengl_surface_device_name.empty());
+    CHECK(capabilities.opengl_surface_status.find("vendor:")
+          != std::string::npos);
+    CHECK(capabilities.opengl_surface_status.find("OpenGL version:")
+          != std::string::npos);
+    CHECK(capabilities.opengl_surface_status.find("maximum texture size:")
+          != std::string::npos);
 
     pvt::FrameRenderOptions cpu;
     cpu.backend = pvt::RenderBackend::Cpu;
@@ -539,6 +611,75 @@ int main(int argc, char** argv) {
     CHECK(pvt::render_frame(neutral, 0, gpu, neutral_gpu, nullptr, &error));
     CHECK(maximum_difference(neutral_reference, neutral_hybrid) <= 0.0035);
     CHECK(maximum_difference(neutral_reference, neutral_gpu) <= 0.0035);
+
+    // Reduced-grid shading must preserve edge blocks, orientation, and the
+    // per-pixel procedural alpha that is intentionally independent of RGB's
+    // block size. Alternate sizes so stale textures or uniforms cannot hide.
+    for (const auto& size : {std::pair<int, int>{67, 53}, {32, 48}}) {
+        for (const int block_size : {1, 2, 3, 8, size.second,
+                                     std::max(size.first, size.second)}) {
+            for (const bool alpha_enabled : {false, true}) {
+                pvt::RenderConfig blocks = neutral;
+                blocks.width = size.first;
+                blocks.height = size.second;
+                blocks.block_size = block_size;
+                blocks.starting_colors.mode =
+                    pvt::StartingColorMode::ContinuousHue;
+                blocks.starting_colors.include_alpha = false;
+                blocks.alpha.enabled = alpha_enabled;
+                blocks.alpha.minimum = 0.08;
+                blocks.alpha.maximum = 0.92;
+                blocks.alpha.spatial_frequency = 1.73;
+                blocks.alpha.cycles_per_loop = -3;
+                blocks.output.write_alpha = true;
+                pvt::Image block_reference;
+                pvt::Image block_gpu;
+                CHECK(pvt::render_frame_at_phase(blocks, 0.37, cpu,
+                                                 block_reference, nullptr,
+                                                 &error));
+                CHECK(pvt::render_frame_at_phase(blocks, 0.37, gpu,
+                                                 block_gpu, nullptr, &error));
+                const double difference = maximum_difference(
+                    block_reference, block_gpu);
+                if (difference > 0.0035) {
+                    std::cerr << "Generated block parity " << blocks.width
+                              << 'x' << blocks.height << " block="
+                              << block_size << " alpha=" << alpha_enabled
+                              << " difference=" << difference << '\n';
+                }
+                CHECK(difference <= 0.0035);
+                CHECK(block_gpu.pixels.size()
+                      == block_reference.pixels.size());
+                if (block_gpu.pixels.size() != block_reference.pixels.size()) {
+                    continue;
+                }
+                for (int y = 0; y < blocks.height; ++y) {
+                    for (int x = 0; x < blocks.width; ++x) {
+                        const std::size_t offset =
+                            (static_cast<std::size_t>(y)
+                                 * static_cast<std::size_t>(blocks.width)
+                             + static_cast<std::size_t>(x)) * 4U;
+                        const std::size_t origin =
+                            (static_cast<std::size_t>(y / block_size * block_size)
+                                 * static_cast<std::size_t>(blocks.width)
+                             + static_cast<std::size_t>(x / block_size * block_size))
+                            * 4U;
+                        for (std::size_t channel = 0U; channel < 3U; ++channel) {
+                            CHECK(block_gpu.pixels[offset + channel]
+                                  == block_gpu.pixels[origin + channel]);
+                        }
+                        CHECK(std::fabs(block_gpu.pixels[offset + 3U]
+                                        - block_reference.pixels[offset + 3U])
+                              <= 1.0e-5F);
+                    }
+                }
+                if (alpha_enabled && block_size > 1) {
+                    CHECK(std::fabs(block_gpu.pixels[3U]
+                                    - block_gpu.pixels[7U]) > 1.0e-4F);
+                }
+            }
+        }
+    }
 
     // ChannelLoops deliberately takes the reference source lane, so any
     // strict-GPU difference below comes from the ordered Water shader and the

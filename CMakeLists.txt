@@ -47,6 +47,8 @@ option(PVT_BUILD_EXAMPLES "Build the C++ library API example" OFF)
 option(PVT_ENABLE_METAL "Build the optional Apple Metal rendering backend" ON)
 option(PVT_ENABLE_OPENGL_SURFACE
     "Build the Qt-hosted OpenGL generated-source/surface backend on Windows/Linux" ON)
+option(PVT_ENABLE_QT_OPENGL_WITHOUT_GUI
+    "Require Qt Gui for OpenGL acceleration in CLI/library builds without the editor" OFF)
 option(PVT_TEST_OPENGL_SURFACE_ON_APPLE
     "Build the portable OpenGL backend on Apple hosts for local parity tests" OFF)
 mark_as_advanced(PVT_TEST_OPENGL_SURFACE_ON_APPLE)
@@ -130,12 +132,21 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
-# Product builds already require Qt for the editor. Discover it before the
-# renderer target so Windows/Linux can use the same public Qt context and
-# function-loading APIs for offscreen OpenGL surface mapping. A core-only
-# library build remains free of Qt and uses the portable CPU implementation.
+# Discover Qt before the renderer target so Windows/Linux can use its public
+# context and function-loading APIs. CLI/library users can opt into Qt Gui
+# without Widgets or the editor; default core-only builds remain Qt-free.
 if(PVT_BUILD_QT_GUI)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Network)
+elseif(PVT_ENABLE_QT_OPENGL_WITHOUT_GUI)
+    if(NOT PVT_ENABLE_OPENGL_SURFACE)
+        message(FATAL_ERROR
+            "PVT_ENABLE_QT_OPENGL_WITHOUT_GUI requires PVT_ENABLE_OPENGL_SURFACE=ON.")
+    endif()
+    if(APPLE AND NOT PVT_TEST_OPENGL_SURFACE_ON_APPLE)
+        message(FATAL_ERROR
+            "macOS uses Metal without Qt. Portable OpenGL testing also requires PVT_TEST_OPENGL_SURFACE_ON_APPLE=ON.")
+    endif()
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Gui)
 endif()
 
 add_library(ProceduralVisualizerTool
@@ -219,7 +230,8 @@ if(NOT PVT_METAL_BACKEND_ENABLED)
 endif()
 
 set(PVT_OPENGL_SURFACE_BACKEND_ENABLED OFF)
-if(PVT_ENABLE_OPENGL_SURFACE AND PVT_BUILD_QT_GUI
+if(PVT_ENABLE_OPENGL_SURFACE
+   AND (PVT_BUILD_QT_GUI OR PVT_ENABLE_QT_OPENGL_WITHOUT_GUI)
    AND (WIN32 OR (UNIX AND NOT APPLE)
         OR (APPLE AND PVT_TEST_OPENGL_SURFACE_ON_APPLE)))
     set(PVT_OPENGL_SURFACE_BACKEND_ENABLED ON)
@@ -483,6 +495,9 @@ if(PVT_BUILD_CLI)
         target_compile_definitions(pvt_render_cli PRIVATE
             PVT_CLI_HAS_QT_OPENGL_SURFACE=1)
         target_link_libraries(pvt_render_cli PRIVATE Qt6::Gui)
+        if(WIN32)
+            target_sources(pvt_render_cli PRIVATE app/windows_gpu_preference.cpp)
+        endif()
     endif()
     pvt_enable_warnings(pvt_render_cli)
 endif()
@@ -618,6 +633,10 @@ if(PVT_BUILD_QT_GUI)
     endif()
     target_compile_definitions(ProceduralVisualizerToolGui PRIVATE
         PVT_PROGRAM_VERSION="${PVT_PRODUCT_VERSION}")
+    if(WIN32 AND PVT_OPENGL_SURFACE_BACKEND_ENABLED)
+        target_sources(ProceduralVisualizerToolGui PRIVATE
+            app/windows_gpu_preference.cpp)
+    endif()
     pvt_enable_warnings(ProceduralVisualizerToolGui)
 
     if(PVT_ENABLE_DISTRIBUTION)
@@ -735,6 +754,12 @@ if(BUILD_TESTING)
     pvt_enable_warnings(pvt_tests)
     add_test(NAME pvt_core COMMAND pvt_tests ${CMAKE_CURRENT_SOURCE_DIR})
 
+    add_executable(pvt_display_color_tests tests/display_color_test.cpp)
+    target_compile_features(pvt_display_color_tests PRIVATE cxx_std_17)
+    set_target_properties(pvt_display_color_tests PROPERTIES CXX_EXTENSIONS NO)
+    pvt_enable_warnings(pvt_display_color_tests)
+    add_test(NAME pvt_display_color COMMAND pvt_display_color_tests)
+
     add_executable(pvt_project_composite_tests
         tests/project_composite_test.cpp)
     target_compile_features(pvt_project_composite_tests PRIVATE cxx_std_17)
@@ -826,6 +851,20 @@ if(BUILD_TESTING)
     if(PVT_BUILD_CLI)
         add_test(NAME pvt_cli_self_test COMMAND pvt_render_cli --self-test)
         add_test(NAME pvt_cli_help COMMAND pvt_render_cli --help)
+        add_test(NAME pvt_cli_renderer_info COMMAND pvt_render_cli --renderer-info)
+        set_tests_properties(pvt_cli_renderer_info PROPERTIES
+            PASS_REGULAR_EXPRESSION "Build architecture:.*Working color:.*Metal:.*OpenGL:")
+        add_test(NAME pvt_cli_renderer_info_rejects_options
+            COMMAND pvt_render_cli --renderer-info --render)
+        set_tests_properties(pvt_cli_renderer_info_rejects_options PROPERTIES
+            WILL_FAIL TRUE)
+        add_test(NAME pvt_cli_cpu_without_graphics
+            COMMAND pvt_render_cli --render --backend cpu
+                --width 32 --height 32 --block-size 2 --frames 2
+                --output-dir ${CMAKE_CURRENT_BINARY_DIR}/pvt-cli-cpu-without-graphics
+                --overwrite)
+        set_tests_properties(pvt_cli_cpu_without_graphics PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=pvt-intentionally-invalid-platform")
         add_test(NAME pvt_cli_version COMMAND pvt_render_cli --version)
         set_tests_properties(pvt_cli_version PROPERTIES
             PASS_REGULAR_EXPRESSION

@@ -1,5 +1,7 @@
 #include "application_settings_dialog.h"
+#include "../app/renderer_diagnostics.h"
 
+#include <QClipboard>
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -302,6 +304,32 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
                                                 backend_group);
     capability_label->setObjectName(QStringLiteral("rendererCapabilityStatus"));
     backend_form->addRow(tr("Acceleration"), capability_label);
+    const QString renderer_report = QString::fromStdString(
+        pvt::app::renderer_diagnostic_report(capabilities));
+    capability_label->setToolTip(renderer_report);
+    capability_label->setAccessibleDescription(renderer_report);
+    auto* copy_report = new QPushButton(tr("Copy renderer report"), backend_group);
+    copy_report->setObjectName(QStringLiteral("copyRendererReport"));
+    copy_report->setToolTip(tr(
+        "Copy the runtime device, driver status, build architecture, and CPU "
+        "worker count for troubleshooting or comparing computers."));
+    connect(copy_report, &QPushButton::clicked, this, [renderer_report] {
+        QGuiApplication::clipboard()->setText(renderer_report);
+    });
+    backend_form->addRow(copy_report);
+#if defined(Q_OS_WIN)
+    backend_form->addRow(explanatory_label(
+        tr("For a laptop with multiple GPUs, select this app in Windows "
+           "Settings > System > Display > Graphics to choose High performance "
+           "or Power saving. Restart the app after changing the preference."),
+        backend_group));
+#elif defined(Q_OS_LINUX)
+    backend_form->addRow(explanatory_label(
+        tr("On systems with multiple GPUs, use your desktop's Launch using "
+           "Discrete Graphics option or the driver's PRIME offload settings. "
+           "The renderer report shows which device the driver selected."),
+        backend_group));
+#endif
     backend_form->addRow(
         explanatory_label(
             tr("Used for preview, LIVE, and export. Automatic keeps supported "
