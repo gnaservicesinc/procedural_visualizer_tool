@@ -505,6 +505,157 @@ void test_project_validation() {
     identity_motion.phase_degrees = 90.0;
     CHECK(!pvt::validate(invalid).ok);
 
+    // Project validation must use the same exterior-coverage rules as the
+    // single-layer renderer and editor. A transformed Plane with a transparent
+    // exterior can uncover pixels even though Plane curvature is neutral,
+    // while Source/Reflect fill policies keep both planes and curved surfaces
+    // opaque.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto& plane = invalid.layers[0U].render.surface;
+    plane.enabled = true;
+    plane.mapping = pvt::SurfaceMapping::Plane;
+    plane.outside = pvt::SurfaceOutside::Transparent;
+    plane.size_percent = 75.0;
+    CHECK(!pvt::validate(invalid).ok);
+    plane.outside = pvt::SurfaceOutside::Source;
+    CHECK(pvt::validate(invalid).ok);
+    plane.outside = pvt::SurfaceOutside::Reflect;
+    CHECK(pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto& sphere = invalid.layers[0U].render.surface;
+    sphere.enabled = true;
+    sphere.mapping = pvt::SurfaceMapping::Sphere;
+    sphere.curvature = 1.0;
+    sphere.outside = pvt::SurfaceOutside::Transparent;
+    CHECK(!pvt::validate(invalid).ok);
+    sphere.outside = pvt::SurfaceOutside::Source;
+    CHECK(pvt::validate(invalid).ok);
+    sphere.outside = pvt::SurfaceOutside::Reflect;
+    CHECK(pvt::validate(invalid).ok);
+
+    // Twirl is an exact no-op at zero direction/depth, and Edge Detect always
+    // preserves the incoming alpha even when transparent samples affect its
+    // luminance kernel. Neither should force an otherwise opaque project to
+    // write an alpha channel.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.effects.clear();
+    auto neutral_twirl = pvt::default_effect(pvt::EffectType::Twirl);
+    neutral_twirl.id = pvt::allocate_id(invalid.layers[0U].render);
+    neutral_twirl.enabled = true;
+    neutral_twirl.edge_mode = pvt::EdgeMode::Alpha;
+    neutral_twirl.secondary = 0.0;
+    invalid.layers[0U].render.effects.push_back(neutral_twirl);
+    CHECK(pvt::validate(invalid).ok);
+
+    auto edge_detect = pvt::default_effect(pvt::EffectType::EdgeDetect);
+    edge_detect.id = pvt::allocate_id(invalid.layers[0U].render);
+    edge_detect.enabled = true;
+    edge_detect.edge_mode = pvt::EdgeMode::Alpha;
+    invalid.layers[0U].render.effects.push_back(edge_detect);
+    CHECK(pvt::validate(invalid).ok);
+    pvt::Image opaque_edges;
+    std::string edge_error;
+    CHECK(pvt::render_project_frame(invalid, 1, opaque_edges, nullptr,
+                                    &edge_error));
+    if (!opaque_edges.pixels.empty()) {
+        for (std::size_t offset = 3U; offset < opaque_edges.pixels.size();
+             offset += 4U) {
+            CHECK(opaque_edges.pixels[offset] == 1.0F);
+        }
+    }
+
+    // Numeric LFOs are render-time state. Alpha admission must consider the
+    // full reachable range rather than only the authored fallback, including
+    // an eraser that is transparent only at rest.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.alpha.enabled = true;
+    pvt::ParameterLfo alpha_lfo;
+    alpha_lfo.id = pvt::allocate_id(invalid.layers[0U].render);
+    alpha_lfo.target_path = "alpha.minimum";
+    alpha_lfo.minimum = 0.25;
+    alpha_lfo.maximum = 1.0;
+    invalid.layers[0U].render.parameter_lfos.push_back(alpha_lfo);
+    CHECK(!pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto& lfo_motion = invalid.layers[0U].render.motion;
+    lfo_motion.enabled = true;
+    lfo_motion.path = pvt::LayerMotionPath::Orbit;
+    lfo_motion.travel_x = 0.0;
+    lfo_motion.travel_y = 0.0;
+    pvt::ParameterLfo travel_lfo;
+    travel_lfo.id = pvt::allocate_id(invalid.layers[0U].render);
+    travel_lfo.target_path = "motion.travel_x";
+    travel_lfo.minimum = 0.0;
+    travel_lfo.maximum = 0.25;
+    invalid.layers[0U].render.parameter_lfos.push_back(travel_lfo);
+    CHECK(!pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    invalid.layers[0U].render.effects.clear();
+    auto lfo_shake = pvt::default_effect(pvt::EffectType::Shake);
+    lfo_shake.id = pvt::allocate_id(invalid.layers[0U].render);
+    lfo_shake.enabled = true;
+    lfo_shake.edge_mode = pvt::EdgeMode::Alpha;
+    lfo_shake.magnitude = 0.0;
+    invalid.layers[0U].render.effects.push_back(lfo_shake);
+    pvt::ParameterLfo magnitude_lfo;
+    magnitude_lfo.id = pvt::allocate_id(invalid.layers[0U].render);
+    magnitude_lfo.target_path =
+        "effect/" + std::to_string(lfo_shake.id) + "/magnitude";
+    magnitude_lfo.minimum = 0.0;
+    magnitude_lfo.maximum = 0.2;
+    invalid.layers[0U].render.parameter_lfos.push_back(magnitude_lfo);
+    CHECK(!pvt::validate(invalid).ok);
+
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto animated_eraser = pvt::default_layer(1U);
+    animated_eraser.blend_mode = pvt::BlendMode::Erase;
+    animated_eraser.render.alpha.enabled = true;
+    animated_eraser.render.alpha.minimum = 0.0;
+    animated_eraser.render.alpha.maximum = 0.0;
+    pvt::ParameterLfo eraser_alpha_lfo;
+    eraser_alpha_lfo.id = pvt::allocate_id(animated_eraser.render);
+    eraser_alpha_lfo.target_path = "alpha.maximum";
+    eraser_alpha_lfo.minimum = 0.0;
+    eraser_alpha_lfo.maximum = 1.0;
+    animated_eraser.render.parameter_lfos.push_back(eraser_alpha_lfo);
+    invalid.layers.push_back(std::move(animated_eraser));
+    CHECK(!pvt::validate(invalid).ok);
+
+    // An opaque Black/White exterior can also synthesize alpha from an
+    // otherwise transparent eraser source. A final full Zero alpha route
+    // clears that coverage again and must restore the no-op proof.
+    invalid = pvt::default_project();
+    make_small(invalid);
+    auto edged_eraser = pvt::default_layer(1U);
+    edged_eraser.blend_mode = pvt::BlendMode::Erase;
+    edged_eraser.render.alpha.enabled = true;
+    edged_eraser.render.alpha.minimum = 0.0;
+    edged_eraser.render.alpha.maximum = 0.0;
+    edged_eraser.render.effects.clear();
+    auto edged_shake = pvt::default_effect(pvt::EffectType::Shake);
+    edged_shake.id = pvt::allocate_id(edged_eraser.render);
+    edged_shake.enabled = true;
+    edged_shake.edge_mode = pvt::EdgeMode::Black;
+    edged_eraser.render.effects.push_back(edged_shake);
+    invalid.layers.push_back(edged_eraser);
+    CHECK(!pvt::validate(invalid).ok);
+    auto& erased_post = invalid.layers.back().render.post_process;
+    erased_post.effects_authoritative = false;
+    erased_post.channel_map.enabled = true;
+    erased_post.channel_map.alpha_source = pvt::ChannelSource::Zero;
+    erased_post.channel_map.mix = 1.0;
+    CHECK(pvt::validate(invalid).ok);
+
     // Blur intensity is retained compatibility data. Rendering derives the
     // active mix from blur_minimum/blur_maximum, so a zero maximum must not
     // make an otherwise opaque RGB stack look transparent to validation.

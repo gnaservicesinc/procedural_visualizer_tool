@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.3.0**. The version is read from `VERSION` by every
+Current product version: **17.3.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,21 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.3.1 alpha and animated-control reliability
+
+Renderer, project, and editor alpha checks now share the same rules for Numeric
+LFO ranges, transformed surfaces, moving layers, effect edges, source alpha,
+erasers, and ordered channel routing. Neutral Twirl and Edge Detect no longer
+require alpha when their actual output is opaque, while Black/White effect
+borders that create eraser coverage are correctly accounted for.
+
+Effect controls use consistent valid ranges across the editor, Live mappings and
+scenes, and Numeric LFOs. Animated counts are rounded and dependent values are
+repaired during effect-type changes. The Live `motion.scale` destination now
+works alongside the persisted `motion.scale_pulse` spelling. Live display frames
+retain transparency without changing saved export preferences. Project formats
+and the public ABI remain unchanged.
 
 ## 17.3.0 FPS and movement-placement improvements
 

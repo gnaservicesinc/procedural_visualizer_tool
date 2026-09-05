@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 #include "../src/config_codec.h"
 #include "../src/displacement_surface.h"
+#include "../src/effect_parameter_domain.h"
 #include "../src/frame_renderer_internal.h"
 #include "../src/path_utf8.h"
 #include "../src/source_image.h"
@@ -119,7 +120,26 @@ void test_parameter_lfos() {
         animated, "post.invert_blue_mix"));
     CHECK(pvt::parameter_lfo_target_supported(
         animated, "post.channel_map_mix"));
+    CHECK(pvt::parameter_lfo_target_supported(animated, "motion.scale"));
+    CHECK(pvt::parameter_lfo_target_supported(
+        animated, "motion.scale_pulse"));
     CHECK(!pvt::parameter_lfo_target_supported(animated, "not/a/target"));
+
+    pvt::RenderConfig scale_animated = pvt::default_config();
+    pvt::ParameterLfo scale_lfo;
+    scale_lfo.target_path = "motion.scale";
+    scale_lfo.minimum = 0.25;
+    scale_lfo.maximum = 0.25;
+    scale_animated.parameter_lfos.push_back(scale_lfo);
+    CHECK(pvt::validate(scale_animated).ok);
+    CHECK(std::fabs(
+              pvt::detail::materialize_parameter_lfos(scale_animated, 0.0)
+                      .motion.scale_pulse
+              - 0.25) < 1.0e-12);
+    pvt::ParameterLfo duplicate_scale_lfo = scale_lfo;
+    duplicate_scale_lfo.target_path = "motion.scale_pulse";
+    scale_animated.parameter_lfos.push_back(duplicate_scale_lfo);
+    CHECK(!pvt::validate(scale_animated).ok);
 
     pvt::RenderConfig mapped = pvt::default_config();
     mapped.post_process.channel_map.mix = 0.44;
@@ -415,6 +435,88 @@ void test_parameter_lfos() {
               && rejected_workload.height == workload_sentinel.height
               && rejected_workload.pixels == workload_sentinel.pixels);
     }
+
+    // Numeric LFO targets share the same domains as their direct editors and
+    // Live controls. Type-specific mix/radius/count controls must be repaired
+    // in the render-time copy so a valid authored setup cannot become
+    // structurally invalid merely by reaching an in-range oscillator value.
+    const auto materialized_effect = [](pvt::EffectType type,
+                                        const char* property,
+                                        double value) {
+        pvt::RenderConfig candidate = pvt::default_config();
+        make_small(candidate);
+        candidate.output.write_alpha = true;
+        candidate.effects.clear();
+        pvt::EffectConfig effect = pvt::default_effect(type);
+        effect.id = 100U;
+        effect.enabled = true;
+        candidate.effects.push_back(effect);
+        pvt::ParameterLfo control;
+        control.id = 1U;
+        control.target_path =
+            "effect/100/" + std::string(property);
+        control.waveform = pvt::Waveform::Square;
+        control.minimum = value;
+        control.maximum = value;
+        candidate.parameter_lfos.push_back(control);
+        CHECK(pvt::validate(candidate).ok);
+        pvt::RenderConfig resolved =
+            pvt::detail::materialize_parameter_lfos(candidate, 0.0);
+        CHECK(pvt::validate(resolved).ok);
+        return resolved.effects.front();
+    };
+
+    const auto edge_intensity = materialized_effect(
+        pvt::EffectType::EdgeDetect, "intensity", 2.0);
+    const auto edge_frequency = materialized_effect(
+        pvt::EffectType::EdgeDetect, "frequency", 1.6);
+    const auto edge_threshold = materialized_effect(
+        pvt::EffectType::EdgeDetect, "secondary", -1.0);
+    CHECK(edge_intensity.intensity == 1.0);
+    CHECK(edge_frequency.frequency == 2.0);
+    CHECK(edge_threshold.secondary == 0.0);
+
+    const auto twirl_intensity = materialized_effect(
+        pvt::EffectType::Twirl, "intensity", 2.0);
+    const auto twirl_frequency = materialized_effect(
+        pvt::EffectType::Twirl, "frequency", 0.0);
+    const auto twirl_depth = materialized_effect(
+        pvt::EffectType::Twirl, "secondary", 2.0);
+    CHECK(twirl_intensity.intensity == 1.0);
+    CHECK(twirl_frequency.frequency == 0.25);
+    CHECK(twirl_depth.secondary == 1.0);
+
+    const auto glitch_frequency = materialized_effect(
+        pvt::EffectType::Glitch, "frequency", 1.6);
+    const auto starburst_frequency = materialized_effect(
+        pvt::EffectType::Starburst, "frequency", 1.6);
+    CHECK(glitch_frequency.frequency == 2.0);
+    CHECK(starburst_frequency.frequency == 2.0);
+
+    const auto lens_direction = materialized_effect(
+        pvt::EffectType::LensDistortion, "secondary", 2.0);
+    const auto particle_trail = materialized_effect(
+        pvt::EffectType::ParticleField, "secondary", -1.0);
+    CHECK(lens_direction.secondary == 1.0);
+    CHECK(particle_trail.secondary == 0.0);
+
+    const auto block_frequency = materialized_effect(
+        pvt::EffectType::BlockScale, "frequency", 0.0);
+    const auto block_steps = materialized_effect(
+        pvt::EffectType::BlockScale, "secondary", 1.6);
+    const auto block_magnitude = materialized_effect(
+        pvt::EffectType::BlockScale, "magnitude", 3.0);
+    CHECK(block_frequency.frequency >= block_frequency.magnitude);
+    CHECK(block_steps.secondary == 2.0);
+    CHECK(block_magnitude.frequency >= block_magnitude.magnitude);
+    const double maximum_whole_effect_parameter = std::floor(
+        pvt::maximum_render_parameter_magnitude());
+    CHECK(pvt::detail::effect_parameter_domain(
+              pvt::EffectType::ParticleField, 0.0).frequency_maximum
+          == maximum_whole_effect_parameter);
+    CHECK(pvt::detail::effect_parameter_domain(
+              pvt::EffectType::BlockScale, 1.0).secondary_maximum
+          == maximum_whole_effect_parameter);
 
     // Cached analysis remains part of a valid setup even while the music
     // clock is inactive. Keep this collection large enough to make accidental

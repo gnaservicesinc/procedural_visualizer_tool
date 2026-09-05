@@ -12,6 +12,7 @@
 #include "../src/audio_playback.h"
 #include "../src/config_codec.h"
 #include "../src/displacement_surface.h"
+#include "../src/effect_parameter_domain.h"
 #include "../src/palette_io.h"
 #include "../src/post_process_alpha.h"
 #include "../src/project_bundle.h"
@@ -1582,92 +1583,7 @@ bool layer_visible_in_project(const pvt::ProjectConfig& project,
                               const pvt::LayerConfig& layer);
 
 bool configuration_requires_alpha(const pvt::RenderConfig& config) {
-    if (config.alpha.use_source_alpha) {
-        if (config.starting_image.enabled) return true;
-        if (config.palette.enabled
-            && std::any_of(config.palette.colors.begin(), config.palette.colors.end(),
-                           [](const pvt::PaletteColor& color) {
-                               return color.alpha < 1.0;
-                           })) {
-            return true;
-        }
-    }
-    if (!config.starting_image.enabled && !config.palette.enabled
-        && config.starting_colors.include_alpha
-        && config.starting_colors.alpha_minimum < 1.0) {
-        return true;
-    }
-    if (config.surface.enabled
-        && config.surface.outside == pvt::SurfaceOutside::Transparent) {
-        const bool transformed_plane =
-            config.surface.mapping == pvt::SurfaceMapping::Plane
-            && (config.surface.projection
-                    != pvt::SurfaceProjection::Orthographic
-                || config.surface.sizing != pvt::SurfaceSizing::Contain
-                || config.surface.rotation_x_turns_per_loop != 0
-                || config.surface.rotation_y_turns_per_loop != 0
-                || config.surface.rotation_z_turns_per_loop != 0
-                || std::fmod(config.surface.rotation_x_degrees, 360.0) != 0.0
-                || std::fmod(config.surface.rotation_y_degrees, 360.0) != 0.0
-                || std::fmod(config.surface.rotation_z_degrees, 360.0) != 0.0
-                || config.surface.size_percent != 100.0
-                || config.surface.scale_x != 1.0
-                || config.surface.scale_y != 1.0
-                || config.surface.scale_z != 1.0
-                || config.surface.position_x_percent != 0.0
-                || config.surface.position_y_percent != 0.0
-                || config.surface.position_z != 0.0);
-        if ((config.surface.mapping != pvt::SurfaceMapping::Plane
-             && config.surface.curvature > 0.0)
-            || (config.surface.mapping == pvt::SurfaceMapping::Plane
-                && config.surface.plane_displacement.enabled
-                && config.surface.curvature > 0.0)
-            || transformed_plane) {
-            return true;
-        }
-    }
-    if (config.motion.enabled) {
-        const bool built_in_path_has_work =
-            config.motion.path != pvt::LayerMotionPath::None
-            && (std::fabs(config.motion.travel_x) > 1.0e-12
-                || std::fabs(config.motion.travel_y) > 1.0e-12);
-        const bool scale_has_work =
-            config.motion.scale_pulse > 1.0e-12
-            && (config.motion.cycles_y != 0
-                || std::fmod(config.motion.phase_degrees, 180.0) != 0.0);
-        if (built_in_path_has_work
-            || config.motion.custom_path.enabled
-            || std::fabs(config.motion.center_x - 0.5) > 1.0e-12
-            || std::fabs(config.motion.center_y - 0.5) > 1.0e-12
-            || config.motion.rotations_per_loop != 0
-            || std::fmod(config.motion.rotation_offset_degrees, 360.0) != 0.0
-            || scale_has_work) {
-            return true;
-        }
-    }
-    if (std::any_of(config.effects.begin(), config.effects.end(), [](const auto& effect) {
-        const bool active_blur = effect.type == pvt::EffectType::Blur
-                                 && effect.radius_pixels > 0.0
-                                 && effect.blur_maximum > 0.0;
-        const bool active_coordinate = effect.intensity > 0.0
-                                       && effect.magnitude > 0.0
-                                       && effect.type != pvt::EffectType::Blur
-                                       && ((effect.type
-                                                != pvt::EffectType::LensDistortion
-                                            && effect.type
-                                                   != pvt::EffectType::Twirl)
-                                           || effect.secondary != 0.0);
-        return effect.enabled && (active_blur || active_coordinate)
-               && effect.type != pvt::EffectType::Glow
-               && effect.type != pvt::EffectType::BlockScale
-               && effect.type != pvt::EffectType::ParticleField
-               && pvt::effective_effect_edge_mode(effect) == pvt::EdgeMode::Alpha;
-    })) {
-        return true;
-    }
-    return pvt::detail::post_process_alpha_certainty(
-               config, pvt::detail::AlphaCertainty::One)
-           != pvt::detail::AlphaCertainty::One;
+    return pvt::detail::render_data_can_create_transparency(config);
 }
 
 bool visible_stack_requires_alpha(
@@ -1689,34 +1605,15 @@ bool visible_stack_requires_alpha(
             || layer.blend_mode == pvt::BlendMode::ColorEraseTones
             || layer.blend_mode == pvt::BlendMode::ColorEraseBrightness;
         if (erases_lower_layers) {
-            const bool particle_can_synthesize_coverage = std::any_of(
-                materialized.effects.begin(), materialized.effects.end(),
-                [](const pvt::EffectConfig& effect) {
-                    return effect.enabled
-                           && effect.type == pvt::EffectType::ParticleField
-                           && effect.intensity > 0.0
-                           && effect.frequency >= 1.0
-                           && effect.radius_pixels > 0.0;
-                });
-            const bool source_is_guaranteed_transparent =
-                materialized.alpha.enabled
-                && materialized.alpha.maximum == 0.0
-                && !particle_can_synthesize_coverage
-                && pvt::detail::post_process_alpha_certainty(
-                       materialized, pvt::detail::AlphaCertainty::Zero)
-                       == pvt::detail::AlphaCertainty::Zero;
-            if (!source_is_guaranteed_transparent) {
+            if (!pvt::detail::eraser_source_is_guaranteed_transparent(
+                    materialized)) {
                 // Destination-out can remove coverage established by every
                 // lower layer. A later ordinary opaque layer may establish it.
                 guaranteed_opaque = false;
             }
             continue;
         }
-        const bool procedural_transparency = materialized.alpha.enabled
-            && (materialized.alpha.minimum < 1.0
-                || materialized.alpha.maximum < 1.0);
         const bool source_guaranteed_opaque = layer.opacity >= 1.0
-            && !procedural_transparency
             && !configuration_requires_alpha(materialized);
         // Source-over and destination-over have the same coverage union. Once
         // either ordinary operand covers the full canvas, their result does too.
@@ -8417,6 +8314,10 @@ void MainWindow::showParameterLfoEditor() {
         }
         pvt::RenderConfig candidate = config_;
         candidate.parameter_lfos = edited;
+        // The project-level alpha control is repaired after the dialog is
+        // accepted. Validate the LFO graph itself without rejecting a newly
+        // reachable transparent state first.
+        candidate.output.write_alpha = true;
         const pvt::ValidationResult validation = pvt::validate(candidate);
         if (!validation.ok) {
             QMessageBox::warning(
@@ -8436,7 +8337,9 @@ void MainWindow::showParameterLfoEditor() {
 
     auto before = captureActiveState();
     config_.parameter_lfos = std::move(edited);
+    ensureAlphaForTransparency();
     syncActiveRender();
+    syncProjectGlobals();
     preview_->setConfiguration(config_);
     schedulePreview();
     recordActiveStateChange(tr("Edit numeric LFOs"), std::move(before));
@@ -12876,67 +12779,24 @@ void MainWindow::updateEffectEditorVisibility() {
         is_particles
         && particle_profile == pvt::ParticleRenderProfile::Defined);
 
-    if (is_block_scale) {
-        effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(
-            kMinimumPositiveUiValue, kMaximumRenderParameter);
-        effect_frequency_->setRange(effect_magnitude_->value(),
-                                    kMaximumRenderParameter);
-        effect_secondary_->setRange(
-            0.0, static_cast<double>(kMaximumIntegerParameter));
-        effect_secondary_->setDecimals(0);
-        effect_secondary_->setSingleStep(1.0);
-    } else if (is_particles) {
-        effect_intensity_->setRange(0.0, kMaximumRenderParameter);
-        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setRange(
-            1.0, static_cast<double>((std::numeric_limits<int>::max)()));
-        effect_frequency_->setDecimals(0);
-        effect_frequency_->setSingleStep(1.0);
-        effect_secondary_->setRange(0.0, 1.0);
-        effect_secondary_->setDecimals(4);
-        effect_secondary_->setSingleStep(0.01);
-    } else if (is_water) {
-        effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setDecimals(4);
-        effect_frequency_->setSingleStep(0.05);
-        effect_secondary_->setRange(0.0, 1.0);
-        effect_secondary_->setDecimals(4);
-        effect_secondary_->setSingleStep(0.01);
-    } else if (is_glitch || is_starburst || is_edge_detect) {
-        effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setRange(
-            1.0, is_glitch
-                     ? static_cast<double>(kMaximumIntegerParameter)
-                     : kMaximumRenderParameter);
-        effect_frequency_->setDecimals(0);
-        effect_frequency_->setSingleStep(1.0);
-        effect_secondary_->setRange(0.0, 1.0);
-        effect_secondary_->setDecimals(4);
-        effect_secondary_->setSingleStep(0.01);
-    } else if (is_lens || is_twirl) {
-        effect_intensity_->setRange(0.0, 1.0);
-        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setRange(0.25, kMaximumRenderParameter);
-        effect_frequency_->setDecimals(4);
-        effect_frequency_->setSingleStep(0.05);
-        effect_secondary_->setRange(-1.0, 1.0);
-        effect_secondary_->setDecimals(4);
-        effect_secondary_->setSingleStep(0.05);
-    } else {
-        effect_intensity_->setRange(0.0, kMaximumRenderParameter);
-        effect_magnitude_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setRange(0.0, kMaximumRenderParameter);
-        effect_frequency_->setDecimals(4);
-        effect_frequency_->setSingleStep(0.01);
-        effect_secondary_->setRange(-kMaximumRenderParameter,
-                                    kMaximumRenderParameter);
-        effect_secondary_->setDecimals(4);
-        effect_secondary_->setSingleStep(0.01);
-    }
+    const pvt::detail::EffectParameterDomain domain =
+        pvt::detail::effect_parameter_domain(
+            type, effect_magnitude_->value());
+    effect_intensity_->setRange(0.0, domain.intensity_maximum);
+    effect_magnitude_->setRange(
+        domain.magnitude_minimum, kMaximumRenderParameter);
+    effect_frequency_->setRange(
+        domain.frequency_minimum, domain.frequency_maximum);
+    effect_frequency_->setDecimals(domain.frequency_is_integer ? 0 : 4);
+    effect_frequency_->setSingleStep(
+        domain.frequency_is_integer ? 1.0
+        : (is_lens || is_twirl || is_water ? 0.05 : 0.01));
+    effect_secondary_->setRange(
+        domain.secondary_minimum, domain.secondary_maximum);
+    effect_secondary_->setDecimals(domain.secondary_is_integer ? 0 : 4);
+    effect_secondary_->setSingleStep(
+        domain.secondary_is_integer ? 1.0
+        : (is_lens || is_twirl ? 0.05 : 0.01));
 
     if (is_zoom) {
         set_form_label(effect_form_, effect_intensity_, tr("Mix / zoom depth"));
@@ -15756,9 +15616,9 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_blur_type_) {
         effect.blur_type = static_cast<pvt::BlurType>(
             effect_blur_type_->currentData().toInt());
-        if (effect.blur_type == pvt::BlurType::Gaussian
-            && effect.blur_samples % 2 == 0) {
-            ++effect.blur_samples;
+        const int previous_samples = effect.blur_samples;
+        pvt::detail::repair_gaussian_blur_samples(effect);
+        if (effect.blur_samples != previous_samples) {
             const QSignalBlocker blocker(effect_blur_samples_);
             effect_blur_samples_->setValue(effect.blur_samples);
         }
@@ -15812,17 +15672,21 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_edge_) {
         effect.edge_mode = static_cast<pvt::EdgeMode>(effect_edge_->currentData().toInt());
     } else if (changed_editor == effect_intensity_) {
-        effect.intensity = effect_intensity_->value();
+        pvt::detail::set_effect_intensity(
+            effect, effect_intensity_->value());
     } else if (changed_editor == effect_magnitude_) {
-        effect.magnitude = effect_magnitude_->value();
+        pvt::detail::set_effect_magnitude(
+            effect, effect_magnitude_->value());
         if (effect.type == pvt::EffectType::BlockScale) {
             synchronize_block_scale_maximum_editor(
                 effect_frequency_, effect.magnitude, effect.frequency);
         }
     } else if (changed_editor == effect_frequency_) {
-        effect.frequency = effect_frequency_->value();
+        pvt::detail::set_effect_frequency(
+            effect, effect_frequency_->value());
     } else if (changed_editor == effect_secondary_) {
-        effect.secondary = effect_secondary_->value();
+        pvt::detail::set_effect_secondary(
+            effect, effect_secondary_->value());
     } else if (changed_editor == effect_center_x_) {
         effect.center_x = effect_center_x_->value();
     } else if (changed_editor == effect_center_y_) {
@@ -15830,14 +15694,15 @@ void MainWindow::applyEffectEditor(const QObject* changed_editor) {
     } else if (changed_editor == effect_angle_) {
         effect.angle_degrees = effect_angle_->value();
     } else if (changed_editor == effect_radius_) {
-        effect.radius_pixels = effect_radius_->value();
+        pvt::detail::set_effect_radius(effect, effect_radius_->value());
         if (effect.type == pvt::EffectType::ParticleField) {
             const QSignalBlocker blocker(effect_particle_size_scale_);
             effect_particle_size_scale_->setValue(
                 particle_slider_from_radius(effect.radius_pixels));
         }
     } else if (changed_editor == effect_threshold_) {
-        effect.threshold = effect_threshold_->value();
+        pvt::detail::set_effect_threshold(
+            effect, effect_threshold_->value());
     } else if (changed_editor == effect_knee_) {
         effect.soft_knee = effect_knee_->value();
     } else if (changed_editor == effect_area_radius_) {
@@ -19729,6 +19594,124 @@ bool MainWindow::runSmokeChecks(QString* error) {
             return false;
         }
     }
+    {
+        // Live mappings may change several fields in either order. Every
+        // individual setter, including a type switch, must leave the effect
+        // inside the same structural domain used by the editor and core.
+        pvt::ProjectConfig live_effect_probe = pvt::default_project();
+        auto& render = live_effect_probe.layers.front().render;
+        render.effects.clear();
+        const auto append_effect = [&render](pvt::EffectConfig effect) {
+            effect.id = pvt::allocate_id(render);
+            effect.enabled = true;
+            render.effects.push_back(std::move(effect));
+            return render.effects.back().id;
+        };
+        const std::uint64_t edge_id = append_effect(
+            pvt::default_effect(pvt::EffectType::EdgeDetect));
+        const std::uint64_t twirl_id = append_effect(
+            pvt::default_effect(pvt::EffectType::Twirl));
+        const std::uint64_t block_id = append_effect(
+            pvt::default_effect(pvt::EffectType::BlockScale));
+        pvt::EffectConfig box_blur = pvt::default_effect(
+            pvt::EffectType::Blur);
+        box_blur.blur_type = pvt::BlurType::Box;
+        box_blur.blur_samples = 8;
+        const std::uint64_t blur_id = append_effect(std::move(box_blur));
+        const std::uint64_t switched_id = append_effect(
+            pvt::default_effect(pvt::EffectType::Ripple));
+        const QString prefix = QStringLiteral("layer/%1/effect/")
+                                   .arg(QString::fromStdString(
+                                       live_effect_probe.layers.front().uuid));
+        const auto targets = buildLiveTargetRegistry(live_effect_probe);
+        const auto target = [&targets, &prefix](std::uint64_t id,
+                                                const QString& property) {
+            const QString path = prefix + QString::number(id)
+                                 + QStringLiteral("/") + property;
+            return std::find_if(
+                targets.begin(), targets.end(),
+                [&path](const LiveTargetDescriptor& item) {
+                    return item.path == path;
+                });
+        };
+        const auto edge_intensity = target(
+            edge_id, QStringLiteral("intensity"));
+        const auto edge_frequency = target(
+            edge_id, QStringLiteral("frequency"));
+        const auto twirl_frequency = target(
+            twirl_id, QStringLiteral("frequency"));
+        const auto block_magnitude = target(
+            block_id, QStringLiteral("magnitude"));
+        const auto block_secondary = target(
+            block_id, QStringLiteral("secondary"));
+        const auto blur_type_target = target(
+            blur_id, QStringLiteral("blur_type"));
+        const auto switched_type = target(
+            switched_id, QStringLiteral("type"));
+        if (edge_intensity == targets.end()
+            || edge_frequency == targets.end()
+            || twirl_frequency == targets.end()
+            || block_magnitude == targets.end()
+            || block_secondary == targets.end()
+            || blur_type_target == targets.end()
+            || switched_type == targets.end()
+            || edge_intensity->maximum != 1.0
+            || edge_frequency->kind != LiveTargetKind::Integer
+            || edge_frequency->minimum != 1.0
+            || edge_frequency->maximum
+                   != std::floor(kMaximumRenderParameter)
+            || twirl_frequency->minimum != 0.25
+            || block_secondary->kind != LiveTargetKind::Integer
+            || block_secondary->maximum
+                   != std::floor(kMaximumRenderParameter)
+            || !edge_intensity->apply(live_effect_probe, 2.0)
+            || !edge_frequency->apply(live_effect_probe, 1.6)
+            || !twirl_frequency->apply(live_effect_probe, 0.0)
+            || !block_magnitude->apply(live_effect_probe, 4.0)
+            || !blur_type_target->apply(
+                live_effect_probe,
+                static_cast<double>(pvt::BlurType::Gaussian))
+            || !switched_type->apply(
+                live_effect_probe,
+                static_cast<double>(pvt::EffectType::ParticleField))) {
+            if (error != nullptr) {
+                *error = tr("Live effect targets do not expose or enforce the core effect domains.");
+            }
+            return false;
+        }
+        const auto find_effect_by_id = [&render](std::uint64_t id)
+            -> const pvt::EffectConfig* {
+            const auto found = std::find_if(
+                render.effects.begin(), render.effects.end(),
+                [id](const pvt::EffectConfig& effect) {
+                    return effect.id == id;
+                });
+            return found == render.effects.end() ? nullptr : &*found;
+        };
+        const pvt::EffectConfig* edge = find_effect_by_id(edge_id);
+        const pvt::EffectConfig* twirl = find_effect_by_id(twirl_id);
+        const pvt::EffectConfig* block = find_effect_by_id(block_id);
+        const pvt::EffectConfig* blur = find_effect_by_id(blur_id);
+        const pvt::EffectConfig* switched = find_effect_by_id(switched_id);
+        live_effect_probe.output.write_alpha = true;
+        if (edge == nullptr || twirl == nullptr || block == nullptr
+            || blur == nullptr || switched == nullptr
+            || edge->intensity != 1.0 || edge->frequency != 2.0
+            || twirl->frequency != 0.25
+            || block->frequency < block->magnitude
+            || blur->blur_type != pvt::BlurType::Gaussian
+            || blur->blur_samples != 9
+            || switched->type != pvt::EffectType::ParticleField
+            || switched->frequency < 1.0
+            || std::floor(switched->frequency) != switched->frequency
+            || switched->radius_pixels <= 0.0
+            || !pvt::validate(live_effect_probe).ok) {
+            if (error != nullptr) {
+                *error = tr("A Live effect update can leave a frame-invalid transient effect.");
+            }
+            return false;
+        }
+    }
     pvt::RenderConfig alpha_probe = pvt::default_config();
     alpha_probe.starting_image.enabled = true;
     alpha_probe.alpha.use_source_alpha = false;
@@ -19769,6 +19752,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (!configuration_requires_alpha(alpha_probe)) {
         if (error != nullptr) {
             *error = tr("Generated alpha was incorrectly disabled by the palette/image source-alpha switch.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
+    alpha_probe.alpha.enabled = true;
+    alpha_probe.alpha.minimum = 1.0;
+    alpha_probe.alpha.maximum = 1.0;
+    pvt::ParameterLfo alpha_minimum_lfo;
+    alpha_minimum_lfo.id = pvt::allocate_id(alpha_probe);
+    alpha_minimum_lfo.target_path = "alpha.minimum";
+    alpha_minimum_lfo.minimum = 0.5;
+    alpha_minimum_lfo.maximum = 1.0;
+    alpha_probe.parameter_lfos.push_back(alpha_minimum_lfo);
+    if (!configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("A Numeric LFO that can reveal alpha did not request alpha output.");
         }
         return false;
     }
@@ -19823,6 +19822,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
     alpha_probe = pvt::default_config();
+    alpha_probe.effects.clear();
+    auto edge_detect = pvt::default_effect(pvt::EffectType::EdgeDetect);
+    edge_detect.enabled = true;
+    edge_detect.edge_mode = pvt::EdgeMode::Alpha;
+    alpha_probe.effects.push_back(edge_detect);
+    if (configuration_requires_alpha(alpha_probe)) {
+        if (error != nullptr) {
+            *error = tr("Edge Detect incorrectly treated transparent luminance samples as output transparency.");
+        }
+        return false;
+    }
+    alpha_probe = pvt::default_config();
     alpha_probe.motion.enabled = true;
     alpha_probe.motion.custom_path.enabled = true;
     if (!configuration_requires_alpha(alpha_probe)) {
@@ -19853,6 +19864,21 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    pvt::ParameterLfo eraser_alpha_lfo;
+    eraser_alpha_lfo.id = pvt::allocate_id(
+        eraser_probe.layers.back().render);
+    eraser_alpha_lfo.target_path = "alpha.maximum";
+    eraser_alpha_lfo.minimum = 0.0;
+    eraser_alpha_lfo.maximum = 1.0;
+    eraser_probe.layers.back().render.parameter_lfos.push_back(
+        eraser_alpha_lfo);
+    if (!visible_stack_requires_alpha(eraser_probe)) {
+        if (error != nullptr) {
+            *error = tr("An animated eraser alpha range did not request alpha output.");
+        }
+        return false;
+    }
+    eraser_probe.layers.back().render.parameter_lfos.clear();
     auto particle = pvt::default_effect(pvt::EffectType::ParticleField);
     particle.enabled = true;
     eraser_probe.layers.back().render.effects.push_back(particle);
@@ -20972,7 +20998,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
         particle_ranges_valid = particle_type >= 0
                                 && effect_radius_->minimum() > 0.0
                                 && effect_threshold_->minimum() == 0.0
-                                && effect_threshold_->maximum() == 1.0;
+                                && effect_threshold_->maximum() == 1.0
+                                && effect_frequency_->decimals() == 0
+                                && effect_frequency_->maximum()
+                                       == std::floor(
+                                           kMaximumRenderParameter);
         const int texture_placement = effect_space_->findData(
             static_cast<int>(pvt::EffectSpace::Texture));
         const int surface_placement = effect_space_->findData(

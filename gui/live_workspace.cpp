@@ -2875,6 +2875,11 @@ void LiveWorkspace::Impl::requestFrame() {
                ? presentation_project_provider()
                : (project_provider ? project_provider() : pvt::default_project()))
         : runtimeProject();
+    // Live's stage and monitor are RGBA surfaces. Runtime mappings and scenes
+    // can reveal coverage that was not reachable in the authored project, so
+    // keep this transient display copy alpha-capable instead of dropping the
+    // frame at export-oriented validation.
+    project.output.write_alpha = true;
     updateScheduledFps(project.canvas.fps);
     double phase = 0.0;
     std::optional<int> synchronized_frame;

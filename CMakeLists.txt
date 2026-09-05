@@ -155,6 +155,7 @@ add_library(ProceduralVisualizerTool
     src/core.cpp
     src/displacement_surface.cpp
     src/displacement_surface.h
+    src/effect_parameter_domain.h
     src/environment_map.cpp
     src/environment_map.h
     src/frame_renderer.cpp

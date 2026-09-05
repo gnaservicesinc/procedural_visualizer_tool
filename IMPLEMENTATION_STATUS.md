@@ -6,6 +6,34 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.3.1 alpha and animated-control correctness
+
+Before release preparation, all 31 native tests passed, including CPU, Metal,
+OpenGL, project composition, persistence, CLI, video export, and Cocoa GUI smoke.
+Clang 22 static analysis reported no findings. AddressSanitizer and
+UndefinedBehaviorSanitizer core and project tests passed with leak detection
+disabled because it is unavailable on this host. The user accepted this evidence
+and requested no repeat of local tests during release. Five-platform main CI
+must pass before tagging, followed by tagged CI and published artifact checks.
+The pre-existing dirty `examples/Projects/Joy Fire.zip` and `tests/.DS_Store`
+remain outside the release commit.
+
+Renderer, project, and editor alpha admission now share reachability rules for
+Numeric LFO ranges and controllers, transformed surfaces and exterior policies,
+layer motion, source alpha, effects, erasers, and ordered finishing stages.
+Neutral Twirl and Edge Detect no longer require alpha when their rendered output
+is opaque. Opaque Black/White effect borders can create eraser coverage, while a
+later full alpha-zero channel route can clear that coverage again.
+
+Effect parameter domains are shared by the editor, Live mappings/scenes, and
+render-time Numeric LFO materialization. Type changes repair dependent values,
+including Gaussian sample counts, so animated controls retain structurally valid
+values. `motion.scale` now reaches the renderer alongside the persisted
+`motion.scale_pulse` spelling; both identify the same destination for duplicate
+validation. Numeric LFO edits enable alpha when required, and Live's transient
+RGBA display copy preserves transparency without changing saved export choices.
+Public structure layout, project formats, and SONAME 17 remain unchanged.
+
 ## 17.3.0 FPS, playback, and movement placement
 
 Local validation before release preparation passed all 31 native test targets,

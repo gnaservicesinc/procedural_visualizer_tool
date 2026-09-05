@@ -1,3 +1,11 @@
+procedural-visualizer-tool (17.3.1) stonking; urgency=medium
+
+  * Unify alpha reachability across rendering, project validation, and the GUI.
+  * Keep Numeric LFO and Live effect values inside valid parameter domains.
+  * Repair motion scale routing and preserve transient Live display alpha.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sat, 05 Sep 2026 19:25:26 -0400
+
 procedural-visualizer-tool (17.3.0) stonking; urgency=medium
 
   * New upstream release.

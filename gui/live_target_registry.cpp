@@ -1,4 +1,5 @@
 #include "live_target_registry.h"
+#include "../src/effect_parameter_domain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1262,28 +1263,11 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             const QString section = layer_section(
                 authored_layer, QObject::tr("Effect — %1")
                                     .arg(QString::fromStdString(effect.name)));
-            const bool block_scale = effect.type == pvt::EffectType::BlockScale;
             const bool particles = effect.type == pvt::EffectType::ParticleField;
-            const bool glitch = effect.type == pvt::EffectType::Glitch;
-            const bool starburst = effect.type == pvt::EffectType::Starburst;
-            const bool lens = effect.type == pvt::EffectType::LensDistortion;
             const bool water = effect.type == pvt::EffectType::Water;
-            const bool normalized_intensity =
-                block_scale || glitch || starburst || lens || water;
-            const double frequency_minimum = block_scale
-                ? std::max(kMinimumPositiveUiValue, effect.magnitude)
-                : (particles || glitch || starburst ? 1.0
-                                                     : (lens ? 0.25 : 0.0));
-            const double frequency_maximum = particles || glitch
-                ? kMaximumIntegerParameter : kMaximumRenderParameter;
-            const double secondary_minimum = block_scale || particles
-                                                     || glitch || starburst
-                                                     || water
-                ? 0.0 : (lens ? -1.0 : -kMaximumRenderParameter);
-            const double secondary_maximum = block_scale
-                ? kMaximumIntegerParameter
-                : (particles || glitch || starburst || lens || water
-                       ? 1.0 : kMaximumRenderParameter);
+            const pvt::detail::EffectParameterDomain domain =
+                pvt::detail::effect_parameter_domain(
+                    effect.type, effect.magnitude);
             const auto add_effect = [&](const QString& key, const QString& label,
                                         LiveTargetKind kind, double minimum,
                                         double maximum, double current, auto setter) {
@@ -1299,20 +1283,23 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                        });
             };
             add_effect(QStringLiteral("enabled"), QObject::tr("Enabled"), LiveTargetKind::Boolean, 0, 1, effect.enabled, [](pvt::EffectConfig& e, double v) { e.enabled = v >= 0.5; });
-            add_effect(QStringLiteral("type"), QObject::tr("Effect type"), LiveTargetKind::Enumeration, 0, static_cast<double>(pvt::EffectType::Water), static_cast<double>(effect.type), [](pvt::EffectConfig& e, double v) { e.type = static_cast<pvt::EffectType>(std::llround(v)); });
+            add_effect(QStringLiteral("type"), QObject::tr("Effect type"), LiveTargetKind::Enumeration, 0, static_cast<double>(pvt::EffectType::Water), static_cast<double>(effect.type), [](pvt::EffectConfig& e, double v) {
+                e.type = static_cast<pvt::EffectType>(std::llround(v));
+                pvt::detail::normalize_effect_parameter_domain(e);
+            });
             add_effect(QStringLiteral("space"), QObject::tr("Effect space"), LiveTargetKind::Enumeration, 0, 1, static_cast<double>(effect.space), [](pvt::EffectConfig& e, double v) { e.space = static_cast<pvt::EffectSpace>(std::llround(v)); });
             add_effect(QStringLiteral("synchronized"), QObject::tr("Use master clock"), LiveTargetKind::Boolean, 0, 1, effect.synchronized, [](pvt::EffectConfig& e, double v) { e.synchronized = v >= 0.5; });
             add_effect(QStringLiteral("edge_mode"), QObject::tr("Edge mode"), LiveTargetKind::Enumeration, 0, 4, static_cast<double>(effect.edge_mode), [](pvt::EffectConfig& e, double v) { e.edge_mode = static_cast<pvt::EdgeMode>(std::llround(v)); });
             add_effect(QStringLiteral("audio_response"), QObject::tr("Audio response"), LiveTargetKind::Enumeration, 0, 12, static_cast<double>(effect.audio_response), [](pvt::EffectConfig& e, double v) { e.audio_response = static_cast<pvt::AudioResponseMode>(std::llround(v)); });
-            add_effect(QStringLiteral("intensity"), QObject::tr("Intensity"), LiveTargetKind::Real, 0, normalized_intensity ? 1.0 : kMaximumRenderParameter, effect.intensity, [](pvt::EffectConfig& e, double v) { e.intensity = v; });
-            add_effect(QStringLiteral("magnitude"), water ? QObject::tr("Peak refraction") : QObject::tr("Magnitude"), LiveTargetKind::Real, block_scale ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { e.magnitude = v; });
-            add_effect(QStringLiteral("frequency"), particles ? QObject::tr("Particle count") : (water ? QObject::tr("Wave density") : QObject::tr("Frequency")), particles ? LiveTargetKind::Integer : LiveTargetKind::Real, frequency_minimum, frequency_maximum, effect.frequency, [particles](pvt::EffectConfig& e, double v) { e.frequency = particles ? std::round(v) : v; });
-            add_effect(QStringLiteral("secondary"), water ? QObject::tr("Cross-wave complexity") : QObject::tr("Secondary"), LiveTargetKind::Real, secondary_minimum, secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { e.secondary = v; });
+            add_effect(QStringLiteral("intensity"), QObject::tr("Intensity"), LiveTargetKind::Real, 0, domain.intensity_maximum, effect.intensity, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_intensity(e, v); });
+            add_effect(QStringLiteral("magnitude"), water ? QObject::tr("Peak refraction") : QObject::tr("Magnitude"), LiveTargetKind::Real, domain.magnitude_minimum, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_magnitude(e, v); });
+            add_effect(QStringLiteral("frequency"), particles ? QObject::tr("Particle count") : (water ? QObject::tr("Wave density") : QObject::tr("Frequency")), domain.frequency_is_integer ? LiveTargetKind::Integer : LiveTargetKind::Real, domain.frequency_minimum, domain.frequency_maximum, effect.frequency, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_frequency(e, v); });
+            add_effect(QStringLiteral("secondary"), water ? QObject::tr("Cross-wave complexity") : QObject::tr("Secondary"), domain.secondary_is_integer ? LiveTargetKind::Integer : LiveTargetKind::Real, domain.secondary_minimum, domain.secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_secondary(e, v); });
             add_effect(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_x, [](pvt::EffectConfig& e, double v) { e.center_x = v; });
             add_effect(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_y, [](pvt::EffectConfig& e, double v) { e.center_y = v; });
             add_effect(QStringLiteral("angle"), QObject::tr("Angle"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.angle_degrees, [](pvt::EffectConfig& e, double v) { e.angle_degrees = v; });
-            add_effect(QStringLiteral("radius"), particles ? QObject::tr("Particle size (output-pixel radius)") : QObject::tr("Radius"), LiveTargetKind::Real, particles ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.radius_pixels, [](pvt::EffectConfig& e, double v) { e.radius_pixels = v; });
-            add_effect(QStringLiteral("threshold"), QObject::tr("Threshold"), LiveTargetKind::Real, 0, particles ? 1.0 : kMaximumRenderParameter, effect.threshold, [](pvt::EffectConfig& e, double v) { e.threshold = v; });
+            add_effect(QStringLiteral("radius"), particles ? QObject::tr("Particle size (output-pixel radius)") : QObject::tr("Radius"), LiveTargetKind::Real, particles ? kMinimumPositiveUiValue : 0.0, kMaximumRenderParameter, effect.radius_pixels, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_radius(e, v); });
+            add_effect(QStringLiteral("threshold"), QObject::tr("Threshold"), LiveTargetKind::Real, 0, particles ? 1.0 : kMaximumRenderParameter, effect.threshold, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_threshold(e, v); });
             add_effect(QStringLiteral("soft_knee"), QObject::tr("Soft knee"), LiveTargetKind::Real, 0, 1, effect.soft_knee, [](pvt::EffectConfig& e, double v) { e.soft_knee = v; });
             add_effect(QStringLiteral("area"), QObject::tr("Local area"), LiveTargetKind::Real, 0, kMaximumRenderParameter, effect.area_radius, [](pvt::EffectConfig& e, double v) { e.area_radius = v; });
             add_effect(QStringLiteral("cycles"), QObject::tr("Cycles per loop"), LiveTargetKind::Integer, kMinimumIntegerParameter, kMaximumIntegerParameter, effect.cycles_per_loop, [](pvt::EffectConfig& e, double v) { e.cycles_per_loop = static_cast<int>(std::llround(v)); });
@@ -1326,14 +1313,15 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                 add_effect(QStringLiteral("particle_orientation"), QObject::tr("Particle orientation"), LiveTargetKind::Enumeration, 0, 2, static_cast<double>(effect.particle_orientation), [](pvt::EffectConfig& e, double v) { e.particle_orientation = static_cast<pvt::ParticleOrientation>(std::llround(v)); });
                 add_effect(QStringLiteral("particle_rotation"), QObject::tr("Particle rotation"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.particle_rotation_degrees, [](pvt::EffectConfig& e, double v) { e.particle_rotation_degrees = v; });
             }
-            add_effect(QStringLiteral("blur_type"), QObject::tr("Blur type"), LiveTargetKind::Enumeration, 0, 4, static_cast<double>(effect.blur_type), [](pvt::EffectConfig& e, double v) { e.blur_type = static_cast<pvt::BlurType>(std::llround(v)); });
+            add_effect(QStringLiteral("blur_type"), QObject::tr("Blur type"), LiveTargetKind::Enumeration, 0, 4, static_cast<double>(effect.blur_type), [](pvt::EffectConfig& e, double v) {
+                e.blur_type = static_cast<pvt::BlurType>(std::llround(v));
+                pvt::detail::repair_gaussian_blur_samples(e);
+            });
             add_effect(QStringLiteral("blur_passes"), QObject::tr("Blur passes"), LiveTargetKind::Integer, 1, kMaximumIntegerParameter, effect.blur_passes, [](pvt::EffectConfig& e, double v) { e.blur_passes = static_cast<int>(std::llround(v)); });
             add_effect(QStringLiteral("blur_samples"), QObject::tr("Blur samples"), LiveTargetKind::Integer, 2, kMaximumIntegerParameter, effect.blur_samples, [](pvt::EffectConfig& e, double v) {
                 int samples = static_cast<int>(std::llround(v));
-                if (e.blur_type == pvt::BlurType::Gaussian && samples % 2 == 0) {
-                    ++samples;
-                }
                 e.blur_samples = samples;
+                pvt::detail::repair_gaussian_blur_samples(e);
             });
             add_effect(QStringLiteral("blur_minimum"), QObject::tr("Blur minimum"), LiveTargetKind::Real, 0, 1, effect.blur_minimum, [](pvt::EffectConfig& e, double v) {
                 e.blur_minimum = v;

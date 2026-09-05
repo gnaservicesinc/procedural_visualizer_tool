@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
 #include "displacement_surface.h"
+#include "effect_parameter_domain.h"
 #include "environment_map.h"
 #include "frame_renderer_internal.h"
 #include "obj_surface.h"
@@ -1428,11 +1429,6 @@ bool effect_has_render_work(const EffectConfig& effect) {
     return false;
 }
 
-bool effect_uses_edge_mode(EffectType type) {
-    return type != EffectType::Glow && type != EffectType::BlockScale
-           && type != EffectType::ParticleField;
-}
-
 bool surface_has_render_work(const SurfaceConfig& surface) {
     if (!surface.enabled) {
         return false;
@@ -1459,33 +1455,6 @@ bool surface_has_render_work(const SurfaceConfig& surface) {
            || std::fabs(surface.position_y_percent) > 1.0e-12
            || std::fabs(surface.position_z) > 1.0e-12
            || surface.lighting > 0.0;
-}
-
-bool surface_has_transparent_exterior(const SurfaceConfig& surface) {
-    if (!surface.enabled || surface.outside != SurfaceOutside::Transparent) {
-        return false;
-    }
-    if (surface.mapping != SurfaceMapping::Plane) {
-        return surface.curvature > 0.0;
-    }
-    if (surface.plane_displacement.enabled && surface.curvature > 0.0) {
-        return true;
-    }
-    return surface.projection != SurfaceProjection::Orthographic
-           || surface.sizing != SurfaceSizing::Contain
-           || surface.rotation_x_turns_per_loop != 0
-           || surface.rotation_y_turns_per_loop != 0
-           || surface.rotation_z_turns_per_loop != 0
-           || std::fmod(surface.rotation_x_degrees, 360.0) != 0.0
-           || std::fmod(surface.rotation_y_degrees, 360.0) != 0.0
-           || std::fmod(surface.rotation_z_degrees, 360.0) != 0.0
-           || std::fabs(surface.size_percent - 100.0) > 1.0e-12
-           || std::fabs(surface.scale_x - 1.0) > 1.0e-12
-           || std::fabs(surface.scale_y - 1.0) > 1.0e-12
-           || std::fabs(surface.scale_z - 1.0) > 1.0e-12
-           || std::fabs(surface.position_x_percent) > 1.0e-12
-           || std::fabs(surface.position_y_percent) > 1.0e-12
-           || std::fabs(surface.position_z) > 1.0e-12;
 }
 
 bool motion_has_render_work(const LayerMotionConfig& motion) {
@@ -1829,7 +1798,7 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
     }
     else if (path == "motion.rotations") render.motion.rotations_per_loop = lfo_integer(value);
     else if (path == "motion.rotation_offset") render.motion.rotation_offset_degrees = finite(-magnitude, magnitude);
-    else if (path == "motion.scale_pulse") render.motion.scale_pulse = finite(0.0, magnitude);
+    else if (path == "motion.scale" || path == "motion.scale_pulse") render.motion.scale_pulse = finite(0.0, magnitude);
     else if (path == "surface.curvature") render.surface.curvature = finite(0.0, 1.0);
     else if (path == "surface.lighting") render.surface.lighting = finite(0.0, magnitude);
     else if (path == "surface.rotation_x_turns") render.surface.rotation_x_turns_per_loop = lfo_integer(value);
@@ -1945,25 +1914,20 @@ bool apply_lfo_target(RenderData& render, std::string_view path,
             const auto found = std::find_if(render.effects.begin(), render.effects.end(),
                 [id](const EffectConfig& item) { return item.id == id; });
             if (found == render.effects.end()) return false;
-            const bool particles = found->type == EffectType::ParticleField;
-            const bool normalized = found->type == EffectType::BlockScale
-                || found->type == EffectType::Glitch
-                || found->type == EffectType::Starburst
-                || found->type == EffectType::LensDistortion
-                || found->type == EffectType::Water;
-            if (property == "intensity") found->intensity = finite(0.0, normalized ? 1.0 : magnitude);
-            else if (property == "magnitude") found->magnitude = finite(found->type == EffectType::BlockScale ? 0.000001 : 0.0, magnitude);
-            else if (property == "frequency") found->frequency = particles ? std::round(finite(1.0, static_cast<double>((std::numeric_limits<int>::max)()))) : finite(0.0, magnitude);
-            else if (property == "secondary") {
-                found->secondary = found->type == EffectType::Water
-                                       ? finite(0.0, 1.0)
-                                       : finite(-magnitude, magnitude);
+            if (property == "intensity") {
+                detail::set_effect_intensity(*found, value);
+            } else if (property == "magnitude") {
+                detail::set_effect_magnitude(*found, value);
+            } else if (property == "frequency") {
+                detail::set_effect_frequency(*found, value);
+            } else if (property == "secondary") {
+                detail::set_effect_secondary(*found, value);
             }
             else if (property == "center_x") found->center_x = finite(-magnitude, magnitude);
             else if (property == "center_y") found->center_y = finite(-magnitude, magnitude);
             else if (property == "angle") found->angle_degrees = finite(-magnitude, magnitude);
-            else if (property == "radius") found->radius_pixels = finite(particles ? 0.000001 : 0.0, magnitude);
-            else if (property == "threshold") found->threshold = finite(0.0, particles ? 1.0 : magnitude);
+            else if (property == "radius") detail::set_effect_radius(*found, value);
+            else if (property == "threshold") detail::set_effect_threshold(*found, value);
             else if (property == "soft_knee") found->soft_knee = finite(0.0, 1.0);
             else if (property == "area") found->area_radius = finite(0.0, magnitude);
             else if (property == "cycles") found->cycles_per_loop = lfo_integer(value);
@@ -3613,8 +3577,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     for (std::size_t index = 0U; index < config.parameter_lfos.size();
          ++index) {
         const ParameterLfo& lfo = config.parameter_lfos[index];
+        const std::string canonical_target =
+            lfo.target_path == "motion.scale_pulse"
+                ? "motion.scale" : lfo.target_path;
         if (!valid_lfo_target_path(lfo.target_path)
-            || !lfo_targets.insert(lfo.target_path).second
+            || !lfo_targets.insert(canonical_target).second
             || (lfo.id != 0U
                 && !lfo_indexes.emplace(lfo.id, index).second)
             || !valid_enum(lfo.waveform)
@@ -3748,7 +3715,6 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     bool has_enabled_effect = false;
     bool has_enabled_glow = false;
     bool has_enabled_blur = false;
-    bool has_transparent_edge_effect = false;
     // Base generation is bounded near unit range. Track a deliberately
     // conservative upper bound for sequential additive glow amplification so
     // every accepted setup remains representable by 32-bit float channels.
@@ -3894,10 +3860,6 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         has_enabled_effect = has_enabled_effect || active_effect;
         has_enabled_glow = has_enabled_glow || active_glow;
         has_enabled_blur = has_enabled_blur || active_blur;
-        has_transparent_edge_effect = has_transparent_edge_effect
-                                      || (active_effect
-                                          && effect_uses_edge_mode(effect.type)
-                                          && effective_effect_edge_mode(effect) == EdgeMode::Alpha);
         if (active_glow || active_particles) {
             double maximum_intensity = effect.intensity;
             if (resolve_item_audio_response(
@@ -4268,32 +4230,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             "An enabled starting image requires a valid image runtime path or embedded attachment identity.");
     }
     if (include_export) {
-        const bool has_transparent_surface =
-            surface_has_transparent_exterior(config.surface);
-        const bool has_transparent_palette_source =
-            config.alpha.use_source_alpha && config.palette.enabled
-            && std::any_of(
-                config.palette.colors.begin(), config.palette.colors.end(),
-                [](const PaletteColor& color) { return color.alpha < 1.0; });
-        const bool has_transparent_generated_source =
-            !config.starting_image.enabled && !config.palette.enabled
-            && config.starting_colors.include_alpha
-            && config.starting_colors.alpha_minimum < 1.0;
-        const bool post_processing_can_create_transparency =
-            detail::post_process_alpha_certainty(
-                config, detail::AlphaCertainty::One)
-            != detail::AlphaCertainty::One;
         if (!config.alpha.enabled && !config.output.write_alpha
-            && (has_transparent_edge_effect || has_transparent_surface
-                || (config.starting_image.enabled
-                    && config.alpha.use_source_alpha)
-                || motion_has_render_work(config.motion)
-                || has_transparent_palette_source
-                || has_transparent_generated_source
-                || post_processing_can_create_transparency)) {
+            && detail::render_data_can_create_transparency(config)) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
-                "edge handling, an active 3D surface has a transparent exterior, "
+                "edge handling, an active surface has a transparent exterior, "
                 "layer motion can expose the canvas exterior, or the active source "
                 "or post-processing can contain or generate transparency.");
         }
