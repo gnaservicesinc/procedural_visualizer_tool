@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.5.0**. The version is read from `VERSION` by every
+Current product version: **17.6.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,19 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.6.0 safer high-resolution height maps and project recovery
+
+PNG height maps up to 8,192 × 8,192 pixels now retain their full source
+resolution within the 512 MiB decoded-image limit. PVT caches their computed
+luminance directly instead of expanding every pixel into four float channels,
+preserving 8/16-bit displacement sampling while reducing memory use. Clear
+errors identify an oversized image's dimensions, required memory, and remedy.
+
+Project-load notices now distinguish retained future settings from repaired
+invalid data, name repaired fields, and offer complete selectable details in
+the editor. The command-line report follows the same distinction. Bundles,
+project formats, public renderer ABI, and SONAME 17 are unchanged.
 
 ## 17.5.0 Live rendering and audio reliability
 
@@ -762,6 +775,12 @@ the authored/output resolution. Changing the map, range, midpoint, ratio, or
 effective resolution selects or rebuilds the matching mesh. The GUI can export
 the authored-output mesh as Wavefront OBJ with positions, UVs, normals, and
 triangles.
+
+PNG height maps up to 8192 × 8192 pixels retain their full resolution within
+the 512 MiB decoded-image limit. The height-map cache stores the original
+computed luminance directly, preserving 8/16-bit sampling and displacement
+without expanding every pixel into four float channels. If an image exceeds
+the limit, the error identifies its dimensions, required memory, and a remedy.
 
 The height map is a content-addressed layer attachment and follows the same
 transactional bundle, duplication, history, and stale-writer protections as

@@ -7498,9 +7498,27 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+14"/>
-        <location line="+12484"/>
-        <source>Recovered this save by applying every safe setting and repairing missing or unusable data. Preserved %1 original/unrecognized field(s); %2 were not safe to use. Saving keeps them.</source>
+        <source>Some project settings needed repair when opening this file.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This project contains settings that this version cannot use.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 invalid setting(s) could not be applied.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 more detail(s); hover over this notice to read all details.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The recovery notice did not explain the repaired setting.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

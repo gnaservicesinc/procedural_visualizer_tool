@@ -32,6 +32,7 @@ enum class DecodeIntent {
     Color,
     Data,
     Srgb,
+    Height,
 };
 
 bool fail(std::string* error, std::string message) {
@@ -43,12 +44,22 @@ bool cancelled(const std::atomic_bool* cancel) {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
 
+struct DecodedSource {
+    std::shared_ptr<Image> rgba;
+    std::shared_ptr<HeightImage> height;
+
+    std::size_t bytes() const {
+        return height ? height->samples.size() * sizeof(double)
+                      : rgba->pixels.size() * sizeof(float);
+    }
+};
+
 struct CachedSource {
     std::string path;
     DecodeIntent intent = DecodeIntent::Color;
     std::uintmax_t file_size = 0U;
     fs::file_time_type modified{};
-    std::shared_ptr<const Image> image;
+    std::shared_ptr<const DecodedSource> image;
     std::size_t decoded_bytes = 0U;
     std::uint64_t last_used = 0U;
     std::uint64_t publication_sequence = 0U;
@@ -68,7 +79,7 @@ struct PendingSource {
     bool succeeded = false;
     bool retryable = false;
     bool source_changed = false;
-    std::shared_ptr<const Image> image;
+    std::shared_ptr<const DecodedSource> image;
     std::string error;
     std::condition_variable wake;
 };
@@ -95,6 +106,19 @@ bool decoded_rgba_size(std::uint64_t width, std::uint64_t height,
     }
     components = pixels * 4U;
     return true;
+}
+
+std::string image_size_error(const char* kind, std::uint64_t width,
+                             std::uint64_t height, std::size_t bytes_per_pixel) {
+    const std::uint64_t pixels_per_mib = 1024U * 1024U / bytes_per_pixel;
+    const std::uint64_t pixels = width * height;
+    const std::uint64_t mib = pixels / pixels_per_mib
+                              + (pixels % pixels_per_mib != 0U ? 1U : 0U);
+    return std::string(kind) + " is " + std::to_string(width) + " x "
+        + std::to_string(height) + " pixels and needs " + std::to_string(mib)
+        + " MiB of decoded image memory; the limit is "
+        + std::to_string(kMaximumDecodedSourceBytes / (1024U * 1024U))
+        + " MiB. Choose a smaller image or resize a copy before importing it.";
 }
 
 bool inspect_source(const std::string& path, std::uintmax_t& file_size,
@@ -151,10 +175,12 @@ bool decode_png_color(const std::string& path,
         || decoded_pixels
                > (std::numeric_limits<std::size_t>::max)()
                      / (4U * sizeof(png_uint_16))) {
+        const auto width = png.width;
+        const auto height = png.height;
         png_image_free(&png);
         std::fclose(file);
-        return fail(error,
-                    "PNG source dimensions are invalid or exceed the decoded-image byte limit.");
+        return fail(error, image_size_error(
+            "PNG image", width, height, 4U * sizeof(float)));
     }
     png.format = PNG_FORMAT_LINEAR_RGB_ALPHA;
     const int decoded_width = static_cast<int>(png.width);
@@ -201,14 +227,15 @@ void png_read_error(png_structp png, png_const_charp message) {
 
 bool decode_png_data(const std::string& path,
                      std::shared_ptr<Image>& decoded,
-                     const std::atomic_bool* cancel, std::string* error) {
+                     const std::atomic_bool* cancel, std::string* error,
+                     HeightImage* height_image) {
     if (cancelled(cancel)) return fail(error, "PNG data decoding was cancelled.");
+    const auto read_error = std::make_unique<PngReadError>();
     std::FILE* file = open_source(path_from_utf8(path));
     if (file == nullptr) return fail(error, "Could not open the PNG data image.");
 
-    PngReadError read_error;
     png_structp png = png_create_read_struct(
-        PNG_LIBPNG_VER_STRING, &read_error, png_read_error, nullptr);
+        PNG_LIBPNG_VER_STRING, read_error.get(), png_read_error, nullptr);
     if (png == nullptr) {
         std::fclose(file);
         return fail(error, "Could not initialize the PNG data decoder.");
@@ -220,14 +247,16 @@ bool decode_png_data(const std::string& path,
         return fail(error, "Could not allocate PNG data metadata.");
     }
 
-    unsigned char* raw = nullptr;
+    // libpng can longjmp after allocation; the cleanup pointer must retain
+    // its value across setjmp even in optimized builds.
+    unsigned char* volatile raw = nullptr;
     if (setjmp(png_jmpbuf(png)) != 0) {
         std::free(raw);
         png_destroy_read_struct(&png, &info, nullptr);
         std::fclose(file);
         return fail(error, "Could not decode PNG data image: "
-                               + std::string(read_error.message[0] != '\0'
-                                                 ? read_error.message
+                               + std::string(read_error->message[0] != '\0'
+                                                 ? read_error->message
                                                  : "unknown libpng error"));
     }
 
@@ -243,8 +272,15 @@ bool decode_png_data(const std::string& path,
         || width > static_cast<png_uint_32>((std::numeric_limits<int>::max)())
         || height > static_cast<png_uint_32>((std::numeric_limits<int>::max)())
         || pixel_count > (std::numeric_limits<std::size_t>::max)() / 8U
-        || !decoded_rgba_size(width, height, components)) {
-        png_error(png, "PNG data dimensions exceed the decoded-image byte limit");
+        || (height_image != nullptr
+                ? pixel_count > kMaximumDecodedSourceBytes / sizeof(double)
+                : !decoded_rgba_size(width, height, components))) {
+        png_destroy_read_struct(&png, &info, nullptr);
+        std::fclose(file);
+        return fail(error, image_size_error(
+            height_image != nullptr ? "PNG height map" : "PNG data image",
+            width, height, height_image != nullptr
+                               ? sizeof(double) : 4U * sizeof(float)));
     }
     if (source_depth != 1 && source_depth != 2 && source_depth != 4
         && source_depth != 8 && source_depth != 16) {
@@ -287,6 +323,9 @@ bool decode_png_data(const std::string& path,
     if (raw == nullptr) png_error(png, "PNG data buffer allocation failed");
     for (int pass = 0; pass < passes; ++pass) {
         for (png_uint_32 row = 0U; row < height; ++row) {
+            if (cancelled(cancel)) {
+                png_error(png, "PNG data decoding was cancelled");
+            }
             png_read_row(png,
                          raw + static_cast<std::size_t>(row) * expected_row,
                          nullptr);
@@ -295,30 +334,48 @@ bool decode_png_data(const std::string& path,
     png_read_end(png, info);
     png_destroy_read_struct(&png, &info, nullptr);
     std::fclose(file);
+    const std::unique_ptr<unsigned char, decltype(&std::free)> raw_owner(
+        raw, &std::free);
     if (cancelled(cancel)) {
-        std::free(raw);
         return fail(error, "PNG data decoding was cancelled.");
+    }
+
+    const float scale = output_depth == 16 ? 1.0F / 65535.0F : 1.0F / 255.0F;
+    const auto sample_at = [&](std::size_t index) {
+        const std::size_t input = index * bytes_per_sample;
+        const std::uint32_t sample = output_depth == 16
+            ? (static_cast<std::uint32_t>(raw[input]) << 8U)
+                  | static_cast<std::uint32_t>(raw[input + 1U])
+            : static_cast<std::uint32_t>(raw[input]);
+        return static_cast<float>(sample) * scale;
+    };
+    if (height_image != nullptr) {
+        height_image->width = static_cast<int>(width);
+        height_image->height = static_cast<int>(height);
+        height_image->samples.resize(static_cast<std::size_t>(pixel_count));
+        for (std::size_t pixel = 0U; pixel < height_image->samples.size(); ++pixel) {
+            if ((pixel & 65535U) == 0U && cancelled(cancel)) {
+                return fail(error, "PNG height-map decoding was cancelled.");
+            }
+            // Match the original sampler's float normalization and double
+            // luminance exactly, including colored maps and ignored alpha.
+            height_image->samples[pixel] = 0.2126 * sample_at(pixel * 4U)
+                + 0.7152 * sample_at(pixel * 4U + 1U)
+                + 0.0722 * sample_at(pixel * 4U + 2U);
+        }
+        return true;
     }
 
     auto result = std::make_shared<Image>();
     result->width = static_cast<int>(width);
     result->height = static_cast<int>(height);
     result->pixels.resize(components);
-    const float scale = output_depth == 16 ? 1.0F / 65535.0F : 1.0F / 255.0F;
-    std::size_t input = 0U;
     for (std::size_t index = 0U; index < components; ++index) {
         if ((index & 65535U) == 0U && cancelled(cancel)) {
-            std::free(raw);
             return fail(error, "PNG data decoding was cancelled.");
         }
-        const std::uint32_t sample = output_depth == 16
-            ? (static_cast<std::uint32_t>(raw[input]) << 8U)
-                  | static_cast<std::uint32_t>(raw[input + 1U])
-            : static_cast<std::uint32_t>(raw[input]);
-        input += bytes_per_sample;
-        result->pixels[index] = static_cast<float>(sample) * scale;
+        result->pixels[index] = sample_at(index);
     }
-    std::free(raw);
     decoded = std::move(result);
     return true;
 }
@@ -725,8 +782,8 @@ bool decode_exr(const std::string& path, std::uintmax_t file_size,
     if (!checked_size_multiply(width, height, pixel_count)
         || !checked_size_multiply(pixel_count, 4U, components)
         || components > kMaximumDecodedSourceBytes / sizeof(float)) {
-        return fail(error,
-                    "OpenEXR dimensions exceed the decoded-image byte limit.");
+        return fail(error, image_size_error(
+            "OpenEXR image", width, height, 4U * sizeof(float)));
     }
 
     std::array<int, 4U> selected{{-1, -1, -1, -1}};
@@ -913,8 +970,13 @@ bool decode_exr(const std::string& path, std::uintmax_t file_size,
 
 bool decode_source(const std::string& path, std::uintmax_t file_size,
                    DecodeIntent intent,
-                   std::shared_ptr<Image>& decoded,
+                   std::shared_ptr<DecodedSource>& source,
                    const std::atomic_bool* cancel, std::string* error) {
+    auto result = std::make_shared<DecodedSource>();
+    auto& decoded = result->rgba;
+    if (intent == DecodeIntent::Height) {
+        result->height = std::make_shared<HeightImage>();
+    }
     std::FILE* file = open_source(path_from_utf8(path));
     if (file == nullptr) return fail(error, "Could not open the image source.");
     std::array<unsigned char, 8U> signature{};
@@ -924,9 +986,11 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
     if (bytes_read == signature.size()
         && png_sig_cmp(signature.data(), 0U, signature.size()) == 0) {
         if (intent == DecodeIntent::Color) {
-            return decode_png_color(path, decoded, cancel, error);
+            if (!decode_png_color(path, decoded, cancel, error)) return false;
+        } else if (!decode_png_data(path, decoded, cancel, error,
+                                    result->height.get())) {
+            return false;
         }
-        if (!decode_png_data(path, decoded, cancel, error)) return false;
     } else {
         const std::uint32_t magic = static_cast<std::uint32_t>(signature[0U])
             | (static_cast<std::uint32_t>(signature[1U]) << 8U)
@@ -937,6 +1001,21 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
                         "Image source is neither a valid PNG nor a scanline OpenEXR file.");
         }
         if (!decode_exr(path, file_size, decoded, cancel, error)) return false;
+        if (result->height) {
+            auto& height = *result->height;
+            height.width = decoded->width;
+            height.height = decoded->height;
+            height.samples.resize(decoded->pixels.size() / 4U);
+            for (std::size_t pixel = 0U; pixel < height.samples.size(); ++pixel) {
+                if ((pixel & 65535U) == 0U && cancelled(cancel)) {
+                    return fail(error, "Height-map decoding was cancelled.");
+                }
+                const float* rgb = decoded->pixels.data() + pixel * 4U;
+                height.samples[pixel] = 0.2126 * rgb[0]
+                    + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            }
+            decoded.reset();
+        }
     }
 
     if (intent == DecodeIntent::Srgb) {
@@ -961,11 +1040,12 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
                 std::min(linear, maximum), encoded));
         }
     }
+    source = std::move(result);
     return true;
 }
 
 bool load_cached(const std::string& path, DecodeIntent intent,
-                 std::shared_ptr<const Image>& image,
+                 std::shared_ptr<const DecodedSource>& image,
                  const std::atomic_bool* cancel, std::string* error) {
     int shared_load_retries = 0;
     constexpr int kMaximumSharedLoadRetries = 2;
@@ -1049,7 +1129,7 @@ bool load_cached(const std::string& path, DecodeIntent intent,
         if (!decode_owner) continue;
 
         try {
-            std::shared_ptr<Image> decoded;
+            std::shared_ptr<DecodedSource> decoded;
             std::string decode_error;
             bool decoded_ok = decode_source(
                 path, file_size, intent, decoded, cancel, &decode_error);
@@ -1057,7 +1137,7 @@ bool load_cached(const std::string& path, DecodeIntent intent,
             bool source_changed = false;
             std::size_t decoded_bytes = 0U;
             if (decoded_ok) {
-                decoded_bytes = decoded->pixels.size() * sizeof(float);
+                decoded_bytes = decoded->bytes();
                 if (decoded_bytes > kMaximumDecodedSourceBytes) {
                     decoded_ok = false;
                     decode_error =
@@ -1080,7 +1160,7 @@ bool load_cached(const std::string& path, DecodeIntent intent,
                     "Image source changed while it was being decoded.";
             }
 
-            std::shared_ptr<const Image> selected;
+            std::shared_ptr<const DecodedSource> selected;
             {
                 const std::lock_guard<std::mutex> lock(source_cache_mutex);
                 if (decoded_ok) {
@@ -1226,7 +1306,9 @@ bool load_starting_image_source(const std::string& path,
                                 std::shared_ptr<const Image>& image,
                                 const std::atomic_bool* cancel,
                                 std::string* error) {
-    const bool ok = load_cached(path, DecodeIntent::Color, image, cancel, error);
+    std::shared_ptr<const DecodedSource> decoded;
+    const bool ok = load_cached(path, DecodeIntent::Color, decoded, cancel, error);
+    if (ok) image = decoded->rgba;
     if (ok && error != nullptr) error->clear();
     return ok;
 }
@@ -1243,8 +1325,29 @@ bool load_data_image_source(const std::string& path,
                             std::shared_ptr<const Image>& image,
                             const std::atomic_bool* cancel,
                             std::string* error) {
-    const bool ok = load_cached(path, DecodeIntent::Data, image, cancel, error);
+    std::shared_ptr<const DecodedSource> decoded;
+    const bool ok = load_cached(path, DecodeIntent::Data, decoded, cancel, error);
+    if (ok) image = decoded->rgba;
     if (ok && error != nullptr) error->clear();
+    return ok;
+}
+
+bool validate_height_image_source(const std::string& path,
+                                  std::string* error) {
+    std::shared_ptr<const HeightImage> decoded;
+    return load_height_image_source(path, decoded, nullptr, error);
+}
+
+bool load_height_image_source(const std::string& path,
+                              std::shared_ptr<const HeightImage>& image,
+                              const std::atomic_bool* cancel,
+                              std::string* error) {
+    std::shared_ptr<const DecodedSource> decoded;
+    const bool ok = load_cached(path, DecodeIntent::Height, decoded, cancel, error);
+    if (ok) {
+        image = decoded->height;
+        if (error != nullptr) error->clear();
+    }
     return ok;
 }
 
@@ -1276,7 +1379,9 @@ bool load_environment_map_source(const std::string& path,
         default:
             return fail(error, "Environment-map encoding is invalid.");
     }
-    const bool ok = load_cached(path, intent, image, cancel, error);
+    std::shared_ptr<const DecodedSource> decoded;
+    const bool ok = load_cached(path, intent, decoded, cancel, error);
+    if (ok) image = decoded->rgba;
     if (ok && error != nullptr) error->clear();
     return ok;
 }

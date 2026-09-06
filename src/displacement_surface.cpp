@@ -1,6 +1,7 @@
 #include "displacement_surface.h"
 
 #include "obj_surface.h"
+#include "path_utf8.h"
 #include "source_image.h"
 
 #include <algorithm>
@@ -26,7 +27,7 @@ constexpr std::size_t kMaximumCachedMeshes = 16U;
 struct DisplacementCancelled final {};
 
 struct CachedMesh {
-    std::shared_ptr<const Image> height_image;
+    std::shared_ptr<const HeightImage> height_image;
     int render_width = 0;
     int render_height = 0;
     int pixels_per_node = 0;
@@ -43,7 +44,7 @@ struct CachedMesh {
 // every worker independently allocates and fills the same potentially large
 // subdivision grid before one of them wins the cache race.
 struct PendingMesh {
-    std::shared_ptr<const Image> height_image;
+    std::shared_ptr<const HeightImage> height_image;
     int render_width = 0;
     int render_height = 0;
     int pixels_per_node = 0;
@@ -120,7 +121,7 @@ ObjVec3 normalize(ObjVec3 value) {
     return {value.x * inverse, value.y * inverse, value.z * inverse};
 }
 
-double sample_height(const Image& image, double x, double y) {
+double sample_height(const HeightImage& image, double x, double y) {
     x = std::clamp(x, 0.0, static_cast<double>(image.width - 1));
     y = std::clamp(y, 0.0, static_cast<double>(image.height - 1));
     const int x0 = static_cast<int>(std::floor(x));
@@ -130,14 +131,9 @@ double sample_height(const Image& image, double x, double y) {
     const double tx = x - x0;
     const double ty = y - y0;
     const auto luminance = [&image](int px, int py) {
-        const std::size_t offset =
-            (static_cast<std::size_t>(py)
-                 * static_cast<std::size_t>(image.width)
-             + static_cast<std::size_t>(px))
-            * 4U;
-        return 0.2126 * image.pixels[offset]
-               + 0.7152 * image.pixels[offset + 1U]
-               + 0.0722 * image.pixels[offset + 2U];
+        return image.samples[
+            static_cast<std::size_t>(py) * static_cast<std::size_t>(image.width)
+            + static_cast<std::size_t>(px)];
     };
     const double top = luminance(x0, y0)
                        + (luminance(x1, y0) - luminance(x0, y0)) * tx;
@@ -161,7 +157,7 @@ double map_displacement(double sample,
 }
 
 bool cache_key_matches(const CachedMesh& cached,
-                       const std::shared_ptr<const Image>& height_image,
+                       const std::shared_ptr<const HeightImage>& height_image,
                        const PlaneDisplacementConfig& config,
                        int render_width,
                        int render_height) {
@@ -176,7 +172,7 @@ bool cache_key_matches(const CachedMesh& cached,
 }
 
 bool pending_key_matches(const PendingMesh& pending,
-                         const std::shared_ptr<const Image>& height_image,
+                         const std::shared_ptr<const HeightImage>& height_image,
                          const PlaneDisplacementConfig& config,
                          int render_width,
                          int render_height,
@@ -191,7 +187,7 @@ bool pending_key_matches(const PendingMesh& pending,
            && pending.cache_generation == cache_generation;
 }
 
-bool build_mesh(const Image& height_image,
+bool build_mesh(const HeightImage& height_image,
                 const PlaneDisplacementConfig& config,
                 int render_width,
                 int render_height,
@@ -375,11 +371,14 @@ bool load_displacement_plane_mesh(
     if (displacement.path.empty()) {
         return fail(error, "A displacement height-map image has not been selected.");
     }
-    std::shared_ptr<const Image> height_image;
-    if (!load_data_image_source(
+    std::shared_ptr<const HeightImage> height_image;
+    if (!load_height_image_source(
             displacement.path, height_image, cancel, error)) {
         if (error != nullptr && !error->empty()) {
-            *error = "Could not load displacement height map: " + *error;
+            const std::string name = displacement.basename.empty()
+                ? path_to_utf8(path_from_utf8(displacement.path).filename())
+                : displacement.basename;
+            *error = "Could not load displacement height map '" + name + "': " + *error;
         }
         return false;
     }

@@ -66,7 +66,6 @@ constexpr std::size_t kMaximumPortableRootBytes = 240U;
 constexpr std::uint32_t kProjectVersionFormatVersion = 5U;
 constexpr std::uint32_t kSplitLayerFormatVersion = 2U;
 constexpr std::uint32_t kLegacySplitLayerFormatVersion = 1U;
-constexpr std::uint32_t kLayerFormatVersionBeforeAlphaOrdering = 19U;
 constexpr std::uint32_t kLayerFormatVersionWithAlphaOrdering = 20U;
 constexpr std::string_view kSplitLayerVersionKey =
     "split.layer_format_version";
@@ -1295,6 +1294,62 @@ bool split_layer_and_music(
     return true;
 }
 
+std::uint32_t legacy_split_layer_version_for_key(std::string_view key) {
+    const auto starts_with = [](std::string_view value, std::string_view prefix) {
+        return value.substr(0U, prefix.size()) == prefix;
+    };
+    // Split v1 was used from layer v7 through v20 without storing the layer
+    // version. Infer the newest schema evidenced by its fields. Assuming v19
+    // for every pre-alpha-ordering file falsely "repairs" valid older saves.
+    if (key == "starting_colors.legacy_alpha_outermost") return 20U;
+    if (key == "post_process.effects_authoritative"
+        || starts_with(key, "post_effects.")
+        || starts_with(key, "motion.reusable_path.")) return 19U;
+    if (starts_with(key, "surface.environment_map.")
+        || starts_with(key, "surface.mesh_construction.")) return 18U;
+    if (starts_with(key, "post_process.channel_map.")
+        || starts_with(key, "post_process.order.")) return 17U;
+    if (starts_with(key, "post_process.invert_red_")
+        || starts_with(key, "post_process.invert_green_")
+        || starts_with(key, "post_process.invert_blue_")) return 16U;
+    if (starts_with(key, "parameter_lfos.")) return 15U;
+    if (key == "surface.projection" || key == "surface.sizing"
+        || key == "surface.outside" || key == "surface.size_percent"
+        || starts_with(key, "surface.rotation_")
+        || starts_with(key, "surface.scale_")
+        || starts_with(key, "surface.position_")
+        || starts_with(key, "surface.light_")
+        || key == "surface.camera_distance" || key == "surface.focal_length"
+        || key == "surface.composite_backfaces"
+        || key == "surface.normalize_obj") return 14U;
+    if (starts_with(key, "effects.")
+        && (key.find(".particle_profile") != std::string_view::npos
+            || key.find(".particle_size_variation") != std::string_view::npos
+            || key.find(".particle_definition") != std::string_view::npos
+            || key.find(".particle_twinkle") != std::string_view::npos
+            || key.find(".particle_seed") != std::string_view::npos
+            || key.find(".particle_orientation") != std::string_view::npos
+            || key.find(".particle_rotation_degrees") != std::string_view::npos)) {
+        return 13U;
+    }
+    if (starts_with(key, "layer_clock.clock.audio_input.")
+        || starts_with(key, "layer_clock.music.input_processing.")
+        || starts_with(key, "layer_clock.music.frequency_streams.")
+        || key == "layer_clock.clock.frequency_stream_uuid"
+        || (starts_with(key, "effects.")
+            && key.find(".particle_shape") != std::string_view::npos)) return 12U;
+    if (starts_with(key, "surface.plane_displacement.")) return 11U;
+    if (starts_with(key, "post_process.")) return 10U;
+    if (key == "layer_clock.mix" || key == "layer_clock.mix_enabled"
+        || starts_with(key, "starting_colors.kaleidoscope.")
+        || starts_with(key, "starting_colors.domain_warp.")
+        || key == "palette.columns") return 9U;
+    if (starts_with(key, "starting_colors.") || key == "alpha.use_source_alpha"
+        || key == "source_image.palette_dither_enabled"
+        || key == "source_image.palette_dither_method") return 8U;
+    return 7U;
+}
+
 bool deserialize_split_layer_and_music(
     const std::string& split_layer,
     const std::string& analysis_bytes,
@@ -1322,7 +1377,7 @@ bool deserialize_split_layer_and_music(
 
     std::uint32_t layer_format_version = 0U;
     bool found_layer_format_version = false;
-    bool found_alpha_ordering = false;
+    std::uint32_t legacy_layer_format_version = 7U;
     std::string split_payload;
     split_payload.reserve(split_layer.size() - split_header.size());
     std::size_t split_start = split_header.size();
@@ -1357,9 +1412,9 @@ bool deserialize_split_layer_and_music(
             }
             found_layer_format_version = true;
         } else {
-            found_alpha_ordering = found_alpha_ordering
-                                   || key
-                                          == "starting_colors.legacy_alpha_outermost";
+            legacy_layer_format_version = std::max(
+                legacy_layer_format_version,
+                legacy_split_layer_version_for_key(key));
             if (!append_bounded_metadata_line(split_payload, line)) {
                 return fail(
                     error,
@@ -1375,12 +1430,7 @@ bool deserialize_split_layer_and_music(
                         "Layer music-analysis split is missing its layer format.");
         }
     } else {
-        // Split v1 was written by both layer-v19 and layer-v20 builds. The
-        // explicit alpha-ordering record was introduced by layer v20, so its
-        // exact presence is the only safe discriminator for those files.
-        layer_format_version = found_alpha_ordering
-                                   ? kLayerFormatVersionWithAlphaOrdering
-                                   : kLayerFormatVersionBeforeAlphaOrdering;
+        layer_format_version = legacy_layer_format_version;
     }
     MusicAnalysis analysis;
     if (!detail::deserialize_music_analysis_config(

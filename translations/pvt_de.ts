@@ -7507,11 +7507,29 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
             <translation>%1 — %2[*] — PVT %3</translation>
         </message>
         <message>
-            <location line="+14" />
-            <location line="+12482" />
-            <source>Recovered this save by applying every safe setting and repairing missing or unusable data. Preserved %1 original/unrecognized field(s); %2 were not safe to use. Saving keeps them.</source>
-            <translation>Diese Speicherung wurde wiederhergestellt, indem alle sicheren Einstellungen angewendet und fehlende oder unbrauchbare Daten repariert wurden. Beibehaltene ursprüngliche/unbekannte Felder: %1; nicht sicher verwendbare Felder: %2. Beim Speichern bleiben sie erhalten.</translation>
-        </message>
+        <source>Some project settings needed repair when opening this file.</source>
+        <translation>Einige Projekteinstellungen mussten beim Öffnen dieser Datei repariert werden.</translation>
+    </message>
+    <message>
+        <source>This project contains settings that this version cannot use.</source>
+        <translation>Dieses Projekt enthält Einstellungen, die diese Version nicht verwenden kann.</translation>
+    </message>
+    <message>
+        <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
+        <translation>Die ursprünglichen Werte von %1 Einstellung(en) bleiben auch beim Speichern erhalten.</translation>
+    </message>
+    <message>
+        <source>%1 invalid setting(s) could not be applied.</source>
+        <translation>%1 ungültige Einstellung(en) konnten nicht angewendet werden.</translation>
+    </message>
+    <message>
+        <source>%1 more detail(s); hover over this notice to read all details.</source>
+        <translation>%1 weitere Angabe(n); bewegen Sie den Mauszeiger über diesen Hinweis, um alle Details zu lesen.</translation>
+    </message>
+    <message>
+        <source>The recovery notice did not explain the repaired setting.</source>
+        <translation>Der Wiederherstellungshinweis erläuterte die reparierte Einstellung nicht.</translation>
+    </message>
         <message>
             <location line="-12455" />
             <source>Unsaved project changes</source>

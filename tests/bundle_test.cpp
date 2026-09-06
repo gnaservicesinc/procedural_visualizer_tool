@@ -3252,6 +3252,65 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(historical_split_v1_loaded.project.layers.front().render
               .starting_colors.legacy_alpha_outermost);
 
+    // PVT 10.0.3 (Lolli Pop 2) used split v1 with layer v15, before per-channel
+    // inversion, channel routing, and instance post effects. Its music-bearing
+    // layers must migrate just like a complete v15 layer, without false repairs.
+    pvt::ProjectDocument old_document = document;
+    old_document.project.name = "split-layer-v1-v15";
+    CHECK(pvt::detach_project_file(
+        old_document,
+        pvt::environment_map_attachment_id(old_document.project.layers.front().uuid),
+        &error));
+    old_document.project.layers.front().render.surface.environment_map = {};
+    const fs::path old_bundle = directory / "split-layer-v1-v15";
+    const bool old_saved = pvt::save_project_document(
+        old_document, as_utf8(old_bundle), &report, &error);
+    if (!old_saved) std::cerr << "legacy v15 setup save: " << error << '\n';
+    CHECK(old_saved);
+    if (!old_saved) return;
+    const fs::path old_layer_path = old_bundle
+        / std::to_string(old_document.current_version) / "0.pvt";
+    const std::string modern_layer = read_bytes(old_layer_path);
+    std::istringstream modern_lines(modern_layer);
+    std::ostringstream old_layer;
+    std::string old_line;
+    CHECK(static_cast<bool>(std::getline(modern_lines, old_line)));
+    old_layer << "PVT_LAYER_SPLIT\t1\n";
+    while (std::getline(modern_lines, old_line)) {
+        const std::string key = old_line.substr(0U, old_line.find('\t'));
+        const bool newer = key == "split.layer_format_version"
+            || key == "starting_colors.legacy_alpha_outermost"
+            || key == "post_process.effects_authoritative"
+            || key.rfind("post_process.invert_red_", 0U) == 0U
+            || key.rfind("post_process.invert_green_", 0U) == 0U
+            || key.rfind("post_process.invert_blue_", 0U) == 0U
+            || key.rfind("post_process.channel_map.", 0U) == 0U
+            || key.rfind("post_process.order.", 0U) == 0U
+            || key.rfind("post_effects.", 0U) == 0U
+            || key.rfind("surface.environment_map.", 0U) == 0U
+            || key.rfind("surface.mesh_construction.", 0U) == 0U
+            || key.rfind("motion.reusable_path.", 0U) == 0U;
+        if (!newer) old_layer << old_line << '\n';
+    }
+    CHECK(write_bytes(old_layer_path, old_layer.str()));
+    pvt::ProjectDocument old_loaded;
+    const bool old_ok = pvt::load_project_document(as_utf8(old_bundle), old_loaded, &error);
+    if (!old_ok) std::cerr << "legacy v15 setup load: " << error << '\n';
+    CHECK(old_ok);
+    if (!old_ok) return;
+    const auto old_recovery = pvt::project_recovery_info(old_loaded.project);
+    for (const auto& note : old_recovery.notes) std::cerr << "legacy v15: " << note << '\n';
+    CHECK(old_recovery.notes.empty());
+    CHECK(old_recovery.preserved_fields == 0U);
+    CHECK(old_loaded.project.layers.front().render.starting_colors.legacy_alpha_outermost);
+    CHECK(old_loaded.project.layers.front().render.layer_clock.clock.music
+              .feature_samples.size() == music.feature_samples.size());
+    CHECK(pvt::save_project_document(old_loaded, as_utf8(old_bundle), &report, &error));
+    pvt::ProjectDocument old_reopened;
+    CHECK(pvt::load_project_document(as_utf8(old_bundle), old_reopened, &error));
+    CHECK(pvt::project_recovery_info(old_reopened.project).notes.empty());
+    CHECK(old_reopened.project.layers.front().render.starting_colors.legacy_alpha_outermost);
+
     // The envelope version is a hostile-input boundary, and a rejected load
     // must leave its destination untouched.
     const fs::path future_split_layer_bundle =

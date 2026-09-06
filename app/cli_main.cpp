@@ -2535,9 +2535,11 @@ void report_recovered_fields(const ProjectDocument& document) {
     const pvt::ProjectRecoveryInfo recovery =
         pvt::project_recovery_info(document.project);
     if (recovery.preserved_fields == 0U && recovery.notes.empty()) return;
-    std::cerr << "Recovered project settings: applied every safe field and kept "
-              << recovery.preserved_fields << " unrecognized/original field(s)"
-              << " for lossless future saves";
+    std::cerr << "Project load notes";
+    if (recovery.preserved_fields != 0U) {
+        std::cerr << ": original values for " << recovery.preserved_fields
+                  << " setting(s) are preserved and will be kept when saving";
+    }
     if (recovery.rejected_fields != 0U) {
         std::cerr << " (" << recovery.rejected_fields
                   << " could not be used safely)";

@@ -2487,6 +2487,7 @@ MainWindow::MainWindow(QWidget* parent)
                 if (status_ != nullptr && live_workspace_ != nullptr
                     && live_workspace_->isRealtimeOutputActive()) {
                     status_->setText(summary);
+                    status_->setToolTip({});
                 }
             });
     connect(live_workspace_, &LiveWorkspace::runtimeOutputSettingsChanged,
@@ -2646,6 +2647,7 @@ MainWindow::MainWindow(QWidget* parent)
                 if (live_workspace_ == nullptr
                     || !live_workspace_->isRealtimeOutputActive()) {
                     status_->setText(result.error);
+                    status_->setToolTip(result.error);
                 }
             }
         }
@@ -6003,6 +6005,8 @@ QWidget* MainWindow::createOutputPage() {
     canvas_layout->addWidget(project_settings);
 
     compatibility_warning_label_ = new QLabel;
+    compatibility_warning_label_->setTextFormat(Qt::PlainText);
+    compatibility_warning_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     compatibility_warning_label_->setWordWrap(true);
     compatibility_warning_label_->setStyleSheet(
         QStringLiteral("QLabel { background: #5b4815; color: #fff2b2; "
@@ -10580,7 +10584,7 @@ bool MainWindow::setPlaneDisplacementSource(const QString& source_path) {
             : QDir::cleanPath(
                   QDir(startup_working_directory_).absoluteFilePath(
                       source_path));
-        if (!pvt::detail::validate_data_image_source(
+        if (!pvt::detail::validate_height_image_source(
                 resolved.toStdString(), &attachment_error)) {
             QMessageBox::critical(
                 this, tr("Could not decode height map"),
@@ -11241,20 +11245,40 @@ void MainWindow::updateWindowTitle() {
 
 void MainWindow::updateCompatibilityWarning() {
     compatibility_warning_.clear();
+    QStringList details;
     if (document_ != nullptr) {
         const pvt::ProjectRecoveryInfo recovery =
             pvt::project_recovery_info(document_->project);
         if (recovery.preserved_fields != 0U || !recovery.notes.empty()) {
-            compatibility_warning_ = tr(
-                "Recovered this save by applying every safe setting and repairing "
-                "missing or unusable data. Preserved %1 original/unrecognized "
-                "field(s); %2 were not safe to use. Saving keeps them.")
-                .arg(recovery.preserved_fields)
-                .arg(recovery.rejected_fields);
+            compatibility_warning_ = !recovery.notes.empty()
+                ? tr("Some project settings needed repair when opening this file.")
+                : tr("This project contains settings that this version cannot use.");
+            if (recovery.preserved_fields != 0U) {
+                compatibility_warning_ += QLatin1Char(' ') + tr(
+                    "Original values for %1 setting(s) are preserved and will be kept when saving.")
+                    .arg(recovery.preserved_fields);
+            }
+            if (recovery.rejected_fields != 0U) {
+                compatibility_warning_ += QLatin1Char(' ') + tr(
+                    "%1 invalid setting(s) could not be applied.")
+                    .arg(recovery.rejected_fields);
+            }
+            for (const auto& note : recovery.notes) {
+                details.push_back(QString::fromStdString(note));
+            }
+            for (int index = 0; index < std::min(3, static_cast<int>(details.size())); ++index) {
+                compatibility_warning_ += QStringLiteral("\n• ") + details[index];
+            }
+            if (details.size() > 3) {
+                compatibility_warning_ += QLatin1Char('\n') + tr(
+                    "%1 more detail(s); hover over this notice to read all details.")
+                    .arg(details.size() - 3);
+            }
         }
     }
     if (compatibility_warning_label_ != nullptr) {
         compatibility_warning_label_->setText(compatibility_warning_);
+        compatibility_warning_label_->setToolTip(details.join(QLatin1Char('\n')));
         compatibility_warning_label_->setVisible(!compatibility_warning_.isEmpty());
     }
     if (!compatibility_warning_.isEmpty() && status_ != nullptr) {
@@ -23729,17 +23753,27 @@ bool MainWindow::runSmokeChecks(QString* error) {
         {"future.output.sparkle", "maximum", false});
     updateCompatibilityWarning();
     const auto smoke_recovery = pvt::project_recovery_info(document_->project);
-    const QString expected_recovery_warning = tr(
-        "Recovered this save by applying every safe setting and repairing "
-        "missing or unusable data. Preserved %1 original/unrecognized "
-        "field(s); %2 were not safe to use. Saving keeps them.")
-        .arg(smoke_recovery.preserved_fields)
-        .arg(smoke_recovery.rejected_fields);
     if (compatibility_warning_.isEmpty() || compatibility_warning_label_->isHidden()
         || smoke_recovery.preserved_fields == 0U
-        || compatibility_warning_ != expected_recovery_warning) {
+        || !compatibility_warning_.contains(tr(
+            "Original values for %1 setting(s) are preserved and will be kept when saving.")
+                .arg(smoke_recovery.preserved_fields))) {
         if (error != nullptr) {
             *error = tr("Preserved future data did not produce an accurate recovery notice.");
+        }
+        return false;
+    }
+    document_->project.canvas.output_compatibility.records.clear();
+    document_->project.canvas.output_compatibility.repair_notes = {
+        "Rebuilt missing field 'canvas.width' from a safe default."};
+    updateCompatibilityWarning();
+    if (!compatibility_warning_.contains(QStringLiteral("canvas.width"))
+        || compatibility_warning_label_->toolTip().isEmpty()
+        || compatibility_warning_.contains(tr(
+            "Original values for %1 setting(s) are preserved and will be kept when saving.")
+                .arg(0))) {
+        if (error != nullptr) {
+            *error = tr("The recovery notice did not explain the repaired setting.");
         }
         return false;
     }

@@ -7507,11 +7507,29 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
             <translation>%1 — %2[*] — PVT %3</translation>
         </message>
         <message>
-            <location line="+14" />
-            <location line="+12482" />
-            <source>Recovered this save by applying every safe setting and repairing missing or unusable data. Preserved %1 original/unrecognized field(s); %2 were not safe to use. Saving keeps them.</source>
-            <translation>Cette sauvegarde a été récupérée en appliquant tous les réglages sûrs et en réparant les données manquantes ou inutilisables. Champs originaux/non reconnus conservés : %1 ; champs inutilisables sans risque : %2. L’enregistrement les conserve.</translation>
-        </message>
+        <source>Some project settings needed repair when opening this file.</source>
+        <translation>Certains réglages du projet ont dû être réparés à l’ouverture de ce fichier.</translation>
+    </message>
+    <message>
+        <source>This project contains settings that this version cannot use.</source>
+        <translation>Ce projet contient des réglages que cette version ne peut pas utiliser.</translation>
+    </message>
+    <message>
+        <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
+        <translation>Les valeurs d’origine de %1 réglage(s) sont conservées, y compris lors de l’enregistrement.</translation>
+    </message>
+    <message>
+        <source>%1 invalid setting(s) could not be applied.</source>
+        <translation>%1 réglage(s) non valide(s) n’ont pas pu être appliqués.</translation>
+    </message>
+    <message>
+        <source>%1 more detail(s); hover over this notice to read all details.</source>
+        <translation>%1 détail(s) supplémentaire(s) ; survolez cet avis pour lire tous les détails.</translation>
+    </message>
+    <message>
+        <source>The recovery notice did not explain the repaired setting.</source>
+        <translation>L’avis de récupération n’expliquait pas le réglage réparé.</translation>
+    </message>
         <message>
             <location line="-12455" />
             <source>Unsaved project changes</source>

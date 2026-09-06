@@ -1061,6 +1061,103 @@ void test_plane_displacement_mesh(const fs::path& directory) {
     CHECK(!pvt::validate(invalid).ok);
 }
 
+bool write_large_height_png(const fs::path& path, png_uint_32 width,
+                            png_uint_32 height, bool header_only = false) {
+    // Stream a compressible grayscale map so the regression fixture itself
+    // does not require a second full-size pixel allocation.
+    std::vector<unsigned char> row(width);
+    for (std::size_t x = 0U; x < row.size(); ++x) {
+        row[x] = static_cast<unsigned char>(x % 256U);
+    }
+    std::FILE* file = std::fopen(path.string().c_str(), "wb");
+    if (file == nullptr) return false;
+    png_structp png = png_create_write_struct(
+        PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    if (png == nullptr) { std::fclose(file); return false; }
+    png_infop info = png_create_info_struct(png);
+    if (info == nullptr) {
+        png_destroy_write_struct(&png, nullptr);
+        std::fclose(file);
+        return false;
+    }
+    if (setjmp(png_jmpbuf(png)) != 0) {
+        png_destroy_write_struct(&png, &info);
+        std::fclose(file);
+        return false;
+    }
+    png_init_io(png, file);
+    png_set_IHDR(png, info, width, height, 8, PNG_COLOR_TYPE_GRAY,
+                 PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE,
+                 PNG_FILTER_TYPE_BASE);
+    png_write_info(png, info);
+    if (!header_only) {
+        for (png_uint_32 y = 0U; y < height; ++y) png_write_row(png, row.data());
+        png_write_end(png, info);
+    } else {
+        // read_info stops at IDAT, before any sample data is allocated.
+        png_write_chunk(png, reinterpret_cast<png_const_bytep>("IDAT"), nullptr, 0U);
+    }
+    png_destroy_write_struct(&png, &info);
+    return std::fclose(file) == 0;
+}
+
+void test_large_height_map(const fs::path& directory) {
+    const fs::path path = directory / "height-8k.png";
+    CHECK(write_large_height_png(path, 8192U, 8192U));
+    std::string error;
+    std::shared_ptr<const pvt::detail::HeightImage> height;
+    CHECK(pvt::detail::load_height_image_source(
+        path.string(), height, nullptr, &error));
+    CHECK(height && height->width == 8192 && height->height == 8192);
+    if (!height) return;
+    CHECK(height->samples.size() == 8192U * 8192U);
+    CHECK(height->samples.front() == 0.0);
+    CHECK(height->samples.back() == 1.0);
+    std::shared_ptr<const pvt::detail::HeightImage> cached;
+    CHECK(pvt::detail::load_height_image_source(
+        path.string(), cached, nullptr, &error));
+    CHECK(cached == height);
+
+    // General RGBA decoding still has its original memory bound. The height
+    // intent must not alias a cached RGBA decode or weaken that admission.
+    std::shared_ptr<const pvt::Image> rgba;
+    CHECK(!pvt::detail::load_data_image_source(
+        path.string(), rgba, nullptr, &error));
+    CHECK(!rgba);
+    CHECK(error.find("8192 x 8192") != std::string::npos);
+    CHECK(error.find("1024 MiB") != std::string::npos);
+    CHECK(error.find("512 MiB") != std::string::npos);
+
+    pvt::PlaneDisplacementConfig displacement;
+    displacement.enabled = true;
+    displacement.path = path.string();
+    displacement.pixels_per_node = 1;
+    std::shared_ptr<const pvt::detail::ObjMesh> mesh;
+    CHECK(pvt::detail::load_displacement_plane_mesh(
+        displacement, 16, 16, mesh, nullptr, &error));
+    CHECK(mesh && mesh->positions.size() == 256U);
+
+    const fs::path too_large = directory / "height-over-limit.png";
+    CHECK(write_large_height_png(too_large, 8192U, 8193U, true));
+    CHECK(!pvt::detail::load_height_image_source(
+        too_large.string(), cached, nullptr, &error));
+    CHECK(cached == height);
+    CHECK(error.find("8192 x 8193") != std::string::npos);
+    CHECK(error.find("resize a copy") != std::string::npos);
+
+    // Corrupt input and cancellation must not replace an existing image.
+    const fs::path truncated = directory / "height-truncated.png";
+    CHECK(write_large_height_png(truncated, 16U, 16U, true));
+    CHECK(!pvt::detail::load_height_image_source(
+        truncated.string(), cached, nullptr, &error));
+    CHECK(cached == height);
+    std::atomic_bool cancel{true};
+    CHECK(!pvt::detail::load_height_image_source(
+        truncated.string(), cached, &cancel, &error));
+    CHECK(cached == height);
+    pvt::detail::clear_displacement_mesh_cache();
+}
+
 void test_post_process_effects(const fs::path& directory) {
     const fs::path source = directory / "post-process-edge.png";
     std::vector<unsigned char> source_pixels(16U * 16U * 4U);
@@ -1708,6 +1805,26 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
             CHECK(decoded_half->pixels[pixel * 4U + 1U] == expected[pixel]);
             CHECK(decoded_half->pixels[pixel * 4U + 2U] == expected[pixel]);
             CHECK(decoded_half->pixels[pixel * 4U + 3U] == 1.0F);
+        }
+    }
+
+    // Compact heights must preserve the previous RGBA sampler exactly for
+    // colored 16-bit data, Adam7 images, and scalar HALF EXR input.
+    for (const auto& path : {data_16, data_16_interlaced, half_exr, source}) {
+        std::shared_ptr<const pvt::Image> rgba;
+        std::shared_ptr<const pvt::detail::HeightImage> height;
+        CHECK(pvt::detail::load_data_image_source(
+            path.string(), rgba, nullptr, &precision_error));
+        CHECK(pvt::detail::load_height_image_source(
+            path.string(), height, nullptr, &precision_error));
+        CHECK(rgba && height);
+        if (!rgba || !height) continue;
+        CHECK(height->width == rgba->width && height->height == rgba->height);
+        CHECK(height->samples.size() * 4U == rgba->pixels.size());
+        for (std::size_t pixel = 0U; pixel < height->samples.size(); ++pixel) {
+            const float* rgb = rgba->pixels.data() + pixel * 4U;
+            CHECK(height->samples[pixel]
+                  == 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]);
         }
     }
 
@@ -7299,6 +7416,7 @@ int main(int argc, char** argv) {
     test_cancellable_single_layer_render();
     test_post_process_effects(test_directory);
     test_plane_displacement_mesh(test_directory);
+    test_large_height_map(test_directory);
     test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
     test_new_procedural_effects();
