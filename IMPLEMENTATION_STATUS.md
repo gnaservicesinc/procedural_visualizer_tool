@@ -6,6 +6,27 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.6.1 Numeric LFO destination filtering
+
+The destination-group picker keeps the authored destination in the filtered
+choices, preserving both its selection and its numeric domain. Previously,
+filtering out that destination left the combo at index -1, so the editor
+silently ignored subsequent value changes. Group changes now use the edited
+oscillator's authored target as their selection source. A tooltip explains the
+behavior in all three released interface languages.
+
+A GUI regression failed against the original implementation and passed with
+the fix. It covers filtering ordinary and LFO-controller destinations, numeric
+ranges, changing destinations, switching rows, transactional cancellation,
+save/reload, and one-step undo/redo. Renderer code, project formats, public ABI,
+and SONAME 17 are unchanged.
+
+Fresh macOS Release validation passed all 36 tests, including Metal, OpenGL,
+CLI, persistence, and Cocoa GUI checks in English, French, and German. The
+self-contained app passed distribution verification across 50 Mach-O files,
+deep/strict signing, bundled CLI version/self-test, and packaged GUI smoke.
+Cross-platform CI and downloadable assets remain pending the release push.
+
 ## 17.5.0 Live frame throughput and bounded audio input
 
 The supplied five-layer Wood project revealed two distinct bottlenecks: two

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.6.0**. The version is read from `VERSION` by every
+Current product version: **17.6.1**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,18 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.6.1 reliable Numeric LFO destination browsing
+
+Changing the destination group in Numeric LFOs keeps the current destination
+selected and its numeric limits intact. Previously, browsing a group that hid
+the active destination silently ignored subsequent value edits. You can now
+browse groups, edit values, and switch between oscillators without losing those
+edits, including when one LFO controls another. Cancel, undo/redo, and saved
+projects retain their existing behavior. The filter tooltip is available in
+English, French, and German.
+
+This patch also includes the Debian translation-extraction fix for Qt 6.10.
 
 ## 17.6.0 safer high-resolution height maps and project recovery
 

@@ -11515,6 +11515,10 @@ Run it directly for the default relative output, or pass an output file or direc
         <source>PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>PreviewWidget</name>

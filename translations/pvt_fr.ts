@@ -11545,6 +11545,10 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <source>PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)</source>
             <translation>Projets PVT (*.zip *.pvt);;Archives de projet (*.zip);;Anciennes configurations (*.pvt);;Tous les fichiers (*)</translation>
         </message>
+        <message>
+            <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
+            <translation>Filtre les destinations disponibles. La destination actuelle reste sélectionnée jusqu’à ce que vous en choisissiez une autre.</translation>
+        </message>
     </context>
     <context>
         <name>PreviewWidget</name>

@@ -11545,6 +11545,10 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
             <source>PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)</source>
             <translation>PVT-Projekte (*.zip *.pvt);;Projektpakete (*.zip);;Alte Konfigurationen (*.pvt);;Alle Dateien (*)</translation>
         </message>
+        <message>
+            <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
+            <translation>Filtert die verfügbaren Ziele. Das aktuelle Ziel bleibt ausgewählt, bis Sie ein anderes wählen.</translation>
+        </message>
     </context>
     <context>
         <name>PreviewWidget</name>

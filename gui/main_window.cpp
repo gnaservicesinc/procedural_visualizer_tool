@@ -7769,6 +7769,9 @@ void MainWindow::showParameterLfoEditor() {
     auto* enabled = new QCheckBox(tr("Enabled"), editor);
     auto* target_group = new QComboBox(editor);
     target_group->setObjectName(QStringLiteral("parameterLfoTargetGroup"));
+    target_group->setToolTip(tr(
+        "Filters the available destinations. The current destination stays "
+        "selected until you choose another."));
     target_group->addItem(tr("All destinations"), QString{});
     std::unordered_set<std::string> target_groups;
     for (const TargetChoice& choice : base_choices) {
@@ -7859,16 +7862,8 @@ void MainWindow::showParameterLfoEditor() {
     }
     std::vector<TargetChoice> choices;
     bool loading = false;
-    const auto make_choices = [&](int source_row,
-                                  const QString& group_filter) {
-        std::vector<TargetChoice> result;
-        const auto accepts_group = [&group_filter](const QString& group) {
-            return group_filter.isEmpty() || group == group_filter;
-        };
-        for (const TargetChoice& choice : base_choices) {
-            if (accepts_group(choice.group)) result.push_back(choice);
-        }
-        if (!accepts_group(QStringLiteral("LFOs"))) return result;
+    const auto make_choices = [&](int source_row) {
+        std::vector<TargetChoice> result = base_choices;
 
         const double magnitude = kMaximumRenderParameter;
         const double integer_maximum =
@@ -7922,8 +7917,16 @@ void MainWindow::showParameterLfoEditor() {
     };
     const auto rebuild_choices = [&](int source_row,
                                      const std::string& selected_path) {
-        choices = make_choices(
-            source_row, target_group->currentData().toString());
+        choices = make_choices(source_row);
+        const QString group_filter = target_group->currentData().toString();
+        // Filtering is navigation, not a change of destination. Keep the
+        // authored selection available so all editors remain connected and
+        // retain its numeric domain even when browsing a different group.
+        choices.erase(std::remove_if(choices.begin(), choices.end(),
+            [&](const TargetChoice& choice) {
+                return !group_filter.isEmpty() && choice.group != group_filter
+                    && choice.path.toStdString() != selected_path;
+            }), choices.end());
         const QSignalBlocker blocker(target);
         target->clear();
         for (const TargetChoice& choice : choices) {
@@ -7941,7 +7944,7 @@ void MainWindow::showParameterLfoEditor() {
     const auto refresh_item = [&](int row) {
         if (row < 0 || row >= static_cast<int>(edited.size())) return;
         const pvt::ParameterLfo& lfo = edited[static_cast<std::size_t>(row)];
-        const std::vector<TargetChoice> all_choices = make_choices(-1, {});
+        const std::vector<TargetChoice> all_choices = make_choices(-1);
         const auto named = std::find_if(
             all_choices.begin(), all_choices.end(),
             [&lfo](const TargetChoice& choice) {
@@ -8028,9 +8031,7 @@ void MainWindow::showParameterLfoEditor() {
                 if (loading) return;
                 const int row = list->currentRow();
                 if (row < 0 || row >= static_cast<int>(edited.size())) return;
-                const std::string selected_path =
-                    target->currentData().toString().toStdString();
-                rebuild_choices(row, selected_path);
+                rebuild_choices(row, edited[static_cast<std::size_t>(row)].target_path);
                 update_ranges();
             });
     connect(target, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
@@ -8063,7 +8064,7 @@ void MainWindow::showParameterLfoEditor() {
     connect(add, &QPushButton::clicked, &dialog, [&] {
         std::unordered_set<std::string> used;
         for (const auto& lfo : edited) used.insert(lfo.target_path);
-        const std::vector<TargetChoice> all_choices = make_choices(-1, {});
+        const std::vector<TargetChoice> all_choices = make_choices(-1);
         const auto available = std::find_if(
             all_choices.begin(), all_choices.end(),
             [&used](const TargetChoice& item) {
@@ -20158,6 +20159,120 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (!phase_arrangement_valid) {
         if (error != nullptr) {
             *error = tr("LFO phase arrangement failed selection, reproducibility, cancellation, persistence, or undo/redo checks.");
+        }
+        return false;
+    }
+    // Browsing destination groups must not disconnect the selected oscillator
+    // from its editors or discard edits when the dialog is accepted.
+    const ActiveDocumentState before_lfo_filtering = captureActiveState();
+    config_.parameter_lfos = {phase_first, phase_second, phase_third};
+    syncActiveRender();
+    const auto exercise_lfo_filtering = [&](bool accept_editor) {
+        bool valid = false;
+        QTimer::singleShot(0, this, [&, accept_editor] {
+            auto* dialog = findChild<QDialog*>(QStringLiteral("parameterLfoDialog"));
+            if (dialog == nullptr) return;
+            auto* list = dialog->findChild<QListWidget*>(QStringLiteral("parameterLfoList"));
+            auto* group = dialog->findChild<QComboBox*>(QStringLiteral("parameterLfoTargetGroup"));
+            auto* target = dialog->findChild<QComboBox*>(QStringLiteral("parameterLfoTarget"));
+            auto* minimum = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("parameterLfoMinimum"));
+            auto* maximum = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("parameterLfoMaximum"));
+            auto* phase = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("parameterLfoPhase"));
+            auto* buttons = dialog->findChild<QDialogButtonBox*>(
+                QString{}, Qt::FindDirectChildrenOnly);
+            if (list == nullptr || group == nullptr || target == nullptr
+                || minimum == nullptr || maximum == nullptr || phase == nullptr
+                || buttons == nullptr) {
+                dialog->reject();
+                return;
+            }
+            const int lfo_group = group->findData(QStringLiteral("LFOs"));
+            const double saturation_minimum = minimum->minimum();
+            const double saturation_maximum = maximum->maximum();
+            group->setCurrentIndex(lfo_group);
+            valid = lfo_group > 1 && target->currentData().toString() == QStringLiteral("saturation")
+                && minimum->minimum() == saturation_minimum
+                && maximum->maximum() == saturation_maximum;
+            minimum->setValue(0.25);
+            maximum->setValue(0.75);
+            phase->setValue(71.0);
+            group->setCurrentIndex(1);
+            group->setCurrentIndex(lfo_group);
+            valid = valid && target->currentData().toString() == QStringLiteral("saturation");
+            // A controller's destination must also survive filtering to an
+            // ordinary numeric group, with its original unbounded range.
+            list->setCurrentRow(1);
+            const double controller_minimum = minimum->minimum();
+            const double controller_maximum = maximum->maximum();
+            group->setCurrentIndex(1);
+            valid = valid && target->currentData().toString() == QStringLiteral("lfo/11/maximum")
+                && minimum->minimum() == controller_minimum
+                && maximum->maximum() == controller_maximum;
+            phase->setValue(81.0);
+            group->setCurrentIndex(lfo_group);
+            const int new_target = target->findData(QStringLiteral("lfo/11/phase_degrees"));
+            valid = valid && new_target >= 0;
+            target->setCurrentIndex(new_target);
+            minimum->setValue(-40.0);
+            maximum->setValue(40.0);
+            list->setCurrentRow(0);
+            valid = valid && phase->value() == 71.0
+                && minimum->value() == 0.25 && maximum->value() == 0.75;
+            list->setCurrentRow(1);
+            valid = valid && phase->value() == 81.0
+                && minimum->value() == -40.0 && maximum->value() == 40.0
+                && target->currentData().toString() == QStringLiteral("lfo/11/phase_degrees")
+                && phase_fixture_matches(13.0, 26.0);
+            if (valid && accept_editor) buttons->button(QDialogButtonBox::Ok)->click();
+            else dialog->reject();
+        });
+        showParameterLfoEditor();
+        return valid;
+    };
+    const auto filtered_fixture_matches = [&] {
+        return config_.parameter_lfos.size() == 3U
+            && config_.parameter_lfos[0].id == 11U
+            && config_.parameter_lfos[0].target_path == "saturation"
+            && config_.parameter_lfos[0].minimum == 0.25
+            && config_.parameter_lfos[0].maximum == 0.75
+            && config_.parameter_lfos[0].phase_degrees == 71.0
+            && config_.parameter_lfos[1].id == 22U
+            && config_.parameter_lfos[1].target_path == "lfo/11/phase_degrees"
+            && config_.parameter_lfos[1].minimum == -40.0
+            && config_.parameter_lfos[1].maximum == 40.0
+            && config_.parameter_lfos[1].phase_degrees == 81.0
+            && config_.parameter_lfos[2].id == 33U
+            && config_.parameter_lfos[2].target_path == "lfo/22/phase_degrees"
+            && config_.parameter_lfos[2].phase_degrees == 39.0
+            && !config_.parameter_lfos[2].enabled;
+    };
+    const int undo_before_filtering = undo_stack_->index();
+    bool lfo_filtering_valid = exercise_lfo_filtering(false)
+        && phase_fixture_matches(13.0, 26.0)
+        && undo_stack_->index() == undo_before_filtering
+        && exercise_lfo_filtering(true)
+        && filtered_fixture_matches()
+        && undo_stack_->index() == undo_before_filtering + 1;
+    if (lfo_filtering_valid) {
+        std::string serialized;
+        pvt::RenderData reloaded;
+        lfo_filtering_valid = pvt::detail::serialize_layer_config(
+            config_, serialized, nullptr, &config_.motion_paths)
+            && pvt::detail::deserialize_layer_config(
+                serialized, reloaded, nullptr, &config_.motion_paths)
+            && render_data_equal(config_, reloaded,
+                                 &config_.motion_paths, &config_.motion_paths);
+        undo_stack_->undo();
+        lfo_filtering_valid = lfo_filtering_valid && phase_fixture_matches(13.0, 26.0);
+        undo_stack_->redo();
+        lfo_filtering_valid = lfo_filtering_valid && filtered_fixture_matches();
+    }
+    restoreActiveState(phase_arrangement_layer, before_lfo_filtering);
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    if (!lfo_filtering_valid) {
+        if (error != nullptr) {
+            *error = QStringLiteral("LFO destination filtering lost selection, edits, cancellation, persistence, or undo/redo.");
         }
         return false;
     }
