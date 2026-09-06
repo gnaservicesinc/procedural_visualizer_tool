@@ -2351,14 +2351,48 @@ kernel void post_process_antialias(
         clamp(coordinate + int2(0, 1), int2(0), maximum)};
     const uint offset = gid.y * width + gid.x;
     const float4 center = source[offset];
-    const float4 center_premultiplied = post_premultiply(center);
-    float4 filtered = 0.5f * center_premultiplied;
-    float contrast = 0.0f;
+    float4 neighbors[4];
+    bool opaque = center.a == 1.0f;
+    bool transparent = center.a == 0.0f;
     for (uint index = 0u; index < 4u; ++index) {
         const int2 sample_coordinate = neighbor_coordinates[index];
         const uint sample_offset = uint(sample_coordinate.y) * width
                                    + uint(sample_coordinate.x);
-        const float4 sample = post_premultiply(source[sample_offset]);
+        neighbors[index] = source[sample_offset];
+        opaque = opaque && neighbors[index].a == 1.0f;
+        transparent = transparent && neighbors[index].a == 0.0f;
+    }
+    // The common interior of an opaque image needs no alpha multiplication or
+    // straight-alpha division. Transparent neighborhoods are exact no-ops,
+    // including their useful RGB. Mixed edges retain the full RGBA operation.
+    if (transparent) {
+        destination[offset] = center;
+        return;
+    }
+    if (opaque) {
+        float3 filtered = 0.5f * center.rgb;
+        float contrast = 0.0f;
+        for (uint index = 0u; index < 4u; ++index) {
+            const float3 difference = fabs(center.rgb - neighbors[index].rgb);
+            contrast = max(contrast, max(max(difference.r, difference.g), difference.b));
+            filtered += 0.125f * neighbors[index].rgb;
+        }
+        const float threshold = frame.post_values.w;
+        if (contrast <= threshold) {
+            destination[offset] = center;
+            return;
+        }
+        const float transition = max(1.0e-12f, 1.0f - threshold);
+        const float amount = frame.post_values.z
+            * clamp((contrast - threshold) / transition, 0.0f, 1.0f);
+        destination[offset] = float4(mix(center.rgb, filtered, amount), 1.0f);
+        return;
+    }
+    const float4 center_premultiplied = post_premultiply(center);
+    float4 filtered = 0.5f * center_premultiplied;
+    float contrast = 0.0f;
+    for (uint index = 0u; index < 4u; ++index) {
+        const float4 sample = post_premultiply(neighbors[index]);
         contrast = max(contrast,
                        post_contrast(center_premultiplied, sample));
         filtered += 0.125f * sample;

@@ -659,6 +659,11 @@ bool LiveAudioCapture::start(const std::string& runtime_device_id_or_name,
                              std::uint32_t requested_period_frames,
                              std::string* error) {
     if (error != nullptr) error->clear();
+    if (requested_period_frames > kMaximumLiveAudioPeriodFrames) {
+        return fail(error, "Live audio input buffer must be between 1 and "
+                               + std::to_string(kMaximumLiveAudioPeriodFrames)
+                               + " frames.");
+    }
     stop();
     if (!impl_->input_processor.configure(
             impl_->processing_config, kCaptureSampleRate, error)) {
@@ -712,6 +717,11 @@ bool LiveAudioCapture::start(const std::string& runtime_device_id_or_name,
     config.sampleRate = kCaptureSampleRate;
     config.periodSizeInFrames = requested_period_frames;
     config.periods = 2U;
+    // The incremental analyzer accepts any callback size. Do not ask
+    // miniaudio to accumulate a fixed-size intermediary buffer: devices may
+    // choose a much smaller period than requested, and holding samples until
+    // the requested size fills adds latency and can look like a hung input.
+    config.noFixedSizedCallback = MA_TRUE;
     config.performanceProfile = ma_performance_profile_low_latency;
     config.noPreSilencedOutputBuffer = MA_FALSE;
     config.dataCallback = &Impl::data_callback;

@@ -12,6 +12,11 @@
 
 namespace pvt::audio {
 
+// A capture period is a latency hint, not storage for seconds of input. Keep
+// both programmatic callers and machine-local UI settings within a bounded
+// real-time range (at most about 171 ms at the 48 kHz analysis rate).
+inline constexpr std::uint32_t kMaximumLiveAudioPeriodFrames = 8192U;
+
 // Capture-device identities are deliberately runtime-only. Projects persist a
 // logical endpoint and optional human-readable match hint, never one of these
 // backend IDs or any captured samples.

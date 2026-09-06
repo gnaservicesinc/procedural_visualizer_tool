@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.4.0**. The version is read from `VERSION` by every
+Current product version: **17.5.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,22 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.5.0 Live rendering and audio reliability
+
+Metal keeps repeated antialias passes in one compute encoder and uses exact fast
+paths for fully opaque and fully transparent neighborhoods. Independent Metal
+layers can occupy the configured in-flight slots while authored-order blending,
+bounded memory admission, cancellation, and visible GPU errors remain intact.
+On the five-layer Wood project with 1,024 antialias passes per frame, Apple M2
+Max measurements improved render plus display conversion from 16.0 to 22.5 FPS
+at 812×406 and 17.4 to 26.6 FPS at 720×360. Full float-frame hashes matched.
+
+Live audio capture accepts the device's actual callback size instead of waiting
+to accumulate an oversized fixed block. Input-buffer requests are bounded to
+8,192 frames, existing larger machine-local settings are clamped, and typing a
+new value restarts capture only after Enter or focus loss. The project, setup,
+and layer formats, public renderer ABI, and SONAME 17 are unchanged.
 
 ## 17.4.0 French and German interfaces
 

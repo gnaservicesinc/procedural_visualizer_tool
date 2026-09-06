@@ -447,14 +447,7 @@ MetalPtr<MTL::Buffer> make_frame_buffer(MTL::Device* device,
         bytes, MTL::ResourceStorageModeShared));
 }
 
-void encode_grid(MTL::CommandBuffer* command_buffer,
-                 MTL::ComputePipelineState* pipeline,
-                 MTL::Size grid,
-                 const std::function<void(MTL::ComputeCommandEncoder*)>& bind) {
-    MTL::ComputeCommandEncoder* encoder =
-        command_buffer->computeCommandEncoder();
-    encoder->setComputePipelineState(pipeline);
-    bind(encoder);
+MTL::Size grid_threadgroup(MTL::ComputePipelineState* pipeline) {
     const NS::UInteger execution_width =
         std::max<NS::UInteger>(1U, pipeline->threadExecutionWidth());
     const NS::UInteger maximum_threads =
@@ -464,7 +457,18 @@ void encode_grid(MTL::CommandBuffer* command_buffer,
                                                         execution_width);
     const NS::UInteger thread_y = std::max<NS::UInteger>(
         1U, std::min<NS::UInteger>(16U, maximum_threads / thread_x));
-    encoder->dispatchThreads(grid, MTL::Size(thread_x, thread_y, 1U));
+    return MTL::Size(thread_x, thread_y, 1U);
+}
+
+void encode_grid(MTL::CommandBuffer* command_buffer,
+                 MTL::ComputePipelineState* pipeline,
+                 MTL::Size grid,
+                 const std::function<void(MTL::ComputeCommandEncoder*)>& bind) {
+    MTL::ComputeCommandEncoder* encoder =
+        command_buffer->computeCommandEncoder();
+    encoder->setComputePipelineState(pipeline);
+    bind(encoder);
+    encoder->dispatchThreads(grid, grid_threadgroup(pipeline));
     encoder->endEncoding();
 }
 
@@ -1869,6 +1873,34 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error,
                     "Metal could not allocate bounded particle acceleration buffers.");
     }
+    const auto encode_antialias = [&](const GpuFrameConstants& post_constants,
+                                       int passes) {
+        // Serial compute dispatches have implicit read/write dependencies.
+        // Keep the pipeline/constants bound and ping-pong the two buffers in
+        // one encoder, instead of ending and beginning a pass for every
+        // iteration. Large authored pass counts otherwise spend substantial
+        // time constructing encoders and synchronizing whole GPU passes.
+        auto* encoder = command_buffer->computeCommandEncoder();
+        if (encoder == nullptr) {
+            return fail(error, "Metal could not create an antialias encoder.");
+        }
+        auto* pipeline = context.pipeline(Pipeline::PostAntialias);
+        encoder->setComputePipelineState(pipeline);
+        encoder->setBytes(&post_constants, sizeof(post_constants), 0U);
+        const auto threadgroup = grid_threadgroup(pipeline);
+        for (int pass = 0; pass < passes; ++pass) {
+            if (cancelled(cancel)) {
+                encoder->endEncoding();
+                return fail(error, "Metal antialias encoding was cancelled; destination was unchanged.");
+            }
+            encoder->setBuffer(current, 0U, 1U);
+            encoder->setBuffer(scratch, 0U, 2U);
+            encoder->dispatchThreads(pixel_grid, threadgroup);
+            std::swap(current, scratch);
+        }
+        encoder->endEncoding();
+        return true;
+    };
     if (config.post_process.effects_authoritative) {
         for (const PostProcessEffectConfig& effect :
              config.post_process.effects) {
@@ -1953,20 +1985,9 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                             static_cast<float>(effect.antialias_strength);
                         instance_constants.post_values.w =
                             static_cast<float>(effect.antialias_threshold);
-                        for (int pass = 0;
-                             pass < effect.antialias_passes; ++pass) {
-                            encode_grid(
-                                command_buffer,
-                                context.pipeline(Pipeline::PostAntialias),
-                                pixel_grid,
-                                [&](MTL::ComputeCommandEncoder* encoder) {
-                                    encoder->setBytes(
-                                        &instance_constants,
-                                        sizeof(instance_constants), 0U);
-                                    encoder->setBuffer(current, 0U, 1U);
-                                    encoder->setBuffer(scratch, 0U, 2U);
-                                });
-                            std::swap(current, scratch);
+                        if (!encode_antialias(instance_constants,
+                                              effect.antialias_passes)) {
+                            return false;
                         }
                     }
                     break;
@@ -2040,19 +2061,9 @@ bool render_prepared_frame_metal(const RenderConfig& config,
             case PostProcessStage::Antialias:
                 if (config.post_process.antialias_enabled
                     && config.post_process.antialias_strength > 0.0) {
-                    for (int pass = 0;
-                         pass < config.post_process.antialias_passes; ++pass) {
-                        encode_grid(
-                            command_buffer,
-                            context.pipeline(Pipeline::PostAntialias),
-                            pixel_grid,
-                            [&](MTL::ComputeCommandEncoder* encoder) {
-                                encoder->setBytes(
-                                    &constants, sizeof(constants), 0U);
-                                encoder->setBuffer(current, 0U, 1U);
-                                encoder->setBuffer(scratch, 0U, 2U);
-                            });
-                        std::swap(current, scratch);
+                    if (!encode_antialias(constants,
+                                          config.post_process.antialias_passes)) {
+                        return false;
                     }
                 }
                 break;

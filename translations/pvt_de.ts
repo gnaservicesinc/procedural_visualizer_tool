@@ -904,8 +904,8 @@ Bereit</translation>
         </message>
         <message>
             <location line="+4" />
-            <source>Machine-local capture callback size. Smaller buffers reduce latency but demand steadier CPU scheduling.</source>
-            <translation>Größe der Audioblöcke für die Aufnahme auf diesem Computer. Kleinere Puffer verringern die Latenz, erfordern aber eine gleichmäßigere CPU-Verarbeitung.</translation>
+            <source>Machine-local capture buffer request (1–8192 frames). The device may choose a different size. Smaller buffers reduce latency but demand steadier CPU scheduling. Typing applies when you press Enter or leave the field.</source>
+            <translation>Angeforderte Aufnahme-Puffergröße auf diesem Computer (1–8192 Frames). Das Gerät kann eine andere Größe wählen. Kleinere Puffer verringern die Latenz, erfordern aber eine gleichmäßigere CPU-Zeitplanung. Eingaben werden mit der Eingabetaste oder beim Verlassen des Felds übernommen.</translation>
         </message>
         <message>
             <location line="+2" />

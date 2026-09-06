@@ -1,3 +1,10 @@
+procedural-visualizer-tool (17.5.0) stonking; urgency=medium
+
+  * Improve high-pass-count Metal rendering and multi-layer GPU scheduling.
+  * Bound Live audio buffers and consume native variable-size callbacks.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Sun, 06 Sep 2026 06:58:00 -0400
+
 procedural-visualizer-tool (17.4.0) stonking; urgency=medium
 
   * Ship complete French and German catalogs after linguistic review.

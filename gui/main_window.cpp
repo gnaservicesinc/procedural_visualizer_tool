@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "live_audio_capture.h"
 #include "localization.h"
 #include "renderer_labels.h"
 
@@ -18485,7 +18486,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || layer_music_frequency_stream_ == nullptr
         || live_audio_period == nullptr
         || live_audio_period->minimum() != 1
-        || live_audio_period->maximum() <= 2048
+        || live_audio_period->maximum() != static_cast<int>(
+               pvt::audio::kMaximumLiveAudioPeriodFrames)
+        || live_audio_period->keyboardTracking()
         || live_audio_gain == nullptr || live_audio_gain->maximum() <= 400.0
         || live_audio_gain->singleStep() > 0.1
         || live_audio_gain_decibels == nullptr

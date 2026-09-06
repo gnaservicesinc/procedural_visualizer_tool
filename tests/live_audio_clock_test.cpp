@@ -25,6 +25,19 @@ bool near(double left, double right, double tolerance = 1.0e-12) {
     return std::fabs(left - right) <= tolerance;
 }
 
+void test_oversized_capture_period_rejected_without_hardware() {
+    pvt::audio::LiveAudioCapture capture;
+    for (const auto frames : {
+             pvt::audio::kMaximumLiveAudioPeriodFrames + 1U,
+             std::numeric_limits<std::uint32_t>::max()}) {
+        std::string error;
+        CHECK(!capture.start({}, frames, &error));
+        CHECK(error.find("input buffer must be between") != std::string::npos);
+        CHECK(!capture.is_running());
+        CHECK(!capture.snapshot().receiving);
+    }
+}
+
 void test_continuous_beat_position() {
     const auto absent = pvt::audio::live_beat_timing(
         0U, 96000U, 48000U, 48000U, 120.0);
@@ -306,6 +319,7 @@ void test_live_noise_gate_and_spectrum_configuration() {
 } // namespace
 
 int main() {
+    test_oversized_capture_period_rejected_without_hardware();
     test_continuous_beat_position();
     test_reference_meter_divisor_does_not_cancel_detected_tempo();
     test_invalid_beat_routes_stay_unlocked();

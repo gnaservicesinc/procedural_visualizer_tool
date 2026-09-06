@@ -6,6 +6,45 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.5.0 Live frame throughput and bounded audio input
+
+The supplied five-layer Wood project revealed two distinct bottlenecks: two
+layers each request 512 dependent antialias passes, while the layer coordinator
+submitted only one Metal layer at a time even when multiple in-flight slots were
+configured. Repeated Metal antialias iterations now retain one serial compute
+encoder and bind pipeline constants once. Fully opaque and fully transparent
+neighborhoods take exact reduced-arithmetic paths; mixed-alpha edges retain the
+original straight-alpha operation. Bounded GPU workers keep preparation,
+submission, completion, and readback moving across independent layers while
+the compositor still consumes results in authored order. Strict GPU failures
+remain visible and are never retried on CPU.
+
+On Apple M2 Max, the unchanged Wood project improved from 16.04 to 22.50 FPS at
+812×406 in CPU + GPU mode and from 17.38 to 26.63 FPS at 720×360 in GPU mode,
+including display conversion. The actual Qt Live controller improved from 15.38
+to 19.47 delivered FPS at 812×406. Aggregate hashes covering every float pixel
+of all sampled animated frames matched before and after at both resolutions.
+
+Live audio no longer asks miniaudio to assemble fixed-size callbacks when its
+incremental analyzer can consume the device's actual callback blocks directly.
+Requests above 8,192 frames fail before disturbing a running device, the UI
+clamps stale machine-local values, and keyboard tracking is disabled so a typed
+number restarts capture only when committed. Hardware capture started, received
+samples, and stopped at 5,000 and 8,192 requested frames; a maximum uint32
+request was rejected in 0.004 ms without opening the device.
+
+Before release preparation, all 36 local tests passed, including CPU, Metal,
+OpenGL, project composition, audio, CLI/video, and Cocoa GUI smoke in English,
+French, and German. Focused regressions cover 512-pass Metal equivalence,
+multi-slot ordered layer results, constrained-memory admission, oversized audio
+requests, and committed-only buffer editing. The user accepted this evidence
+and requested no repeat of local tests during release. Project, setup, and layer
+formats, public structure layout, renderer ABI, and SONAME 17 are unchanged.
+Five-platform main CI must pass before tagging, followed by tagged CI,
+publication, and downloaded artifact verification. The pre-existing dirty
+`examples/Projects/Joy Fire.zip` and `tests/.DS_Store` remain outside the release
+commit.
+
 ## 17.4.0 complete French and German interfaces
 
 French and German are enabled in `translations/released-locales.txt`, each with

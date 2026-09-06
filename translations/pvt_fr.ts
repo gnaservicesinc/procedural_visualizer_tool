@@ -904,8 +904,8 @@ En attente</translation>
         </message>
         <message>
             <location line="+4" />
-            <source>Machine-local capture callback size. Smaller buffers reduce latency but demand steadier CPU scheduling.</source>
-            <translation>Taille du bloc de capture audio, propre à cet ordinateur. Des tampons plus petits réduisent la latence, mais exigent un traitement plus régulier par le processeur.</translation>
+            <source>Machine-local capture buffer request (1–8192 frames). The device may choose a different size. Smaller buffers reduce latency but demand steadier CPU scheduling. Typing applies when you press Enter or leave the field.</source>
+            <translation>Taille du tampon de capture demandée sur cet ordinateur (1–8192 trames). Le périphérique peut choisir une autre taille. Les petits tampons réduisent la latence, mais exigent un ordonnancement CPU plus régulier. La saisie est appliquée lorsque vous appuyez sur Entrée ou quittez le champ.</translation>
         </message>
         <message>
             <location line="+2" />

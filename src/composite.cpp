@@ -1197,7 +1197,11 @@ bool render_project_with_backend_validated(
                         + layer_error);
     };
 
-    if (options.backend == RenderBackend::Gpu) {
+    std::string metal_device;
+    std::string metal_status;
+    const bool metal_available = options.backend != RenderBackend::Cpu
+        && detail::metal_backend_available(&metal_device, &metal_status);
+    if (options.backend == RenderBackend::Gpu && !metal_available) {
         for (const std::size_t index : contributing) {
             Image image;
             std::string layer_error;
@@ -1212,15 +1216,10 @@ bool render_project_with_backend_validated(
 
     // A Metal-capable layer remains GPU-owned in CPU + GPU mode. CPU workers
     // are reserved for genuinely unsupported independent layers; they run
-    // beside a bounded one-thread Metal pipeline. The calling thread only
+    // beside a bounded Metal pipeline. The calling thread only
     // composites completed images in authored order, which both preserves
     // blend semantics and overlaps CPU compositing of layer N with GPU
     // rendering of layer N+1.
-    std::string metal_device;
-    std::string metal_status;
-    const bool metal_available = options.backend == RenderBackend::CpuAndGpu
-        && detail::metal_backend_available(&metal_device, &metal_status);
-
     FrameRenderOptions cpu_options = options;
     cpu_options.backend = RenderBackend::Cpu;
     FrameRenderOptions gpu_options = options;
@@ -1259,8 +1258,8 @@ bool render_project_with_backend_validated(
     gpu_tasks.reserve(contributing.size());
     for (std::size_t position = 0U; position < contributing.size(); ++position) {
         const std::size_t index = contributing[position];
-        bool gpu_owned = false;
-        if (metal_available) {
+        bool gpu_owned = options.backend == RenderBackend::Gpu;
+        if (metal_available && !gpu_owned) {
             // Metal's ownership preflight reads only dimensions and effects.
             // Keep this probe intentionally light: copying the full applied
             // config would duplicate potentially multi-megabyte music analysis
@@ -1328,11 +1327,17 @@ bool render_project_with_backend_validated(
             return render_one(index, selected_cpu_options, image, layer_error,
                               worker_cancel);
         });
-    // Two live GPU results are sufficient to overlap the next Metal layer with
-    // CPU compositing while bounding retained layer images independently of
-    // the project layer count.
+    // Keep the GPU fed while another worker prepares/submits or reads back a
+    // layer. A single worker would wait for completion before submitting the
+    // next independent layer, leaving the configured in-flight slots unused.
+    // Bound both active and completed layers, honor explicit admission limits,
+    // and retain authored-order composition and the shared memory gate.
+    const std::size_t gpu_worker_count = std::max<std::size_t>(
+        1U, std::min({gpu_tasks.size(), kMaximumSequenceWorkers,
+            options.maximum_gpu_frames_in_flight == 0U
+                ? 2U : options.maximum_gpu_frames_in_flight}));
     LayerRenderPool gpu_pool(
-        std::move(gpu_tasks), dispatch.size(), 2U, layer_memory,
+        std::move(gpu_tasks), dispatch.size(), gpu_worker_count, layer_memory,
         cancel,
         [&](std::size_t index, Image& image,
             const std::atomic_bool* worker_cancel, std::string& layer_error) {
@@ -1340,7 +1345,7 @@ bool render_project_with_backend_validated(
                               worker_cancel);
         });
     if (!cpu_pool.start(cpu_worker_count, error)
-        || !gpu_pool.start(1U, error)) {
+        || !gpu_pool.start(gpu_worker_count, error)) {
         cpu_pool.request_stop();
         gpu_pool.request_stop();
         return false;

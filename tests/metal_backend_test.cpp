@@ -1290,6 +1290,41 @@ void test_plane_effect_placement() {
     }
 }
 
+void test_antialias_batch_matches_individual_passes() {
+    if (!pvt::renderer_capabilities().metal_available) return;
+    auto config = parity_config();
+    config.width = 43;
+    config.height = 31;
+    config.block_size = 1;
+    config.quantization.enabled = false;
+    config.post_process = {};
+    config.post_process.antialias_enabled = true;
+    config.post_process.antialias_strength = 0.83;
+    config.post_process.antialias_threshold = 0.0;
+    pvt::FrameRenderOptions options;
+    options.backend = pvt::RenderBackend::Gpu;
+    std::string error;
+    for (const int passes : {2, 17, 512}) {
+        config.post_process.antialias_passes = passes;
+        auto individual = config;
+        individual.post_process.effects_authoritative = true;
+        for (int pass = 0; pass < passes; ++pass) {
+            pvt::PostProcessEffectConfig effect;
+            effect.id = pvt::allocate_id(individual);
+            effect.stage = pvt::PostProcessStage::Antialias;
+            effect.antialias_strength = config.post_process.antialias_strength;
+            effect.antialias_threshold = config.post_process.antialias_threshold;
+            effect.antialias_passes = 1;
+            individual.post_process.effects.push_back(effect);
+        }
+        pvt::Image batched, separate;
+        CHECK(pvt::render_frame(config, 7, options, batched, nullptr, &error));
+        CHECK(pvt::render_frame(individual, 7, options, separate, nullptr, &error));
+        CHECK(!batched.pixels.empty());
+        CHECK(batched.pixels == separate.pixels);
+    }
+}
+
 void test_hybrid_project_parity() {
     const auto capabilities = pvt::renderer_capabilities();
     if (!capabilities.metal_available) return;
@@ -1328,12 +1363,30 @@ void test_hybrid_project_parity() {
                     alpha_mode == pvt::AlphaMode::AlphaOver
                         ? "hybrid alpha-over layered project"
                         : "hybrid alpha-under layered project");
+        // Multiple in-flight GPU layers and a memory budget that serializes
+        // admission must produce exactly the single-slot result, in both
+        // strict GPU and hybrid mode. This also exercises ordered admission
+        // with workers that can finish or request their slots out of order.
+        for (auto backend : {pvt::RenderBackend::Gpu,
+                             pvt::RenderBackend::CpuAndGpu}) {
+            for (std::size_t budget : {0U, 1U}) {
+                auto parallel_options = hybrid_options;
+                parallel_options.backend = backend;
+                parallel_options.maximum_gpu_frames_in_flight = 2U;
+                parallel_options.cpu_memory_budget_bytes = budget;
+                pvt::Image parallel;
+                CHECK(pvt::render_project_frame(project, 7, parallel_options,
+                                                parallel, nullptr, &error));
+                CHECK(parallel.pixels == hybrid.pixels);
+            }
+        }
     }
 }
 
 } // namespace
 
 int main() {
+    test_antialias_batch_matches_individual_passes();
     test_backend_contract();
     test_hybrid_project_parity();
     test_automatic_movement_boundary();

@@ -969,13 +969,15 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     audio_form->addRow(LiveWorkspace::tr("Signal path"), signal_path);
     audio_period = new QSpinBox;
     audio_period->setObjectName(QStringLiteral("liveAudioPeriodFrames"));
-    audio_period->setRange(1, kMaximumUiInteger);
+    audio_period->setRange(1, static_cast<int>(
+        pvt::audio::kMaximumLiveAudioPeriodFrames));
+    audio_period->setKeyboardTracking(false);
     audio_period->setSuffix(LiveWorkspace::tr(" frames"));
     const int stored_period = QSettings().value(
         QStringLiteral("live/audioPeriodFrames"), 128).toInt();
     audio_period->setValue(std::max(1, stored_period));
     audio_period->setToolTip(LiveWorkspace::tr(
-        "Machine-local capture callback size. Smaller buffers reduce latency but demand steadier CPU scheduling."));
+        "Machine-local capture buffer request (1–8192 frames). The device may choose a different size. Smaller buffers reduce latency but demand steadier CPU scheduling. Typing applies when you press Enter or leave the field."));
     audio_form->addRow(LiveWorkspace::tr("Input buffer"), audio_period);
     auto* knob_row = new QWidget;
     auto* knob_layout = new QHBoxLayout(knob_row);
@@ -2596,7 +2598,7 @@ void LiveWorkspace::Impl::restartAudio() {
     }
     const int period = std::clamp(
         QSettings().value(QStringLiteral("live/audioPeriodFrames"), 128).toInt(),
-        1, kMaximumUiInteger);
+        1, static_cast<int>(pvt::audio::kMaximumLiveAudioPeriodFrames));
     if (!audio.start(narrow(device), static_cast<std::uint32_t>(period), &error)) {
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
