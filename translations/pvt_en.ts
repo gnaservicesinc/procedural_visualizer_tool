@@ -2332,7 +2332,7 @@ Last-good watchdog</source>
     <message>
         <location line="-15570"/>
         <location line="+4"/>
-        <location line="+21448"/>
+        <location line="+21456"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+28"/>
@@ -2342,7 +2342,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-21542"/>
+        <location line="-21550"/>
         <source>The active project was not changed.
 
 %1</source>
@@ -5769,12 +5769,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+26"/>
-        <location line="+17411"/>
+        <location line="+17421"/>
         <source>Not saved as a bundle yet</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-17408"/>
+        <location line="-17418"/>
         <source>%1
 Project UUID: %2
 %3 saved version(s). Versions are immutable; revert always creates another version.</source>
@@ -5997,12 +5997,12 @@ Project UUID: %2
     <message>
         <location line="+3"/>
         <location line="+98"/>
-        <location line="+16596"/>
+        <location line="+16599"/>
         <source>Play</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-16693"/>
+        <location line="-16696"/>
         <source>Previous beat</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6309,12 +6309,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+16"/>
-        <location line="+16850"/>
+        <location line="+16858"/>
         <source>Open unpacked project bundle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-16837"/>
+        <location line="-16845"/>
         <source>Randomize layer values?</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6336,12 +6336,12 @@ Project UUID: %2
     <message>
         <location line="+15"/>
         <location line="+20"/>
-        <location line="+16555"/>
+        <location line="+16563"/>
         <source>Invalid output text</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-16570"/>
+        <location line="-16578"/>
         <location line="+20"/>
         <location line="+10335"/>
         <source>Invalid setup</source>
@@ -7499,11 +7499,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+14"/>
+        <location line="+12482"/>
         <source>Recovered this save by applying every safe setting and repairing missing or unusable data. Preserved %1 original/unrecognized field(s); %2 were not safe to use. Saving keeps them.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+27"/>
+        <location line="-12455"/>
         <source>Unsaved project changes</source>
         <translation type="unfinished"></translation>
     </message>
@@ -9517,11 +9518,12 @@ Replace the current palette or append these values?</source>
         <location line="+8"/>
         <location line="+13"/>
         <location line="+12"/>
+        <location line="+4618"/>
         <source>Preview cancelled.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-7"/>
+        <location line="-4625"/>
         <source>The preview image buffer could not be allocated.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10200,22 +10202,17 @@ Run it directly for the default relative output, or pass an output file or direc
     </message>
     <message>
         <location line="+42"/>
-        <location line="+18"/>
+        <location line="+21"/>
         <source>Artwork (before surface)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-16"/>
+        <location line="-19"/>
         <source>Layer canvas (after surface)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>instead of being clipped</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+16"/>
+        <location line="+21"/>
         <source>Layer / object (after surface)</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10591,12 +10588,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+10"/>
-        <source>cancel</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+12"/>
         <source>A stale preview did not honor its cancellation token.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -11180,12 +11172,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+8"/>
-        <source>keeps</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+18"/>
         <source>Preserved future data did not produce an accurate recovery notice.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -11240,22 +11227,17 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+5"/>
-        <source>” is currently saved as “</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Keep the existing filename and record the rename on the next Save, or create a new independent bundle named from “</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>”. An independent copy contains only the current working state as version 0 and receives new project and layer UUIDs.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <location line="+4"/>
+        <source>“%1” is currently saved as “%2”.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Keep the existing filename and record the rename on the next Save, or create a new independent bundle named from “%1”. An independent copy contains only the current working state as version 0 and receives new project and layer UUIDs.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+6"/>
         <source>Keep Existing Filename</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12003,7 +11985,7 @@ Run it directly for the default relative output, or pass an output file or direc
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window.cpp" line="-24163"/>
+        <location filename="../gui/main_window.cpp" line="-24171"/>
         <source>Quantization</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13302,11 +13284,12 @@ Notes:</source>
     </message>
     <message>
         <location line="+3"/>
+        <location line="+20058"/>
         <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+13"/>
+        <location line="-20045"/>
         <source>Movement placement</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13493,7 +13476,49 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+706"/>
+        <location line="+125"/>
+        <location line="+27"/>
+        <source>, audio </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-20"/>
+        <location line="+9"/>
+        <location line="+22"/>
+        <source>on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-31"/>
+        <location line="+9"/>
+        <location line="+22"/>
+        <source>off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-29"/>
+        <location line="+31"/>
+        <source>sync</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-31"/>
+        <location line="+31"/>
+        <source>free</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-21"/>
+        <source>, local</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>, global</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+562"/>
         <source>The reusable asset is unavailable.</source>
         <translation type="unfinished"></translation>
     </message>

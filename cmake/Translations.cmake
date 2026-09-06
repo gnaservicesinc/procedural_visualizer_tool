@@ -180,6 +180,12 @@ if(BUILD_TESTING)
         FILES ${PVT_QT_QM_FILES})
     add_test(NAME pvt_localization COMMAND pvt_localization_tests)
     set_tests_properties(pvt_localization PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_test(NAME pvt_released_localizations
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROGRAM=$<TARGET_FILE:ProceduralVisualizerToolGui>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/TestReleasedTranslations.cmake")
+    set_tests_properties(pvt_released_localizations PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(Python3_Interpreter_FOUND)
         add_test(NAME pvt_translation_catalogs
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/translations.py" check

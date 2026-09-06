@@ -1,10 +1,22 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 17.4.0 complete French and German interfaces
+
+French and German are enabled in `translations/released-locales.txt`, each with
+2,842 of 2,842 messages finished. The completion pass translated 2,336 unfinished
+messages per language, reviewed the 503 previous entries, and replaced three
+rename-dialog fragments with two complete, placeholder-safe sentences. Seven
+previously unextracted list-status labels are localized, and three test-only
+fragments were replaced by whole-message assertions. The
+linguistic review record and validation evidence are in
+`translations/REVIEW-17.4.0.md`. Rendering, project formats, and SONAME 17 are
+unchanged.
 
 ## 17.3.1 alpha and animated-control correctness
 

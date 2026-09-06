@@ -1,0 +1,32 @@
+# Check the actual GUI executable, including installed/packaged copies. Synthetic
+# QTranslator fixtures alone cannot detect a missing release-catalog resource.
+if(NOT DEFINED PROGRAM OR NOT EXISTS "${PROGRAM}")
+    message(FATAL_ERROR "PROGRAM must name the GUI executable")
+endif()
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../translations/released-locales.txt" lines)
+set(locales en)
+foreach(line IN LISTS lines)
+    string(STRIP "${line}" locale)
+    if(NOT locale STREQUAL "" AND NOT locale MATCHES "^#")
+        list(APPEND locales "${locale}")
+    endif()
+endforeach()
+foreach(locale IN LISTS locales)
+    execute_process(
+        COMMAND "${PROGRAM}" --language "${locale}" --localization-info
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors
+        TIMEOUT 30 OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "${locale} localization probe failed: ${output}${errors}")
+    endif()
+    string(JSON resolved GET "${output}" language)
+    string(JSON embedded GET "${output}" embeddedResources)
+    string(JSON qt_translation GET "${output}" qtTranslation)
+    if(NOT resolved STREQUAL locale OR NOT embedded)
+        message(FATAL_ERROR "Released locale ${locale} was not loaded: ${output}")
+    endif()
+    if(NOT locale STREQUAL "en" AND NOT qt_translation)
+        message(FATAL_ERROR "Qt dialogs are not translated for ${locale}: ${output}")
+    endif()
+    message(STATUS "Verified released localization: ${output}")
+endforeach()

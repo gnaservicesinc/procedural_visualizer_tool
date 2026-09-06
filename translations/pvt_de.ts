@@ -60,12 +60,12 @@
         <message>
             <location line="+3" />
             <source>Changing this limit clears the current session's undo and redo history. The maximum follows Qt's signed-int command index; available memory is the practical limit.</source>
-            <translation>Eine Änderung dieser Grenze löscht die Rückgängig- und Wiederholen-Historie der aktuellen Sitzung. Das Maximum richtet sich nach dem vorzeichenbehafteten Ganzzahlindex für Befehle in Qt; praktisch begrenzt der verfügbare Arbeitsspeicher.</translation>
+            <translation>Eine Änderung dieser Grenze löscht die Rückgängig- und Wiederholen-Historie der aktuellen Sitzung. Das Maximum richtet sich nach dem vorzeichenbehafteten Ganzzahlindex für Befehle in Qt; in der Praxis setzt der verfügbare Arbeitsspeicher die Grenze.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Recent Projects</source>
-            <translation>Zuletzt verwendete Projekte</translation>
+            <translation>Zuletzt geöffnete Projekte</translation>
         </message>
         <message>
             <location line="+9" />
@@ -75,7 +75,7 @@
         <message>
             <location line="+3" />
             <source>Controls File &gt; Recent Projects. This machine-local preference is never stored inside a project.</source>
-            <translation>Steuert Datei &gt; Zuletzt verwendete Projekte. Diese maschinenlokale Einstellung wird nie im Projekt gespeichert.</translation>
+            <translation>Steuert Datei &gt; Zuletzt geöffnete Projekte. Diese maschinenlokale Einstellung wird nie im Projekt gespeichert.</translation>
         </message>
         <message>
             <location line="+3" />
@@ -234,27 +234,27 @@
         <message>
             <location line="+10" />
             <source>Maximum image or movie frames prepared concurrently. One serializes frames without disabling CPU layer parallelism inside that frame. Auto uses host capacity, frame count, and the memory budget.</source>
-            <translation>Maximale Anzahl gleichzeitig vorbereiteter Bild- oder Filmframes. Eins serialisiert Frames, ohne die CPU-Ebenenparallelität innerhalb eines Frames zu deaktivieren. Auto verwendet Hostkapazität, Frameanzahl und Arbeitsspeicherbudget.</translation>
+            <translation>Maximale Anzahl gleichzeitig vorbereiteter Bild- oder Filmbilder. Eins verarbeitet Bilder nacheinander, ohne die CPU-Ebenenparallelität innerhalb eines Bildes zu deaktivieren. Auto verwendet Hostkapazität, Bildanzahl und Arbeitsspeicherbudget.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Concurrent export frames</source>
-            <translation>Gleichzeitige Exportframes</translation>
+            <translation>Gleichzeitige Exportbilder</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Maximum CPU layer workers inside each active export frame. Auto partitions host capacity across the outer frames actually admitted. An explicit value applies per frame and can increase total CPU use.</source>
-            <translation>Maximale Anzahl an CPU-Arbeitsprozessen für Ebenen innerhalb jedes aktiven Exportframes. Auto verteilt die Hostkapazität auf die tatsächlich zugelassenen äußeren Frames. Ein expliziter Wert gilt pro Frame und kann die gesamte CPU-Nutzung erhöhen.</translation>
+            <translation>Maximale Anzahl an CPU-Arbeitsprozessen für Ebenen innerhalb jedes aktiven Exportbilder. Auto verteilt die Hostkapazität auf die tatsächlich zugelassenen äußeren Frames. Ein expliziter Wert gilt pro Frame und kann die gesamte CPU-Nutzung erhöhen.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>CPU layer workers per export frame</source>
-            <translation>CPU-Ebenen-Arbeitsprozesse pro Exportframe</translation>
+            <translation>CPU-Ebenen-Arbeitsprozesse pro Exportbild</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Maximum admitted Metal frames and their GPU-visible working sets. Auto uses the renderer's conservative device-safe limit.</source>
-            <translation>Maximal zugelassene Metal-Frames und ihre für die GPU sichtbaren Arbeitssätze. Auto verwendet die konservative, gerätesichere Grenze des Renderers.</translation>
+            <translation>Maximal zugelassene Metal-Bilder und ihre für die GPU sichtbaren Arbeitssätze. Auto verwendet die konservative, gerätesichere Grenze des Renderers.</translation>
         </message>
         <message>
             <location line="+3" />
@@ -269,7 +269,7 @@
         <message>
             <location line="+3" />
             <source>Metal frames in flight</source>
-            <translation>Metal-Frames in Verarbeitung</translation>
+            <translation>Metal-Bilder in Verarbeitung</translation>
         </message>
         <message>
             <location line="+8" />
@@ -299,7 +299,7 @@
         <message>
             <location line="+26" />
             <source>Aggregate scheduling budget for project-layer working sets and parallel export frames. This is a concurrency cap, not a memory preallocation; a valid render can still run one worker when one frame exceeds it.</source>
-            <translation>Gesamtes Planungsbudget für Arbeitssätze von Projektebenen und parallele Exportframes. Dies ist eine Parallelitätsgrenze, keine Speicherreservierung; ein gültiger Render kann weiterhin mit einem Arbeitsprozess laufen, wenn ein Frame sie überschreitet.</translation>
+            <translation>Gesamtes Planungsbudget für Arbeitssätze von Projektebenen und parallele Exportbilder. Dies ist eine Parallelitätsgrenze, keine Speicherreservierung; ein gültiger Render kann weiterhin mit einem Arbeitsprozess laufen, wenn ein Bild sie überschreitet.</translation>
         </message>
         <message>
             <location line="+9" />
@@ -473,7 +473,7 @@
         <message>
             <location line="-9" />
             <source>Frequencies below this cutoff are attenuated before EQ. Use it to remove rumble or DC-like movement; 20 Hz is gentle full-range protection.</source>
-            <translation>Frequenzen unterhalb dieser Grenzfrequenz werden vor dem EQ gedämpft. Verwenden Sie sie, um Rumpeln oder gleichstromähnliche Bewegung zu entfernen; 20 Hz ist ein sanfter Schutz für den gesamten Bereich.</translation>
+            <translation>Frequenzen unterhalb dieser Grenzfrequenz werden vor dem EQ gedämpft. Entfernen Sie damit Rumpeln oder gleichstromähnliche Schwankungen; 20 Hz schützt den gesamten Bereich auf sanfte Weise.</translation>
         </message>
         <message>
             <location line="+3" />
@@ -533,7 +533,7 @@
         <message>
             <location line="+33" />
             <source>Named post-filter frequency streams</source>
-            <translation>Benannte Frequenzsignale nach der Filterung</translation>
+            <translation>Benannte Frequenzströme nach Filterung</translation>
         </message>
         <message>
             <location line="+2" />
@@ -683,7 +683,7 @@
         <message>
             <location line="+1" />
             <source>Real-time frequency energy after Input trim, filters, EQ, and the noise gate—the same signal used by Live analysis.</source>
-            <translation>Frequenzenergie in Echtzeit nach Eingangsanpassung, Filtern, EQ und Noise Gate – dasselbe Signal, das die Live-Analyse verwendet.</translation>
+            <translation>Frequenzenergie in Echtzeit nach Eingangsverstärkung, Filtern, EQ und Noise-Gate: dasselbe Signal wie bei der Live-Analyse.</translation>
         </message>
         <message>
             <location line="+67" />
@@ -703,7 +703,7 @@
             <location line="+1816" />
             <location line="+928" />
             <source>Listening…</source>
-            <translation type="unfinished" />
+            <translation>Warte auf Signal…</translation>
         </message>
         <message>
             <location line="-3227" />
@@ -712,58 +712,59 @@
             <location line="+5" />
             <location line="+929" />
             <source>MIDI Learn</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Lernen</translation>
         </message>
         <message>
             <location line="-3992" />
             <source>LIVE / PERFORMANCE</source>
-            <translation type="unfinished" />
+            <translation>LIVE / PERFORMANCE</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Portable roles and scenes · machine bindings stay on this computer</source>
-            <translation type="unfinished" />
+            <translation>Portable Rollen und Szenen · Gerätezuordnungen bleiben auf diesem Computer</translation>
         </message>
         <message>
             <location line="+8" />
             <location line="+1990" />
             <source>STANDBY</source>
-            <translation type="unfinished" />
+            <translation>BEREIT</translation>
         </message>
         <message>
             <location line="-1988" />
             <location line="+1599" />
             <source>GO LIVE</source>
-            <translation type="unfinished" />
+            <translation>LIVE STARTEN</translation>
         </message>
         <message>
             <location line="-1594" />
             <source>Edit Project</source>
-            <translation type="unfinished" />
+            <translation>Projekt bearbeiten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Bring the full project editor forward without stopping Live input, rendering, or stage output.</source>
-            <translation type="unfinished" />
+            <translation>Den vollständigen Projekteditor in den Vordergrund holen, ohne Live-Eingabe, Rendering oder Bühnenausgabe zu unterbrechen.</translation>
         </message>
         <message>
             <location line="+16" />
             <location line="+1981" />
             <source>PROGRAM OUTPUT
 Standby</source>
-            <translation type="unfinished" />
+            <translation>PROGRAMMAUSGABE
+Bereit</translation>
         </message>
         <message>
             <location line="-1972" />
             <source>Full-screen Output</source>
-            <translation type="unfinished" />
+            <translation>Vollbildausgabe</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+1970" />
             <location line="+20" />
             <source>FREEZE</source>
-            <translation type="unfinished" />
+            <translation>EINFRIEREN</translation>
         </message>
         <message>
             <location line="-1986" />
@@ -771,145 +772,145 @@ Standby</source>
             <location line="+26" />
             <location line="+11" />
             <source>BLACKOUT</source>
-            <translation type="unfinished" />
+            <translation>BLACKOUT</translation>
         </message>
         <message>
             <location line="-1990" />
             <source>AUDIO</source>
-            <translation type="unfinished" />
+            <translation>AUDIO</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+2535" />
             <source>MIDI</source>
-            <translation type="unfinished" />
+            <translation>MIDI</translation>
         </message>
         <message>
             <location line="-2534" />
             <location line="+1945" />
             <source>— fps</source>
-            <translation type="unfinished" />
+            <translation>— Bilder/s</translation>
         </message>
         <message>
             <location line="-1944" />
             <source>Completed frames per second, measured over a quarter-second window. This measures frame delivery to the UI, not the display refresh rate.</source>
-            <translation type="unfinished" />
+            <translation>Fertiggestellte Bilder pro Sekunde, gemessen über eine Viertelsekunde. Gemessen wird die Bildausgabe an die Oberfläche, nicht die Bildwiederholrate des Monitors.</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+1942" />
             <source>No frame</source>
-            <translation type="unfinished" />
+            <translation>Kein Bild</translation>
         </message>
         <message>
             <location line="-1941" />
             <source>Scene: —</source>
-            <translation type="unfinished" />
+            <translation>Szene: —</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Rig</source>
-            <translation type="unfinished" />
+            <translation>Live-Setup</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Control Map</source>
-            <translation type="unfinished" />
+            <translation>Steuerungszuordnung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Scenes</source>
-            <translation type="unfinished" />
+            <translation>Szenen</translation>
         </message>
         <message>
             <location line="+39" />
             <source>Create Starter Rig</source>
-            <translation type="unfinished" />
+            <translation>Starter-Setup erstellen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Adds portable Audio, MIDI, OSC, foot-controller, and MIDI-out roles. No device identity is saved in the project.</source>
-            <translation type="unfinished" />
+            <translation>Portable Rollen für Audio, MIDI, OSC, Fußcontroller und MIDI-Ausgabe hinzufügen. Im Projekt werden keine Gerätekennungen gespeichert.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Add Logical Role…</source>
-            <translation type="unfinished" />
+            <translation>Logische Rolle hinzufügen…</translation>
         </message>
         <message>
             <location line="+7" />
             <source>INPUT RACK</source>
-            <translation type="unfinished" />
+            <translation>EINGÄNGE</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Refresh</source>
-            <translation type="unfinished" />
+            <translation>Aktualisieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Detect connected microphone and audio-interface inputs again.</source>
-            <translation type="unfinished" />
+            <translation>Angeschlossene Mikrofone und Audiointerface-Eingänge erneut erkennen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Audio role / device</source>
-            <translation type="unfinished" />
+            <translation>Audiorolle / Gerät</translation>
         </message>
         <message>
             <location line="+8" />
             <source>MIDI role / source</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Rolle / Quelle</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Foot role / source</source>
-            <translation type="unfinished" />
+            <translation>Fußcontroller-Rolle / Quelle</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Local only</source>
-            <translation type="unfinished" />
+            <translation>Nur lokal</translation>
         </message>
         <message>
             <location line="+8" />
             <source>OSC role / UDP port</source>
-            <translation type="unfinished" />
+            <translation>OSC-Rolle / UDP-Port</translation>
         </message>
         <message>
             <location line="+4" />
             <source>AUDIO ANALYSIS + CALIBRATION</source>
-            <translation type="unfinished" />
+            <translation>AUDIOANALYSE UND KALIBRIERUNG</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Input trim  →  high/low-pass filters  →  10-band EQ  →  gate  →  adaptive level  →  response  →  analysis + routes</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverstärkung  →  Hoch-/Tiefpassfilter  →  10-Band-EQ  →  Gate  →  adaptive Pegelregelung  →  Reaktion  →  Analyse und Zuordnungen</translation>
         </message>
         <message>
             <location line="+5" />
             <source>The fixed order matches a conventional channel-strip starting point. The gate listens to the trimmed, filtered, and equalized signal; Response is applied later and cannot change the gate threshold.</source>
-            <translation type="unfinished" />
+            <translation>Die feste Reihenfolge entspricht einem üblichen Kanalzug. Das Gate wertet das verstärkte, gefilterte und entzerrte Signal aus. Die Reaktion wird erst danach angewendet und kann den Gate-Schwellenwert nicht verändern.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Signal path</source>
-            <translation type="unfinished" />
+            <translation>Signalweg</translation>
         </message>
         <message>
             <location line="+4" />
             <source> frames</source>
-            <translation> Frames</translation>
+            <translation> Bilder</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Machine-local capture callback size. Smaller buffers reduce latency but demand steadier CPU scheduling.</source>
-            <translation type="unfinished" />
+            <translation>Größe der Audioblöcke für die Aufnahme auf diesem Computer. Kleinere Puffer verringern die Latenz, erfordern aber eine gleichmäßigere CPU-Verarbeitung.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Input buffer</source>
-            <translation type="unfinished" />
+            <translation>Eingangspuffer</translation>
         </message>
         <message>
             <location line="+34" />
@@ -919,137 +920,137 @@ Standby</source>
         <message>
             <location line="+1" />
             <source>Mute</source>
-            <translation type="unfinished" />
+            <translation>Stummschalten</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Input trim before filters, EQ, and the gate. Use the dB field for familiar 0.1 dB adjustments or enter an exact percentage.</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverstärkung vor Filtern, EQ und Gate. Nutzen Sie das dB-Feld für die gewohnten Schritte von 0,1 dB oder geben Sie einen exakten Prozentsatz ein.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Exact input-trim multiplier. 100% is unity gain. Values beyond the knob's quick 0–400% range remain supported here.</source>
-            <translation type="unfinished" />
+            <translation>Exakter Faktor der Eingangsverstärkung. 100% bedeutet unverstärkt. Hier sind auch Werte außerhalb des Schnellbereichs von 0–400% am Drehregler möglich.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>A synchronized dB view of Input trim. Mute is 0%; 0 dB is 100%. The percentage field retains values outside this quick ±dB range.</source>
-            <translation type="unfinished" />
+            <translation>Synchronisierte dB-Anzeige der Eingangsverstärkung. Stumm entspricht 0%, 0 dB entspricht 100%. Das Prozentfeld bewahrt Werte außerhalb dieses dB-Schnellbereichs.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Analysis response after the gate and adaptive level stage. Lower it for more visual headroom; raise it for stronger movement.</source>
-            <translation type="unfinished" />
+            <translation>Reaktion der Analyse nach Gate und adaptiver Pegelregelung. Niedrigere Werte schaffen mehr visuellen Spielraum, höhere Werte verstärken die Bewegung.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Exact post-normalization response multiplier. It changes visual features and beat sensitivity, but not input level or gate threshold. Values beyond the knob's quick 0–400% range remain supported.</source>
-            <translation type="unfinished" />
+            <translation>Exakter Reaktionsfaktor nach der Normalisierung. Er verändert visuelle Merkmale und die Beat-Empfindlichkeit, aber weder Eingangspegel noch Gate-Schwellenwert. Werte außerhalb des Schnellbereichs von 0–400% sind weiterhin möglich.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Pre-gate input peak meter</source>
-            <translation type="unfinished" />
+            <translation>Eingangsspitzenpegel vor dem Gate</translation>
         </message>
         <message>
             <location line="+1" />
             <source>PRE-GATE PEAK</source>
-            <translation type="unfinished" />
+            <translation>SPITZENPEGEL VOR GATE</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Peak dBFS after Input trim, high/low-pass filters, and EQ, before the gate. Set trim so normal peaks stay below the red region.</source>
-            <translation type="unfinished" />
+            <translation>Spitzenpegel in dBFS nach Eingangsverstärkung, Hoch-/Tiefpassfiltern und EQ, vor dem Gate. Stellen Sie die Verstärkung so ein, dass normale Spitzen unterhalb des roten Bereichs bleiben.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>INPUT TRIM</source>
-            <translation type="unfinished" />
+            <translation>EINGANGSVERSTÄRKUNG</translation>
         </message>
         <message>
             <location line="+4" />
             <source>RESPONSE</source>
-            <translation type="unfinished" />
+            <translation>REAKTION</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Incoming sound</source>
-            <translation type="unfinished" />
+            <translation>Eingehender Ton</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Enable noise gate</source>
-            <translation type="unfinished" />
+            <translation>Noise-Gate aktivieren</translation>
         </message>
         <message>
             <location line="+9" />
             <source> dBFS</source>
-            <translation type="unfinished" />
+            <translation> dBFS</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The post-EQ dBFS level that opens the gate. Compare it with the pre-gate meter while the wanted source is playing.</source>
-            <translation type="unfinished" />
+            <translation>Pegel in dBFS nach dem EQ, bei dem sich das Gate öffnet. Vergleichen Sie ihn bei laufender Nutzsignalquelle mit der Pegelanzeige vor dem Gate.</translation>
         </message>
         <message>
             <location line="+9" />
             <source> dB return</source>
-            <translation type="unfinished" />
+            <translation> dB Hysterese</translation>
         </message>
         <message>
             <location line="+3" />
             <source>How much quieter the signal must become before the gate may close. A few dB prevents chatter near the opening threshold.</source>
-            <translation type="unfinished" />
+            <translation>Erforderlicher Pegelabfall, bevor das Gate schließen darf. Einige dB verhindern ständiges Öffnen und Schließen nahe der Öffnungsschwelle.</translation>
         </message>
         <message>
             <location line="+8" />
             <source> ms attack</source>
-            <translation type="unfinished" />
+            <translation> ms Attack</translation>
         </message>
         <message>
             <location line="+3" />
             <source>How quickly the gate opens. Short attack preserves drum and pick transients; a longer attack rejects brief clicks.</source>
-            <translation type="unfinished" />
+            <translation>Geschwindigkeit, mit der sich das Gate öffnet. Eine kurze Attack-Zeit erhält Anschläge von Schlagzeug und Plektrum; eine längere blendet kurze Klicks aus.</translation>
         </message>
         <message>
             <location line="+6" />
             <source> ms hold</source>
-            <translation type="unfinished" />
+            <translation> ms Haltezeit</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Minimum time the gate stays open after the signal falls below its return level. Hold prevents rapid open/close chatter.</source>
-            <translation type="unfinished" />
+            <translation>Mindestdauer, die das Gate nach Unterschreiten der Schließschwelle offen bleibt. Die Haltezeit verhindert schnelles Öffnen und Schließen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source> ms release</source>
-            <translation type="unfinished" />
+            <translation> ms Release</translation>
         </message>
         <message>
             <location line="+3" />
             <source>How gradually the gate closes after hold. Longer release preserves natural decays; shorter release makes a tighter rhythmic cut.</source>
-            <translation type="unfinished" />
+            <translation>Wie allmählich das Gate nach der Haltezeit schließt. Längeres Release erhält natürliches Ausklingen; kürzeres Release erzeugt einen strafferen rhythmischen Schnitt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Machine-local post-EQ gate. Threshold opens it; Return hysteresis sets a quieter closing level.</source>
-            <translation type="unfinished" />
+            <translation>Lokales Gate nach dem EQ. Der Schwellenwert bestimmt die Öffnung; die Hysterese legt einen niedrigeren Schließpegel fest.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Gate threshold</source>
-            <translation type="unfinished" />
+            <translation>Gate-Schwellenwert</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Machine-local gate timing. Existing installations retain 5 ms attack, no hold, and 120 ms release until changed.</source>
-            <translation type="unfinished" />
+            <translation>Gate-Zeiten für diesen Computer. Bestehende Installationen behalten bis zur Änderung 5 ms Attack, keine Haltezeit und 120 ms Release bei.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Gate timing</source>
-            <translation type="unfinished" />
+            <translation>Gate-Zeiten</translation>
         </message>
         <message>
             <location line="+3" />
@@ -1060,81 +1061,81 @@ Standby</source>
             <location line="+337" />
             <location line="+2069" />
             <source> ms</source>
-            <translation type="unfinished" />
+            <translation> ms</translation>
         </message>
         <message>
             <location line="-2525" />
             <location line="+998" />
             <source>Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source.</source>
-            <translation type="unfinished" />
+            <translation>Portabler Zeitversatz des Setups. Positive Werte ziehen verspätet analysierte Beats vor; negative Werte verzögern eine zu frühe Quelle.</translation>
         </message>
         <message>
             <location line="-996" />
             <source>Tap beat to align</source>
-            <translation type="unfinished" />
+            <translation>Beat zum Ausrichten tippen</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Portable input offset</source>
-            <translation type="unfinished" />
+            <translation>Portabler Eingangsversatz</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Machine-local correction for this logical role and selected device. Positive values advance late capture; it is never saved in the project.</source>
-            <translation type="unfinished" />
+            <translation>Lokale Korrektur für diese logische Rolle und das gewählte Gerät. Positive Werte ziehen verspätete Aufnahmen vor. Die Korrektur wird nie im Projekt gespeichert.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>This device correction</source>
-            <translation type="unfinished" />
+            <translation>Korrektur für dieses Gerät</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+1620" />
             <source>Waiting for audio…</source>
-            <translation type="unfinished" />
+            <translation>Warte auf Audio…</translation>
         </message>
         <message>
             <location line="-1619" />
             <source>Causal analysis</source>
-            <translation type="unfinished" />
+            <translation>Kausale Analyse</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Filters, EQ + Frequency Streams…</source>
-            <translation type="unfinished" />
+            <translation>Filter, EQ und Frequenzströme…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Configure the portable processing chain that runs before every Live analysis feature.</source>
-            <translation type="unfinished" />
+            <translation>Die portable Verarbeitungskette konfigurieren, die vor jeder Live-Analyse ausgeführt wird.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Before analysis</source>
-            <translation type="unfinished" />
+            <translation>Vor der Analyse</translation>
         </message>
         <message>
             <location line="+4" />
             <source>CLOCK PATCH BAY</source>
-            <translation type="unfinished" />
+            <translation>TAKTZUORDNUNG</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Project timeline</source>
-            <translation type="unfinished" />
+            <translation>Projektzeitleiste</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+13" />
             <source>MIDI Clock in</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Clock-Eingang</translation>
         </message>
         <message>
             <location line="-12" />
             <location line="+13" />
             <source>Audio beat clock</source>
-            <translation type="unfinished" />
+            <translation>Audio-Beat-Takt</translation>
         </message>
         <message>
             <location line="-4" />
@@ -1144,353 +1145,354 @@ Standby</source>
         <message>
             <location line="+2" />
             <source>Follow project</source>
-            <translation type="unfinished" />
+            <translation>Projekt folgen</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Active-layer clock</source>
-            <translation type="unfinished" />
+            <translation>Takt der aktiven Ebene</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Send project clock</source>
-            <translation type="unfinished" />
+            <translation>Projekttakt senden</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Virtual MIDI Clock out</source>
-            <translation type="unfinished" />
+            <translation>Virtueller MIDI-Clock-Ausgang</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Send active layer</source>
-            <translation type="unfinished" />
+            <translation>Aktive Ebene senden</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Layer Clock out</source>
-            <translation type="unfinished" />
+            <translation>Ebenentakt-Ausgang</translation>
         </message>
         <message>
             <location line="+4" />
             <source>STAGE OUTPUT</source>
-            <translation type="unfinished" />
+            <translation>BÜHNENAUSGABE</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Auto · watchdog managed</source>
-            <translation type="unfinished" />
+            <translation>Auto · durch Überwachung geregelt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>100% of output size</source>
-            <translation type="unfinished" />
+            <translation>100% der Ausgabegröße</translation>
         </message>
         <message>
             <location line="+1" />
             <source>75%</source>
-            <translation type="unfinished" />
+            <translation>75%</translation>
         </message>
         <message>
             <location line="+1" />
             <source>50%</source>
-            <translation type="unfinished" />
+            <translation>50%</translation>
         </message>
         <message>
             <location line="+1" />
             <source>25%</source>
-            <translation type="unfinished" />
+            <translation>25%</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fits the project to the output window's pixels, capped at project resolution. Auto reduces resolution when frames miss their deadline. Choose a fixed percentage for performance comparisons and compare the delivered dimensions.</source>
-            <translation type="unfinished" />
+            <translation>Passt das Projekt an die Pixelgröße des Ausgabefensters an, höchstens bis zur Projektauflösung. Auto verringert die Auflösung, wenn Bilder ihre Frist überschreiten. Wählen Sie für Leistungsvergleiche einen festen Prozentsatz und vergleichen Sie die ausgegebenen Abmessungen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Display</source>
-            <translation type="unfinished" />
+            <translation>Anzeige</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Render quality</source>
-            <translation type="unfinished" />
+            <translation>Renderqualität</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Open as full-screen stage output</source>
-            <translation type="unfinished" />
+            <translation>Bühnenausgabe im Vollbild öffnen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Prefer a secondary display on a new machine</source>
-            <translation type="unfinished" />
+            <translation>Auf einem neuen Computer einen zweiten Monitor bevorzugen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Hide the pointer over stage output</source>
-            <translation type="unfinished" />
+            <translation>Mauszeiger über der Bühnenausgabe ausblenden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Portable output policy</source>
-            <translation type="unfinished" />
+            <translation>Portable Ausgaberegeln</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Hold last good frame</source>
-            <translation type="unfinished" />
+            <translation>Letztes gültiges Bild halten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blackout immediately</source>
-            <translation type="unfinished" />
+            <translation>Sofort auf Schwarz schalten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>On dropout</source>
-            <translation type="unfinished" />
+            <translation>Bei Signalausfall</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Enable frame-time watchdog</source>
-            <translation type="unfinished" />
+            <translation>Renderzeitüberwachung aktivieren</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Frame deadline</source>
-            <translation type="unfinished" />
+            <translation>Zeitlimit pro Bild</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Audio dropout grace</source>
-            <translation type="unfinished" />
+            <translation>Toleranzzeit bei Audioausfall</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Last-good then black (0 = hold)</source>
-            <translation type="unfinished" />
+            <translation>Letztes Bild, dann Schwarz (0 = halten)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Prevent device sleep while Live is running (supported platforms)</source>
-            <translation type="unfinished" />
+            <translation>Ruhezustand im Live-Betrieb verhindern (unterstützte Plattformen)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Show continuity</source>
-            <translation type="unfinished" />
+            <translation>Show-Kontinuität</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The renderer keeps only one pending frame. A missed frame holds the last good image; the project watchdog may switch to black according to its saved safety policy.</source>
-            <translation type="unfinished" />
+            <translation>Der Renderer hält nur ein ausstehendes Bild vor. Bei einer verspäteten Ausgabe bleibt das letzte gültige Bild stehen. Die Projektüberwachung kann gemäß den gespeicherten Sicherheitsregeln auf Schwarz schalten.</translation>
         </message>
         <message>
             <location line="+130" />
             <source>Change live input calibration</source>
-            <translation type="unfinished" />
+            <translation>Live-Eingangskalibrierung ändern</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Live input</source>
-            <translation type="unfinished" />
+            <translation>Live-Eingang</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Change live audio input processing</source>
-            <translation type="unfinished" />
+            <translation>Verarbeitung des Live-Audioeingangs ändern</translation>
         </message>
         <message>
             <location line="+72" />
             <source>Change portable live output safety</source>
-            <translation type="unfinished" />
+            <translation>Portable Sicherheitsregeln der Live-Ausgabe ändern</translation>
         </message>
         <message>
             <location line="+27" />
             <source>Map analyzed audio, MIDI, OSC, or a foot-controller input to any render-safe setting, performance action, or scene. Live values are an ephemeral overlay—sound and controller motion do not flood project history.</source>
-            <translation type="unfinished" />
+            <translation>Analysiertes Audio, MIDI, OSC oder einen Fußcontroller einem während des Renderns sicheren Parameter, einer Performance-Aktion oder einer Szene zuordnen. Live-Werte wirken nur vorübergehend; Ton und Controllerbewegungen füllen nicht den Projektverlauf.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Add Mapping…</source>
-            <translation type="unfinished" />
+            <translation>Zuordnung hinzufügen…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Add Audio Starter Map</source>
-            <translation type="unfinished" />
+            <translation>Audio-Starterzuordnungen hinzufügen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Add editable bass, onset, and treble mappings for the active layer so incoming sound visibly changes more than its clock.</source>
-            <translation type="unfinished" />
+            <translation>Bearbeitbare Zuordnungen für Bass, Anschläge und Höhen zur aktiven Ebene hinzufügen, damit eingehender Ton sichtbar mehr als nur ihren Takt verändert.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Edit…</source>
-            <translation type="unfinished" />
+            <translation>Bearbeiten…</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+76" />
             <source>Remove</source>
-            <translation type="unfinished" />
+            <translation>Entfernen</translation>
         </message>
         <message>
             <location line="-65" />
             <source>On</source>
-            <translation type="unfinished" />
+            <translation>An</translation>
         </message>
         <message>
             <location line="+0" />
             <location line="+1840" />
             <location line="+156" />
             <source>Name</source>
-            <translation type="unfinished" />
+            <translation>Name</translation>
         </message>
         <message>
             <location line="-1996" />
             <source>Source</source>
-            <translation type="unfinished" />
+            <translation>Quelle</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+2021" />
             <source>Target</source>
-            <translation type="unfinished" />
+            <translation>Ziel</translation>
         </message>
         <message>
             <location line="-2021" />
             <source>Mode</source>
-            <translation type="unfinished" />
+            <translation>Modus</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Tip: MIDI Learn changes only the selected portable mapping. Runtime source names remain in this machine's preferences.</source>
-            <translation type="unfinished" />
+            <translation>Tipp: MIDI-Lernen ändert nur die ausgewählte portable Zuordnung. Namen der zur Laufzeit verwendeten Quellen bleiben in den Einstellungen dieses Computers.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Toggle live mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung umschalten</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Scenes snapshot every currently resolved Live target. Numeric controls crossfade; switches and modes change at the end of the transition.</source>
-            <translation type="unfinished" />
+            <translation>Szenen speichern alle aktuell aufgelösten Live-Ziele. Numerische Regler werden überblendet; Schalter und Modi wechseln am Ende des Übergangs.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Transition</source>
-            <translation type="unfinished" />
+            <translation>Übergang</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Capture New…</source>
-            <translation type="unfinished" />
+            <translation>Neue Szene erfassen…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Update Snapshot</source>
-            <translation type="unfinished" />
+            <translation>Momentaufnahme aktualisieren</translation>
         </message>
         <message>
             <location line="+7" />
             <source>◀ Previous</source>
-            <translation type="unfinished" />
+            <translation>◀ Zurück</translation>
         </message>
         <message>
             <location line="+1" />
             <source>TAKE SCENE</source>
-            <translation type="unfinished" />
+            <translation>SZENE ÜBERNEHMEN</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Next ▶</source>
-            <translation type="unfinished" />
+            <translation>Weiter ▶</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Use selected scene when Live starts</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählte Szene beim Live-Start verwenden</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Change live scene transition</source>
-            <translation type="unfinished" />
+            <translation>Live-Szenenübergang ändern</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Change live startup scene</source>
-            <translation type="unfinished" />
+            <translation>Live-Startszene ändern</translation>
         </message>
         <message>
             <location line="+31" />
             <source>WATCHDOG</source>
-            <translation type="unfinished" />
+            <translation>ÜBERWACHUNG</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Frame %1 exceeded its live deadline; the last good frame remains on stage.</source>
-            <translation type="unfinished" />
+            <translation>Bild %1 hat sein Live-Zeitlimit überschritten; das letzte gültige Bild bleibt auf der Bühne.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Live Preview Output frame %1 exceeded its 60-second render watchdog; the last delivered frame remains visible and Auto quality was reduced.</source>
-            <translation type="unfinished" />
+            <translation>Bild %1 der Live-Vorschau hat das Renderzeitlimit von 60 Sekunden überschritten. Das zuletzt ausgegebene Bild bleibt sichtbar; die Auto-Qualität wurde reduziert.</translation>
         </message>
         <message>
             <location line="+58" />
             <source>Live configuration</source>
-            <translation type="unfinished" />
+            <translation>Live-Konfiguration</translation>
         </message>
         <message>
             <location line="+1" />
             <source>That patch would make the Live rig invalid:
 %1</source>
-            <translation type="unfinished" />
+            <translation>Diese Änderung würde das Live-Setup ungültig machen:
+%1</translation>
         </message>
         <message>
             <location line="+192" />
             <source>No logical role</source>
-            <translation type="unfinished" />
+            <translation>Keine logische Rolle</translation>
         </message>
         <message>
             <location line="+41" />
             <location line="+1617" />
             <source>Unresolved · %1</source>
-            <translation type="unfinished" />
+            <translation>Nicht aufgelöst · %1</translation>
         </message>
         <message>
             <location line="-1606" />
             <source>Unresolved scene</source>
-            <translation type="unfinished" />
+            <translation>Nicht aufgelöste Szene</translation>
         </message>
         <message>
             <location line="+25" />
             <source>%1    %2 targets    %3 ms</source>
-            <translation type="unfinished" />
+            <translation>%1    %2 Ziele    %3 ms</translation>
         </message>
         <message>
             <location line="+47" />
             <source>Choose role</source>
-            <translation type="unfinished" />
+            <translation>Rolle wählen</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Full filtered signal</source>
-            <translation type="unfinished" />
+            <translation>Vollständiges gefiltertes Signal</translation>
         </message>
         <message>
             <location line="+53" />
             <source>The authored portable offset is outside this editor's range. The boundary is displayed, but the exact project value is preserved until you edit it.</source>
-            <translation type="unfinished" />
+            <translation>Der gespeicherte portable Versatz liegt außerhalb des Wertebereichs dieses Editors. Angezeigt wird der Grenzwert; der exakte Projektwert bleibt bis zur Bearbeitung erhalten.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The portable input offset for %1 is outside the millisecond editor range; its exact authored value remains preserved.</source>
-            <translation type="unfinished" />
+            <translation>Der portable Eingangsversatz für %1 liegt außerhalb des Millisekunden-Wertebereichs des Editors; sein exakter gespeicherter Wert bleibt erhalten.</translation>
         </message>
         <message>
             <location line="+21" />
@@ -1499,242 +1501,244 @@ Standby</source>
             <location line="+24" />
             <location line="+39" />
             <source>System default</source>
-            <translation type="unfinished" />
+            <translation>Systemstandard</translation>
         </message>
         <message>
             <location line="-2769" />
             <location line="+2710" />
             <source>%1 · default</source>
-            <translation type="unfinished" />
+            <translation>%1 · Standard</translation>
         </message>
         <message>
             <location line="-2678" />
             <location line="+2706" />
             <source>previously selected input</source>
-            <translation type="unfinished" />
+            <translation>zuvor gewählter Eingang</translation>
         </message>
         <message>
             <location line="-2704" />
             <location line="+2705" />
             <source>Unavailable · %1</source>
-            <translation type="unfinished" />
+            <translation>Nicht verfügbar · %1</translation>
         </message>
         <message>
             <location line="-2689" />
             <source>Input discovery failed: %1</source>
-            <translation type="unfinished" />
+            <translation>Eingangserkennung fehlgeschlagen: %1</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Unavailable</source>
-            <translation type="unfinished" />
+            <translation>Nicht verfügbar</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The saved microphone is unavailable. Live will not capture the system default unless you choose it explicitly.</source>
-            <translation type="unfinished" />
+            <translation>Das gespeicherte Mikrofon ist nicht verfügbar. Live verwendet den Systemstandard nur, wenn Sie ihn ausdrücklich auswählen.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>This device binding is stored only on this computer.</source>
-            <translation type="unfinished" />
+            <translation>Diese Gerätezuordnung wird nur auf diesem Computer gespeichert.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Any MIDI source</source>
-            <translation type="unfinished" />
+            <translation>Beliebige MIDI-Quelle</translation>
         </message>
         <message>
             <location line="+138" />
             <source>LIVE · ON</source>
-            <translation type="unfinished" />
+            <translation>LIVE · AN</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Live performance runtime started.</source>
-            <translation type="unfinished" />
+            <translation>Live-Performance gestartet.</translation>
         </message>
         <message>
             <location line="+40" />
             <source>Live performance runtime stopped.</source>
-            <translation type="unfinished" />
+            <translation>Live-Performance beendet.</translation>
         </message>
         <message>
             <location line="+37" />
             <source>Live Preview Output started without performance inputs.</source>
-            <translation type="unfinished" />
+            <translation>Live-Vorschauausgabe ohne Performance-Eingänge gestartet.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Live Preview Output stopped.</source>
-            <translation type="unfinished" />
+            <translation>Live-Vorschauausgabe beendet.</translation>
         </message>
         <message>
             <location line="+28" />
             <source>Core MIDI routing is active.</source>
-            <translation type="unfinished" />
+            <translation>Core-MIDI-Routing ist aktiv.</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Add or select an Audio input role.</source>
-            <translation type="unfinished" />
+            <translation>Fügen Sie eine Audioeingangsrolle hinzu oder wählen Sie eine aus.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Audio input processing could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Verarbeitung des Audioeingangs konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Live noise gate could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Live-Noise-Gate konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Audio input could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Audioeingang konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Audio capture started; waiting for callbacks.</source>
-            <translation type="unfinished" />
+            <translation>Audioaufnahme gestartet; warte auf Datenblöcke.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>OSC could not listen: %1</source>
-            <translation type="unfinished" />
+            <translation>OSC-Empfang konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+9" />
             <source>PVT Clock</source>
-            <translation type="unfinished" />
+            <translation>PVT-Takt</translation>
         </message>
         <message>
             <location line="+2" />
             <source> · Layer</source>
-            <translation type="unfinished" />
+            <translation> · Ebene</translation>
         </message>
         <message>
             <location line="+2" />
             <source> · Project</source>
-            <translation type="unfinished" />
+            <translation> · Projekt</translation>
         </message>
         <message>
             <location line="+134" />
             <source>STARTING</source>
-            <translation type="unfinished" />
+            <translation>STARTET</translation>
         </message>
         <message>
             <location line="+2" />
             <source>0.0 fps delivered</source>
-            <translation type="unfinished" />
+            <translation>0,0 Bilder/s ausgegeben</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Waiting for first frame</source>
-            <translation type="unfinished" />
+            <translation>Warte auf erstes Bild</translation>
         </message>
         <message>
             <location line="+2" />
             <source>PROGRAM OUTPUT
 Waiting for first frame</source>
-            <translation type="unfinished" />
+            <translation>PROGRAMMAUSGABE
+Warte auf erstes Bild</translation>
         </message>
         <message>
             <location line="+42" />
             <source>FROZEN</source>
-            <translation type="unfinished" />
+            <translation>EINGEFROREN</translation>
         </message>
         <message>
             <location line="+7" />
             <source>BLACK</source>
-            <translation type="unfinished" />
+            <translation>SCHWARZ</translation>
         </message>
         <message>
             <location line="+10" />
             <source>SAFETY BLACKOUT
 Last-good watchdog</source>
-            <translation type="unfinished" />
+            <translation>SICHERHEITS-BLACKOUT
+Überwachung des letzten gültigen Bildes</translation>
         </message>
         <message>
             <location line="+25" />
             <source>An effective audio clock uses a different logical role than the active microphone. The last good frame is being held; choose the same role in Live or edit the advanced route.</source>
-            <translation type="unfinished" />
+            <translation>Ein wirksamer Audiotakt verwendet eine andere logische Rolle als das aktive Mikrofon. Das letzte gültige Bild wird gehalten. Wählen Sie in Live dieselbe Rolle oder bearbeiten Sie das erweiterte Routing.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>An effective audio clock's named frequency stream is unavailable. The last good frame is being held; choose an authored stream or edit the advanced route.</source>
-            <translation type="unfinished" />
+            <translation>Der benannte Frequenzstrom eines wirksamen Audiotakts ist nicht verfügbar. Das letzte gültige Bild wird gehalten. Wählen Sie einen im Projekt definierten Strom oder bearbeiten Sie das erweiterte Routing.</translation>
         </message>
         <message>
             <location line="+85" />
             <source>HOLDING</source>
-            <translation type="unfinished" />
+            <translation>BILD GEHALTEN</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Last good · %1 dropped</source>
-            <translation type="unfinished" />
+            <translation>Letztes gültiges Bild · %1 verworfen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Live Preview Output is holding the last frame: %1</source>
-            <translation type="unfinished" />
+            <translation>Die Live-Vorschauausgabe hält das letzte Bild: %1</translation>
         </message>
         <message>
             <location line="+20" />
             <source>%1 × %2 · %3 ms · %4 dropped</source>
-            <translation type="unfinished" />
+            <translation>%1 × %2 · %3 ms · %4 verworfen</translation>
         </message>
         <message>
             <location line="+10" />
             <source>%1 fps delivered</source>
-            <translation type="unfinished" />
+            <translation>%1 Bilder/s ausgegeben</translation>
         </message>
         <message>
             <location line="+7" />
             <source>LATE</source>
-            <translation type="unfinished" />
+            <translation>VERSPÄTET</translation>
         </message>
         <message>
             <location line="+9" />
             <source>ON AIR</source>
-            <translation type="unfinished" />
+            <translation>AUF SENDUNG</translation>
         </message>
         <message>
             <location line="+71" />
             <source>%1 BPM · phase %2 · %3 ms input</source>
-            <translation type="unfinished" />
+            <translation>%1 BPM · Phase %2 · Eingang %3 ms</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Listening · causal features active</source>
-            <translation type="unfinished" />
+            <translation>Empfang aktiv · kausale Analyse aktiv</translation>
         </message>
         <message>
             <location line="+107" />
             <source>Create starter rig</source>
-            <translation type="unfinished" />
+            <translation>Starter-Setup erstellen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This project already has Live roles. Add a complete starter set as well?</source>
-            <translation type="unfinished" />
+            <translation>Dieses Projekt enthält bereits Live-Rollen. Zusätzlich einen vollständigen Startersatz hinzufügen?</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Stage audio</source>
-            <translation type="unfinished" />
+            <translation>Bühnenaudio</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Stage MIDI</source>
-            <translation type="unfinished" />
+            <translation>Bühnen-MIDI</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Stage OSC</source>
-            <translation type="unfinished" />
+            <translation>Bühnen-OSC</translation>
         </message>
         <message>
             <location line="+2" />
@@ -1745,73 +1749,73 @@ Last-good watchdog</source>
         <message>
             <location line="-170" />
             <source>Layer clock return</source>
-            <translation type="unfinished" />
+            <translation>Ebenentakt-Rückkanal</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Create portable live starter rig</source>
-            <translation type="unfinished" />
+            <translation>Portables Live-Starter-Setup erstellen</translation>
         </message>
         <message>
             <location line="+18" />
             <location line="+115" />
             <source>Audio starter map</source>
-            <translation type="unfinished" />
+            <translation>Audio-Starterzuordnungen</translation>
         </message>
         <message>
             <location line="-114" />
             <source>Create or add an Audio input role on the Rig tab first.</source>
-            <translation type="unfinished" />
+            <translation>Erstellen oder ergänzen Sie zuerst eine Audioeingangsrolle auf der Registerkarte Live-Setup.</translation>
         </message>
         <message>
             <location line="+50" />
             <source>Bass → %1 wave amplitude</source>
-            <translation type="unfinished" />
+            <translation>Bass → Wellenamplitude von %1</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Onset → %1 effect strength</source>
-            <translation type="unfinished" />
+            <translation>Anschläge → Effektstärke von %1</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Treble → %1 saturation</source>
-            <translation type="unfinished" />
+            <translation>Höhen → Sättigung von %1</translation>
         </message>
         <message>
             <location line="+34" />
             <source>The available starter routes already exist, or this layer has no compatible wave/effect/color targets.</source>
-            <translation type="unfinished" />
+            <translation>Die verfügbaren Starterzuordnungen bestehen bereits, oder diese Ebene besitzt keine kompatiblen Wellen-, Effekt- oder Farbziele.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Add live audio starter mappings</source>
-            <translation type="unfinished" />
+            <translation>Live-Audio-Starterzuordnungen hinzufügen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Added %1 editable audio mappings. Bass, onsets, and treble now drive visible layer settings.</source>
-            <translation type="unfinished" />
+            <translation>%1 bearbeitbare Audiozuordnungen hinzugefügt. Bass, Anschläge und Höhen steuern jetzt sichtbare Ebeneneinstellungen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Add Logical Live Role</source>
-            <translation type="unfinished" />
+            <translation>Logische Live-Rolle hinzufügen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Live control</source>
-            <translation type="unfinished" />
+            <translation>Live-Steuerung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Audio</source>
-            <translation type="unfinished" />
+            <translation>Audio</translation>
         </message>
         <message>
             <location line="+2" />
             <source>OSC</source>
-            <translation type="unfinished" />
+            <translation>OSC</translation>
         </message>
         <message>
             <location line="+3" />
@@ -1827,87 +1831,87 @@ Last-good watchdog</source>
         <message>
             <location line="+1" />
             <source>Input + output</source>
-            <translation type="unfinished" />
+            <translation>Ein- und Ausgang</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The project stores this role and its calibration. Device names, network addresses, and port identities stay in local preferences.</source>
-            <translation type="unfinished" />
+            <translation>Das Projekt speichert diese Rolle und ihre Kalibrierung. Gerätenamen, Netzwerkadressen und Portkennungen bleiben in den lokalen Einstellungen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Protocol</source>
-            <translation type="unfinished" />
+            <translation>Protokoll</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Direction</source>
-            <translation type="unfinished" />
+            <translation>Richtung</translation>
         </message>
         <message>
             <location line="+31" />
             <source>Add portable live role</source>
-            <translation type="unfinished" />
+            <translation>Portable Live-Rolle hinzufügen</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Align audio beat</source>
-            <translation type="unfinished" />
+            <translation>Audio-Beats ausrichten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Start Live and play a steady beat first. Tap this button on the beat; the current causal beat phase becomes a correction for this computer and device.</source>
-            <translation type="unfinished" />
+            <translation>Starten Sie zuerst Live und spielen Sie einen gleichmäßigen Beat. Tippen Sie im Takt auf diese Schaltfläche. Die aktuelle kausale Beat-Phase wird als Korrektur für diesen Computer und dieses Gerät verwendet.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Saved a %1 ms machine-local correction for this microphone. The portable rig offset was left unchanged.</source>
-            <translation type="unfinished" />
+            <translation>Lokale Korrektur von %1 ms für dieses Mikrofon gespeichert. Der portable Setup-Versatz bleibt unverändert.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Edit Live Mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung bearbeiten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Add Live Mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung hinzufügen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Performance control</source>
-            <translation type="unfinished" />
+            <translation>Performance-Steuerung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Enabled</source>
-            <translation type="unfinished" />
+            <translation>Aktiviert</translation>
         </message>
         <message>
             <location line="+41" />
             <source>Logical role</source>
-            <translation type="unfinished" />
+            <translation>Logische Rolle</translation>
         </message>
         <message>
             <location line="+1" />
             <source>MIDI channel (0 = omni)</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Kanal (0 = Omni)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Control / note</source>
-            <translation type="unfinished" />
+            <translation>Controller / Note</translation>
         </message>
         <message>
             <location line="+1" />
             <source>OSC address</source>
-            <translation type="unfinished" />
+            <translation>OSC-Adresse</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Behavior</source>
-            <translation type="unfinished" />
+            <translation>Verhalten</translation>
         </message>
         <message>
             <location line="+4" />
@@ -1917,7 +1921,7 @@ Last-good watchdog</source>
         <message>
             <location line="+1" />
             <source>Performance action</source>
-            <translation type="unfinished" />
+            <translation>Performance-Aktion</translation>
         </message>
         <message>
             <location line="+1" />
@@ -1927,169 +1931,169 @@ Last-good watchdog</source>
         <message>
             <location line="+2" />
             <source>TARGET</source>
-            <translation type="unfinished" />
+            <translation>ZIEL</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Search targets by layer, section, or control…</source>
-            <translation type="unfinished" />
+            <translation>Ziele nach Ebene, Abschnitt oder Regler suchen…</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Current</source>
-            <translation type="unfinished" />
+            <translation>Aktuell</translation>
         </message>
         <message>
             <location line="+114" />
             <source>Input range</source>
-            <translation type="unfinished" />
+            <translation>Eingangsbereich</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Output range</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbereich</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Response curve</source>
-            <translation type="unfinished" />
+            <translation>Reaktionskurve</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Dead zone</source>
-            <translation type="unfinished" />
+            <translation>Totzone</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Smoothing</source>
-            <translation type="unfinished" />
+            <translation>Glättung</translation>
         </message>
         <message>
             <location line="+80" />
             <location line="+5" />
             <location line="+23" />
             <source>Live mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung</translation>
         </message>
         <message>
             <location line="-27" />
             <source>A mapping needs a name and a compatible logical role.</source>
-            <translation type="unfinished" />
+            <translation>Eine Zuordnung benötigt einen Namen und eine kompatible logische Rolle.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>The input maximum must be greater than its minimum.</source>
-            <translation type="unfinished" />
+            <translation>Das Eingangsmaximum muss größer als das Minimum sein.</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Choose a setting target.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine Zieleinstellung.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Edit live mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung bearbeiten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Add live mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung hinzufügen</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Remove live mapping</source>
-            <translation type="unfinished" />
+            <translation>Live-Zuordnung entfernen</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Select a MIDI or foot-controller mapping first.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie zuerst eine MIDI- oder Fußcontroller-Zuordnung.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Learn live MIDI control</source>
-            <translation type="unfinished" />
+            <translation>Live-MIDI-Steuerung lernen</translation>
         </message>
         <message>
             <location line="+170" />
             <source>Capture Live Scene</source>
-            <translation type="unfinished" />
+            <translation>Live-Szene erfassen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Scene name</source>
-            <translation type="unfinished" />
+            <translation>Szenenname</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Scene %1</source>
-            <translation type="unfinished" />
+            <translation>Szene %1</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Update live scene</source>
-            <translation type="unfinished" />
+            <translation>Live-Szene aktualisieren</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Capture live scene</source>
-            <translation type="unfinished" />
+            <translation>Live-Szene erfassen</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Remove live scene</source>
-            <translation type="unfinished" />
+            <translation>Live-Szene entfernen</translation>
         </message>
         <message>
             <location line="+49" />
             <source>Scene: %1</source>
-            <translation type="unfinished" />
+            <translation>Szene: %1</translation>
         </message>
         <message>
             <location line="+133" />
             <source>An effective audio clock uses a different logical role than the active microphone. Its deterministic clock is being used instead; choose the same role in Live or edit the advanced route.</source>
-            <translation type="unfinished" />
+            <translation>Ein wirksamer Audiotakt verwendet eine andere logische Rolle als das aktive Mikrofon. Stattdessen wird sein deterministischer Takt verwendet. Wählen Sie in Live dieselbe Rolle oder bearbeiten Sie das erweiterte Routing.</translation>
         </message>
         <message>
             <location line="+26" />
             <source>An audio clock's frequency stream is unavailable. Its deterministic clock is being used instead.</source>
-            <translation type="unfinished" />
+            <translation>Der Frequenzstrom eines Audiotakts ist nicht verfügbar. Stattdessen wird sein deterministischer Takt verwendet.</translation>
         </message>
         <message>
             <location line="+367" />
             <source>Patch active-layer live clock</source>
-            <translation type="unfinished" />
+            <translation>Live-Takt der aktiven Ebene zuordnen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Patch project live clock</source>
-            <translation type="unfinished" />
+            <translation>Live-Projekttakt zuordnen</translation>
         </message>
         <message>
             <location line="+39" />
             <source>Change active-layer MIDI clock output</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Clock-Ausgang der aktiven Ebene ändern</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Change project MIDI clock output</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Clock-Ausgang des Projekts ändern</translation>
         </message>
         <message>
             <location line="+238" />
             <source>The selected Live role is not an audio input.</source>
-            <translation type="unfinished" />
+            <translation>Die ausgewählte Live-Rolle ist kein Audioeingang.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Unavailable · </source>
-            <translation type="unfinished" />
+            <translation>Nicht verfügbar · </translation>
         </message>
         <message>
             <location line="+4" />
             <source> · default</source>
-            <translation type="unfinished" />
+            <translation> · Standard</translation>
         </message>
     </context>
     <context>
@@ -2097,12 +2101,12 @@ Last-good watchdog</source>
         <message>
             <location filename="../gui/main_window.cpp" line="+2368" />
             <source>Project Sync &amp; Audio is edited in the persistent Drivers panel above. Expand it to configure the project clock and inherited audio profile alongside the active layer override.</source>
-            <translation type="unfinished" />
+            <translation>Projektsynchronisation und Audio werden im dauerhaft verfügbaren Steuerungspanel oben bearbeitet. Klappen Sie es auf, um Projekttakt und geerbtes Audioprofil neben den individuellen Einstellungen der aktiven Ebene zu konfigurieren.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Project settings and active-layer category editor</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen und Kategorieeditor der aktiven Ebene</translation>
         </message>
         <message>
             <location line="+1" />
@@ -2110,28 +2114,28 @@ Last-good watchdog</source>
             <location line="+143" />
             <location line="+17542" />
             <source>Starting Colors</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsfarben</translation>
         </message>
         <message>
             <location line="-18224" />
             <location line="+540" />
             <location line="+17687" />
             <source>Layer Effects</source>
-            <translation type="unfinished" />
+            <translation>Ebeneneffekte</translation>
         </message>
         <message>
             <location line="-18226" />
             <location line="+538" />
             <location line="+17686" />
             <source>Modifiers</source>
-            <translation type="unfinished" />
+            <translation>Modifikatoren</translation>
         </message>
         <message>
             <location line="-18223" />
             <location line="+538" />
             <location line="+17686" />
             <source>Movement</source>
-            <translation type="unfinished" />
+            <translation>Bewegung</translation>
         </message>
         <message>
             <location line="-18223" />
@@ -2139,7 +2143,7 @@ Last-good watchdog</source>
             <location line="+1636" />
             <location line="+16052" />
             <source>Post Effects</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekte</translation>
         </message>
         <message>
             <location line="-18224" />
@@ -2147,13 +2151,13 @@ Last-good watchdog</source>
             <location line="+3202" />
             <location line="+527" />
             <source>Canvas &amp; Loop</source>
-            <translation type="unfinished" />
+            <translation>Leinwand und Schleife</translation>
         </message>
         <message>
             <location line="-4306" />
             <location line="+4309" />
             <source>Project Sync &amp; Audio</source>
-            <translation type="unfinished" />
+            <translation>Projektsynchronisation und Audio</translation>
         </message>
         <message>
             <location line="-4308" />
@@ -2164,161 +2168,161 @@ Last-good watchdog</source>
             <location line="+655" />
             <location line="+13911" />
             <source>Export</source>
-            <translation type="unfinished" />
+            <translation>Exportieren</translation>
         </message>
         <message>
             <location line="-18222" />
             <location line="+3592" />
             <location line="+723" />
             <source>History</source>
-            <translation type="unfinished" />
+            <translation>Verlauf</translation>
         </message>
         <message>
             <location line="-4304" />
             <source>Current workflow context</source>
-            <translation type="unfinished" />
+            <translation>Aktueller Arbeitskontext</translation>
         </message>
         <message>
             <location line="+7" />
             <location line="+1878" />
             <location line="+16361" />
             <source>Synchronization</source>
-            <translation type="unfinished" />
+            <translation>Synchronisation</translation>
         </message>
         <message>
             <location line="-18237" />
             <source>Project and active-layer synchronization</source>
-            <translation type="unfinished" />
+            <translation>Synchronisation von Projekt und aktiver Ebene</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Show or hide driver controls</source>
-            <translation type="unfinished" />
+            <translation>Steuerungsregler ein- oder ausblenden</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Open project and active-layer clock, swing, rhythm, and audio-response controls.</source>
-            <translation type="unfinished" />
+            <translation>Regler für Takt, Swing, Rhythmus und Audioreaktion von Projekt und aktiver Ebene öffnen.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Workflow status and prerequisites</source>
-            <translation type="unfinished" />
+            <translation>Arbeitsstatus und Voraussetzungen</translation>
         </message>
         <message>
             <location line="+57" />
             <source>Performance LIVE stopped — editor preview resumed.</source>
-            <translation type="unfinished" />
+            <translation>LIVE-Performance beendet — Editorvorschau fortgesetzt.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Stop Live Preview Output</source>
-            <translation type="unfinished" />
+            <translation>Live-Vorschauausgabe stoppen</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+3620" />
             <source>Start Live Preview Output</source>
-            <translation type="unfinished" />
+            <translation>Live-Vorschauausgabe starten</translation>
         </message>
         <message>
             <location line="-3615" />
             <source>Streaming the editor preview; performance inputs remain off.</source>
-            <translation type="unfinished" />
+            <translation>Die Editorvorschau wird ausgegeben; Performance-Eingänge bleiben deaktiviert.</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+3608" />
             <source>Stopped — start this to present the editor preview without entering LIVE.</source>
-            <translation type="unfinished" />
+            <translation>Gestoppt — starten, um die Editorvorschau ohne LIVE-Modus zu präsentieren.</translation>
         </message>
         <message>
             <location line="-3593" />
             <source>Ready</source>
-            <translation type="unfinished" />
+            <translation>Bereit</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Project file operation in progress</source>
-            <translation type="unfinished" />
+            <translation>Projektdateivorgang läuft</translation>
         </message>
         <message>
             <location line="+49" />
             <source>Unexpected preview error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Vorschaufehler: %1</translation>
         </message>
         <message>
             <location line="+5" />
             <location line="+15128" />
             <source>Preview failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Die Vorschau ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="-15100" />
             <source>Preview %1 × %2 · frame %3/%4</source>
-            <translation type="unfinished" />
+            <translation>Vorschau %1 × %2 · Bild %3/%4</translation>
         </message>
         <message>
             <location line="+4" />
             <source> · %1 fps delivered</source>
-            <translation type="unfinished" />
+            <translation> · %1 Bilder/s ausgegeben</translation>
         </message>
         <message>
             <location line="+30" />
             <source>Unexpected export error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Exportfehler: %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Export failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Der Export ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+14" />
             <location line="+2" />
             <source>Export complete</source>
-            <translation type="unfinished" />
+            <translation>Export abgeschlossen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>The export completed successfully.</source>
-            <translation type="unfinished" />
+            <translation>Der Export wurde erfolgreich abgeschlossen.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Export cancelled</source>
-            <translation type="unfinished" />
+            <translation>Export abgebrochen</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+2" />
             <source>Export failed</source>
-            <translation type="unfinished" />
+            <translation>Export fehlgeschlagen</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Unexpected music-analysis error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Fehler bei der Musikanalyse: %1</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Music analysis failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Die Musikanalyse ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Unexpected project-file error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Projektdateifehler: %1</translation>
         </message>
         <message>
             <location line="+5" />
             <source>The project file operation failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Der Projektdateivorgang ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Loaded %1</source>
-            <translation type="unfinished" />
+            <translation>%1 geladen</translation>
         </message>
         <message>
             <location line="+3" />
@@ -2326,50 +2330,52 @@ Last-good watchdog</source>
             <location line="+15560" />
             <location line="+6" />
             <source>Load failed</source>
-            <translation type="unfinished" />
+            <translation>Laden fehlgeschlagen</translation>
         </message>
         <message>
             <location line="-15570" />
             <location line="+4" />
-            <location line="+21448" />
+            <location line="+21456" />
             <location line="+6" />
             <location line="+7" />
             <location line="+28" />
             <location line="+6" />
             <location line="+49" />
             <source>Save failed</source>
-            <translation type="unfinished" />
+            <translation>Speichern fehlgeschlagen</translation>
         </message>
         <message>
-            <location line="-21542" />
+            <location line="-21550" />
             <source>The active project was not changed.
 
 %1</source>
-            <translation type="unfinished" />
+            <translation>Das aktive Projekt wurde nicht verändert.
+
+%1</translation>
         </message>
         <message>
             <location line="+25" />
             <location line="+3637" />
             <source>Unexpected version-comparison error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Fehler beim Versionsvergleich: %1</translation>
         </message>
         <message>
             <location line="-3630" />
             <location line="+3633" />
             <source>Version comparison failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Der Versionsvergleich ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="-3608" />
             <location line="+3550" />
             <source>Could not compare versions: %1</source>
-            <translation type="unfinished" />
+            <translation>Versionen konnten nicht verglichen werden: %1</translation>
         </message>
         <message>
             <location line="-3546" />
             <location line="+3551" />
             <source>No semantic project differences.</source>
-            <translation type="unfinished" />
+            <translation>Keine semantischen Projektunterschiede.</translation>
         </message>
         <message>
             <location line="-3545" />
@@ -2377,213 +2383,215 @@ Last-good watchdog</source>
             <source>%1
   %2
 → %3</source>
-            <translation type="unfinished" />
+            <translation>%1
+  %2
+→ %3</translation>
         </message>
         <message>
             <location line="-3482" />
             <source>Project and layer workspace categories</source>
-            <translation type="unfinished" />
+            <translation>Arbeitsbereichskategorien für Projekt und Ebenen</translation>
         </message>
         <message>
             <location line="+5" />
             <location line="+4424" />
             <location line="+13260" />
             <source>Project</source>
-            <translation type="unfinished" />
+            <translation>Projekt</translation>
         </message>
         <message>
             <location line="-17680" />
             <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
-            <translation type="unfinished" />
+            <translation>Leinwand, Schleife, Synchronisation, Audio und Verlauf für das gesamte Projekt bearbeiten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Choose the image, generated colors, or starting palette that establishes the layer's pixels.</source>
-            <translation type="unfinished" />
+            <translation>Bild, generierte Farben oder Ausgangspalette wählen, die die Pixel der Ebene bestimmen.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Shape the active layer with procedural features, transforms, alpha, and optional surface mapping.</source>
-            <translation type="unfinished" />
+            <translation>Die aktive Ebene mit prozeduralen Funktionen, Transformationen, Alpha und optionaler Oberflächenabbildung gestalten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Build motion with waves, seamless layer movement, and reusable paths.</source>
-            <translation type="unfinished" />
+            <translation>Bewegung mit Wellen, nahtloser Ebenenbewegung und wiederverwendbaren Pfaden aufbauen.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Edit effects in separate movement, light, stylize, particle, and blur categories.</source>
-            <translation type="unfinished" />
+            <translation>Effekte in getrennten Kategorien für Bewegung, Licht, Stilisierung, Partikel und Unschärfe bearbeiten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Apply final layer-local processing such as post-effects color quantization.</source>
-            <translation type="unfinished" />
+            <translation>Abschließende Verarbeitung je Ebene anwenden, etwa die Farbquantisierung nach den Effekten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Set output size, timing, encoding, destination, and start an export.</source>
-            <translation type="unfinished" />
+            <translation>Ausgabegröße, Timing, Kodierung und Ziel festlegen und einen Export starten.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Category %1 of %2: %3</source>
-            <translation type="unfinished" />
+            <translation>Kategorie %1 von %2: %3</translation>
         </message>
         <message>
             <location line="+88" />
             <source>Collapse</source>
-            <translation type="unfinished" />
+            <translation>Einklappen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Configure…</source>
-            <translation type="unfinished" />
+            <translation>Konfigurieren…</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Driver controls are expanded</source>
-            <translation type="unfinished" />
+            <translation>Steuerungsregler sind aufgeklappt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Driver controls are collapsed</source>
-            <translation type="unfinished" />
+            <translation>Steuerungsregler sind eingeklappt</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Project Settings  ›  %1</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen  ›  %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Active Layer  ›  %1  ›  %2</source>
-            <translation type="unfinished" />
+            <translation>Aktive Ebene  ›  %1  ›  %2</translation>
         </message>
         <message>
             <location line="+3" />
             <source>No active layer</source>
-            <translation type="unfinished" />
+            <translation>Keine aktive Ebene</translation>
         </message>
         <message>
             <location line="+13" />
             <source>%1 × %2 at %3 FPS</source>
-            <translation type="unfinished" />
+            <translation>%1 × %2 bei %3 Bildern/s</translation>
         </message>
         <message>
             <location line="+3" />
             <source>%1 waves; %2 starting-palette colors</source>
-            <translation type="unfinished" />
+            <translation>%1 Wellen; %2 Farben in der Ausgangspalette</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Modifiers · optional surface mapping enabled</source>
-            <translation type="unfinished" />
+            <translation>Modifikatoren · optionale Oberflächenabbildung aktiviert</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Modifiers · surface mapping off</source>
-            <translation type="unfinished" />
+            <translation>Modifikatoren · Oberflächenabbildung aus</translation>
         </message>
         <message>
             <location line="+2" />
             <source>%1 waves · whole-layer motion %2</source>
-            <translation type="unfinished" />
+            <translation>%1 Wellen · Bewegung der gesamten Ebene %2</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+8922" />
             <location line="+3" />
             <source>enabled</source>
-            <translation type="unfinished" />
+            <translation>aktiviert</translation>
         </message>
         <message>
             <location line="-8925" />
             <location line="+6412" />
             <location line="+23" />
             <source>off</source>
-            <translation type="unfinished" />
+            <translation>aus</translation>
         </message>
         <message>
             <location line="-6433" />
             <source>%1 categorized layer effects</source>
-            <translation type="unfinished" />
+            <translation>Ebeneneffekte nach Kategorien: %1</translation>
         </message>
         <message>
             <location line="+16" />
             <source>all-RGB invert</source>
-            <translation type="unfinished" />
+            <translation>gesamtes RGB invertieren</translation>
         </message>
         <message>
             <location line="+4" />
             <source>red invert</source>
-            <translation type="unfinished" />
+            <translation>Rot invertieren</translation>
         </message>
         <message>
             <location line="+4" />
             <source>green invert</source>
-            <translation type="unfinished" />
+            <translation>Grün invertieren</translation>
         </message>
         <message>
             <location line="+4" />
             <source>blue invert</source>
-            <translation type="unfinished" />
+            <translation>Blau invertieren</translation>
         </message>
         <message>
             <location line="+4" />
             <source>alpha invert</source>
-            <translation type="unfinished" />
+            <translation>Alpha invertieren</translation>
         </message>
         <message>
             <location line="+4" />
             <source>channel routing</source>
-            <translation type="unfinished" />
+            <translation>Kanalzuordnung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>edge antialiasing</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>quantization</source>
-            <translation type="unfinished" />
+            <translation>Quantisierung</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Post effects bypassed</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekte umgangen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Active: %1</source>
-            <translation type="unfinished" />
+            <translation>Aktiv: %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>%1-bit output · %2</source>
-            <translation type="unfinished" />
+            <translation>%1-Bit-Ausgabe · %2</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Project: Mic (Live) · offline %1</source>
-            <translation type="unfinished" />
+            <translation>Projekt: Mikrofon (Live) · offline %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Project: %1</source>
-            <translation type="unfinished" />
+            <translation>Projekt: %1</translation>
         </message>
         <message>
             <location line="+4" />
             <source>The project-wide clock is always the base timeline for synchronized items.</source>
-            <translation type="unfinished" />
+            <translation>Der Projekttakt bildet stets die Basiszeitleiste für synchronisierte Elemente.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Layer: Mic (Live) · offline %1</source>
-            <translation type="unfinished" />
+            <translation>Ebene: Mikrofon (Live) · offline %1</translation>
         </message>
         <message>
             <location line="+4" />
@@ -2593,152 +2601,152 @@ Last-good watchdog</source>
         <message>
             <location line="+3" />
             <source>Layer: %1 · %2</source>
-            <translation type="unfinished" />
+            <translation>Ebene: %1 · %2</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Layer: %1 · replace</source>
-            <translation type="unfinished" />
+            <translation>Ebene: %1 · Ersetzen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Layer: Off</source>
-            <translation type="unfinished" />
+            <translation>Ebene: Aus</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Clock mixing is explicitly enabled. The selected policy combines project and layer phases.</source>
-            <translation type="unfinished" />
+            <translation>Die Taktmischung ist ausdrücklich aktiviert. Das gewählte Verfahren kombiniert Projekt- und Ebenenphase.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Mixing is off. The active layer clock replaces the project clock, preserving the historical behavior.</source>
-            <translation type="unfinished" />
+            <translation>Die Mischung ist deaktiviert. Der Takt der aktiven Ebene ersetzt wie bisher den Projekttakt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>No active-layer clock is applied; the project clock remains unchanged.</source>
-            <translation type="unfinished" />
+            <translation>Es wird kein Takt der aktiven Ebene angewendet; der Projekttakt bleibt unverändert.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Swing: %1/%2</source>
-            <translation type="unfinished" />
+            <translation>Swing: %1/%2</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Swing: Off</source>
-            <translation type="unfinished" />
+            <translation>Swing: Aus</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Audio: Layer</source>
-            <translation type="unfinished" />
+            <translation>Audio: Ebene</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Audio: Project</source>
-            <translation type="unfinished" />
+            <translation>Audio: Projekt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Audio: Off</source>
-            <translation type="unfinished" />
+            <translation>Audio: Aus</translation>
         </message>
         <message>
             <location line="+4" />
             <source>%1 · %2 effects · new effects start on Texture</source>
-            <translation type="unfinished" />
+            <translation>%1 · Effekte: %2 · neue Effekte beginnen auf Textur</translation>
         </message>
         <message>
             <location line="+6" />
             <source>%1 × %2 · %3 FPS · %4 frames · %5-bit %6</source>
-            <translation type="unfinished" />
+            <translation>%1 × %2 · %3 Bilder/s · %4 Bilder · %5 Bit %6</translation>
         </message>
         <message>
             <location line="+3" />
             <source>EXR</source>
-            <translation type="unfinished" />
+            <translation>EXR</translation>
         </message>
         <message>
             <location line="+0" />
             <source>PNG</source>
-            <translation type="unfinished" />
+            <translation>PNG</translation>
         </message>
         <message>
             <location line="+6" />
             <source>These settings apply to the whole project and are independent of the selected layer stage.</source>
-            <translation type="unfinished" />
+            <translation>Diese Einstellungen gelten für das gesamte Projekt, unabhängig von der ausgewählten Ebenenstufe.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Select a layer row to edit its render pipeline. Group controls remain in the Layers &amp; Groups panel.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine Ebenenzeile, um ihre Renderkette zu bearbeiten. Gruppenregler bleiben im Panel Ebenen und Gruppen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Add or select a layer to begin editing this pipeline.</source>
-            <translation type="unfinished" />
+            <translation>Fügen Sie eine Ebene hinzu oder wählen Sie eine aus, um diese Verarbeitungskette zu bearbeiten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>This layer belongs to a locked group. Unlock the group in Layers &amp; Groups to edit layer stages.</source>
-            <translation type="unfinished" />
+            <translation>Diese Ebene gehört zu einer gesperrten Gruppe. Entsperren Sie die Gruppe unter Ebenen und Gruppen, um Ebenenstufen zu bearbeiten.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Whole-layer motion is off. Waves and reusable path editing remain available.</source>
-            <translation type="unfinished" />
+            <translation>Die Bewegung der gesamten Ebene ist deaktiviert. Wellen und wiederverwendbare Pfade lassen sich weiterhin bearbeiten.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>No %1 effects yet. Choose a type below to add one; it will start on Texture.</source>
-            <translation type="unfinished" />
+            <translation>Noch keine Effekte der Kategorie %1. Wählen Sie unten einen Typ zum Hinzufügen; er beginnt auf Textur.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>This category contains one focused part of the active layer; use the top navigation to switch without scrolling through unrelated controls.</source>
-            <translation type="unfinished" />
+            <translation>Diese Kategorie zeigt einen bestimmten Bereich der aktiven Ebene. Wechseln Sie über die obere Navigation, ohne durch andere Regler scrollen zu müssen.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Cancelling export before closing…</source>
-            <translation type="unfinished" />
+            <translation>Export wird vor dem Schließen abgebrochen…</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Finishing the project file operation before closing…</source>
-            <translation type="unfinished" />
+            <translation>Projektdateivorgang wird vor dem Schließen abgeschlossen…</translation>
         </message>
         <message>
             <location line="+120" />
             <source>Drag numbered handles in the preview to place waves. A synchronized wave uses the effective project or per-layer clock; a free wave remains independently periodic.</source>
-            <translation type="unfinished" />
+            <translation>Ziehen Sie die nummerierten Griffe in der Vorschau, um Wellen zu platzieren. Eine synchronisierte Welle verwendet den wirksamen Projekt- oder Ebenentakt; eine freie Welle bleibt unabhängig periodisch.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Wave output</source>
-            <translation type="unfinished" />
+            <translation>Wellenausgabe</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Displace the generated pattern</source>
-            <translation type="unfinished" />
+            <translation>Generiertes Muster verschieben</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Uses wave slopes to move the generated pattern. This is the same layer setting shown under Modifiers &gt; Procedural features.</source>
-            <translation type="unfinished" />
+            <translation>Verwendet Wellensteigungen, um das generierte Muster zu verschieben. Dieselbe Ebeneneinstellung finden Sie unter Modifikatoren &gt; Prozedurale Funktionen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Apply wave-slope lighting</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtung anhand der Wellensteigung anwenden</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Uses wave slopes to shade the generated pattern. This is the same layer setting shown under Modifiers &gt; Procedural features.</source>
-            <translation type="unfinished" />
+            <translation>Verwendet Wellensteigungen, um das generierte Muster zu beleuchten. Dieselbe Ebeneneinstellung finden Sie unter Modifikatoren &gt; Prozedurale Funktionen.</translation>
         </message>
         <message>
             <location line="+11" />
@@ -2754,7 +2762,7 @@ Last-good watchdog</source>
             <location line="+147" />
             <location line="+2322" />
             <source>Duplicate</source>
-            <translation type="unfinished" />
+            <translation>Duplizieren</translation>
         </message>
         <message>
             <location line="-3157" />
@@ -2763,26 +2771,26 @@ Last-good watchdog</source>
             <location line="+2322" />
             <location line="+1158" />
             <source>Remove</source>
-            <translation type="unfinished" />
+            <translation>Entfernen</translation>
         </message>
         <message>
             <location line="-4315" />
             <location line="+689" />
             <location line="+147" />
             <source>Up</source>
-            <translation type="unfinished" />
+            <translation>Nach oben</translation>
         </message>
         <message>
             <location line="-835" />
             <location line="+689" />
             <location line="+147" />
             <source>Down</source>
-            <translation type="unfinished" />
+            <translation>Nach unten</translation>
         </message>
         <message>
             <location line="-827" />
             <source>Selected wave</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählte Welle</translation>
         </message>
         <message>
             <location line="+5" />
@@ -2791,13 +2799,13 @@ Last-good watchdog</source>
             <location line="+3476" />
             <location line="+124" />
             <source>Enabled</source>
-            <translation type="unfinished" />
+            <translation>Aktiviert</translation>
         </message>
         <message>
             <location line="-4438" />
             <location line="+17197" />
             <source>Use synchronized clock</source>
-            <translation type="unfinished" />
+            <translation>Synchronisierten Takt verwenden</translation>
         </message>
         <message>
             <location line="-17182" />
@@ -2808,28 +2816,28 @@ Last-good watchdog</source>
             <location line="+17" />
             <location line="+1729" />
             <source>Name</source>
-            <translation type="unfinished" />
+            <translation>Name</translation>
         </message>
         <message>
             <location line="-4920" />
             <location line="+917" />
             <source>Audio response</source>
-            <translation type="unfinished" />
+            <translation>Audioreaktion</translation>
         </message>
         <message>
             <location line="-916" />
             <source>X position (%)</source>
-            <translation type="unfinished" />
+            <translation>X-Position (%)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Y position (%)</source>
-            <translation type="unfinished" />
+            <translation>Y-Position (%)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Amplitude</source>
-            <translation type="unfinished" />
+            <translation>Amplitude</translation>
         </message>
         <message>
             <location line="+1" />
@@ -2837,7 +2845,7 @@ Last-good watchdog</source>
             <location line="+7182" />
             <location line="+21" />
             <source>Spatial frequency</source>
-            <translation type="unfinished" />
+            <translation>Räumliche Frequenz</translation>
         </message>
         <message>
             <location line="-9368" />
@@ -2849,137 +2857,137 @@ Last-good watchdog</source>
             <location line="+73" />
             <location line="+557" />
             <source>Cycles per loop</source>
-            <translation type="unfinished" />
+            <translation>Zyklen pro Schleife</translation>
         </message>
         <message>
             <location line="-4984" />
             <location line="+697" />
             <location line="+219" />
             <source>Phase (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Phase (Grad)</translation>
         </message>
         <message>
             <location line="-915" />
             <source>Direction (0 horizontal, .5 radial, 1 vertical)</source>
-            <translation type="unfinished" />
+            <translation>Richtung (0 horizontal, 0,5 radial, 1 vertikal)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>A descriptive layer-local name used in lists and semantic version diffs.</source>
-            <translation type="unfinished" />
+            <translation>Beschreibender Name innerhalb der Ebene, der in Listen und semantischen Versionsvergleichen verwendet wird.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Bypasses this wave without deleting or resetting its authored settings.</source>
-            <translation type="unfinished" />
+            <translation>Umgeht diese Welle, ohne ihre gespeicherten Einstellungen zu löschen oder zurückzusetzen.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Uses the layer's swung synchronized clock. Clear it for an independent seamless clock.</source>
-            <translation type="unfinished" />
+            <translation>Verwendet den synchronisierten Ebenentakt mit Swing. Deaktivieren Sie die Option für einen unabhängigen, nahtlosen Takt.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Default inherits both the effective profile's Waves switch and Wave source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this wave in and overrides that source. The final two choices force this wave on with the profile source or ignore audio. Clock synchronization is independent unless the profile explicitly limits response to synchronized items. Missing/null project data is Default.</source>
-            <translation type="unfinished" />
+            <translation>Standard übernimmt sowohl den Wellenschalter als auch die Wellenquelle des wirksamen Profils. Bei aktiviertem Profil schaltet die Wahl von Beat, Energie oder einem anderen Merkmal die Reaktion dieser Welle ein und ersetzt die Quelle. Die letzten beiden Optionen erzwingen die Profilquelle oder ignorieren Audio. Die Taktsynchronisation ist unabhängig, sofern das Profil die Reaktion nicht ausdrücklich auf synchronisierte Elemente beschränkt. Fehlende oder leere Projektdaten verwenden Standard.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Horizontal wave source position. Values outside 0–100% place the source beyond the canvas.</source>
-            <translation type="unfinished" />
+            <translation>Horizontale Position der Wellenquelle. Werte außerhalb von 0–100% platzieren die Quelle jenseits der Leinwand.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Vertical wave source position. Values outside 0–100% place the source beyond the canvas.</source>
-            <translation type="unfinished" />
+            <translation>Vertikale Position der Wellenquelle. Werte außerhalb von 0–100% platzieren die Quelle jenseits der Leinwand.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Peak contribution of this wave before optional audio modulation.</source>
-            <translation type="unfinished" />
+            <translation>Maximaler Beitrag dieser Welle vor einer optionalen Audiomodulation.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Number of spatial oscillations across the normalized wave coordinate.</source>
-            <translation type="unfinished" />
+            <translation>Anzahl räumlicher Schwingungen entlang der normierten Wellenkoordinate.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Whole or signed motion cycles over one seamless project loop.</source>
-            <translation type="unfinished" />
+            <translation>Ganzzahlige, auch negative Bewegungszyklen innerhalb einer nahtlosen Projektschleife.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Authored phase offset; large values are allowed for procedural workflows.</source>
-            <translation type="unfinished" />
+            <translation>Festgelegter Phasenversatz; große Werte sind für prozedurale Arbeitsabläufe zulässig.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blends propagation from horizontal through radial to vertical.</source>
-            <translation type="unfinished" />
+            <translation>Blendet die Ausbreitungsrichtung von horizontal über radial zu vertikal über.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Wave limit</source>
-            <translation type="unfinished" />
+            <translation>Wellenlimit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The Qt item-index limit is %1 waves.</source>
-            <translation type="unfinished" />
+            <translation>Die Qt-Elementindexgrenze beträgt %1 Wellen.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Add wave</source>
-            <translation type="unfinished" />
+            <translation>Welle hinzufügen</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Duplicate wave</source>
-            <translation type="unfinished" />
+            <translation>Welle duplizieren</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Remove wave</source>
-            <translation type="unfinished" />
+            <translation>Welle entfernen</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Clock — project-wide</source>
-            <translation type="unfinished" />
+            <translation>Takt — gesamtes Projekt</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The base clock drives every synchronized wave and effect in every layer. Frame, Time, and Time Signature modes can hold or interpolate the calculated clock between pulses; Music follows the embedded source's analyzed beat map. Mic (Live) follows a desktop input only while LIVE is running and preserves this authored clock for offline rendering.</source>
-            <translation type="unfinished" />
+            <translation>Der Basistakt steuert alle synchronisierten Wellen und Effekte in jeder Ebene. Die Modi Bild, Zeit und Taktart können den berechneten Takt zwischen Impulsen halten oder interpolieren; Musik folgt dem analysierten Beat-Raster der eingebetteten Quelle. Mikrofon (Live) folgt nur während LIVE einem Audioeingang und bewahrt den festgelegten Takt für Offline-Rendering.</translation>
         </message>
         <message>
             <location line="+15" />
             <location line="+193" />
             <source>Mic (Live)…</source>
-            <translation type="unfinished" />
+            <translation>Mikrofon (Live)…</translation>
         </message>
         <message>
             <location line="-190" />
             <source>Use a detected microphone during LIVE while keeping the authored clock as the offline and CLI fallback.</source>
-            <translation type="unfinished" />
+            <translation>Während LIVE ein erkanntes Mikrofon verwenden und den festgelegten Takt als Rückfall für Offline-Rendering und CLI beibehalten.</translation>
         </message>
         <message>
             <location line="+4" />
             <location line="+193" />
             <source>Refresh</source>
-            <translation type="unfinished" />
+            <translation>Aktualisieren</translation>
         </message>
         <message>
             <location line="-191" />
             <location line="+193" />
             <source>Live controls…</source>
-            <translation type="unfinished" />
+            <translation>Live-Steuerung…</translation>
         </message>
         <message>
             <location line="-169" />
             <source>Interpolates the evaluated clock/parameters, not rendered frames.</source>
-            <translation type="unfinished" />
+            <translation>Interpoliert den ausgewerteten Takt und die Parameter, nicht die gerenderten Bilder.</translation>
         </message>
         <message>
             <location line="+8" />
@@ -2987,141 +2995,141 @@ Last-good watchdog</source>
             <location line="+168" />
             <location line="+26" />
             <source> ms</source>
-            <translation type="unfinished" />
+            <translation> ms</translation>
         </message>
         <message>
             <location line="-216" />
             <source>Examples: 7/8, 3+2+3/8, 5/4 | 6/4, 4/3</source>
-            <translation type="unfinished" />
+            <translation>Beispiele: 7/8, 3+2+3/8, 5/4 | 6/4, 4/3</translation>
         </message>
         <message>
             <location line="+5" />
             <location line="+194" />
             <source> BPM</source>
-            <translation type="unfinished" />
+            <translation> BPM</translation>
         </message>
         <message>
             <location line="-191" />
             <location line="+194" />
             <source>1/</source>
-            <translation type="unfinished" />
+            <translation>1/</translation>
         </message>
         <message>
             <location line="-193" />
             <source>Reverse clock direction</source>
-            <translation type="unfinished" />
+            <translation>Taktrichtung umkehren</translation>
         </message>
         <message>
             <location line="+15" />
             <location line="+194" />
             <source>Data only — mute during preview playback and movie export</source>
-            <translation type="unfinished" />
+            <translation>Nur Daten — bei Vorschauwiedergabe und Videoexport stummschalten</translation>
         </message>
         <message>
             <location line="-192" />
             <location line="+196" />
             <source>Source</source>
-            <translation type="unfinished" />
+            <translation>Quelle</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Microphone</source>
-            <translation type="unfinished" />
+            <translation>Mikrofon</translation>
         </message>
         <message>
             <location line="-194" />
             <location line="+196" />
             <source>Between pulses</source>
-            <translation type="unfinished" />
+            <translation>Zwischen Impulsen</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Interval policy</source>
-            <translation type="unfinished" />
+            <translation>Intervallregel</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Pulse every</source>
-            <translation type="unfinished" />
+            <translation>Impuls alle</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Pulse interval</source>
-            <translation type="unfinished" />
+            <translation>Impulsintervall</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Meter</source>
-            <translation type="unfinished" />
+            <translation>Taktart</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Parsed meter</source>
-            <translation type="unfinished" />
+            <translation>Erkannte Taktart</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Tempo</source>
-            <translation type="unfinished" />
+            <translation>Tempo</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Tempo note</source>
-            <translation type="unfinished" />
+            <translation>Tempo-Notenwert</translation>
         </message>
         <message>
             <location line="-194" />
             <location line="+196" />
             <source>Phase offset</source>
-            <translation type="unfinished" />
+            <translation>Phasenversatz</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Music tempo</source>
-            <translation type="unfinished" />
+            <translation>Musiktempo</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+196" />
             <source>Beat-grid offset</source>
-            <translation type="unfinished" />
+            <translation>Beat-Raster-Versatz</translation>
         </message>
         <message>
             <location line="-192" />
             <source>Music source — embedded with project</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle — im Projekt eingebettet</translation>
         </message>
         <message>
             <location line="+5" />
             <source>No analyzed music source</source>
-            <translation type="unfinished" />
+            <translation>Keine analysierte Musikquelle</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+198" />
             <source>Filters, EQ + Frequency Streams…</source>
-            <translation type="unfinished" />
+            <translation>Filter, EQ und Frequenzströme…</translation>
         </message>
         <message>
             <location line="-194" />
             <location line="+200" />
             <source>Input processing</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverarbeitung</translation>
         </message>
         <message>
             <location line="-199" />
             <location line="+201" />
             <source>Clock stream</source>
-            <translation type="unfinished" />
+            <translation>Taktstrom</translation>
         </message>
         <message>
             <location line="-198" />
@@ -3130,19 +3138,19 @@ Last-good watchdog</source>
             <location line="+538" />
             <location line="+77" />
             <source>Choose…</source>
-            <translation type="unfinished" />
+            <translation>Auswählen…</translation>
         </message>
         <message>
             <location line="-1545" />
             <location line="+201" />
             <source>Relink…</source>
-            <translation type="unfinished" />
+            <translation>Neu verknüpfen…</translation>
         </message>
         <message>
             <location line="-200" />
             <location line="+201" />
             <source>Reanalyze</source>
-            <translation type="unfinished" />
+            <translation>Erneut analysieren</translation>
         </message>
         <message>
             <location line="-200" />
@@ -3151,258 +3159,258 @@ Last-good watchdog</source>
             <location line="+540" />
             <location line="+75" />
             <source>Clear</source>
-            <translation type="unfinished" />
+            <translation>Leeren</translation>
         </message>
         <message>
             <location line="-1521" />
             <location line="+197" />
             <source>Cancel analysis</source>
-            <translation type="unfinished" />
+            <translation>Analyse abbrechen</translation>
         </message>
         <message>
             <location line="-189" />
             <source>Clock — active layer</source>
-            <translation type="unfinished" />
+            <translation>Takt — aktive Ebene</translation>
         </message>
         <message>
             <location line="+5" />
             <source>With advanced mixing off, this replaces the project clock only for the active layer while remaining locked to the project timeline. Short music clips can repeat with minimal stretch, traverse once, or hand back to the project clock.</source>
-            <translation type="unfinished" />
+            <translation>Ohne erweiterte Mischung ersetzt dieser Takt den Projekttakt nur für die aktive Ebene und bleibt an die Projektzeitleiste gebunden. Kurze Musikclips können mit minimaler Dehnung wiederholt, einmal durchlaufen oder an den Projekttakt zurückgegeben werden.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Mix project and layer clocks (advanced)</source>
-            <translation type="unfinished" />
+            <translation>Projekt- und Ebenentakt mischen (erweitert)</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Off is the safe default and preserves the historical behavior: an enabled layer clock replaces the project clock. Turn this on only when you deliberately want both phases to contribute.</source>
-            <translation type="unfinished" />
+            <translation>Aus ist die sichere Standardeinstellung und erhält das bisherige Verhalten: Ein aktivierter Ebenentakt ersetzt den Projekttakt. Aktivieren Sie dies nur, wenn bewusst beide Phasen beitragen sollen.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Replace is unchanged from normal layer-clock behavior. Add and Difference combine wrapped phases. Soft XOR is continuous; Bitwise XOR combines 24-bit fixed-point phases and is intentionally experimental.</source>
-            <translation type="unfinished" />
+            <translation>Ersetzen entspricht dem normalen Ebenentakt. Addition und Differenz kombinieren zyklisch begrenzte Phasen. Weiches XOR ist kontinuierlich; bitweises XOR kombiniert 24-Bit-Festkommaphasen und ist ausdrücklich experimentell.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Use a detected microphone for this layer during LIVE while keeping its authored clock as the offline and CLI fallback.</source>
-            <translation type="unfinished" />
+            <translation>Während LIVE ein erkanntes Mikrofon für diese Ebene verwenden und ihren festgelegten Takt als Rückfall für Offline-Rendering und CLI beibehalten.</translation>
         </message>
         <message>
             <location line="+43" />
             <source>Examples: 7/8, 3+2+3/8, 5/4 | 6/4</source>
-            <translation type="unfinished" />
+            <translation>Beispiele: 7/8, 3+2+3/8, 5/4 | 6/4</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Reverse layer clock direction</source>
-            <translation type="unfinished" />
+            <translation>Ebenentaktrichtung umkehren</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Mix operation</source>
-            <translation type="unfinished" />
+            <translation>Mischoperation</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Duration mapping</source>
-            <translation type="unfinished" />
+            <translation>Dauerzuordnung</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Layer music source — embedded with project</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle der Ebene — im Projekt eingebettet</translation>
         </message>
         <message>
             <location line="+4" />
             <source>No analyzed layer music source</source>
-            <translation type="unfinished" />
+            <translation>Keine analysierte Ebenenmusikquelle</translation>
         </message>
         <message>
             <location line="+50" />
             <source>Audio response — project-wide defaults</source>
-            <translation type="unfinished" />
+            <translation>Audioreaktion — Projektstandard</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Sets the response profile inherited by every layer that does not author an override. This is the fastest way to art-direct a consistent music relationship across a project.</source>
-            <translation type="unfinished" />
+            <translation>Legt das Reaktionsprofil fest, das alle Ebenen ohne eigene Einstellungen übernehmen. So gestalten Sie am schnellsten einen einheitlichen Musikbezug im gesamten Projekt.</translation>
         </message>
         <message>
             <location line="+6" />
             <location line="+36" />
             <source>Only synchronized waves and effects</source>
-            <translation type="unfinished" />
+            <translation>Nur synchronisierte Wellen und Effekte</translation>
         </message>
         <message>
             <location line="-34" />
             <location line="+35" />
             <source>Modulate wave amplitude</source>
-            <translation type="unfinished" />
+            <translation>Wellenamplitude modulieren</translation>
         </message>
         <message>
             <location line="-30" />
             <location line="+34" />
             <source>Modulate effect strength</source>
-            <translation type="unfinished" />
+            <translation>Effektstärke modulieren</translation>
         </message>
         <message>
             <location line="-30" />
             <location line="+34" />
             <source>Modulate color hue</source>
-            <translation type="unfinished" />
+            <translation>Farbton modulieren</translation>
         </message>
         <message>
             <location line="-27" />
             <source>Audio response — active-layer override</source>
-            <translation type="unfinished" />
+            <translation>Audioreaktion — eigene Einstellungen der aktiven Ebene</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Shows whether this layer currently inherits the project profile or uses its own override.</source>
-            <translation type="unfinished" />
+            <translation>Zeigt, ob diese Ebene derzeit das Projektprofil übernimmt oder eigene Einstellungen verwendet.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Copy project settings into override</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen in eigene Einstellungen kopieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Copies every project-wide response value here, then enables the layer override so you can refine it independently.</source>
-            <translation type="unfinished" />
+            <translation>Kopiert alle Reaktionswerte des Projekts hierher und aktiviert anschließend die eigenen Ebeneneinstellungen zur unabhängigen Anpassung.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Enable audio response for this layer</source>
-            <translation type="unfinished" />
+            <translation>Audioreaktion für diese Ebene aktivieren</translation>
         </message>
         <message>
             <location line="+31" />
             <location line="+13" />
             <source>Wave feature</source>
-            <translation type="unfinished" />
+            <translation>Wellenmerkmal</translation>
         </message>
         <message>
             <location line="-12" />
             <location line="+13" />
             <source>Wave amount</source>
-            <translation type="unfinished" />
+            <translation>Wellenanteil</translation>
         </message>
         <message>
             <location line="-11" />
             <location line="+13" />
             <source>Effect feature</source>
-            <translation type="unfinished" />
+            <translation>Effektmerkmal</translation>
         </message>
         <message>
             <location line="-12" />
             <location line="+13" />
             <source>Effect amount</source>
-            <translation type="unfinished" />
+            <translation>Effektanteil</translation>
         </message>
         <message>
             <location line="-11" />
             <location line="+13" />
             <source>Color feature</source>
-            <translation type="unfinished" />
+            <translation>Farbmerkmal</translation>
         </message>
         <message>
             <location line="-12" />
             <location line="+13" />
             <source>Hue range</source>
-            <translation type="unfinished" />
+            <translation>Farbtonbereich</translation>
         </message>
         <message>
             <location line="+10" />
             <source>When enabled, free-running waves/effects ignore audio. A synchronized item's Audio response can inherit the profile, select a specific feature, force the profile feature on, or ignore audio.</source>
-            <translation type="unfinished" />
+            <translation>Wenn aktiviert, ignorieren frei laufende Wellen und Effekte Audio. Die Audioreaktion eines synchronisierten Elements kann das Profil übernehmen, ein bestimmtes Merkmal wählen, das Profilmerkmal erzwingen oder Audio ignorieren.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Default routing for wave amplitude. A synchronized wave can override this with its Audio response selector.</source>
-            <translation type="unfinished" />
+            <translation>Standardzuordnung für die Wellenamplitude. Eine synchronisierte Welle kann sie über ihre Audioreaktion überschreiben.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Analyzed music feature sampled at the layer's effective timeline position.</source>
-            <translation type="unfinished" />
+            <translation>Analysiertes Musikmerkmal, abgetastet an der wirksamen Zeitleistenposition der Ebene.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Scales wave amplitude by 1 + feature × amount. Negative values duck on peaks; -1 can reduce a full-scale peak to zero.</source>
-            <translation type="unfinished" />
+            <translation>Skaliert die Wellenamplitude mit 1 + Merkmal × Anteil. Negative Werte senken sie bei Spitzen ab; -1 kann eine Spitze mit vollem Pegel auf null reduzieren.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Default routing for effect intensity. A synchronized effect can override this with its Audio response selector.</source>
-            <translation type="unfinished" />
+            <translation>Standardzuordnung für die Effektstärke. Ein synchronisierter Effekt kann sie über seine Audioreaktion überschreiben.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Analyzed feature used to modulate enabled effect intensity.</source>
-            <translation type="unfinished" />
+            <translation>Analysiertes Merkmal zur Modulation der Stärke aktivierter Effekte.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Scales effect intensity by 1 + feature × amount. The renderer clamps the multiplier at zero.</source>
-            <translation type="unfinished" />
+            <translation>Skaliert die Effektstärke mit 1 + Merkmal × Anteil. Der Renderer begrenzt den Faktor nach unten auf null.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Rotates the layer's evaluated starting colors without rewriting the authored palette.</source>
-            <translation type="unfinished" />
+            <translation>Verschiebt den Farbton der ausgewerteten Ausgangsfarben der Ebene, ohne die gespeicherte Palette umzuschreiben.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Analyzed feature used as the hue-rotation control signal.</source>
-            <translation type="unfinished" />
+            <translation>Analysiertes Merkmal als Steuersignal für die Farbtondrehung.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Maximum signed hue rotation at a full-scale feature value.</source>
-            <translation type="unfinished" />
+            <translation>Maximale vorzeichenbehaftete Farbtondrehung bei vollem Merkmalswert.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>The canonical response profile for layers whose active-layer override is off. Missing/null project data resolves to the safe Default profile.</source>
-            <translation type="unfinished" />
+            <translation>Maßgebliches Reaktionsprofil für Ebenen ohne aktivierte eigene Einstellungen. Fehlende oder leere Projektdaten verwenden das sichere Standardprofil.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Check this group to stop inheriting and author an independent response profile for the selected layer.</source>
-            <translation type="unfinished" />
+            <translation>Aktivieren Sie diese Gruppe, um die Vererbung zu beenden und ein unabhängiges Reaktionsprofil für die ausgewählte Ebene zu erstellen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Master switch stored inside this layer's override. Clear it to keep an explicit no-response layer while project defaults remain active elsewhere.</source>
-            <translation type="unfinished" />
+            <translation>Hauptschalter innerhalb der eigenen Ebeneneinstellungen. Deaktivieren Sie ihn, um diese Ebene ausdrücklich ohne Reaktion zu belassen, während der Projektstandard für andere Ebenen aktiv bleibt.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Cancelling music analysis…</source>
-            <translation type="unfinished" />
+            <translation>Musikanalyse wird abgebrochen…</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Cancelling layer music analysis…</source>
-            <translation type="unfinished" />
+            <translation>Musikanalyse der Ebene wird abgebrochen…</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Swings — active layer</source>
-            <translation type="unfinished" />
+            <translation>Swings — aktive Ebene</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Swing modulators reshape the synchronized clock. Add, duplicate, remove, or reorder them for loop-safe rhythm. A Local radius above zero creates the numbered source/UV circle in the preview. Localized Swings drive source waves and Texture effects; Mapped-object effects use the global clock.</source>
-            <translation type="unfinished" />
+            <translation>Swing-Modulatoren formen den synchronisierten Takt. Fügen Sie sie hinzu, duplizieren, entfernen oder ordnen Sie sie um, um nahtlose Rhythmen zu erzeugen. Ein lokaler Radius über null erzeugt den nummerierten Quell-/UV-Kreis in der Vorschau. Lokale Swings steuern Quellwellen und Textureffekte; Effekte auf dem abgebildeten Objekt verwenden den globalen Takt.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Selected swing</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählter Swing</translation>
         </message>
         <message>
             <location line="+7" />
@@ -3417,7 +3425,7 @@ Last-good watchdog</source>
         <message>
             <location line="+1" />
             <source>Smooth pulse</source>
-            <translation>Weicher Impuls</translation>
+            <translation>Weicher Puls</translation>
         </message>
         <message>
             <location line="+1" />
@@ -3442,37 +3450,37 @@ Last-good watchdog</source>
         <message>
             <location line="+14" />
             <source>Strength of this timing modulation. Negative values invert the swing.</source>
-            <translation type="unfinished" />
+            <translation>Stärke dieser Zeitmodulation. Negative Werte kehren den Swing um.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Changes the contour of shaped waveforms; sine and triangle ignore it.</source>
-            <translation type="unfinished" />
+            <translation>Verändert die Kontur geformter Wellenformen; Sinus und Dreieck ignorieren diesen Wert.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Fraction of the shorter canvas edge. Zero preserves whole-layer behavior; positive values create a feathered movable circle.</source>
-            <translation type="unfinished" />
+            <translation>Anteil der kürzeren Leinwandkante. Null erhält die Wirkung auf die gesamte Ebene; positive Werte erzeugen einen verschiebbaren Kreis mit weichem Rand.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Waveform</source>
-            <translation type="unfinished" />
+            <translation>Wellenform</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Amount</source>
-            <translation type="unfinished" />
+            <translation>Stärke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Pulses per loop</source>
-            <translation type="unfinished" />
+            <translation>Impulse pro Schleife</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Waveform shape</source>
-            <translation type="unfinished" />
+            <translation>Wellenformgestaltung</translation>
         </message>
         <message>
             <location line="+1" />
@@ -3485,7 +3493,7 @@ Last-good watchdog</source>
             <location line="+12" />
             <location line="+22" />
             <source>Center X (0–1)</source>
-            <translation type="unfinished" />
+            <translation>Zentrum X (0–1)</translation>
         </message>
         <message>
             <location line="-8759" />
@@ -3498,87 +3506,87 @@ Last-good watchdog</source>
             <location line="+12" />
             <location line="+22" />
             <source>Center Y (0–1)</source>
-            <translation type="unfinished" />
+            <translation>Zentrum Y (0–1)</translation>
         </message>
         <message>
             <location line="-8759" />
             <source>Local radius (0 = whole layer)</source>
-            <translation type="unfinished" />
+            <translation>Lokaler Radius (0 = gesamte Ebene)</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Swing limit</source>
-            <translation type="unfinished" />
+            <translation>Swing-Limit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The Qt item-index limit is %1 swing modulators.</source>
-            <translation type="unfinished" />
+            <translation>Die Qt-Elementindexgrenze beträgt %1 Swing-Modulatoren.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Add swing</source>
-            <translation type="unfinished" />
+            <translation>Swing hinzufügen</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Duplicate swing</source>
-            <translation type="unfinished" />
+            <translation>Swing duplizieren</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Remove swing</source>
-            <translation type="unfinished" />
+            <translation>Swing entfernen</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Current effect stage</source>
-            <translation type="unfinished" />
+            <translation>Aktuelle Effektstufe</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Each effect appears in exactly one category based on its type. New effects start before surface mapping, which is the useful default. Placement wording adapts to the selected effect: it describes whether movement, particles, or styling belongs to the artwork or to the completed layer/object. Centers and local radii remain draggable in the preview.</source>
-            <translation type="unfinished" />
+            <translation>Jeder Effekt erscheint je nach Typ in genau einer Kategorie. Neue Effekte beginnen standardmäßig vor der Oberflächenabbildung. Die Platzierungsbezeichnung passt sich dem gewählten Effekt an und erklärt, ob Bewegung, Partikel oder Gestaltung zum Motiv oder zur fertigen Ebene bzw. zum fertigen Objekt gehören. Zentren und lokale Radien bleiben in der Vorschau verschiebbar.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Effect categories</source>
-            <translation type="unfinished" />
+            <translation>Effektkategorien</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Selected effect</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählter Effekt</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Effect placement stage</source>
-            <translation type="unfinished" />
+            <translation>Platzierungsstufe des Effekts</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Texture (default)</source>
-            <translation type="unfinished" />
+            <translation>Textur (Standard)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Mapped surface (advanced)</source>
-            <translation type="unfinished" />
+            <translation>Abgebildete Oberfläche (erweitert)</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Placement explanation</source>
-            <translation type="unfinished" />
+            <translation>Erläuterung zur Platzierung</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Follow placement</source>
-            <translation>An Platzierung anpassen</translation>
+            <translation>Platzierung folgen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Transparent alpha</source>
-            <translation type="unfinished" />
+            <translation>Transparentes Alpha</translation>
         </message>
         <message>
             <location line="+1" />
@@ -3599,426 +3607,426 @@ Last-good watchdog</source>
             <location line="+36" />
             <location line="+53" />
             <source>Particle size scale</source>
-            <translation type="unfinished" />
+            <translation>Partikelgrößenskalierung</translation>
         </message>
         <message>
             <location line="-48" />
             <source>0 uses effect ID</source>
-            <translation type="unfinished" />
+            <translation>0 verwendet die Effekt-ID</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Surprise me — reseed</source>
-            <translation type="unfinished" />
+            <translation>Überraschen — neuer Startwert</translation>
         </message>
         <message>
             <location line="+27" />
             <source>Type</source>
-            <translation type="unfinished" />
+            <translation>Typ</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Placement</source>
-            <translation type="unfinished" />
+            <translation>Platzierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Blank-space handling</source>
-            <translation type="unfinished" />
+            <translation>Umgang mit Leerflächen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Intensity / mix</source>
-            <translation type="unfinished" />
+            <translation>Stärke / Mischung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Magnitude</source>
-            <translation type="unfinished" />
+            <translation>Ausmaß</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Frequency</source>
-            <translation type="unfinished" />
+            <translation>Frequenz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Secondary variation</source>
-            <translation type="unfinished" />
+            <translation>Sekundäre Variation</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Center X</source>
-            <translation type="unfinished" />
+            <translation>Zentrum X</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Center Y</source>
-            <translation type="unfinished" />
+            <translation>Zentrum Y</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Angle (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Winkel (Grad)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Glow radius (pixels)</source>
-            <translation type="unfinished" />
+            <translation>Leuchtradius (Pixel)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Glow threshold</source>
-            <translation type="unfinished" />
+            <translation>Leuchtschwelle</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Glow soft knee</source>
-            <translation type="unfinished" />
+            <translation>Weicher Übergang der Leuchtschwelle</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Local area radius (0 = whole layer)</source>
-            <translation type="unfinished" />
+            <translation>Lokaler Bereichsradius (0 = gesamte Ebene)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Particle shape</source>
-            <translation type="unfinished" />
+            <translation>Partikelform</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle look</source>
-            <translation type="unfinished" />
+            <translation>Partikelaussehen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Size variation</source>
-            <translation type="unfinished" />
+            <translation>Größenvariation</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Shape definition</source>
-            <translation type="unfinished" />
+            <translation>Formschärfe</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Twinkle amount</source>
-            <translation type="unfinished" />
+            <translation>Funkelstärke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Pattern seed</source>
-            <translation type="unfinished" />
+            <translation>Musterstartwert</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Shape / trail orientation</source>
-            <translation type="unfinished" />
+            <translation>Form-/Spurausrichtung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Shape rotation (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Formdrehung (Grad)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blur algorithm</source>
-            <translation type="unfinished" />
+            <translation>Unschärfealgorithmus</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blur passes</source>
-            <translation type="unfinished" />
+            <translation>Unschärfedurchläufe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Samples per pass</source>
-            <translation type="unfinished" />
+            <translation>Abtastungen pro Durchlauf</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Minimum blur mix</source>
-            <translation type="unfinished" />
+            <translation>Minimaler Unschärfeanteil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Maximum blur mix</source>
-            <translation type="unfinished" />
+            <translation>Maximaler Unschärfeanteil</translation>
         </message>
         <message>
             <location line="+2" />
             <source>A descriptive layer-local name used in the stack and semantic version diffs.</source>
-            <translation type="unfinished" />
+            <translation>Beschreibender Name innerhalb der Ebene, der im Stapel und in semantischen Versionsvergleichen verwendet wird.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Bypasses this effect without deleting it or changing its authored parameters.</source>
-            <translation type="unfinished" />
+            <translation>Umgeht diesen Effekt, ohne ihn zu löschen oder seine gespeicherten Parameter zu ändern.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>On: use the effective project or per-layer clock. Off: use an independent seamless clock. Cycles per loop is the modulation count in either mode.</source>
-            <translation type="unfinished" />
+            <translation>An: wirksamen Projekt- oder Ebenentakt verwenden. Aus: unabhängigen nahtlosen Takt verwenden. Zyklen pro Schleife bestimmt in beiden Modi die Anzahl der Modulationen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Default inherits both the effective profile's Effects switch and Effect source. While the profile master is enabled, choosing Beat, Energy, or another feature opts this effect in and overrides that source. The final two choices force this effect on with the profile source or ignore audio. Clock synchronization is independent unless the profile explicitly limits response to synchronized items. Missing/null project data is Default.</source>
-            <translation type="unfinished" />
+            <translation>Standard übernimmt sowohl den Effektschalter als auch die Effektquelle des wirksamen Profils. Bei aktiviertem Profil schaltet die Wahl von Beat, Energie oder einem anderen Merkmal die Reaktion dieses Effekts ein und ersetzt die Quelle. Die letzten beiden Optionen erzwingen die Profilquelle oder ignorieren Audio. Die Taktsynchronisation ist unabhängig, sofern das Profil die Reaktion nicht ausdrücklich auf synchronisierte Elemente beschränkt. Fehlende oder leere Projektdaten verwenden Standard.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Changes the effect algorithm while preserving identity, routing, timing, center, and local area.</source>
-            <translation type="unfinished" />
+            <translation>Ändert den Effektalgorithmus und erhält dabei Identität, Routing, Timing, Zentrum und lokalen Bereich.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Defined silhouette keeps shapes crisp and visibly different. Legacy glow reproduces the softer pre-format-15 look.</source>
-            <translation type="unfinished" />
+            <translation>Klare Silhouette erhält scharfe, deutlich unterscheidbare Formen. Klassisches Leuchten reproduziert das weichere Aussehen vor Format 15.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Logarithmic hands-on size control from 0.5 to 256 full-resolution output pixels. The exact radius editor accepts values beyond this slider.</source>
-            <translation type="unfinished" />
+            <translation>Logarithmischer Größenregler von 0,5 bis 256 Ausgabepixeln bei voller Auflösung. Das exakte Radiusfeld erlaubt Werte außerhalb dieses Schiebereglers.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Deterministically varies each particle radius around the exact base radius.</source>
-            <translation type="unfinished" />
+            <translation>Variiert jeden Partikelradius deterministisch um den exakten Basisradius.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Sharpens arms, corners, points, and ring thickness in Defined silhouette mode.</source>
-            <translation type="unfinished" />
+            <translation>Schärft Arme, Ecken, Spitzen und Ringstärke im Modus Klare Silhouette.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Zero is steady; one uses the full deterministic brightness animation.</source>
-            <translation type="unfinished" />
+            <translation>Null hält die Helligkeit konstant; eins nutzt die vollständige deterministische Helligkeitsanimation.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Unsigned 64-bit deterministic seed. Zero derives a stable pattern from the effect ID.</source>
-            <translation type="unfinished" />
+            <translation>Deterministischer vorzeichenloser 64-Bit-Startwert. Null leitet ein stabiles Muster aus der Effekt-ID ab.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Creates a new deterministic layout without changing the other authored controls.</source>
-            <translation type="unfinished" />
+            <translation>Erstellt eine neue deterministische Anordnung, ohne die anderen festgelegten Regler zu verändern.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Fixed preserves the authored travel-angle alignment. Follow motion makes trails point behind the actual orbit. Random keeps motion-following trails and rotates each silhouette independently.</source>
-            <translation type="unfinished" />
+            <translation>Fest erhält die festgelegte Ausrichtung am Bewegungswinkel. Bewegung folgen richtet Spuren entgegen der tatsächlichen Umlaufbahn aus. Zufällig behält bewegungsfolgende Spuren bei und dreht jede Silhouette unabhängig.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Gaussian and Box use separable passes; Directional follows the authored angle; Radial rotates samples around the center; Zoom pulls samples toward the center.</source>
-            <translation type="unfinished" />
+            <translation>Gauß und Box verwenden separierbare Durchläufe; Gerichtet folgt dem festgelegten Winkel; Radial dreht Abtastpunkte um das Zentrum; Zoom zieht sie zum Zentrum.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Repeats the complete blur. More passes create a broader, smoother result and require more GPU or CPU work.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholt die vollständige Unschärfe. Mehr Durchläufe erzeugen ein breiteres, weicheres Ergebnis und erfordern mehr GPU- oder CPU-Arbeit.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Samples used in each pass. Higher values improve smoothness at the cost of render time.</source>
-            <translation type="unfinished" />
+            <translation>Abtastungen pro Durchlauf. Höhere Werte verbessern die Glätte auf Kosten der Renderzeit.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Lowest wet/dry mix reached on the effect's selected clock. Set equal to the maximum for constant blur.</source>
-            <translation type="unfinished" />
+            <translation>Niedrigster Effektanteil im Verlauf des gewählten Takts. Für konstante Unschärfe auf denselben Wert wie das Maximum setzen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Highest wet/dry mix reached on the effect's selected clock. Set equal to the minimum for constant blur.</source>
-            <translation type="unfinished" />
+            <translation>Höchster Effektanteil im Verlauf des gewählten Takts. Für konstante Unschärfe auf denselben Wert wie das Minimum setzen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Signed effect modulations across the project loop; whole values preserve the seam. For Blur, this directly controls the number of minimum-to-maximum-to-minimum pulses.</source>
-            <translation type="unfinished" />
+            <translation>Vorzeichenbehaftete Effektmodulationen über die Projektschleife; ganzzahlige Werte erhalten den nahtlosen Übergang. Bei Unschärfe steuert dies direkt die Anzahl der Minimum-Maximum-Minimum-Pulse.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Authored timing offset in degrees. Values beyond one rotation are retained.</source>
-            <translation type="unfinished" />
+            <translation>Festgelegter Zeitversatz in Grad. Werte über eine Umdrehung hinaus bleiben erhalten.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Effect limit</source>
-            <translation type="unfinished" />
+            <translation>Effektlimit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The Qt item-index limit is %1 effects.</source>
-            <translation type="unfinished" />
+            <translation>Die Qt-Elementindexgrenze beträgt %1 Effekte.</translation>
         </message>
         <message>
             <location line="+13" />
             <location line="+879" />
             <source>Add effect</source>
-            <translation type="unfinished" />
+            <translation>Effekt hinzufügen</translation>
         </message>
         <message>
             <location line="-861" />
             <location line="+873" />
             <source>Duplicate effect</source>
-            <translation type="unfinished" />
+            <translation>Effekt duplizieren</translation>
         </message>
         <message>
             <location line="-861" />
             <location line="+864" />
             <source>Remove effect</source>
-            <translation type="unfinished" />
+            <translation>Effekt entfernen</translation>
         </message>
         <message>
             <location line="-824" />
             <source>Starting Colors — establish the layer's pixels</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsfarben — Pixel der Ebene festlegen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Choose an embedded image or generated color pattern, then optionally constrain it with a starting palette. Shaping, alpha, mapping, and movement have their own categories.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie ein eingebettetes Bild oder ein generiertes Farbmuster und begrenzen Sie es bei Bedarf durch eine Ausgangspalette. Formgebung, Alpha, Abbildung und Bewegung haben eigene Kategorien.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Active Layer Modifiers</source>
-            <translation type="unfinished" />
+            <translation>Modifikatoren der aktiven Ebene</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Shape generated coordinates, transform the layer, control source/procedural alpha, and optionally wrap it on a 3D surface. Surface mapping is an advanced modifier, not a required workflow stage.</source>
-            <translation type="unfinished" />
+            <translation>Formen Sie generierte Koordinaten, transformieren Sie die Ebene, steuern Sie Quell- und prozedurales Alpha und bilden Sie sie bei Bedarf auf einer 3D-Oberfläche ab. Die Oberflächenabbildung ist ein erweiterter Modifikator und kein Pflichtschritt.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Layer Movement</source>
-            <translation type="unfinished" />
+            <translation>Ebenenbewegung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Combine local waves, seamless whole-layer movement, and reusable paths. Movement and distortion effect types are separated in Layer Effects instead of duplicated by mapping location.</source>
-            <translation type="unfinished" />
+            <translation>Kombinieren Sie lokale Wellen, nahtlose Bewegung der gesamten Ebene und wiederverwendbare Pfade. Bewegungs- und Verzerrungseffekte stehen getrennt unter Ebeneneffekte und werden nicht je nach Abbildungsort dupliziert.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Finish the active layer with channel inversion, simultaneous RGBA routing, alpha-aware edge antialiasing, and optional color quantization. Arrange the stages explicitly below; export encoding and destination settings remain in Export.</source>
-            <translation type="unfinished" />
+            <translation>Schließen Sie die aktive Ebene mit Kanalinvertierung, gleichzeitiger RGBA-Zuordnung, alphabewusster Kantenglättung und optionaler Farbquantisierung ab. Ordnen Sie die Stufen unten ausdrücklich an; Kodierung und Ziel bleiben unter Exportieren.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Rhythm and color timing</source>
-            <translation type="unfinished" />
+            <translation>Rhythmus und Farb-Timing</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Periodic warp applied to the effective project-wide or per-layer synchronized clock.</source>
-            <translation type="unfinished" />
+            <translation>Periodische Verformung des wirksamen synchronisierten Projekt- oder Ebenentakts.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Mix between the main and phase-lagged color signals.</source>
-            <translation type="unfinished" />
+            <translation>Mischung zwischen dem Hauptfarbsignal und dem phasenverzögerten Farbsignal.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Phase separation of the ghost color signal.</source>
-            <translation type="unfinished" />
+            <translation>Phasenabstand des Geisterfarbsignals.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Phrase warp</source>
-            <translation type="unfinished" />
+            <translation>Phrasenverformung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Ghost mix</source>
-            <translation type="unfinished" />
+            <translation>Geistermischung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Ghost lag (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Geisterverzögerung (Grad)</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Starting image source</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbildquelle</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Use embedded image as layer source</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes Bild als Ebenenquelle verwenden</translation>
         </message>
         <message>
             <location line="+9" />
             <source>No embedded image selected</source>
-            <translation type="unfinished" />
+            <translation>Kein eingebettetes Bild ausgewählt</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Embedded image (PNG / OpenEXR)</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes Bild (PNG / OpenEXR)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fit</source>
-            <translation type="unfinished" />
+            <translation>Einpassung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Dither when quantizing this image to the starting palette</source>
-            <translation type="unfinished" />
+            <translation>Bei der Quantisierung dieses Bildes auf die Ausgangspalette Dithering anwenden</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Source quantization dither</source>
-            <translation type="unfinished" />
+            <translation>Dithering bei Quellquantisierung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>PNG samples and HALF/FLOAT OpenEXR channels are decoded directly to float32 without an 8-bit intermediate. The image controls where source colors appear. When a starting palette is enabled, the image is quantized to that palette before effects; the two options are intentionally composable.</source>
-            <translation type="unfinished" />
+            <translation>PNG-Abtastwerte und HALF/FLOAT-Kanäle aus OpenEXR werden direkt als float32 ohne 8-Bit-Zwischenschritt dekodiert. Das Bild bestimmt, wo Quellfarben erscheinen. Bei aktivierter Ausgangspalette wird das Bild vor den Effekten auf diese Palette quantisiert; beide Optionen lassen sich bewusst kombinieren.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Generated starting colors</source>
-            <translation type="unfinished" />
+            <translation>Generierte Ausgangsfarben</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Include alpha as a generated color dimension</source>
-            <translation type="unfinished" />
+            <translation>Alpha als Dimension der generierten Farben einbeziehen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>When no starting image or palette is active, generated RGBA tuples differ by alpha as well as RGB. This setting applies directly; the separate palette/image source-alpha switch does not disable it.</source>
-            <translation type="unfinished" />
+            <translation>Wenn weder Ausgangsbild noch Ausgangspalette aktiv sind, unterscheiden sich generierte RGBA-Tupel sowohl in Alpha als auch in RGB. Diese Einstellung wirkt direkt; der separate Quellalpha-Schalter für Palette/Bild deaktiviert sie nicht.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Repeat RGB gamut for each alpha level (legacy)</source>
-            <translation type="unfinished" />
+            <translation>RGB-Farbraum je Alphastufe wiederholen (klassisch)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>For generated RGB-lattice patterns, preserves the pre-format-22 ordering in which alpha changes only after a complete RGB gamut, visibly repeating the rainbow. Uncheck this on an imported project to use the corrected RGBA order, where alpha changes fastest and the RGB gamut is traversed once.</source>
-            <translation type="unfinished" />
+            <translation>Für generierte RGB-Gittermuster bleibt die Reihenfolge vor Format 22 erhalten: Alpha ändert sich erst nach einem vollständigen RGB-Farbraum, wodurch sich der Regenbogen sichtbar wiederholt. Deaktivieren Sie dies in importierten Projekten für die korrigierte RGBA-Reihenfolge, bei der Alpha am schnellsten wechselt und der RGB-Farbraum einmal durchlaufen wird.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Pattern</source>
-            <translation type="unfinished" />
+            <translation>Muster</translation>
         </message>
         <message>
             <location line="+6" />
             <location line="+9760" />
             <source>Channel</source>
-            <translation type="unfinished" />
+            <translation>Kanal</translation>
         </message>
         <message>
             <location line="-9759" />
@@ -4027,7 +4035,7 @@ Last-good watchdog</source>
             <location line="+69" />
             <location line="+6535" />
             <source>Minimum</source>
-            <translation type="unfinished" />
+            <translation>Minimum</translation>
         </message>
         <message>
             <location line="-9759" />
@@ -4036,7 +4044,7 @@ Last-good watchdog</source>
             <location line="+71" />
             <location line="+6533" />
             <source>Maximum</source>
-            <translation type="unfinished" />
+            <translation>Maximum</translation>
         </message>
         <message>
             <location line="-9750" />
@@ -4065,351 +4073,351 @@ Last-good watchdog</source>
         <message>
             <location line="-9749" />
             <source>Used when the authored starting palette is off. Every choice in this box obeys its RGB/alpha Min/Max range. Channel resolution scales automatically with the full-resolution output and block size; ordered patterns walk an automatically sized RGB or RGBA lattice without omitting tuples. Corrected RGBA ordering changes alpha fastest so the RGB gamut remains one broad horizontal, vertical, diagonal, or spiral field. Random is the only shuffled color-static pattern. Generated values remain float32 through effects and compositing; only the chosen output format quantizes them. Preview and export use the same full-resolution coordinates.</source>
-            <translation type="unfinished" />
+            <translation>Wird bei deaktivierter Ausgangspalette verwendet. Jede Auswahl beachtet ihren RGB-/Alpha-Min/Max-Bereich. Die Kanalauflösung skaliert automatisch mit der Ausgabe bei voller Auflösung und der Blockgröße; geordnete Muster durchlaufen ein automatisch dimensioniertes RGB- oder RGBA-Gitter ohne ausgelassene Tupel. Die korrigierte RGBA-Reihenfolge ändert Alpha am schnellsten, sodass der RGB-Farbraum ein einziges breites horizontales, vertikales, diagonales oder spiralförmiges Feld bildet. Zufällig ist das einzige gemischte statische Farbmuster. Generierte Werte bleiben bei Effekten und Komposition float32; erst das gewählte Ausgabeformat quantisiert sie. Vorschau und Export verwenden dieselben Koordinaten bei voller Auflösung.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Procedural features</source>
-            <translation type="unfinished" />
+            <translation>Prozedurale Funktionen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Displacement enabled</source>
-            <translation type="unfinished" />
+            <translation>Verschiebung aktiviert</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Slope lighting enabled</source>
-            <translation type="unfinished" />
+            <translation>Steigungsbeleuchtung aktiviert</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Spiral enabled</source>
-            <translation type="unfinished" />
+            <translation>Spirale aktiviert</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Wall reflection enabled</source>
-            <translation type="unfinished" />
+            <translation>Wandreflexion aktiviert</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Displacement</source>
-            <translation type="unfinished" />
+            <translation>Verschiebung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Lighting depth</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtungstiefe</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Spiral frequency</source>
-            <translation type="unfinished" />
+            <translation>Spiralfrequenz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Spiral arms</source>
-            <translation type="unfinished" />
+            <translation>Spiralarme</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Wall frequency</source>
-            <translation type="unfinished" />
+            <translation>Wandfrequenz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Wall mix</source>
-            <translation type="unfinished" />
+            <translation>Wandmischung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Hue cycles per loop</source>
-            <translation type="unfinished" />
+            <translation>Farbtonzyklen pro Schleife</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Saturation</source>
-            <translation type="unfinished" />
+            <translation>Sättigung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Kaleidoscope shaping</source>
-            <translation type="unfinished" />
+            <translation>Kaleidoskopformung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Folds generated source coordinates into mirrored radial segments before waves and later pipeline stages.</source>
-            <translation type="unfinished" />
+            <translation>Faltet generierte Quellkoordinaten vor Wellen und späteren Verarbeitungsstufen in gespiegelte radiale Segmente.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Mirrored segments</source>
-            <translation type="unfinished" />
+            <translation>Gespiegelte Segmente</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+430" />
             <source>Rotation</source>
-            <translation type="unfinished" />
+            <translation>Drehung</translation>
         </message>
         <message>
             <location line="-429" />
             <source>Coordinate mix</source>
-            <translation type="unfinished" />
+            <translation>Koordinatenmischung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Seamless domain warp</source>
-            <translation type="unfinished" />
+            <translation>Nahtlose Bereichsverzerrung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Distorts generated coordinates with deterministic loop-closed noise. It does not affect an embedded starting image.</source>
-            <translation type="unfinished" />
+            <translation>Verzerrt generierte Koordinaten mit deterministischem, nahtlos zyklischem Rauschen. Ein eingebettetes Ausgangsbild wird nicht beeinflusst.</translation>
         </message>
         <message>
             <location line="+13" />
             <location line="+538" />
             <source>Unsigned 64-bit seed</source>
-            <translation type="unfinished" />
+            <translation>Vorzeichenloser 64-Bit-Startwert</translation>
         </message>
         <message>
             <location line="-537" />
             <location line="+538" />
             <source>Randomize</source>
-            <translation type="unfinished" />
+            <translation>Zufällig wählen</translation>
         </message>
         <message>
             <location line="-537" />
             <source>Choose a new operating-system random seed. The selected value is stored in the project, so preview and export remain deterministic.</source>
-            <translation type="unfinished" />
+            <translation>Einen neuen Zufallsstartwert vom Betriebssystem wählen. Der Wert wird im Projekt gespeichert, damit Vorschau und Export deterministisch bleiben.</translation>
         </message>
         <message>
             <location line="+8" />
             <location line="+816" />
             <source>Strength</source>
-            <translation type="unfinished" />
+            <translation>Stärke</translation>
         </message>
         <message>
             <location line="-815" />
             <source>Spatial scale</source>
-            <translation type="unfinished" />
+            <translation>Räumliche Skalierung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Noise octaves</source>
-            <translation type="unfinished" />
+            <translation>Rauschoktaven</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+551" />
             <source>Seed</source>
-            <translation type="unfinished" />
+            <translation>Startwert</translation>
         </message>
         <message>
             <location line="-547" />
             <source>Transform layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene transformieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Flip horizontally</source>
-            <translation type="unfinished" />
+            <translation>Horizontal spiegeln</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Flip vertically</source>
-            <translation type="unfinished" />
+            <translation>Vertikal spiegeln</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Copies an explicitly named source half into the opposite half. Four-way mirrors the top-left quadrant. Flips run afterward.</source>
-            <translation type="unfinished" />
+            <translation>Kopiert die ausdrücklich benannte Quellhälfte in die gegenüberliegende Hälfte. Vierfach spiegelt den linken oberen Quadranten. Umklappungen folgen danach.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Mirror symmetry</source>
-            <translation type="unfinished" />
+            <translation>Spiegelsymmetrie</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Seamless layer motion</source>
-            <translation type="unfinished" />
+            <translation>Nahtlose Ebenenbewegung</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Static rotation applied before per-loop rotation. This can turn a still layer without adding animation.</source>
-            <translation type="unfinished" />
+            <translation>Statische Drehung vor der Drehung pro Schleife. Damit lässt sich eine unbewegte Ebene ohne zusätzliche Animation drehen.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Edit reusable paths and bindings…</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Pfade und Bindungen bearbeiten…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Create and edit project-wide closed paths. New paths appear in the Closed path list above; advanced bindings can also drive individual waves or effect centers.</source>
-            <translation type="unfinished" />
+            <translation>Projektweite geschlossene Pfade erstellen und bearbeiten. Neue Pfade erscheinen oben in der Liste Geschlossener Pfad; erweiterte Bindungen können auch einzelne Wellen oder Effektzentren steuern.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Closed path</source>
-            <translation type="unfinished" />
+            <translation>Geschlossener Pfad</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Center X / reusable X offset</source>
-            <translation type="unfinished" />
+            <translation>Zentrum X / wiederverwendbarer X-Versatz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Center Y / reusable Y offset</source>
-            <translation type="unfinished" />
+            <translation>Zentrum Y / wiederverwendbarer Y-Versatz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Horizontal added travel</source>
-            <translation type="unfinished" />
+            <translation>Zusätzlicher horizontaler Weg</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Vertical added travel</source>
-            <translation type="unfinished" />
+            <translation>Zusätzlicher vertikaler Weg</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Horizontal cycles</source>
-            <translation type="unfinished" />
+            <translation>Horizontale Zyklen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Vertical cycles</source>
-            <translation type="unfinished" />
+            <translation>Vertikale Zyklen</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+478" />
             <location line="+3133" />
             <source>Starting phase</source>
-            <translation type="unfinished" />
+            <translation>Anfangsphase</translation>
         </message>
         <message>
             <location line="-3610" />
             <location line="+228" />
             <source>Rotations per loop</source>
-            <translation type="unfinished" />
+            <translation>Umdrehungen pro Schleife</translation>
         </message>
         <message>
             <location line="-227" />
             <source>Starting rotation</source>
-            <translation type="unfinished" />
+            <translation>Anfangsdrehung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Scale pulse</source>
-            <translation type="unfinished" />
+            <translation>Skalierungspuls</translation>
         </message>
         <message>
             <location line="+2" />
             <source>A lightweight path animator. Integer cycles, rotations, and scale pulses close exactly at the project loop seam.</source>
-            <translation type="unfinished" />
+            <translation>Ein schlanker Pfadanimator. Ganzzahlige Zyklen, Drehungen und Skalierungspulse schließen exakt am Übergang der Projektschleife.</translation>
         </message>
         <message>
             <location line="+4" />
             <location line="+3507" />
             <source>Reusable motion paths</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Bewegungspfade</translation>
         </message>
         <message>
             <location line="-3505" />
             <source>Create shared closed cubic paths here, then choose one directly from Closed path above. The editor also provides advanced per-wave and per-effect bindings.</source>
-            <translation type="unfinished" />
+            <translation>Erstellen Sie hier gemeinsam nutzbare geschlossene kubische Pfade und wählen Sie oben unter Geschlossener Pfad einen aus. Der Editor bietet auch erweiterte Bindungen je Welle und Effekt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Starting palette</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Use this palette for starting colors</source>
-            <translation type="unfinished" />
+            <translation>Diese Palette für Ausgangsfarben verwenden</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Use preset</source>
-            <translation type="unfinished" />
+            <translation>Vorgabe verwenden</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Palette name</source>
-            <translation type="unfinished" />
+            <translation>Palettenname</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Built-in palettes</source>
-            <translation type="unfinished" />
+            <translation>Mitgelieferte Paletten</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Add color…</source>
-            <translation type="unfinished" />
+            <translation>Farbe hinzufügen…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Edit color…</source>
-            <translation type="unfinished" />
+            <translation>Farbe bearbeiten…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Remove color</source>
-            <translation type="unfinished" />
+            <translation>Farbe entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Generate random…</source>
-            <translation type="unfinished" />
+            <translation>Zufällig erzeugen…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Save to Library…</source>
-            <translation type="unfinished" />
+            <translation>In Bibliothek speichern…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Load Reusable…</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Palette laden…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Import File…</source>
-            <translation type="unfinished" />
+            <translation>Datei importieren…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Export As…</source>
-            <translation type="unfinished" />
+            <translation>Exportieren als…</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Colors are embedded in this layer. Ordinary colors use sRGBA; imported linear/HDR entries retain their source encoding and exact finite values. The renderer selects the procedural starting colors from this palette. Lighting and effects may create other colors afterward. Use Post-effects color quantization below when you want to deliberately reduce final colors. File import/export supports GIMP GPL, Krita KPL, GIMP-style code/text, and PNG/EXR palette images.</source>
-            <translation type="unfinished" />
+            <translation>Die Farben sind in dieser Ebene eingebettet. Normale Farben verwenden sRGBA; importierte lineare/HDR-Einträge behalten ihre Quellkodierung und exakten endlichen Werte. Der Renderer wählt die prozeduralen Ausgangsfarben aus dieser Palette. Beleuchtung und Effekte können danach weitere Farben erzeugen. Nutzen Sie unten die Farbquantisierung nach Effekten, um die Endfarben gezielt zu reduzieren. Import und Export unterstützen GIMP GPL, Krita KPL, Code/Text im GIMP-Stil und PNG/EXR-Palettenbilder.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>3D surface wrapping</source>
-            <translation type="unfinished" />
+            <translation>Abbildung auf einer 3D-Oberfläche</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Surface mapping enabled</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenabbildung aktiviert</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Plane</source>
-            <translation>Ebene</translation>
+            <translation>Ebene Fläche</translation>
         </message>
         <message>
             <location line="+1" />
@@ -4434,23 +4442,23 @@ Last-good watchdog</source>
         <message>
             <location line="+8" />
             <source>Path to a Wavefront .obj file</source>
-            <translation type="unfinished" />
+            <translation>Pfad zu einer Wavefront-.obj-Datei</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Custom OBJ surfaces use authored texture coordinates when present, or automatic box projection otherwise. Every named object, group, and disconnected part in the file is kept together as one surface. Relative paths start from the application's working directory.</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefinierte OBJ-Oberflächen verwenden vorhandene Texturkoordinaten, andernfalls eine automatische Boxprojektion. Alle benannten Objekte, Gruppen und unverbundenen Teile der Datei bleiben als eine Oberfläche zusammen. Relative Pfade beginnen im Arbeitsverzeichnis der Anwendung.</translation>
         </message>
         <message>
             <location line="+4" />
             <location line="+1123" />
             <source>Browse…</source>
-            <translation type="unfinished" />
+            <translation>Durchsuchen…</translation>
         </message>
         <message>
             <location line="-1118" />
             <source>Orthographic (no perspective)</source>
-            <translation type="unfinished" />
+            <translation>Orthografisch (ohne Perspektive)</translation>
         </message>
         <message>
             <location line="+2" />
@@ -4460,22 +4468,22 @@ Last-good watchdog</source>
         <message>
             <location line="+4" />
             <source>Contain whole surface</source>
-            <translation type="unfinished" />
+            <translation>Gesamte Oberfläche einpassen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Cover canvas</source>
-            <translation type="unfinished" />
+            <translation>Leinwand ausfüllen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Stretch to canvas</source>
-            <translation type="unfinished" />
+            <translation>Auf Leinwand strecken</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Size from canvas short side</source>
-            <translation type="unfinished" />
+            <translation>Größe nach kurzer Leinwandkante</translation>
         </message>
         <message>
             <location line="+4" />
@@ -4485,12 +4493,12 @@ Last-good watchdog</source>
         <message>
             <location line="+2" />
             <source>Keep original source</source>
-            <translation type="unfinished" />
+            <translation>Originalquelle beibehalten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Reflect source at plane edges</source>
-            <translation type="unfinished" />
+            <translation>Quelle an Ebenenflächenrändern spiegeln</translation>
         </message>
         <message>
             <location line="+5" />
@@ -4525,7 +4533,7 @@ Last-good watchdog</source>
         <message>
             <location line="+2" />
             <source>Choose the exact order used to apply the authored axis rotations. This is saved with the layer and is never inferred from the surface type.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie die genaue Reihenfolge der festgelegten Achsendrehungen. Sie wird mit der Ebene gespeichert und nie aus dem Oberflächentyp abgeleitet.</translation>
         </message>
         <message>
             <location line="+16" />
@@ -4534,174 +4542,174 @@ Last-good watchdog</source>
             <location line="+1618" />
             <location line="+1171" />
             <source>%</source>
-            <translation type="unfinished" />
+            <translation>%</translation>
         </message>
         <message>
             <location line="-2769" />
             <source>Composite transparent rear surfaces</source>
-            <translation type="unfinished" />
+            <translation>Transparente Rückflächen mit einblenden</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Center and normalize imported OBJ geometry</source>
-            <translation type="unfinished" />
+            <translation>Importierte OBJ-Geometrie zentrieren und normieren</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Neutral front view</source>
-            <translation type="unfinished" />
+            <translation>Neutrale Vorderansicht</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Classic three-quarter view</source>
-            <translation type="unfinished" />
+            <translation>Klassische Dreiviertelansicht</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Surface</source>
-            <translation type="unfinished" />
+            <translation>Oberfläche</translation>
         </message>
         <message>
             <location line="+1" />
             <source>OBJ file</source>
-            <translation type="unfinished" />
+            <translation>OBJ-Datei</translation>
         </message>
         <message>
             <location line="+9" />
             <source>View presets</source>
-            <translation type="unfinished" />
+            <translation>Ansichtsvorgaben</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Transform and loop animation</source>
-            <translation type="unfinished" />
+            <translation>Transformation und Schleifenanimation</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Axis</source>
-            <translation type="unfinished" />
+            <translation>Achse</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+3329" />
             <source>X</source>
-            <translation type="unfinished" />
+            <translation>X</translation>
         </message>
         <message>
             <location line="-3328" />
             <location line="+3328" />
             <source>Y</source>
-            <translation type="unfinished" />
+            <translation>Y</translation>
         </message>
         <message>
             <location line="-3327" />
             <source>Z</source>
-            <translation type="unfinished" />
+            <translation>Z</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Starting rotation (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Anfangsdrehung (Grad)</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Rotation order</source>
-            <translation type="unfinished" />
+            <translation>Drehreihenfolge</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Object scale</source>
-            <translation type="unfinished" />
+            <translation>Objektskalierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Canvas/object position</source>
-            <translation type="unfinished" />
+            <translation>Leinwand-/Objektposition</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Projection and framing</source>
-            <translation type="unfinished" />
+            <translation>Projektion und Bildausschnitt</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Projection</source>
-            <translation type="unfinished" />
+            <translation>Projektion</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fit policy</source>
-            <translation type="unfinished" />
+            <translation>Einpassungsregel</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Visible size</source>
-            <translation type="unfinished" />
+            <translation>Sichtbare Größe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Camera distance</source>
-            <translation type="unfinished" />
+            <translation>Kameraabstand</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Focal length</source>
-            <translation type="unfinished" />
+            <translation>Brennweite</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Pixels outside surface</source>
-            <translation type="unfinished" />
+            <translation>Pixel außerhalb der Oberfläche</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Shape and lighting</source>
-            <translation type="unfinished" />
+            <translation>Form und Beleuchtung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Curvature / mapping mix</source>
-            <translation type="unfinished" />
+            <translation>Krümmung / Abbildungsanteil</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Lighting amount</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtungsstärke</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Light direction</source>
-            <translation type="unfinished" />
+            <translation>Lichtrichtung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Ambient</source>
-            <translation type="unfinished" />
+            <translation>Umgebungslicht</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Diffuse</source>
-            <translation type="unfinished" />
+            <translation>Diffuslicht</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Environment-map lighting</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtung durch Umgebungskarte</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Use the environment map for surface lighting</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte zur Oberflächenbeleuchtung verwenden</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Choose an equirectangular PNG or OpenEXR map</source>
-            <translation type="unfinished" />
+            <translation>Eine äquirektangulare PNG- oder OpenEXR-Karte wählen</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Auto (PNG metadata / linear OpenEXR)</source>
-            <translation type="unfinished" />
+            <translation>Auto (PNG-Metadaten / lineares OpenEXR)</translation>
         </message>
         <message>
             <location line="+2" />
@@ -4711,122 +4719,122 @@ Last-good watchdog</source>
         <message>
             <location line="+2" />
             <source>Linear light</source>
-            <translation type="unfinished" />
+            <translation>Lineares Licht</translation>
         </message>
         <message>
             <location line="+7" />
             <source> stops</source>
-            <translation type="unfinished" />
+            <translation> Blendenstufen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Uses a Y-up equirectangular map. Rotation moves the lighting around the surface; exposure and intensity scale it. The mix runs from the authored ambient/directional lights at 0 to environment diffuse light at 1, with Lighting amount above controlling the overall result.</source>
-            <translation type="unfinished" />
+            <translation>Verwendet eine äquirektangulare Karte mit Y nach oben. Die Drehung bewegt die Beleuchtung um die Oberfläche; Belichtung und Intensität skalieren sie. Die Mischung reicht von den festgelegten Umgebungs- und Richtungslichtern bei 0 bis zum diffusen Umgebungslicht bei 1. Beleuchtungsstärke oben steuert das Gesamtergebnis.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Color encoding</source>
-            <translation type="unfinished" />
+            <translation>Farbkodierung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Exposure</source>
-            <translation type="unfinished" />
+            <translation>Belichtung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Intensity</source>
-            <translation type="unfinished" />
+            <translation>Intensität</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Direct / environment mix</source>
-            <translation type="unfinished" />
+            <translation>Direkt-/Umgebungsmischung</translation>
         </message>
         <message>
             <location line="+5" />
             <source>No camera angle, rotation, scale, fit, or light is inferred from the selected surface. New Plane mappings start as a pixel-aligned neutral view; the classic preset is an explicit recreation of the older three-quarter presentation. Transform order is scale, the selected Euler axis order, then position and projection.</source>
-            <translation type="unfinished" />
+            <translation>Aus der gewählten Oberfläche werden weder Kamerawinkel, Drehung, Skalierung, Einpassung noch Beleuchtung abgeleitet. Neue Abbildungen auf einer ebenen Fläche beginnen pixelgenau in neutraler Ansicht; die klassische Vorgabe stellt ausdrücklich die frühere Dreiviertelansicht her. Transformationsreihenfolge: Skalierung, gewählte Euler-Achsenreihenfolge, dann Position und Projektion.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Plane displacement mesh</source>
-            <translation type="unfinished" />
+            <translation>Verschiebungsnetz der ebenen Fläche</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Builds a cached subdivided plane at the current render resolution. Preview/live monitoring uses its lower working resolution; frame, video, and full-resolution live output build the corresponding full grid.</source>
-            <translation type="unfinished" />
+            <translation>Erstellt ein zwischengespeichertes unterteiltes Flächennetz mit der aktuellen Renderauflösung. Vorschau und Live-Monitoring verwenden ihre niedrigere Arbeitsauflösung; Einzelbilder, Video und Live-Ausgabe bei voller Auflösung erzeugen das entsprechende vollständige Gitter.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Displace Plane with height map</source>
-            <translation type="unfinished" />
+            <translation>Ebene Fläche mit Höhenkarte verformen</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Choose a high-precision PNG or OpenEXR height map</source>
-            <translation type="unfinished" />
+            <translation>Eine hochpräzise PNG- oder OpenEXR-Höhenkarte wählen</translation>
         </message>
         <message>
             <location line="+13" />
             <source> px/node</source>
-            <translation type="unfinished" />
+            <translation> px/Knoten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>1 creates one vertex per render pixel. Larger values create fewer vertices and triangles. Both outer edges are always retained.</source>
-            <translation type="unfinished" />
+            <translation>1 erzeugt einen Scheitelpunkt pro Renderpixel. Größere Werte erzeugen weniger Scheitelpunkte und Dreiecke. Beide Außenkanten bleiben stets erhalten.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Export output-resolution OBJ…</source>
-            <translation type="unfinished" />
+            <translation>OBJ mit Ausgabeauflösung exportieren…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Generate the same mesh used at the authored output resolution and save it as a Wavefront OBJ with UVs and smooth normals.</source>
-            <translation type="unfinished" />
+            <translation>Dasselbe Netz wie bei der festgelegten Ausgabeauflösung erzeugen und als Wavefront-OBJ mit UVs und geglätteten Normalen speichern.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>PNG sample codes and OpenEXR samples are treated as linear height data. Single-channel EXR files are supported. The midpoint is the neutral (zero-height) sample; values below/above it interpolate to the signed minimum/maximum. A changed map or setting rebuilds the cached plane automatically.</source>
-            <translation type="unfinished" />
+            <translation>PNG-Codewerte und OpenEXR-Abtastwerte werden als lineare Höhendaten behandelt. Einkanalige EXR-Dateien werden unterstützt. Der Mittelpunkt ist der neutrale Wert mit Höhe null; Werte darunter bzw. darüber werden zum vorzeichenbehafteten Minimum bzw. Maximum interpoliert. Änderungen an Karte oder Einstellungen erstellen die zwischengespeicherte Fläche automatisch neu.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Minimum displacement</source>
-            <translation type="unfinished" />
+            <translation>Minimale Verschiebung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Maximum displacement</source>
-            <translation type="unfinished" />
+            <translation>Maximale Verschiebung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Neutral midpoint</source>
-            <translation type="unfinished" />
+            <translation>Neutraler Mittelpunkt</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Pixel-to-node ratio</source>
-            <translation type="unfinished" />
+            <translation>Pixel-Knoten-Verhältnis</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Loop-safe mesh construction</source>
-            <translation type="unfinished" />
+            <translation>Nahtlose Netzkonstruktion</translation>
         </message>
         <message>
             <location line="+8" />
@@ -4866,115 +4874,115 @@ Last-good watchdog</source>
         <message>
             <location line="+32" />
             <source>Available for Custom OBJ surfaces and enabled displaced Planes. Signed whole cycles—including 0—close exactly at the loop seam. Switching to another surface temporarily disables these controls without erasing their authored values.</source>
-            <translation type="unfinished" />
+            <translation>Verfügbar für benutzerdefinierte OBJ-Oberflächen und aktivierte verformte ebene Flächen. Ganze Zyklen mit Vorzeichen, einschließlich 0, schließen exakt am Schleifenübergang. Beim Wechsel zu einer anderen Oberfläche werden diese Regler vorübergehend deaktiviert, ohne ihre festgelegten Werte zu löschen.</translation>
         </message>
         <message>
             <location line="+6" />
             <location line="+292" />
             <source>Mode</source>
-            <translation type="unfinished" />
+            <translation>Modus</translation>
         </message>
         <message>
             <location line="-291" />
             <source>Fragmentation</source>
-            <translation type="unfinished" />
+            <translation>Fragmentierung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Target fragments</source>
-            <translation type="unfinished" />
+            <translation>Angestrebte Fragmentzahl</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Travel distance</source>
-            <translation type="unfinished" />
+            <translation>Bewegungsstrecke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fragment rotation</source>
-            <translation type="unfinished" />
+            <translation>Fragmentdrehung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Minimum scale</source>
-            <translation type="unfinished" />
+            <translation>Minimale Skalierung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Stagger</source>
-            <translation type="unfinished" />
+            <translation>Staffelung</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Active post-effect stack</source>
-            <translation type="unfinished" />
+            <translation>Aktiver Nachbearbeitungsstapel</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Only effects currently applied to this layer appear here. Add, remove, or reorder them; the stack runs from top to bottom.</source>
-            <translation type="unfinished" />
+            <translation>Hier erscheinen nur die aktuell auf diese Ebene angewendeten Effekte. Fügen Sie Effekte hinzu, entfernen oder ordnen Sie sie um; der Stapel läuft von oben nach unten.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Active effects run from top to bottom on this layer before it is composited.</source>
-            <translation type="unfinished" />
+            <translation>Aktive Effekte laufen auf dieser Ebene vor der Komposition von oben nach unten.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Choose any post-effect type. The same type can be added any number of times.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie einen Nachbearbeitungseffekt. Derselbe Typ kann beliebig oft hinzugefügt werden.</translation>
         </message>
         <message>
             <location line="+10" />
             <location line="+1233" />
             <source>Move up</source>
-            <translation type="unfinished" />
+            <translation>Nach oben</translation>
         </message>
         <message>
             <location line="-1231" />
             <location line="+1232" />
             <source>Move down</source>
-            <translation type="unfinished" />
+            <translation>Nach unten</translation>
         </message>
         <message>
             <location line="-1219" />
             <source>Each row is an independent instance with its own settings. Add or duplicate a type as often as needed; removing deletes only the selected instance. Order is layer-local and runs natively on the GPU.</source>
-            <translation type="unfinished" />
+            <translation>Jede Zeile ist eine unabhängige Instanz mit eigenen Einstellungen. Fügen Sie einen Typ beliebig oft hinzu oder duplizieren Sie ihn; Entfernen löscht nur die ausgewählte Instanz. Die Reihenfolge gilt je Ebene und wird nativ auf der GPU ausgeführt.</translation>
         </message>
         <message>
             <location line="+36" />
             <source>Selected post-effect settings</source>
-            <translation type="unfinished" />
+            <translation>Einstellungen des gewählten Nachbearbeitungseffekts</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Layer-local finishing effects run in the order authored above.</source>
-            <translation type="unfinished" />
+            <translation>Die Nachbearbeitungseffekte der Ebene laufen in der oben festgelegten Reihenfolge.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Invert all RGB channels</source>
-            <translation type="unfinished" />
+            <translation>Alle RGB-Kanäle invertieren</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Invert each linear-light RGB channel around reference white. HDR and out-of-range working values remain unclamped.</source>
-            <translation type="unfinished" />
+            <translation>Jeden RGB-Kanal in linearem Licht um Referenzweiß invertieren. HDR- und außerhalb des Bereichs liegende Arbeitswerte bleiben unbegrenzt.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Crossfade from the original color at 0 to fully inverted color at 1. The stage acts on the value entering its current position in the authored order.</source>
-            <translation type="unfinished" />
+            <translation>Überblendung von der Originalfarbe bei 0 zur vollständig invertierten Farbe bei 1. Die Stufe wirkt auf den Wert an ihrer aktuellen Position in der festgelegten Reihenfolge.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Invert this linear-light channel at its current position in the authored order. Two enabled inversion stages can intentionally invert the same channel twice.</source>
-            <translation type="unfinished" />
+            <translation>Diesen Kanal in linearem Licht an seiner aktuellen Position in der festgelegten Reihenfolge invertieren. Zwei aktivierte Invertierungsstufen können denselben Kanal bewusst zweimal invertieren.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Crossfade between the value entering this channel stage at 0 and its inversion at 1.</source>
-            <translation type="unfinished" />
+            <translation>Überblendung zwischen dem Eingangswert dieser Kanalstufe bei 0 und seiner Invertierung bei 1.</translation>
         </message>
         <message>
             <location line="+6" />
@@ -4999,168 +5007,168 @@ Last-good watchdog</source>
         <message>
             <location line="+3" />
             <source>Invert layer transparency independently from its RGB channels.</source>
-            <translation type="unfinished" />
+            <translation>Ebenentransparenz unabhängig von den RGB-Kanälen invertieren.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Crossfade from the original alpha at 0 to fully inverted alpha at 1.</source>
-            <translation type="unfinished" />
+            <translation>Überblendung vom Originalalpha bei 0 zum vollständig invertierten Alpha bei 1.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Use custom channel routing (off keeps RGBA unchanged)</source>
-            <translation type="unfinished" />
+            <translation>Eigene Kanalzuordnung verwenden (aus: RGBA unverändert)</translation>
         </message>
         <message>
             <location line="+3" />
             <source>When off, red stays red, green stays green, blue stays blue, and alpha stays alpha. When on, each output uses the input selected below.</source>
-            <translation type="unfinished" />
+            <translation>Aus: Rot bleibt Rot, Grün bleibt Grün, Blau bleibt Blau und Alpha bleibt Alpha. An: Jeder Ausgang verwendet den unten gewählten Eingang.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>0 keeps the incoming pixel unchanged; 1 applies the selected routing fully. Intermediate values blend between them.</source>
-            <translation type="unfinished" />
+            <translation>0 lässt das Eingangspixel unverändert; 1 wendet die gewählte Zuordnung vollständig an. Zwischenwerte mischen beide Ergebnisse.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Input red</source>
-            <translation type="unfinished" />
+            <translation>Eingangsrot</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Input green</source>
-            <translation type="unfinished" />
+            <translation>Eingangsgrün</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Input blue</source>
-            <translation type="unfinished" />
+            <translation>Eingangsblau</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Input alpha</source>
-            <translation type="unfinished" />
+            <translation>Eingangsalpha</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Constant 0 (empty)</source>
-            <translation type="unfinished" />
+            <translation>Konstante 0 (leer)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Constant 1 (full)</source>
-            <translation type="unfinished" />
+            <translation>Konstante 1 (voll)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Select the incoming channel or constant used for this output. All four selections read the same incoming pixel.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie den Eingangskanal oder die Konstante für diesen Ausgang. Alle vier Auswahlen lesen dasselbe Eingangspixel.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Keep original RGBA</source>
-            <translation type="unfinished" />
+            <translation>Original-RGBA beibehalten</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Turn channel routing off and reset every output to its matching input.</source>
-            <translation type="unfinished" />
+            <translation>Kanalzuordnung deaktivieren und jeden Ausgang auf den zugehörigen Eingang zurücksetzen.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Edge antialiasing</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Smooth high-contrast edges in premultiplied-alpha space so hidden RGB cannot bleed through transparent pixels.</source>
-            <translation type="unfinished" />
+            <translation>Kontrastreiche Kanten im Raum mit vormultipliziertem Alpha glätten, damit verborgenes RGB nicht durch transparente Pixel durchscheint.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Amount of edge-aware neighborhood smoothing.</source>
-            <translation type="unfinished" />
+            <translation>Stärke der kantenbewussten Nachbarschaftsglättung.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Minimum local contrast treated as an edge. Lower values smooth more pixels.</source>
-            <translation type="unfinished" />
+            <translation>Minimaler lokaler Kontrast, der als Kante gilt. Niedrigere Werte glätten mehr Pixel.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Repeat the antialias pass for stronger smoothing. Additional passes cost frame time.</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättung für stärkere Glättung wiederholen. Zusätzliche Durchläufe erhöhen die Bildberechnungszeit.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>All-RGB invert mix</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil gesamte RGB-Invertierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Red invert mix</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil Rot-Invertierung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Green invert mix</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil Grün-Invertierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Blue invert mix</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil Blau-Invertierung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Alpha invert mix</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil Alpha-Invertierung</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Routing amount (0 = unchanged, 1 = routed)</source>
-            <translation type="unfinished" />
+            <translation>Zuordnungsanteil (0 = unverändert, 1 = zugeordnet)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Red output  ←</source>
-            <translation type="unfinished" />
+            <translation>Rot-Ausgang  ←</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Green output  ←</source>
-            <translation type="unfinished" />
+            <translation>Grün-Ausgang  ←</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blue output  ←</source>
-            <translation type="unfinished" />
+            <translation>Blau-Ausgang  ←</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Alpha output  ←</source>
-            <translation type="unfinished" />
+            <translation>Alpha-Ausgang  ←</translation>
         </message>
         <message>
             <location line="+7" />
             <location line="+7325" />
             <source>Edge threshold</source>
-            <translation type="unfinished" />
+            <translation>Kantenschwelle</translation>
         </message>
         <message>
             <location line="-7323" />
             <source>Passes</source>
-            <translation type="unfinished" />
+            <translation>Durchläufe</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Post-effects color quantization</source>
-            <translation type="unfinished" />
+            <translation>Farbquantisierung nach Effekten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Quantization enabled</source>
-            <translation type="unfinished" />
+            <translation>Quantisierung aktiviert</translation>
         </message>
         <message>
             <location line="+4" />
@@ -5180,79 +5188,79 @@ Last-good watchdog</source>
         <message>
             <location line="+2" />
             <source>Levels</source>
-            <translation type="unfinished" />
+            <translation>Stufen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Mix</source>
-            <translation type="unfinished" />
+            <translation>Mischung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Alpha channel</source>
-            <translation type="unfinished" />
+            <translation>Alphakanal</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Procedural alpha modulation</source>
-            <translation type="unfinished" />
+            <translation>Prozedurale Alphamodulation</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Controls opacity generated by this layer. The project output channel selection is configured separately in Export.</source>
-            <translation type="unfinished" />
+            <translation>Steuert die von dieser Ebene erzeugte Deckkraft. Die Ausgabekanäle des Projekts werden separat unter Exportieren ausgewählt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Use alpha stored in starting palettes and image pixels</source>
-            <translation type="unfinished" />
+            <translation>Gespeichertes Alpha aus Ausgangspaletten und Bildpixeln verwenden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This does not change generated alpha or layer opacity. Turning it off ignores palette and image alpha non-destructively; those authored values remain available when re-enabled.</source>
-            <translation type="unfinished" />
+            <translation>Ändert weder generiertes Alpha noch Ebenendeckkraft. Deaktivieren ignoriert Paletten- und Bildalpha zerstörungsfrei; diese Werte sind nach erneuter Aktivierung wieder verfügbar.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Starting phase (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Anfangsphase (Grad)</translation>
         </message>
         <message>
             <location line="+54" />
             <source>Use classic surface view</source>
-            <translation type="unfinished" />
+            <translation>Klassische Oberflächenansicht verwenden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Use neutral surface view</source>
-            <translation type="unfinished" />
+            <translation>Neutrale Oberflächenansicht verwenden</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Applied an explicit classic three-quarter surface view.</source>
-            <translation type="unfinished" />
+            <translation>Explizite klassische Dreiviertelansicht der Oberfläche angewendet.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Removed surface camera, rotation, scale, position, and lighting transforms.</source>
-            <translation type="unfinished" />
+            <translation>Kamera-, Drehungs-, Skalierungs-, Positions- und Beleuchtungstransformationen der Oberfläche entfernt.</translation>
         </message>
         <message>
             <location line="+19" />
             <location line="+137" />
             <location line="+8221" />
             <source>Project layer: %1 — %2</source>
-            <translation type="unfinished" />
+            <translation>Projektebene: %1 — %2</translation>
         </message>
         <message>
             <location line="-8353" />
             <source>Load a different OBJ from disk…</source>
-            <translation type="unfinished" />
+            <translation>Andere OBJ-Datei vom Datenträger laden…</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Choose custom OBJ asset</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefinierte OBJ-Ressource wählen</translation>
         </message>
         <message>
             <location line="+0" />
@@ -5260,283 +5268,283 @@ Last-good watchdog</source>
             <location line="+11037" />
             <location line="+113" />
             <source>Matching project assets</source>
-            <translation type="unfinished" />
+            <translation>Passende Projektressourcen</translation>
         </message>
         <message>
             <location line="-11274" />
             <source>Could not reuse OBJ</source>
-            <translation type="unfinished" />
+            <translation>OBJ konnte nicht wiederverwendet werden</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Reuse embedded custom OBJ</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes benutzerdefiniertes OBJ wiederverwenden</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+137" />
             <source>Reused %1 without duplicating its bytes.</source>
-            <translation type="unfinished" />
+            <translation>%1 ohne Duplizieren seiner Daten wiederverwendet.</translation>
         </message>
         <message>
             <location line="-122" />
             <source>Choose custom OBJ mesh</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefiniertes OBJ-Netz wählen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Wavefront OBJ (*.obj);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>Wavefront OBJ (*.obj);;Alle Dateien (*)</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Replace embedded OBJ?</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes OBJ ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Replace the active layer's current internal OBJ binding with %1?</source>
-            <translation type="unfinished" />
+            <translation>Die aktuelle interne OBJ-Bindung der aktiven Ebene durch %1 ersetzen?</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Choose plane displacement height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte zur Flächenverschiebung wählen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>PNG / OpenEXR height maps (*.png *.exr);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>PNG-/OpenEXR-Höhenkarten (*.png *.exr);;Alle Dateien (*)</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Replace embedded height map?</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Höhenkarte ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Replace the active layer's plane-displacement map with %1?</source>
-            <translation type="unfinished" />
+            <translation>Die Flächenverschiebungskarte der aktiven Ebene durch %1 ersetzen?</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Choose environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte wählen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>PNG / OpenEXR environment maps (*.png *.exr);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>PNG-/OpenEXR-Umgebungskarten (*.png *.exr);;Alle Dateien (*)</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Replace embedded environment map?</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Umgebungskarte ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Replace the active layer's environment map with %1?</source>
-            <translation type="unfinished" />
+            <translation>Die Umgebungskarte der aktiven Ebene durch %1 ersetzen?</translation>
         </message>
         <message>
             <location line="+26" />
             <source>Load a different PNG or OpenEXR from disk…</source>
-            <translation type="unfinished" />
+            <translation>Andere PNG- oder OpenEXR-Datei vom Datenträger laden…</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Choose starting image asset</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbildressource wählen</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Could not reuse image</source>
-            <translation type="unfinished" />
+            <translation>Bild konnte nicht wiederverwendet werden</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Reuse embedded starting image</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes Ausgangsbild wiederverwenden</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Choose starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild wählen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>High-precision image (*.png *.exr)</source>
-            <translation type="unfinished" />
+            <translation>Hochpräzises Bild (*.png *.exr)</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Replace embedded starting image?</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes Ausgangsbild ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Replace the active layer's current internal image binding with %1?</source>
-            <translation type="unfinished" />
+            <translation>Die aktuelle interne Bildbindung der aktiven Ebene durch %1 ersetzen?</translation>
         </message>
         <message>
             <location line="+53" />
             <source>Project-wide image dimensions, block resolution, frame count, and playback rate. These values define the timeline shared by every layer.</source>
-            <translation type="unfinished" />
+            <translation>Projektweite Bildabmessungen, Blockauflösung, Bildanzahl und Wiedergaberate. Diese Werte definieren die gemeinsame Zeitleiste aller Ebenen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Project Identity</source>
-            <translation type="unfinished" />
+            <translation>Projektidentität</translation>
         </message>
         <message>
             <location line="+8" />
             <source>The display name appears in the window title and supplies the default bundle name.</source>
-            <translation type="unfinished" />
+            <translation>Der Anzeigename erscheint im Fenstertitel und dient als Standardname des Projektpakets.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Project Settings</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Canvas &amp;&amp; Loop</source>
-            <translation type="unfinished" />
+            <translation>Leinwand &amp;&amp; Schleife</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Sync &amp;&amp; Audio</source>
-            <translation type="unfinished" />
+            <translation>Synchronisation &amp;&amp; Audio</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Open project-wide dimensions, frame count, and playback rate.</source>
-            <translation type="unfinished" />
+            <translation>Projektweite Abmessungen, Bildanzahl und Wiedergaberate öffnen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Open the persistent Drivers controls for project clock and inherited audio response.</source>
-            <translation type="unfinished" />
+            <translation>Dauerhaft verfügbare Steuerungsregler für Projekttakt und geerbte Audioreaktion öffnen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Open project-wide image encoding and output destination settings.</source>
-            <translation type="unfinished" />
+            <translation>Projektweite Bildkodierung und Ausgabezieleinstellungen öffnen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Open immutable saved versions, rollback actions, and semantic comparison.</source>
-            <translation type="unfinished" />
+            <translation>Unveränderliche gespeicherte Versionen, Rücksetzaktionen und semantischen Vergleich öffnen.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Project settings: Canvas and Loop</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen: Leinwand und Schleife</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Project settings: Synchronization and Audio</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen: Synchronisation und Audio</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Project settings: Export</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen: Export</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Project settings: History</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellungen: Verlauf</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Everything needed to understand or start an export is collected here. Canvas size and frame timing are summarized below and remain editable in Project; encoding, destination, and file naming are editable on this page.</source>
-            <translation type="unfinished" />
+            <translation>Hier finden Sie alles zum Verstehen oder Starten eines Exports. Leinwandgröße und Bild-Timing sind unten zusammengefasst und bleiben unter Projekt bearbeitbar; Kodierung, Ziel und Dateibenennung bearbeiten Sie auf dieser Seite.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Canvas and loop</source>
-            <translation type="unfinished" />
+            <translation>Leinwand und Schleife</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Width</source>
-            <translation type="unfinished" />
+            <translation>Breite</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Height</source>
-            <translation type="unfinished" />
+            <translation>Höhe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Block size</source>
-            <translation type="unfinished" />
+            <translation>Blockgröße</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Manual frames</source>
-            <translation type="unfinished" />
+            <translation>Manuelle Bildanzahl</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Effective duration</source>
-            <translation type="unfinished" />
+            <translation>Wirksame Dauer</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Playback FPS</source>
-            <translation type="unfinished" />
+            <translation>Wiedergabe (Bilder/s)</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Canvas and timeline</source>
-            <translation type="unfinished" />
+            <translation>Leinwand und Zeitleiste</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Edit Canvas &amp;&amp; Timeline…</source>
-            <translation type="unfinished" />
+            <translation>Leinwand &amp;&amp; Zeitleiste bearbeiten…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Open project-wide width, height, block size, frame count, and playback rate.</source>
-            <translation type="unfinished" />
+            <translation>Projektweite Breite, Höhe, Blockgröße, Bildanzahl und Wiedergaberate öffnen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>8-bit PNG</source>
-            <translation type="unfinished" />
+            <translation>8-Bit-PNG</translation>
         </message>
         <message>
             <location line="+1" />
             <source>16-bit PNG</source>
-            <translation type="unfinished" />
+            <translation>16-Bit-PNG</translation>
         </message>
         <message>
             <location line="+1" />
             <source>32-bit float EXR</source>
-            <translation type="unfinished" />
+            <translation>32-Bit-Fließkomma-EXR</translation>
         </message>
         <message>
             <location line="+3" />
             <source>PNG compression from 0 (fastest) to 9 (smallest files). Ignored for EXR.</source>
-            <translation type="unfinished" />
+            <translation>PNG-Kompression von 0 (am schnellsten) bis 9 (kleinste Dateien). Bei EXR ignoriert.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Dither integer output</source>
-            <translation type="unfinished" />
+            <translation>Dithering für Ganzzahlausgabe</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Float EXR never uses dithering. The integer-output preference is preserved.</source>
-            <translation type="unfinished" />
+            <translation>Fließkomma-EXR verwendet nie Dithering. Die Einstellung für Ganzzahlausgabe bleibt erhalten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Deterministic blue-noise-like</source>
-            <translation type="unfinished" />
+            <translation>Deterministisch, ähnlich blauem Rauschen</translation>
         </message>
         <message>
             <location line="+2" />
@@ -5551,322 +5559,324 @@ Last-good watchdog</source>
         <message>
             <location line="+2" />
             <source>Write final alpha channel</source>
-            <translation type="unfinished" />
+            <translation>Endgültigen Alphakanal schreiben</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Project-global RGB/RGBA selection. Automatically enabled when layering or render data can produce transparency.</source>
-            <translation type="unfinished" />
+            <translation>Projektweite RGB-/RGBA-Auswahl. Wird automatisch aktiviert, wenn Ebenen oder Renderdaten Transparenz erzeugen können.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Overwrite existing output</source>
-            <translation type="unfinished" />
+            <translation>Vorhandene Ausgabedateien überschreiben</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Bit depth</source>
-            <translation type="unfinished" />
+            <translation>Bittiefe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>PNG compression (0 off, 9 max)</source>
-            <translation type="unfinished" />
+            <translation>PNG-Kompression (0 aus, 9 maximal)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Dither method</source>
-            <translation type="unfinished" />
+            <translation>Dithering-Methode</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Directory</source>
-            <translation type="unfinished" />
+            <translation>Verzeichnis</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Filename prefix</source>
-            <translation type="unfinished" />
+            <translation>Dateinamenpräfix</translation>
         </message>
         <message>
             <location line="+1" />
             <source>First frame number</source>
-            <translation type="unfinished" />
+            <translation>Erste Bildnummer</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Minimum number digits</source>
-            <translation type="unfinished" />
+            <translation>Mindestanzahl Ziffern</translation>
         </message>
         <message>
             <location line="+4" />
             <location line="+1317" />
             <source>Live Preview Output</source>
-            <translation type="unfinished" />
+            <translation>Live-Vorschauausgabe</translation>
         </message>
         <message>
             <location line="-1314" />
             <source>Present the editor preview on another window or display without starting microphone, MIDI, OSC, scenes, routed clocks, or the LIVE performance workspace.</source>
-            <translation type="unfinished" />
+            <translation>Die Editorvorschau in einem anderen Fenster oder auf einem anderen Bildschirm zeigen, ohne Mikrofon, MIDI, OSC, Szenen, zugeordnete Takte oder den LIVE-Performance-Arbeitsbereich zu starten.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Auto · frame-budget managed</source>
-            <translation type="unfinished" />
+            <translation>Auto · nach Bildzeitbudget geregelt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>100% of output size</source>
-            <translation type="unfinished" />
+            <translation>100% der Ausgabegröße</translation>
         </message>
         <message>
             <location line="+1" />
             <source>75%</source>
-            <translation type="unfinished" />
+            <translation>75%</translation>
         </message>
         <message>
             <location line="+1" />
             <source>50%</source>
-            <translation type="unfinished" />
+            <translation>50%</translation>
         </message>
         <message>
             <location line="+1" />
             <source>25%</source>
-            <translation type="unfinished" />
+            <translation>25%</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fits the project to the output window's pixels, capped at project resolution. Auto reduces resolution when frames miss their deadline. Choose a fixed percentage for performance comparisons and compare the delivered dimensions.</source>
-            <translation type="unfinished" />
+            <translation>Passt das Projekt an die Pixelgröße des Ausgabefensters an, höchstens bis zur Projektauflösung. Auto verringert die Auflösung, wenn Bilder ihre Frist überschreiten. Wählen Sie für Leistungsvergleiche einen festen Prozentsatz und vergleichen Sie die ausgegebenen Abmessungen.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Full-screen output</source>
-            <translation type="unfinished" />
+            <translation>Vollbildausgabe</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Hide pointer over output</source>
-            <translation type="unfinished" />
+            <translation>Mauszeiger über der Ausgabe ausblenden</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Display</source>
-            <translation type="unfinished" />
+            <translation>Anzeige</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Render quality</source>
-            <translation type="unfinished" />
+            <translation>Renderqualität</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Start export</source>
-            <translation type="unfinished" />
+            <translation>Export starten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Export Frames…</source>
-            <translation type="unfinished" />
+            <translation>Bilder exportieren…</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+1267" />
             <source>Export Video…</source>
-            <translation type="unfinished" />
+            <translation>Video exportieren…</translation>
         </message>
         <message>
             <location line="-1257" />
             <source>Choose export directory</source>
-            <translation type="unfinished" />
+            <translation>Exportverzeichnis wählen</translation>
         </message>
         <message>
             <location line="+65" />
             <source>Make Current</source>
-            <translation type="unfinished" />
+            <translation>Als aktuelle Version festlegen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Revert as New Version</source>
-            <translation type="unfinished" />
+            <translation>Als neue Version wiederherstellen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Point the bundle at this immutable version without deleting later versions.</source>
-            <translation type="unfinished" />
+            <translation>Das Projektpaket auf diese unveränderliche Version verweisen lassen, ohne spätere Versionen zu löschen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Copy this snapshot into a new highest-numbered version, preserving rollback.</source>
-            <translation type="unfinished" />
+            <translation>Diese Momentaufnahme in eine neue Version mit der höchsten Nummer kopieren und die Rückkehr zu früheren Versionen ermöglichen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Semantic version diff</source>
-            <translation type="unfinished" />
+            <translation>Semantischer Versionsvergleich</translation>
         </message>
         <message>
             <location line="+5" />
             <source>From</source>
-            <translation type="unfinished" />
+            <translation>Von</translation>
         </message>
         <message>
             <location line="+2" />
             <source>To</source>
-            <translation type="unfinished" />
+            <translation>Bis</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Compare</source>
-            <translation type="unfinished" />
+            <translation>Vergleichen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Load and compare the selected snapshots in the background.</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählte Momentaufnahmen im Hintergrund laden und vergleichen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Save at least two versions to compare project, output, layer, and render fields.</source>
-            <translation type="unfinished" />
+            <translation>Speichern Sie mindestens zwei Versionen, um Projekt-, Ausgabe-, Ebenen- und Renderfelder zu vergleichen.</translation>
         </message>
         <message>
             <location line="+9" />
             <location line="+102" />
             <source>Choose two versions and select Compare. Comparison runs in the background.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie zwei Versionen und dann Vergleichen. Der Vergleich läuft im Hintergrund.</translation>
         </message>
         <message>
             <location line="-60" />
             <source>Version %1 — %2 — %3 layer(s)</source>
-            <translation type="unfinished" />
+            <translation>Version %1 — %2 — Ebenen: %3</translation>
         </message>
         <message>
             <location line="+4" />
             <source>CURRENT  </source>
-            <translation type="unfinished" />
+            <translation>AKTUELL  </translation>
         </message>
         <message>
             <location line="+1" />
             <source>  [unindexed version]</source>
-            <translation type="unfinished" />
+            <translation>  [nicht indizierte Version]</translation>
         </message>
         <message>
             <location line="+2" />
             <source>  [integrity mismatch]</source>
-            <translation type="unfinished" />
+            <translation>  [Integritätsabweichung]</translation>
         </message>
         <message>
             <location line="+2" />
             <source>  [external change / integrity mismatch]</source>
-            <translation type="unfinished" />
+            <translation>  [externe Änderung / Integritätsabweichung]</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Version %1</source>
-            <translation type="unfinished" />
+            <translation>Version %1</translation>
         </message>
         <message>
             <location line="+26" />
-            <location line="+17411" />
+            <location line="+17421" />
             <source>Not saved as a bundle yet</source>
-            <translation type="unfinished" />
+            <translation>Noch nicht als Projektpaket gespeichert</translation>
         </message>
         <message>
-            <location line="-17408" />
+            <location line="-17418" />
             <source>%1
 Project UUID: %2
 %3 saved version(s). Versions are immutable; revert always creates another version.</source>
-            <translation type="unfinished" />
+            <translation>%1
+Projekt-UUID: %2
+Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen erstellt immer eine weitere Version.</translation>
         </message>
         <message>
             <location line="+33" />
             <location line="+38" />
             <source>The same version is selected on both sides.</source>
-            <translation type="unfinished" />
+            <translation>Auf beiden Seiten ist dieselbe Version ausgewählt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Comparing versions in the background…</source>
-            <translation type="unfinished" />
+            <translation>Versionen werden im Hintergrund verglichen…</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Could not start version comparison: %1</source>
-            <translation type="unfinished" />
+            <translation>Versionsvergleich konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Could not start the background version comparison.</source>
-            <translation type="unfinished" />
+            <translation>Versionsvergleich im Hintergrund konnte nicht gestartet werden.</translation>
         </message>
         <message>
             <location line="+28" />
             <source>Could not change version</source>
-            <translation type="unfinished" />
+            <translation>Version konnte nicht gewechselt werden</translation>
         </message>
         <message>
             <location line="+42" />
             <source>Revert as a new version?</source>
-            <translation type="unfinished" />
+            <translation>Als neue Version wiederherstellen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Create a new version copied from version %1 and make it current?</source>
-            <translation type="unfinished" />
+            <translation>Eine neue Version aus Version %1 erstellen und als aktuell festlegen?</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Could not revert version</source>
-            <translation type="unfinished" />
+            <translation>Version konnte nicht wiederhergestellt werden</translation>
         </message>
         <message>
             <location line="+25" />
             <location line="+14037" />
             <source>Layers &amp;&amp; Groups</source>
-            <translation type="unfinished" />
+            <translation>Ebenen &amp;&amp; Gruppen</translation>
         </message>
         <message>
             <location line="-14032" />
             <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
-            <translation type="unfinished" />
+            <translation>Ziehen Sie die Titelleiste, um dieses Panel zu verschieben oder anzudocken. Ein Doppelklick wechselt zwischen schwebend und angedockt.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Top rows paint over the layers below them. Groups are contiguous folders that move, hide, lock, and solo their layers together. Solo is preview-only.</source>
-            <translation type="unfinished" />
+            <translation>Obere Zeilen werden über darunterliegende Ebenen gemalt. Gruppen sind zusammenhängende Ordner, deren Ebenen gemeinsam verschoben, ausgeblendet, gesperrt und solo geschaltet werden. Solo gilt nur für die Vorschau.</translation>
         </message>
         <message>
             <location line="+19" />
             <location line="+3706" />
             <source>Add group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe hinzufügen</translation>
         </message>
         <message>
             <location line="-3705" />
             <source>Remove group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe entfernen</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Selected layer</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählte Ebene</translation>
         </message>
         <message>
             <location line="+5" />
             <location line="+42" />
             <source>Visible in preview and export</source>
-            <translation type="unfinished" />
+            <translation>In Vorschau und Export sichtbar</translation>
         </message>
         <message>
             <location line="-41" />
             <source>Solo in preview</source>
-            <translation type="unfinished" />
+            <translation>Solo in der Vorschau</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Normal (none)</source>
-            <translation type="unfinished" />
+            <translation>Normal (keine)</translation>
         </message>
         <message>
             <location line="+5" />
@@ -5881,1201 +5891,1201 @@ Project UUID: %2
         <message>
             <location line="+3" />
             <source>Alpha Over paints this layer over the accumulated lower stack. Alpha Under places it beneath that stack after applying the selected blend.</source>
-            <translation type="unfinished" />
+            <translation>Alpha darüber malt diese Ebene über den angesammelten unteren Stapel. Alpha darunter platziert sie nach Anwendung der gewählten Mischung unter diesem Stapel.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Blend</source>
-            <translation type="unfinished" />
+            <translation>Mischmodus</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Alpha Mode</source>
-            <translation type="unfinished" />
+            <translation>Alphamodus</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Opacity</source>
-            <translation type="unfinished" />
+            <translation>Deckkraft</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Selected group</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählte Gruppe</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Solo group in preview</source>
-            <translation type="unfinished" />
+            <translation>Gruppe solo in der Vorschau</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Lock group and contained layers</source>
-            <translation type="unfinished" />
+            <translation>Gruppe und enthaltene Ebenen sperren</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Layers &amp; Groups is floating. Double-click its title bar to dock it, or use View &gt; Restore Layers &amp; Groups Panel.</source>
-            <translation type="unfinished" />
+            <translation>Ebenen und Gruppen ist schwebend. Doppelklicken Sie zum Andocken auf die Titelleiste oder wählen Sie Ansicht &gt; Panel Ebenen und Gruppen wiederherstellen.</translation>
         </message>
         <message>
             <location line="+40" />
             <source>Project names cannot be empty or contain control characters or path separators.</source>
-            <translation type="unfinished" />
+            <translation>Projektnamen dürfen nicht leer sein und keine Steuerzeichen oder Pfadtrennzeichen enthalten.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Rename layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene umbenennen</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Show layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene einblenden</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Hide layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene ausblenden</translation>
         </message>
         <message>
             <location line="+31" />
             <source>Change layer blend</source>
-            <translation type="unfinished" />
+            <translation>Ebenenmischmodus ändern</translation>
         </message>
         <message>
             <location line="+31" />
             <source>Change layer alpha mode</source>
-            <translation type="unfinished" />
+            <translation>Alphamodus der Ebene ändern</translation>
         </message>
         <message>
             <location line="+26" />
             <source>Change layer opacity</source>
-            <translation type="unfinished" />
+            <translation>Ebenendeckkraft ändern</translation>
         </message>
         <message>
             <location line="+37" />
             <source>Rename group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe umbenennen</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Show group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe einblenden</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Hide group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe ausblenden</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Lock group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe sperren</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Unlock group</source>
-            <translation type="unfinished" />
+            <translation>Gruppe entsperren</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Layers &amp; Groups restored to the left side.</source>
-            <translation type="unfinished" />
+            <translation>Ebenen und Gruppen auf der linken Seite wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Project timeline transport</source>
-            <translation type="unfinished" />
+            <translation>Wiedergabesteuerung der Projektzeitleiste</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+98" />
-            <location line="+16596" />
+            <location line="+16599" />
             <source>Play</source>
-            <translation type="unfinished" />
+            <translation>Wiedergabe</translation>
         </message>
         <message>
-            <location line="-16693" />
+            <location line="-16696" />
             <source>Previous beat</source>
-            <translation type="unfinished" />
+            <translation>Vorheriger Beat</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Next beat</source>
-            <translation type="unfinished" />
+            <translation>Nächster Beat</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Current project frame</source>
-            <translation type="unfinished" />
+            <translation>Aktuelles Projektbild</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Scrub the single project-wide render timeline. Every visible layer is evaluated at this frame.</source>
-            <translation type="unfinished" />
+            <translation>Durch die gemeinsame Renderzeitleiste des Projekts navigieren. Jede sichtbare Ebene wird bei diesem Bild ausgewertet.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Monitoring volume for the synchronized mix of audible project and active-layer Music clocks. Data-only sources stay silent.</source>
-            <translation type="unfinished" />
+            <translation>Abhörlautstärke der synchronisierten Mischung hörbarer Musiktakte von Projekt und aktiver Ebene. Quellen im Modus Nur Daten bleiben stumm.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Current time and frame readout</source>
-            <translation type="unfinished" />
+            <translation>Anzeige von aktueller Zeit und Bildnummer</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Project timeline</source>
-            <translation type="unfinished" />
+            <translation>Projektzeitleiste</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Audio</source>
-            <translation type="unfinished" />
+            <translation>Audio</translation>
         </message>
         <message>
             <location line="+36" />
             <location line="+5403" />
             <source>Editor playback is paused until the export finishes.</source>
-            <translation type="unfinished" />
+            <translation>Die Editorwiedergabe ist bis zum Ende des Exports angehalten.</translation>
         </message>
         <message>
             <location line="-5395" />
             <location line="+5393" />
             <source>Stop performance LIVE before starting editor playback.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie die LIVE-Performance, bevor Sie die Editorwiedergabe starten.</translation>
         </message>
         <message>
             <location line="-5378" />
             <source>Pause</source>
-            <translation type="unfinished" />
+            <translation>Pause</translation>
         </message>
         <message>
             <location line="+48" />
             <source>Preview is playing silently because an audible embedded music source is unavailable or has already finished.</source>
-            <translation type="unfinished" />
+            <translation>Die Vorschau läuft stumm, weil eine hörbare eingebettete Musikquelle nicht verfügbar oder bereits beendet ist.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Preview is playing silently: %1</source>
-            <translation type="unfinished" />
+            <translation>Die Vorschau läuft stumm: %1</translation>
         </message>
         <message>
             <location line="+44" />
             <source>Editing the live project — input, rendering, and stage output remain active in the LIVE window.</source>
-            <translation type="unfinished" />
+            <translation>Live-Projekt wird bearbeitet — Eingänge, Rendering und Bühnenausgabe bleiben im LIVE-Fenster aktiv.</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+154" />
             <source>Edit mode — Flow Workbench ready.</source>
-            <translation type="unfinished" />
+            <translation>Bearbeitungsmodus — Flow-Arbeitsbereich bereit.</translation>
         </message>
         <message>
             <location line="-144" />
             <source>Finish or cancel the active export, project operation, or music analysis before opening LIVE.</source>
-            <translation type="unfinished" />
+            <translation>Beenden oder brechen Sie den laufenden Export, Projektvorgang oder die Musikanalyse ab, bevor Sie LIVE öffnen.</translation>
         </message>
         <message>
             <location line="+53" />
             <source>Finish the active export, project operation, or music analysis before starting Live Preview Output.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie den laufenden Export, Projektvorgang oder die Musikanalyse, bevor Sie die Live-Vorschauausgabe starten.</translation>
         </message>
         <message>
             <location line="+39" />
             <source>Procedural Visualizer Tool — LIVE</source>
-            <translation type="unfinished" />
+            <translation>Procedural Visualizer Tool — LIVE</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Live opened in its own window; the editor preview follows the same routed clocks.</source>
-            <translation type="unfinished" />
+            <translation>Live wurde in einem eigenen Fenster geöffnet; die Editorvorschau folgt denselben zugeordneten Takten.</translation>
         </message>
         <message>
             <location line="+63" />
             <source>Live project settings are locked until the project file operation finishes.</source>
-            <translation type="unfinished" />
+            <translation>Die Live-Projekteinstellungen bleiben bis zum Ende des Projektdateivorgangs gesperrt.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Live setting was not applied: %1</source>
-            <translation type="unfinished" />
+            <translation>Live-Einstellung wurde nicht angewendet: %1</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Edit Live performance settings</source>
-            <translation type="unfinished" />
+            <translation>Live-Performance-Einstellungen bearbeiten</translation>
         </message>
         <message>
             <location line="+13" />
             <source>&amp;File</source>
-            <translation type="unfinished" />
+            <translation>&amp;Datei</translation>
         </message>
         <message>
             <location line="+1" />
             <source>&amp;Edit</source>
-            <translation type="unfinished" />
+            <translation>&amp;Bearbeiten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>&amp;View</source>
-            <translation type="unfinished" />
+            <translation>&amp;Ansicht</translation>
         </message>
         <message>
             <location line="+2" />
             <source>&amp;Mode</source>
-            <translation type="unfinished" />
+            <translation>&amp;Modus</translation>
         </message>
         <message>
             <location line="+2" />
             <source>&amp;Settings</source>
-            <translation type="unfinished" />
+            <translation>&amp;Einstellungen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>&amp;Help</source>
-            <translation type="unfinished" />
+            <translation>&amp;Hilfe</translation>
         </message>
         <message>
             <location line="+6" />
             <source>New Project</source>
-            <translation type="unfinished" />
+            <translation>Neues Projekt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Open / Import…</source>
-            <translation type="unfinished" />
+            <translation>Öffnen / Importieren…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Open Bundle Folder…</source>
-            <translation type="unfinished" />
+            <translation>Projektpaketordner öffnen…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Show Project in File Browser</source>
-            <translation type="unfinished" />
+            <translation>Projekt im Dateimanager anzeigen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Save…</source>
-            <translation type="unfinished" />
+            <translation>Speichern…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Save As…</source>
-            <translation type="unfinished" />
+            <translation>Speichern unter…</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Open a folder project directly, or reveal and select a project file in the environment's default file browser.</source>
-            <translation type="unfinished" />
+            <translation>Ein Ordnerprojekt direkt öffnen oder eine Projektdatei im Standarddateimanager anzeigen und auswählen.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Open Recent</source>
-            <translation type="unfinished" />
+            <translation>Zuletzt geöffnet</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Randomize Values…</source>
-            <translation type="unfinished" />
+            <translation>Werte zufällig wählen…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Randomize bounded, loop-safe parameters while preserving each item's name, type, enabled state, and position in its stack.</source>
-            <translation type="unfinished" />
+            <translation>Begrenzte, nahtlos schleifenfähige Parameter zufällig wählen und dabei Name, Typ, Aktivierungszustand und Stapelposition jedes Elements erhalten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Random Mix…</source>
-            <translation type="unfinished" />
+            <translation>Zufallsmischung…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Create a new bounded mix of waves, swing waveforms, effect types, and enabled items.</source>
-            <translation type="unfinished" />
+            <translation>Eine neue begrenzte Mischung aus Wellen, Swing-Wellenformen, Effekttypen und aktivierten Elementen erzeugen.</translation>
         </message>
         <message>
             <location line="+5" />
             <location line="+11942" />
             <source>LFOs…</source>
-            <translation type="unfinished" />
+            <translation>LFOs…</translation>
         </message>
         <message>
             <location line="-11939" />
             <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
-            <translation type="unfinished" />
+            <translation>Numerische Werte mit einem nahtlosen Niederfrequenzoszillator zwischen festgelegtem Minimum und Maximum animieren.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Export Settings…</source>
-            <translation type="unfinished" />
+            <translation>Exporteinstellungen…</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Review canvas timing, bit depth, alpha, destination, and file naming before exporting.</source>
-            <translation type="unfinished" />
+            <translation>Vor dem Export Leinwand-Timing, Bittiefe, Alpha, Ziel und Dateibenennung prüfen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Export Current Frame…</source>
-            <translation type="unfinished" />
+            <translation>Aktuelles Bild exportieren…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Export Frames</source>
-            <translation type="unfinished" />
+            <translation>Bilder exportieren</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Stream the editor preview to the selected display without starting performance Live inputs.</source>
-            <translation type="unfinished" />
+            <translation>Die Editorvorschau auf dem ausgewählten Bildschirm ausgeben, ohne Live-Performance-Eingänge zu starten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Cancel export</source>
-            <translation type="unfinished" />
+            <translation>Export abbrechen</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Undo</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Redo</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Edit Workbench</source>
-            <translation type="unfinished" />
+            <translation>Bearbeitungsbereich</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+11001" />
             <source>Live Controls</source>
-            <translation type="unfinished" />
+            <translation>Live-Steuerung</translation>
         </message>
         <message>
             <location line="-10987" />
             <source>Open the stage-focused Live controls in a separate window immediately. The editor remains available, and freeze, blackout, current scene, and captured input remain ephemeral.</source>
-            <translation type="unfinished" />
+            <translation>Die bühnenorientierte Live-Steuerung sofort in einem separaten Fenster öffnen. Der Editor bleibt verfügbar; Einfrieren, Blackout, aktuelle Szene und erfasste Eingaben bleiben vorübergehend.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Application Settings…</source>
-            <translation type="unfinished" />
+            <translation>Anwendungseinstellungen…</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Configure preferences that apply to every project and persist across relaunches.</source>
-            <translation type="unfinished" />
+            <translation>Einstellungen konfigurieren, die für alle Projekte gelten und nach einem Neustart erhalten bleiben.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Layers &amp;&amp; Groups Panel</source>
-            <translation type="unfinished" />
+            <translation>Panel Ebenen &amp;&amp; Gruppen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Show or hide the layer and group controls.</source>
-            <translation type="unfinished" />
+            <translation>Ebenen- und Gruppenregler ein- oder ausblenden.</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+13103" />
             <source>Restore Layers &amp;&amp; Groups Panel</source>
-            <translation type="unfinished" />
+            <translation>Panel Ebenen &amp;&amp; Gruppen wiederherstellen</translation>
         </message>
         <message>
             <location line="-13099" />
             <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
-            <translation type="unfinished" />
+            <translation>Das Panel Ebenen und Gruppen anzeigen und links andocken.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>About PVT…</source>
-            <translation type="unfinished" />
+            <translation>Über PVT…</translation>
         </message>
         <message>
             <location line="+16" />
-            <location line="+16850" />
+            <location line="+16858" />
             <source>Open unpacked project bundle</source>
-            <translation type="unfinished" />
+            <translation>Entpacktes Projektpaket öffnen</translation>
         </message>
         <message>
-            <location line="-16837" />
+            <location line="-16845" />
             <source>Randomize layer values?</source>
-            <translation type="unfinished" />
+            <translation>Ebenenwerte zufällig wählen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This changes the values of every wave, swing, and effect in the active layer. The action can be undone. Continue?</source>
-            <translation type="unfinished" />
+            <translation>Dies ändert die Werte aller Wellen, Swings und Effekte der aktiven Ebene. Die Aktion kann rückgängig gemacht werden. Fortfahren?</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Create a random mix?</source>
-            <translation type="unfinished" />
+            <translation>Zufallsmischung erstellen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This replaces the active layer's wave, swing, and effect stacks with a new random mix. The action can be undone. Continue?</source>
-            <translation type="unfinished" />
+            <translation>Dies ersetzt die Wellen-, Swing- und Effektstapel der aktiven Ebene durch eine neue Zufallsmischung. Die Aktion kann rückgängig gemacht werden. Fortfahren?</translation>
         </message>
         <message>
             <location line="+15" />
             <location line="+20" />
-            <location line="+16555" />
+            <location line="+16563" />
             <source>Invalid output text</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Ausgabetext</translation>
         </message>
         <message>
-            <location line="-16570" />
+            <location line="-16578" />
             <location line="+20" />
             <location line="+10335" />
             <source>Invalid setup</source>
-            <translation type="unfinished" />
+            <translation>Ungültige Konfiguration</translation>
         </message>
         <message>
             <location line="-10326" />
             <source> - frame %1</source>
-            <translation type="unfinished" />
+            <translation> - Bild %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Export current full-resolution frame</source>
-            <translation type="unfinished" />
+            <translation>Aktuelles Bild in voller Auflösung exportieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>OpenEXR image (*.exr)</source>
-            <translation type="unfinished" />
+            <translation>OpenEXR-Bild (*.exr)</translation>
         </message>
         <message>
             <location line="+0" />
             <source>PNG image (*.png)</source>
-            <translation type="unfinished" />
+            <translation>PNG-Bild (*.png)</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Cancelling export…</source>
-            <translation type="unfinished" />
+            <translation>Export wird abgebrochen…</translation>
         </message>
         <message>
             <location line="+9" />
             <source>About PVT</source>
-            <translation type="unfinished" />
+            <translation>Über PVT</translation>
         </message>
         <message>
             <location line="+6" />
             <source>&lt;h2&gt;Procedural Visualizer Tool %1&lt;/h2&gt;</source>
-            <translation type="unfinished" />
+            <translation>&lt;h2&gt;Procedural Visualizer Tool %1&lt;/h2&gt;</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Create deterministic, seamlessly looping procedural art, layered compositions, image sequences, and music-synchronized visuals.</source>
-            <translation type="unfinished" />
+            <translation>Erstellen Sie deterministische, nahtlos wiederholte prozedurale Kunst, Ebenenkompositionen, Bildsequenzen und musiksynchrone Visualisierungen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>PVT is free software licensed under the GNU General Public License version 3 or later. It comes with no warranty. Third-party notices are included with source and packaged distributions.</source>
-            <translation type="unfinished" />
+            <translation>PVT ist freie Software unter der GNU General Public License Version 3 oder höher. Es wird ohne Gewährleistung bereitgestellt. Hinweise zu Drittanbietern sind in Quellcode- und Paketdistributionen enthalten.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Project Website</source>
-            <translation type="unfinished" />
+            <translation>Projektwebsite</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Report a Bug</source>
-            <translation type="unfinished" />
+            <translation>Fehler melden</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Report a Vulnerability</source>
-            <translation type="unfinished" />
+            <translation>Sicherheitslücke melden</translation>
         </message>
         <message>
             <location line="+13" />
             <source>No editable layer</source>
-            <translation type="unfinished" />
+            <translation>Keine bearbeitbare Ebene</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Select a layer before authoring numeric LFOs.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine Ebene, bevor Sie numerische LFOs erstellen.</translation>
         </message>
         <message>
             <location line="+36" />
             <source>No numeric targets</source>
-            <translation type="unfinished" />
+            <translation>Keine numerischen Ziele</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This layer does not currently expose a numeric LFO target.</source>
-            <translation type="unfinished" />
+            <translation>Diese Ebene bietet derzeit kein numerisches LFO-Ziel.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Numeric LFOs — %1</source>
-            <translation type="unfinished" />
+            <translation>Numerische LFOs — %1</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Each LFO replaces its target value only while rendering. The numeric field remains the authored fallback, and one or more whole cycles stay seamless across the project loop. Delay and skipped cycles use that authored value during each rest. LFO destinations can also modulate every editable setting of another LFO; Enabled uses 0/1 and Wave type uses the numbered menu order.</source>
-            <translation type="unfinished" />
+            <translation>Jeder LFO ersetzt seinen Zielwert nur beim Rendern. Das Zahlenfeld bleibt der festgelegte Rückfallwert; ein oder mehrere ganze Zyklen verlaufen nahtlos über die Projektschleife. Verzögerungen und übersprungene Zyklen verwenden diesen Wert während jeder Pause. LFO-Ziele können auch jede bearbeitbare Einstellung eines anderen LFOs modulieren; Aktiviert verwendet 0/1, Wellentyp die nummerierte Menüreihenfolge.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Add LFO</source>
-            <translation type="unfinished" />
+            <translation>LFO hinzufügen</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Arrange phases…</source>
-            <translation type="unfinished" />
+            <translation>Phasen anordnen…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Coordinate any selection of LFOs with evenly spaced, stepped, synchronized, or reproducible random phases.</source>
-            <translation type="unfinished" />
+            <translation>Eine beliebige LFO-Auswahl mit gleichmäßig verteilten, abgestuften, synchronisierten oder reproduzierbaren Zufallsphasen koordinieren.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Selected LFO</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählter LFO</translation>
         </message>
         <message>
             <location line="+6" />
             <source>All destinations</source>
-            <translation type="unfinished" />
+            <translation>Alle Ziele</translation>
         </message>
         <message>
             <location line="+7" />
             <source>LFOs</source>
-            <translation type="unfinished" />
+            <translation>LFOs</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Type to search destinations…</source>
-            <translation type="unfinished" />
+            <translation>Tippen, um Ziele zu suchen…</translation>
         </message>
         <message>
             <location line="+25" />
             <location line="+338" />
             <location line="+4" />
             <source>°</source>
-            <translation type="unfinished" />
+            <translation>°</translation>
         </message>
         <message>
             <location line="-338" />
             <source>Soft-to-sharp pulse shape. Used only by Smooth pulse.</source>
-            <translation type="unfinished" />
+            <translation>Pulsform von weich bis scharf. Wird nur von Weicher Puls verwendet.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Portion of each active oscillator slot held at the authored numeric value after the wave completes.</source>
-            <translation type="unfinished" />
+            <translation>Anteil jedes aktiven Oszillatorzeitfensters, der nach Ende der Welle beim festgelegten Zahlenwert bleibt.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Whole oscillator slots held at the authored numeric value before the next active wave.</source>
-            <translation type="unfinished" />
+            <translation>Ganze Oszillatorzeitfenster, die vor der nächsten aktiven Welle beim festgelegten Zahlenwert bleiben.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Destination group</source>
-            <translation type="unfinished" />
+            <translation>Zielgruppe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Destination</source>
-            <translation type="unfinished" />
+            <translation>Ziel</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+67" />
             <source>Wave type</source>
-            <translation type="unfinished" />
+            <translation>Wellentyp</translation>
         </message>
         <message>
             <location line="-63" />
             <location line="+75" />
             <source>Phase</source>
-            <translation type="unfinished" />
+            <translation>Phase</translation>
         </message>
         <message>
             <location line="-74" />
             <location line="+77" />
             <source>Pulse shape</source>
-            <translation type="unfinished" />
+            <translation>Pulsform</translation>
         </message>
         <message>
             <location line="-76" />
             <location line="+78" />
             <source>Delay after wave</source>
-            <translation type="unfinished" />
+            <translation>Verzögerung nach der Welle</translation>
         </message>
         <message>
             <location line="-77" />
             <location line="+80" />
             <source>Skip cycles</source>
-            <translation type="unfinished" />
+            <translation>Zyklen überspringen</translation>
         </message>
         <message>
             <location line="-30" />
             <source>LFO %1 — %2</source>
-            <translation type="unfinished" />
+            <translation>LFO %1 — %2</translation>
         </message>
         <message>
             <location line="+65" />
             <source>%1 — %2 to %3 (%4)</source>
-            <translation type="unfinished" />
+            <translation>%1 — %2 bis %3 (%4)</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Disabled — </source>
-            <translation type="unfinished" />
+            <translation>Deaktiviert — </translation>
         </message>
         <message>
             <location line="+116" />
             <source>All targets already have LFOs</source>
-            <translation type="unfinished" />
+            <translation>Alle Ziele haben bereits LFOs</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Remove or retarget an existing LFO before adding another.</source>
-            <translation type="unfinished" />
+            <translation>Entfernen Sie einen vorhandenen LFO oder ändern Sie sein Ziel, bevor Sie einen weiteren hinzufügen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Cannot add LFO</source>
-            <translation type="unfinished" />
+            <translation>LFO kann nicht hinzugefügt werden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The layer has exhausted the available LFO identities.</source>
-            <translation type="unfinished" />
+            <translation>Für diese Ebene sind keine weiteren LFO-Kennungen verfügbar.</translation>
         </message>
         <message>
             <location line="+35" />
             <source>Arrange LFO phases</source>
-            <translation type="unfinished" />
+            <translation>LFO-Phasen anordnen</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Choose the LFOs to coordinate. Spacing follows list order. Random phases use stable LFO identities and the seed, so changing the selection preserves each LFO's random phase. LFOs that modulate Phase still override these authored values while rendering.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie die zu koordinierenden LFOs. Der Abstand folgt der Listenreihenfolge. Zufallsphasen verwenden stabile LFO-Kennungen und den Startwert; eine geänderte Auswahl erhält daher die Zufallsphase jedes LFOs. LFOs, die Phase modulieren, überschreiben diese festgelegten Werte weiterhin beim Rendern.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Evenly spaced around a cycle</source>
-            <translation type="unfinished" />
+            <translation>Gleichmäßig über einen Zyklus verteilen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fixed phase step</source>
-            <translation type="unfinished" />
+            <translation>Fester Phasenschritt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Same phase</source>
-            <translation type="unfinished" />
+            <translation>Gleiche Phase</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Seeded random</source>
-            <translation type="unfinished" />
+            <translation>Zufällig mit Startwert</translation>
         </message>
         <message>
             <location line="+10" />
             <source>A negative step reverses the phase progression.</source>
-            <translation type="unfinished" />
+            <translation>Ein negativer Schritt kehrt die Phasenfolge um.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Arrangement</source>
-            <translation type="unfinished" />
+            <translation>Anordnung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Starting phase / offset</source>
-            <translation type="unfinished" />
+            <translation>Anfangsphase / Versatz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Step between LFOs</source>
-            <translation type="unfinished" />
+            <translation>Schritt zwischen LFOs</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Random seed</source>
-            <translation type="unfinished" />
+            <translation>Zufallsstartwert</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Select all</source>
-            <translation type="unfinished" />
+            <translation>Alle auswählen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Enabled only</source>
-            <translation type="unfinished" />
+            <translation>Nur aktivierte</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Clear selection</source>
-            <translation type="unfinished" />
+            <translation>Auswahl aufheben</translation>
         </message>
         <message>
             <location line="+11" />
             <source>LFO</source>
-            <translation type="unfinished" />
+            <translation>LFO</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Current phase</source>
-            <translation type="unfinished" />
+            <translation>Aktuelle Phase</translation>
         </message>
         <message>
             <location line="+0" />
             <source>New phase</source>
-            <translation type="unfinished" />
+            <translation>Neue Phase</translation>
         </message>
         <message>
             <location line="+10" />
             <source>%1. %2</source>
-            <translation type="unfinished" />
+            <translation>%1. %2</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Apply phases</source>
-            <translation type="unfinished" />
+            <translation>Phasen anwenden</translation>
         </message>
         <message>
             <location line="+13" />
             <source>%1 of %2 LFOs selected. New phases wrap into 0–360°.</source>
-            <translation type="unfinished" />
+            <translation>%1 von %2 LFOs ausgewählt. Neue Phasen werden zyklisch auf 0–360° begrenzt.</translation>
         </message>
         <message>
             <location line="+35" />
             <location line="+2" />
             <source>%1°</source>
-            <translation type="unfinished" />
+            <translation>%1°</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Unchanged</source>
-            <translation type="unfinished" />
+            <translation>Unverändert</translation>
         </message>
         <message>
             <location line="+58" />
             <source>Duplicate LFO target</source>
-            <translation type="unfinished" />
+            <translation>Doppeltes LFO-Ziel</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Each numeric value can have one LFO. Choose a different target for one of the duplicates.</source>
-            <translation type="unfinished" />
+            <translation>Jeder Zahlenwert kann einen LFO haben. Wählen Sie für eines der Duplikate ein anderes Ziel.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Invalid LFO range</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger LFO-Bereich</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Every LFO minimum must be less than or equal to its maximum.</source>
-            <translation type="unfinished" />
+            <translation>Das Minimum jedes LFOs muss kleiner oder gleich seinem Maximum sein.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Invalid LFO settings</source>
-            <translation type="unfinished" />
+            <translation>Ungültige LFO-Einstellungen</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Edit numeric LFOs</source>
-            <translation type="unfinished" />
+            <translation>Numerische LFOs bearbeiten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Updated %1 numeric LFO(s) for %2.</source>
-            <translation type="unfinished" />
+            <translation>Numerische LFOs für %2 aktualisiert: %1.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Paths are project-wide closed cubic loops. Geometry is shared, while each layer, wave, or effect owns its own clock, offset, direction, and tangent settings. The final node always connects back to the first.</source>
-            <translation type="unfinished" />
+            <translation>Pfade sind projektweite geschlossene kubische Schleifen. Die Geometrie wird gemeinsam genutzt; jede Ebene, Welle und jeder Effekt hat jedoch eigene Einstellungen für Takt, Versatz, Richtung und Tangente. Der letzte Knoten verbindet sich immer mit dem ersten.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Add ellipse</source>
-            <translation type="unfinished" />
+            <translation>Ellipse hinzufügen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Remove path</source>
-            <translation type="unfinished" />
+            <translation>Pfad entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+70" />
             <source>Path</source>
-            <translation type="unfinished" />
+            <translation>Pfad</translation>
         </message>
         <message>
             <location line="-58" />
             <source>Node ID</source>
-            <translation type="unfinished" />
+            <translation>Knoten-ID</translation>
         </message>
         <message>
             <location line="+0" />
             <source>In X</source>
-            <translation type="unfinished" />
+            <translation>Eingang X</translation>
         </message>
         <message>
             <location line="+0" />
             <source>In Y</source>
-            <translation type="unfinished" />
+            <translation>Eingang Y</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Out X</source>
-            <translation type="unfinished" />
+            <translation>Ausgang X</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Out Y</source>
-            <translation type="unfinished" />
+            <translation>Ausgang Y</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Handle mode</source>
-            <translation type="unfinished" />
+            <translation>Griffmodus</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Add node</source>
-            <translation type="unfinished" />
+            <translation>Knoten hinzufügen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Remove node</source>
-            <translation type="unfinished" />
+            <translation>Knoten entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fit selected handles</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählte Griffe anpassen</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Consumer binding</source>
-            <translation type="unfinished" />
+            <translation>Bindung des nutzenden Elements</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Whole active layer</source>
-            <translation type="unfinished" />
+            <translation>Gesamte aktive Ebene</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Wave: %1</source>
-            <translation type="unfinished" />
+            <translation>Welle: %1</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Effect center: %1</source>
-            <translation type="unfinished" />
+            <translation>Effektzentrum: %1</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Follow a reusable path</source>
-            <translation type="unfinished" />
+            <translation>Einem wiederverwendbaren Pfad folgen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Use synchronized project clock</source>
-            <translation type="unfinished" />
+            <translation>Synchronisierten Projekttakt verwenden</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Reverse direction</source>
-            <translation type="unfinished" />
+            <translation>Richtung umkehren</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Follow tangent orientation</source>
-            <translation type="unfinished" />
+            <translation>Tangentenausrichtung folgen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Target</source>
-            <translation type="unfinished" />
+            <translation>Ziel</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Horizontal offset</source>
-            <translation type="unfinished" />
+            <translation>Horizontaler Versatz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Vertical offset</source>
-            <translation type="unfinished" />
+            <translation>Vertikaler Versatz</translation>
         </message>
         <message>
             <location line="+82" />
             <source>Corner</source>
-            <translation type="unfinished" />
+            <translation>Ecke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Auto smooth</source>
-            <translation type="unfinished" />
+            <translation>Automatisch glätten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Smooth</source>
-            <translation type="unfinished" />
+            <translation>Glatt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Symmetric</source>
-            <translation type="unfinished" />
+            <translation>Symmetrisch</translation>
         </message>
         <message>
             <location line="+104" />
             <source>Path limit reached</source>
-            <translation type="unfinished" />
+            <translation>Pfadlimit erreicht</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The signed-int UI/API path index is exhausted.</source>
-            <translation type="unfinished" />
+            <translation>Der vorzeichenbehaftete Ganzzahlindex für Pfade in Oberfläche/API ist ausgeschöpft.</translation>
         </message>
         <message>
             <location line="+120" />
             <source>Invalid path node</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Pfadknoten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Every path coordinate and handle must be finite within the renderer's numeric representation.</source>
-            <translation type="unfinished" />
+            <translation>Jede Pfadkoordinate und jeder Griffwert muss in der Zahlendarstellung des Renderers endlich sein.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Invalid path name</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Pfadname</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Give the selected path a non-empty portable name.</source>
-            <translation type="unfinished" />
+            <translation>Geben Sie dem ausgewählten Pfad einen nicht leeren portablen Namen.</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Invalid path configuration</source>
-            <translation type="unfinished" />
+            <translation>Ungültige Pfadkonfiguration</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Edit reusable motion paths</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Bewegungspfade bearbeiten</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Updated reusable motion paths and active-layer bindings. Final alpha output was enabled because the edited stack can be transparent.</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Bewegungspfade und Bindungen der aktiven Ebene aktualisiert. Die endgültige Alpha-Ausgabe wurde aktiviert, da der bearbeitete Stapel transparent sein kann.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Updated reusable motion paths and active-layer bindings.</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Bewegungspfade und Bindungen der aktiven Ebene aktualisiert.</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Rename wave</source>
-            <translation type="unfinished" />
+            <translation>Welle umbenennen</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Rename swing</source>
-            <translation type="unfinished" />
+            <translation>Swing umbenennen</translation>
         </message>
         <message>
             <location line="+28" />
             <source>Rename effect</source>
-            <translation type="unfinished" />
+            <translation>Effekt umbenennen</translation>
         </message>
         <message>
             <location line="+178" />
             <source>Copied project audio response into the active-layer override.</source>
-            <translation type="unfinished" />
+            <translation>Projekt-Audioreaktion in die eigenen Einstellungen der aktiven Ebene kopiert.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Copy project audio response</source>
-            <translation type="unfinished" />
+            <translation>Projekt-Audioreaktion kopieren</translation>
         </message>
         <message>
             <location line="+134" />
             <source>The custom OBJ path is invalid.</source>
-            <translation type="unfinished" />
+            <translation>Der Pfad zum benutzerdefinierten OBJ ist ungültig.</translation>
         </message>
         <message>
             <location line="+71" />
             <source>Move wave</source>
-            <translation type="unfinished" />
+            <translation>Welle verschieben</translation>
         </message>
         <message>
             <location line="+49" />
             <source>Move swing area</source>
-            <translation type="unfinished" />
+            <translation>Swing-Bereich verschieben</translation>
         </message>
         <message>
             <location line="+52" />
             <source>Move effect area</source>
-            <translation type="unfinished" />
+            <translation>Effektbereich verschieben</translation>
         </message>
         <message>
             <location line="+130" />
             <location line="+23" />
             <source>on</source>
-            <translation type="unfinished" />
+            <translation>an</translation>
         </message>
         <message>
             <location line="-22" />
             <source>, locked</source>
-            <translation type="unfinished" />
+            <translation>, gesperrt</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+32" />
             <source>  [SOLO]</source>
-            <translation type="unfinished" />
+            <translation>  [SOLO]</translation>
         </message>
         <message>
             <location line="-22" />
             <source>Layer group. Visibility, lock, solo, and movement apply to every contained layer.</source>
-            <translation type="unfinished" />
+            <translation>Ebenengruppe. Sichtbarkeit, Sperre, Solo und Bewegung gelten für alle enthaltenen Ebenen.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>base</source>
-            <translation type="unfinished" />
+            <translation>Basis</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Bottom/base layer. Its blend mode has no lower layer to affect.</source>
-            <translation type="unfinished" />
+            <translation>Unterste/Basisebene. Ihr Mischmodus hat keine darunterliegende Ebene, auf die er wirken könnte.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This layer is composited over every enabled layer below it. Eraser modes remove lower-layer coverage without affecting layers above.</source>
-            <translation type="unfinished" />
+            <translation>Diese Ebene wird über allen aktivierten Ebenen darunter zusammengesetzt. Radiermodi entfernen die Abdeckung unterer Ebenen, ohne obere Ebenen zu beeinflussen.</translation>
         </message>
         <message>
             <location line="+39" />
             <source>Ungrouped</source>
-            <translation type="unfinished" />
+            <translation>Ohne Gruppe</translation>
         </message>
         <message>
             <location line="+21" />
             <source>The bottom layer has nothing beneath it to blend with.</source>
-            <translation type="unfinished" />
+            <translation>Die unterste Ebene hat keine darunterliegenden Inhalte zum Mischen.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blend applies this layer over the enabled layers below. Eraser modes are destination-out masks and never paint over later layers above.</source>
-            <translation type="unfinished" />
+            <translation>Der Mischmodus wendet diese Ebene auf aktivierte Ebenen darunter an. Radiermodi sind Destination-out-Masken und übermalen niemals später zusammengesetzte obere Ebenen.</translation>
         </message>
         <message>
             <location line="+54" />
             <source>The selected new-project default has no layer template.</source>
-            <translation type="unfinished" />
+            <translation>Die gewählte Vorgabe für neue Projekte enthält keine Ebenenvorlage.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Could not allocate a unique identity for the new layer.</source>
-            <translation type="unfinished" />
+            <translation>Der neuen Ebene konnte keine eindeutige Kennung zugewiesen werden.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Layer %1</source>
-            <translation type="unfinished" />
+            <translation>Ebene %1</translation>
         </message>
         <message>
             <location line="+26" />
             <source>The new-layer template refers to a missing reusable motion path.</source>
-            <translation type="unfinished" />
+            <translation>Die Vorlage für neue Ebenen verweist auf einen fehlenden wiederverwendbaren Bewegungspfad.</translation>
         </message>
         <message>
             <location line="+18" />
             <source>The reusable motion-path identity space is exhausted.</source>
-            <translation type="unfinished" />
+            <translation>Der Kennungsbereich für wiederverwendbare Bewegungspfade ist ausgeschöpft.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The project has no room for the new layer's reusable motion path.</source>
-            <translation type="unfinished" />
+            <translation>Im Projekt ist kein Platz mehr für den wiederverwendbaren Bewegungspfad der neuen Ebene.</translation>
         </message>
         <message>
             <location line="+107" />
             <source>The new-layer template is not valid in this project: %1</source>
-            <translation type="unfinished" />
+            <translation>Die Vorlage für neue Ebenen ist in diesem Projekt ungültig: %1</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Not enough memory to create a layer from the saved default.</source>
-            <translation type="unfinished" />
+            <translation>Nicht genügend Speicher, um eine Ebene aus der gespeicherten Vorgabe zu erstellen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Could not create a layer from the saved default: %1</source>
-            <translation type="unfinished" />
+            <translation>Ebene konnte nicht aus der gespeicherten Vorgabe erstellt werden: %1</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Could not create a layer from the saved default.</source>
-            <translation type="unfinished" />
+            <translation>Ebene konnte nicht aus der gespeicherten Vorgabe erstellt werden.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Layer limit</source>
-            <translation type="unfinished" />
+            <translation>Ebenenlimit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The signed-int UI/API layer index is exhausted.</source>
-            <translation type="unfinished" />
+            <translation>Der vorzeichenbehaftete Ganzzahlindex für Ebenen in Oberfläche/API ist ausgeschöpft.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Could not add layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene konnte nicht hinzugefügt werden</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Add layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene hinzufügen</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Unlock the group before duplicating one of its layers.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie die Gruppe, bevor Sie eine ihrer Ebenen duplizieren.</translation>
         </message>
         <message>
             <location line="+24" />
@@ -7092,449 +7102,450 @@ Project UUID: %2
             <location line="+16" />
             <location line="+11" />
             <source>Could not duplicate layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene konnte nicht dupliziert werden</translation>
         </message>
         <message>
             <location line="-147" />
             <source>The project attachment registry is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Das Anlagenregister des Projekts ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+9" />
             <location line="+189" />
             <source>The attachment transaction could not be staged: %1</source>
-            <translation type="unfinished" />
+            <translation>Die Anlagentransaktion konnte nicht vorbereitet werden: %1</translation>
         </message>
         <message>
             <location line="-183" />
             <location line="+189" />
             <source>The attachment transaction could not be staged.</source>
-            <translation type="unfinished" />
+            <translation>Die Anlagentransaktion konnte nicht vorbereitet werden.</translation>
         </message>
         <message>
             <location line="-177" />
             <source>The embedded custom OBJ source is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete benutzerdefinierte OBJ-Quelle ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>The embedded plane-displacement height map is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Höhenkarte zur Flächenverschiebung ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+28" />
             <source>The embedded environment map is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Umgebungskarte ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>The embedded active-layer music source is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Musikquelle der aktiven Ebene ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+28" />
             <source>The embedded starting image is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Das eingebettete Ausgangsbild ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Duplicate layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene duplizieren</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Keep one layer</source>
-            <translation type="unfinished" />
+            <translation>Eine Ebene beibehalten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>A project must always contain at least one layer.</source>
-            <translation type="unfinished" />
+            <translation>Ein Projekt muss immer mindestens eine Ebene enthalten.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Unlock the group before removing one of its layers.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie die Gruppe, bevor Sie eine ihrer Ebenen entfernen.</translation>
         </message>
         <message>
             <location line="+15" />
             <location line="+6" />
             <location line="+13" />
             <source>Could not remove layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+35" />
             <source>Remove layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene entfernen</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Unlock the group before moving one of its layers.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie die Gruppe, bevor Sie eine ihrer Ebenen verschieben.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Move the group to keep its folder contiguous, or change this layer's Group field first.</source>
-            <translation type="unfinished" />
+            <translation>Verschieben Sie die Gruppe, damit ihr Ordner zusammenhängend bleibt, oder ändern Sie zuerst das Gruppenfeld dieser Ebene.</translation>
         </message>
         <message>
             <location line="+8" />
             <location line="+115" />
             <location line="+21" />
             <source>Unlock the adjacent group before moving across it.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie die angrenzende Gruppe, bevor Sie eine Ebene darüber hinweg verschieben.</translation>
         </message>
         <message>
             <location line="-109" />
             <source>Move layer up</source>
-            <translation type="unfinished" />
+            <translation>Ebene nach oben verschieben</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Move layer down</source>
-            <translation type="unfinished" />
+            <translation>Ebene nach unten verschieben</translation>
         </message>
         <message>
             <location line="+10" />
             <source>This layer is already grouped. Choose Ungrouped first or select another layer.</source>
-            <translation type="unfinished" />
+            <translation>Diese Ebene gehört bereits zu einer Gruppe. Wählen Sie zuerst Ohne Gruppe oder eine andere Ebene.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Group limit</source>
-            <translation type="unfinished" />
+            <translation>Gruppenlimit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The signed-int UI/API group index is exhausted.</source>
-            <translation type="unfinished" />
+            <translation>Der vorzeichenbehaftete Ganzzahlindex für Gruppen in Oberfläche/API ist ausgeschöpft.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Group %1</source>
-            <translation type="unfinished" />
+            <translation>Gruppe %1</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Unlock the group before removing it.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie die Gruppe, bevor Sie sie entfernen.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Remove group and keep layers</source>
-            <translation type="unfinished" />
+            <translation>Gruppe entfernen und Ebenen behalten</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Unlock the group before moving it.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie die Gruppe, bevor Sie sie verschieben.</translation>
         </message>
         <message>
             <location line="+58" />
             <source>Move group up</source>
-            <translation type="unfinished" />
+            <translation>Gruppe nach oben verschieben</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Move group down</source>
-            <translation type="unfinished" />
+            <translation>Gruppe nach unten verschieben</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Unlock both source and destination groups before moving a layer.</source>
-            <translation type="unfinished" />
+            <translation>Entsperren Sie Quell- und Zielgruppe, bevor Sie eine Ebene verschieben.</translation>
         </message>
         <message>
             <location line="+48" />
             <source>Ungroup layer</source>
-            <translation type="unfinished" />
+            <translation>Ebene aus Gruppe lösen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Move layer into group</source>
-            <translation type="unfinished" />
+            <translation>Ebene in Gruppe verschieben</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Could not clear custom OBJ</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefiniertes OBJ konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Could not embed custom OBJ</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefiniertes OBJ konnte nicht eingebettet werden</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Clear custom OBJ</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefiniertes OBJ entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embed custom OBJ</source>
-            <translation type="unfinished" />
+            <translation>Benutzerdefiniertes OBJ einbetten</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Cleared the active layer's embedded custom OBJ.</source>
-            <translation type="unfinished" />
+            <translation>Eingebettetes benutzerdefiniertes OBJ der aktiven Ebene entfernt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embedded %1 for the active layer.</source>
-            <translation type="unfinished" />
+            <translation>%1 für die aktive Ebene eingebettet.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Unsupported height map</source>
-            <translation type="unfinished" />
+            <translation>Nicht unterstützte Höhenkarte</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Plane displacement accepts full-precision PNG and HALF/FLOAT scanline OpenEXR height maps.</source>
-            <translation type="unfinished" />
+            <translation>Die Flächenverschiebung unterstützt PNG-Höhenkarten mit voller Präzision und zeilenbasierte HALF/FLOAT-OpenEXR-Höhenkarten.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Could not clear height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Could not decode height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte konnte nicht dekodiert werden</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Could not embed height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte konnte nicht eingebettet werden</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Clear plane height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte der ebenen Fläche entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embed plane height map</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte der ebenen Fläche einbetten</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Cleared the active layer's plane-displacement height map.</source>
-            <translation type="unfinished" />
+            <translation>Höhenkarte zur Flächenverschiebung der aktiven Ebene entfernt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embedded %1 and rebuilt the active layer's displacement plane.</source>
-            <translation type="unfinished" />
+            <translation>%1 eingebettet und Verschiebungsfläche der aktiven Ebene neu erstellt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Unsupported environment map</source>
-            <translation type="unfinished" />
+            <translation>Nicht unterstützte Umgebungskarte</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Environment-map lighting accepts PNG and HALF/FLOAT OpenEXR images.</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtung durch Umgebungskarten unterstützt PNG- und HALF/FLOAT-OpenEXR-Bilder.</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Could not clear environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Could not decode environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte konnte nicht dekodiert werden</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Could not embed environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte konnte nicht eingebettet werden</translation>
         </message>
         <message>
             <location line="+27" />
             <source>Clear environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embed environment map</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte einbetten</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Cleared the active layer's environment map.</source>
-            <translation type="unfinished" />
+            <translation>Umgebungskarte der aktiven Ebene entfernt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embedded %1 for the active layer's environment lighting.</source>
-            <translation type="unfinished" />
+            <translation>%1 für die Umgebungsbeleuchtung der aktiven Ebene eingebettet.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>No height map</source>
-            <translation type="unfinished" />
+            <translation>Keine Höhenkarte</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Choose a plane-displacement height map before exporting its mesh.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie vor dem Netzexport eine Höhenkarte zur Flächenverschiebung.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Export output-resolution displacement plane</source>
-            <translation type="unfinished" />
+            <translation>Verschiebungsfläche mit Ausgabeauflösung exportieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Wavefront OBJ (*.obj)</source>
-            <translation type="unfinished" />
+            <translation>Wavefront OBJ (*.obj)</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Could not build displacement plane</source>
-            <translation type="unfinished" />
+            <translation>Verschiebungsfläche konnte nicht erstellt werden</translation>
         </message>
         <message>
             <location line="+10" />
             <location line="+53" />
             <source>Could not export OBJ</source>
-            <translation type="unfinished" />
+            <translation>OBJ konnte nicht exportiert werden</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Exported %1 vertices and %2 triangles to %3.</source>
-            <translation type="unfinished" />
+            <translation>%1 Scheitelpunkte und %2 Dreiecke nach %3 exportiert.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Unsupported starting image</source>
-            <translation type="unfinished" />
+            <translation>Nicht unterstütztes Ausgangsbild</translation>
         </message>
         <message>
             <location line="+1" />
             <source>PVT accepts full-precision PNG and HALF/FLOAT scanline OpenEXR starting images. Samples are decoded directly to float32.</source>
-            <translation type="unfinished" />
+            <translation>PVT unterstützt PNG-Ausgangsbilder mit voller Präzision und zeilenbasierte HALF/FLOAT-OpenEXR-Bilder. Abtastwerte werden direkt als float32 dekodiert.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Could not clear starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Could not decode starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild konnte nicht dekodiert werden</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Could not embed starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild konnte nicht eingebettet werden</translation>
         </message>
         <message>
             <location line="+24" />
             <source>Clear starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild entfernen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embed starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild einbetten</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Cleared the active layer's starting image.</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild der aktiven Ebene entfernt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embedded %1 as the active layer's starting image.</source>
-            <translation type="unfinished" />
+            <translation>%1 als Ausgangsbild der aktiven Ebene eingebettet.</translation>
         </message>
         <message>
             <location line="+203" />
             <source>Change kept, but there was not enough memory to record Undo.</source>
-            <translation type="unfinished" />
+            <translation>Änderung beibehalten, aber nicht genügend Speicher zum Aufzeichnen von Rückgängig.</translation>
         </message>
         <message>
             <location line="+36" />
             <source>Save the project before showing it in the file browser.</source>
-            <translation type="unfinished" />
+            <translation>Speichern Sie das Projekt, bevor Sie es im Dateimanager anzeigen.</translation>
         </message>
         <message>
             <location line="+58" />
             <source>The default file browser could not open %1.</source>
-            <translation type="unfinished" />
+            <translation>Der Standarddateimanager konnte %1 nicht öffnen.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Opened the containing folder. This file browser did not expose file selection.</source>
-            <translation type="unfinished" />
+            <translation>Übergeordneten Ordner geöffnet. Dieser Dateimanager bietet keine Dateiauswahl an.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Opened project folder %1.</source>
-            <translation type="unfinished" />
+            <translation>Projektordner %1 geöffnet.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Revealed project file %1.</source>
-            <translation type="unfinished" />
+            <translation>Projektdatei %1 angezeigt.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>%1[*] — PVT %2</source>
-            <translation type="unfinished" />
+            <translation>%1[*] — PVT %2</translation>
         </message>
         <message>
             <location line="+2" />
             <source>%1 — %2[*] — PVT %3</source>
-            <translation type="unfinished" />
+            <translation>%1 — %2[*] — PVT %3</translation>
         </message>
         <message>
             <location line="+14" />
+            <location line="+12482" />
             <source>Recovered this save by applying every safe setting and repairing missing or unusable data. Preserved %1 original/unrecognized field(s); %2 were not safe to use. Saving keeps them.</source>
-            <translation type="unfinished" />
+            <translation>Diese Speicherung wurde wiederhergestellt, indem alle sicheren Einstellungen angewendet und fehlende oder unbrauchbare Daten repariert wurden. Beibehaltene ursprüngliche/unbekannte Felder: %1; nicht sicher verwendbare Felder: %2. Beim Speichern bleiben sie erhalten.</translation>
         </message>
         <message>
-            <location line="+27" />
+            <location line="-12455" />
             <source>Unsaved project changes</source>
-            <translation type="unfinished" />
+            <translation>Ungespeicherte Projektänderungen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Save the changes to “%1” before continuing?</source>
-            <translation type="unfinished" />
+            <translation>Änderungen an „%1“ vor dem Fortfahren speichern?</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Finish the active project load or save before replacing the project or version.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie das laufende Laden oder Speichern, bevor Sie Projekt oder Version ersetzen.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Cancel or finish the active export before replacing the project or version.</source>
-            <translation type="unfinished" />
+            <translation>Brechen Sie den laufenden Export ab oder beenden Sie ihn, bevor Sie Projekt oder Version ersetzen.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Recent projects disabled</source>
-            <translation type="unfinished" />
+            <translation>Zuletzt geöffnete Projekte deaktiviert</translation>
         </message>
         <message>
             <location line="+18" />
             <source>%1 — %2</source>
-            <translation type="unfinished" />
+            <translation>%1 — %2</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Recent project is unavailable</source>
-            <translation type="unfinished" />
+            <translation>Zuletzt geöffnetes Projekt nicht verfügbar</translation>
         </message>
         <message>
             <location line="+1" />
@@ -7542,337 +7553,342 @@ Project UUID: %2
 %1
 
 Its recent entry will be removed.</source>
-            <translation type="unfinished" />
+            <translation>Das Projekt existiert nicht mehr unter:
+%1
+
+Sein Eintrag wird aus den zuletzt geöffneten Projekten entfernt.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>No recent projects</source>
-            <translation type="unfinished" />
+            <translation>Keine zuletzt geöffneten Projekte</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Clear Recent Projects</source>
-            <translation type="unfinished" />
+            <translation>Liste zuletzt geöffneter Projekte leeren</translation>
         </message>
         <message>
             <location line="+139" />
             <source>Clear undo history?</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig-Verlauf löschen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Applying the new history limit clears this session's undo and redo history. Other settings in this dialog will also be applied. Continue?</source>
-            <translation type="unfinished" />
+            <translation>Die neue Verlaufsgrenze löscht den Rückgängig- und Wiederholen-Verlauf dieser Sitzung. Andere Einstellungen dieses Dialogs werden ebenfalls angewendet. Fortfahren?</translation>
         </message>
         <message>
             <location line="+74" />
             <source> Restart the application to apply the language change.</source>
-            <translation type="unfinished" />
+            <translation> Starten Sie die Anwendung neu, um die Sprachänderung anzuwenden.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Replace new-project default?</source>
-            <translation type="unfinished" />
+            <translation>Vorgabe für neue Projekte ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Save the current project — including all layers and embedded assets — as the template used by every future New Project command? The active layer will also become the Add Layer template.</source>
-            <translation type="unfinished" />
+            <translation>Das aktuelle Projekt mit allen Ebenen und eingebetteten Ressourcen als Vorlage für jeden künftigen Befehl Neues Projekt speichern? Die aktive Ebene wird auch zur Vorlage für Ebene hinzufügen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source> Current project saved as the new-project default.</source>
-            <translation type="unfinished" />
+            <translation> Aktuelles Projekt als Vorgabe für neue Projekte gespeichert.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Restore built-in default?</source>
-            <translation type="unfinished" />
+            <translation>Mitgelieferte Vorgabe wiederherstellen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Future new projects will use the program's built-in starting settings. Continue?</source>
-            <translation type="unfinished" />
+            <translation>Künftige neue Projekte verwenden die mitgelieferten Starteinstellungen. Fortfahren?</translation>
         </message>
         <message>
             <location line="+4" />
             <source> Built-in new-project default restored.</source>
-            <translation type="unfinished" />
+            <translation> Mitgelieferte Vorgabe für neue Projekte wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Could not update new-project defaults</source>
-            <translation type="unfinished" />
+            <translation>Vorgaben für neue Projekte konnten nicht aktualisiert werden</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Automatic GPU-first</source>
-            <translation type="unfinished" />
+            <translation>Automatisch, GPU zuerst</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Application settings saved — %1 undo steps, %2 rendering, %3 recent projects.%4</source>
-            <translation type="unfinished" />
+            <translation>Anwendungseinstellungen gespeichert — %1 Rückgängig-Schritte, Rendering: %2, %3 zuletzt geöffnete Projekte.%4</translation>
         </message>
         <message>
             <location line="+30" />
             <source>Custom new-project defaults could not be loaded; using the built-in template. %1</source>
-            <translation type="unfinished" />
+            <translation>Eigene Vorgaben für neue Projekte konnten nicht geladen werden; die mitgelieferte Vorlage wird verwendet. %1</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Custom new-project defaults were valid but could not be detached; using the built-in template. %1</source>
-            <translation type="unfinished" />
+            <translation>Die eigenen Vorgaben für neue Projekte waren gültig, konnten aber nicht unabhängig kopiert werden; die mitgelieferte Vorlage wird verwendet. %1</translation>
         </message>
         <message>
             <location line="+39" />
             <source>The operating system did not provide an application-settings directory.</source>
-            <translation type="unfinished" />
+            <translation>Das Betriebssystem hat kein Verzeichnis für Anwendungseinstellungen bereitgestellt.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Could not create the defaults directory.</source>
-            <translation type="unfinished" />
+            <translation>Vorgabenverzeichnis konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Could not create a defaults staging directory.</source>
-            <translation type="unfinished" />
+            <translation>Temporäres Verzeichnis für Vorgaben konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Could not open the defaults bundle for atomic installation.</source>
-            <translation type="unfinished" />
+            <translation>Vorgabenpaket konnte nicht zur atomaren Installation geöffnet werden.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Could not read the staged defaults bundle.</source>
-            <translation type="unfinished" />
+            <translation>Vorbereitetes Vorgabenpaket konnte nicht gelesen werden.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Could not write the new defaults bundle.</source>
-            <translation type="unfinished" />
+            <translation>Neues Vorgabenpaket konnte nicht geschrieben werden.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Could not atomically install the new defaults bundle.</source>
-            <translation type="unfinished" />
+            <translation>Neues Vorgabenpaket konnte nicht atomar installiert werden.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The installed defaults bundle failed validation: %1</source>
-            <translation type="unfinished" />
+            <translation>Validierung des installierten Vorgabenpakets fehlgeschlagen: %1</translation>
         </message>
         <message>
             <location line="+12" />
             <source>The template was saved, but its activation preference could not be persisted.</source>
-            <translation type="unfinished" />
+            <translation>Die Vorlage wurde gespeichert, ihre Aktivierungseinstellung jedoch nicht dauerhaft gesichert.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Could not persist the built-in-default selection.</source>
-            <translation type="unfinished" />
+            <translation>Die Auswahl der mitgelieferten Vorgabe konnte nicht dauerhaft gespeichert werden.</translation>
         </message>
         <message>
             <location line="+49" />
             <source>Started a new project from your custom defaults.</source>
-            <translation type="unfinished" />
+            <translation>Neues Projekt aus Ihren eigenen Vorgaben gestartet.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Started a new project from the built-in defaults.</source>
-            <translation type="unfinished" />
+            <translation>Neues Projekt aus den mitgelieferten Vorgaben gestartet.</translation>
         </message>
         <message>
             <location line="+73" />
             <source>Time %1  ·  Frame %2 / %3</source>
-            <translation type="unfinished" />
+            <translation>Zeit %1  ·  Bild %2 / %3</translation>
         </message>
         <message>
             <location line="+10" />
             <source>  ·  Beat %1</source>
-            <translation type="unfinished" />
+            <translation>  ·  Beat %1</translation>
         </message>
         <message>
             <location line="+96" />
             <source>Effective routing: active-layer override — %1</source>
-            <translation type="unfinished" />
+            <translation>Wirksame Zuordnung: eigene Einstellungen der aktiven Ebene — %1</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+3" />
             <source>disabled</source>
-            <translation type="unfinished" />
+            <translation>deaktiviert</translation>
         </message>
         <message>
             <location line="-2" />
             <source>Effective routing: project-wide defaults — %1. Check this group to override them for this layer.</source>
-            <translation type="unfinished" />
+            <translation>Wirksame Zuordnung: Projektstandard — %1. Aktivieren Sie diese Gruppe, um eigene Einstellungen für diese Ebene zu verwenden.</translation>
         </message>
         <message>
             <location line="+41" />
             <source>This saved manual frame count is preserved but ignored while render-ready Music determines duration.</source>
-            <translation type="unfinished" />
+            <translation>Diese gespeicherte manuelle Bildanzahl bleibt erhalten, wird aber ignoriert, solange renderbereite Musik die Dauer bestimmt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>%1 frames · %2 at %3 FPS</source>
-            <translation type="unfinished" />
+            <translation>%1 Bilder · %2 bei %3 Bildern/s</translation>
         </message>
         <message>
             <location line="+110" />
             <source>This source outlasts the project. Play Once will show the available prefix; Play Once Then Project will not reach its project-clock transition before this project ends.</source>
-            <translation type="unfinished" />
+            <translation>Diese Quelle dauert länger als das Projekt. Einmal abspielen zeigt den verfügbaren Anfang; Einmal, dann Projekt erreicht den Übergang zum Projekttakt nicht vor Projektende.</translation>
         </message>
         <message>
             <location line="+80" />
             <source>Choose a WAV, FLAC, or MP3 source. It will be analyzed first and embedded by content in the project bundle.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine WAV-, FLAC- oder MP3-Quelle. Sie wird zuerst analysiert und dann anhand ihres Inhalts in das Projektpaket eingebettet.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>No adaptive tempo map</source>
-            <translation type="unfinished" />
+            <translation>Keine adaptive Tempokarte</translation>
         </message>
         <message>
             <location line="+1" />
             <source>%1 tempo point(s), %2–%3 BPM</source>
-            <translation type="unfinished" />
+            <translation>Tempopunkte: %1, %2–%3 BPM</translation>
         </message>
         <message>
             <location line="+7" />
             <source> · %1</source>
-            <translation type="unfinished" />
+            <translation> · %1</translation>
         </message>
         <message>
             <location line="+5" />
             <source>%1 · %2 Hz · %3 channel(s) · %4%5
 Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
 %10 features/s · %11 source frame(s) at %12 FPS</source>
-            <translation type="unfinished" />
+            <translation>%1 · %2 Hz · Kanäle: %3 · %4%5
+%6 BPM erkannt (%7% Konfidenz) · Beats: %8 · %9
+%10 Merkmale/s · Quellbilder: %11 bei %12 Bildern/s</translation>
         </message>
         <message>
             <location line="+16" />
             <source>The analyzed source is not available locally. Relink the matching file before reanalysis.</source>
-            <translation type="unfinished" />
+            <translation>Die analysierte Quelle ist lokal nicht verfügbar. Verknüpfen Sie vor der erneuten Analyse die passende Datei.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Stop LIVE or Live Preview Output before exporting so the realtime display keeps its frame budget.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie LIVE oder die Live-Vorschauausgabe vor dem Export, damit die Echtzeitanzeige ihr Bildzeitbudget behält.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Render the timeline's current frame at the full canvas resolution using the selected PNG/EXR quality settings.</source>
-            <translation type="unfinished" />
+            <translation>Das aktuelle Bild der Zeitleiste mit voller Leinwandauflösung und den gewählten PNG-/EXR-Qualitätseinstellungen rendern.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Export a native macOS QuickTime movie without FFmpeg.</source>
-            <translation type="unfinished" />
+            <translation>Ein natives macOS-QuickTime-Video ohne FFmpeg exportieren.</translation>
         </message>
         <message>
             <location line="+347" />
             <source> 3D surface mapping is currently off; this stage still runs on the flat layer after whole-layer motion.</source>
-            <translation type="unfinished" />
+            <translation> Die 3D-Oberflächenabbildung ist derzeit aus; diese Stufe läuft dennoch auf der flachen Ebene nach der Bewegung der gesamten Ebene.</translation>
         </message>
         <message>
             <location line="+47" />
             <source>Follow placement uses reflected artwork for texture movement and transparent edges for movement of the completed layer/object. Other effect types use reflected samples. Explicit Transparent, Black, White, or Reflected pattern choices override this behavior.</source>
-            <translation type="unfinished" />
+            <translation>Platzierung folgen verwendet gespiegelte Motive für Texturbewegungen und transparente Ränder für Bewegungen der fertigen Ebene bzw. des fertigen Objekts. Andere Effekttypen verwenden gespiegelte Abtastwerte. Die ausdrückliche Auswahl Transparent, Schwarz, Weiß oder Gespiegeltes Muster überschreibt dieses Verhalten.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Normalized horizontal center; 0 is left and 1 is right.</source>
-            <translation type="unfinished" />
+            <translation>Normiertes horizontales Zentrum; 0 ist links, 1 rechts.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Normalized vertical center; 0 is top and 1 is bottom.</source>
-            <translation type="unfinished" />
+            <translation>Normiertes vertikales Zentrum; 0 ist oben, 1 unten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blur radius in full-resolution output pixels.</source>
-            <translation type="unfinished" />
+            <translation>Unschärferadius in Ausgabepixeln bei voller Auflösung.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Exact base particle radius in full-resolution output pixels.</source>
-            <translation type="unfinished" />
+            <translation>Exakter Basisradius der Partikel in Ausgabepixeln bei voller Auflösung.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Glow blur radius in full-resolution output pixels.</source>
-            <translation type="unfinished" />
+            <translation>Unschärferadius des Leuchtens in Ausgabepixeln bei voller Auflösung.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Fraction of the shorter canvas edge. Zero affects the whole layer; positive values create a feathered draggable circle.</source>
-            <translation type="unfinished" />
+            <translation>Anteil der kürzeren Leinwandkante. Null wirkt auf die gesamte Ebene; positive Werte erzeugen einen verschiebbaren Kreis mit weichem Rand.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Linear-light brightness where glow begins.</source>
-            <translation type="unfinished" />
+            <translation>Helligkeit in linearem Licht, ab der das Leuchten beginnt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Soft transition width around the glow threshold.</source>
-            <translation type="unfinished" />
+            <translation>Breite des weichen Übergangs um die Leuchtschwelle.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Mix / zoom depth</source>
-            <translation type="unfinished" />
+            <translation>Mischung / Zoomtiefe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Zoom strength</source>
-            <translation type="unfinished" />
+            <translation>Zoomstärke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Octave multiplier</source>
-            <translation type="unfinished" />
+            <translation>Oktavenfaktor</translation>
         </message>
         <message>
             <location line="+4" />
             <source>From 0 to 1, blends between the source and looping zoom. Values above 1 deepen the zoom span, so positive Audio Response remains visible at the default full blend.</source>
-            <translation type="unfinished" />
+            <translation>Von 0 bis 1 wird zwischen Quelle und Schleifenzoom überblendet. Werte über 1 vergrößern den Zoombereich, damit eine positive Audioreaktion auch bei der standardmäßigen vollen Mischung sichtbar bleibt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Base zoom amount before the octave multiplier.</source>
-            <translation type="unfinished" />
+            <translation>Basiszoomstärke vor dem Oktavenfaktor.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Multiplies the zoom octave span; the renderer caps the combined span.</source>
-            <translation type="unfinished" />
+            <translation>Multipliziert den Zoomumfang in Oktaven; der Renderer begrenzt den kombinierten Umfang.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Ripple intensity</source>
-            <translation type="unfinished" />
+            <translation>Kräuselstärke</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+11" />
             <location line="+10" />
             <source>Magnitude (short-edge fraction)</source>
-            <translation type="unfinished" />
+            <translation>Ausmaß (Anteil der kurzen Kante)</translation>
         </message>
         <message>
             <location line="-19" />
             <source>Distance attenuation</source>
-            <translation type="unfinished" />
+            <translation>Entfernungsdämpfung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Scales the ripple displacement.</source>
-            <translation type="unfinished" />
+            <translation>Skaliert die Kräuselverschiebung.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -7880,734 +7896,734 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
             <location line="+12" />
             <location line="+108" />
             <source>Peak displacement as a fraction of the shorter image edge.</source>
-            <translation type="unfinished" />
+            <translation>Maximale Verschiebung als Anteil der kürzeren Bildkante.</translation>
         </message>
         <message>
             <location line="-129" />
             <source>Number of spatial ripple oscillations.</source>
-            <translation type="unfinished" />
+            <translation>Anzahl räumlicher Kräuselschwingungen.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Values above 1 increasingly attenuate distant ripples.</source>
-            <translation type="unfinished" />
+            <translation>Werte über 1 dämpfen entfernte Kräuselwellen zunehmend.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Shake intensity</source>
-            <translation type="unfinished" />
+            <translation>Schüttelstärke</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Shake harmonic</source>
-            <translation type="unfinished" />
+            <translation>Schüttelharmonische</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Cross-axis harmonic mix</source>
-            <translation type="unfinished" />
+            <translation>Harmonischer Mischanteil der Querachse</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+26" />
             <source>Direction angle (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Richtungswinkel (Grad)</translation>
         </message>
         <message>
             <location line="-25" />
             <source>Scales the total shake displacement.</source>
-            <translation type="unfinished" />
+            <translation>Skaliert die gesamte Schüttelverschiebung.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Rounded to a whole harmonic to preserve a seamless loop.</source>
-            <translation type="unfinished" />
+            <translation>Wird auf eine ganze Harmonische gerundet, um eine nahtlose Schleife zu erhalten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Mix and direction of the secondary shake axis.</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil und Richtung der zweiten Schüttelachse.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Flag-wave intensity</source>
-            <translation type="unfinished" />
+            <translation>Flaggenwellenstärke</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Secondary harmonic mix</source>
-            <translation type="unfinished" />
+            <translation>Mischanteil der zweiten Harmonischen</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+102" />
             <source>Wave angle (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Wellenwinkel (Grad)</translation>
         </message>
         <message>
             <location line="-101" />
             <source>Scales the flag-wave displacement.</source>
-            <translation type="unfinished" />
+            <translation>Skaliert die Verschiebung der Flaggenwelle.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Number of flag-wave oscillations across the image.</source>
-            <translation type="unfinished" />
+            <translation>Anzahl der Flaggenwellenschwingungen über das Bild.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Adds a half-frequency secondary fold to the flag wave.</source>
-            <translation type="unfinished" />
+            <translation>Fügt der Flaggenwelle eine zweite Falte mit halber Frequenz hinzu.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Glow intensity</source>
-            <translation type="unfinished" />
+            <translation>Leuchtstärke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Pulse depth</source>
-            <translation type="unfinished" />
+            <translation>Pulstiefe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Brightness added by the blurred highlight layer.</source>
-            <translation type="unfinished" />
+            <translation>Helligkeit, die von der unscharfen Glanzlichtebene hinzugefügt wird.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>How strongly the synchronized clock pulses glow intensity.</source>
-            <translation type="unfinished" />
+            <translation>Stärke, mit der der synchronisierte Takt die Leuchtintensität pulsieren lässt.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blur radius (pixels)</source>
-            <translation type="unfinished" />
+            <translation>Unschärferadius (Pixel)</translation>
         </message>
         <message>
             <location line="+5" />
             <location line="+2" />
             <source>Center for Radial and Zoom blur, and for an optional local-area mask.</source>
-            <translation type="unfinished" />
+            <translation>Zentrum für Radial- und Zoom-Unschärfe sowie eine optionale lokale Bereichsmaske.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Sampling direction for Directional blur.</source>
-            <translation type="unfinished" />
+            <translation>Abtastrichtung für gerichtete Unschärfe.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Pixel-block mix</source>
-            <translation type="unfinished" />
+            <translation>Pixelblock-Mischanteil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Minimum size multiplier</source>
-            <translation type="unfinished" />
+            <translation>Minimaler Größenfaktor</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Maximum size multiplier</source>
-            <translation type="unfinished" />
+            <translation>Maximaler Größenfaktor</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Quantization steps (0 smooth)</source>
-            <translation type="unfinished" />
+            <translation>Quantisierungsstufen (0 = stufenlos)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blend between the incoming image and the animated block grouping.</source>
-            <translation type="unfinished" />
+            <translation>Mischung zwischen Eingangsbild und animierter Blockgruppierung.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Smallest multiplier applied to the canvas block-size setting.</source>
-            <translation type="unfinished" />
+            <translation>Kleinster Faktor für die Leinwand-Blockgröße.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Largest multiplier applied to the canvas block-size setting.</source>
-            <translation type="unfinished" />
+            <translation>Größter Faktor für die Leinwand-Blockgröße.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Zero changes smoothly; a whole value snaps the motion into that many intervals.</source>
-            <translation type="unfinished" />
+            <translation>Null ändert sich stufenlos; ein ganzzahliger Wert rastet die Bewegung in entsprechend viele Intervalle ein.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Glitch mix</source>
-            <translation type="unfinished" />
+            <translation>Glitch-Mischanteil</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Horizontal displacement</source>
-            <translation type="unfinished" />
+            <translation>Horizontale Verschiebung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Scanline bands</source>
-            <translation type="unfinished" />
+            <translation>Scanline-Bänder</translation>
         </message>
         <message>
             <location line="+1" />
             <source>RGB split</source>
-            <translation type="unfinished" />
+            <translation>RGB-Aufspaltung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Whole horizontal band count. Each band receives a deterministic loop-safe offset.</source>
-            <translation type="unfinished" />
+            <translation>Ganzzahlige Anzahl horizontaler Bänder. Jedes Band erhält einen deterministischen, nahtlos zyklischen Versatz.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Separates color channels inside displaced bands.</source>
-            <translation type="unfinished" />
+            <translation>Trennt Farbkanäle innerhalb verschobener Bänder.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Starburst mix</source>
-            <translation type="unfinished" />
+            <translation>Sternstrahlen-Mischanteil</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Radial displacement</source>
-            <translation type="unfinished" />
+            <translation>Radiale Verschiebung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Ray count</source>
-            <translation type="unfinished" />
+            <translation>Strahlenzahl</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Ray sharpness</source>
-            <translation type="unfinished" />
+            <translation>Strahlenschärfe</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Ray rotation (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Strahlendrehung (Grad)</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Whole radial ray count around the authored center.</source>
-            <translation type="unfinished" />
+            <translation>Ganzzahlige Anzahl radialer Strahlen um das festgelegte Zentrum.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Sharpens the transition between neighboring rays.</source>
-            <translation type="unfinished" />
+            <translation>Schärft den Übergang zwischen benachbarten Strahlen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Lens mix</source>
-            <translation type="unfinished" />
+            <translation>Linsen-Mischanteil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Lens bend</source>
-            <translation type="unfinished" />
+            <translation>Linsenkrümmung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Radial exponent</source>
-            <translation type="unfinished" />
+            <translation>Radialer Exponent</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Direction (−1 barrel, +1 pincushion)</source>
-            <translation type="unfinished" />
+            <translation>Richtung (−1 Tonne, +1 Kissen)</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Negative values bow outward (barrel); positive values pinch inward.</source>
-            <translation type="unfinished" />
+            <translation>Negative Werte wölben nach außen (Tonne); positive ziehen nach innen (Kissen).</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Edge mix</source>
-            <translation type="unfinished" />
+            <translation>Kanten-Mischanteil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Edge gain</source>
-            <translation type="unfinished" />
+            <translation>Kantenverstärkung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Sampling radius (pixels)</source>
-            <translation type="unfinished" />
+            <translation>Abtastradius (Pixel)</translation>
         </message>
         <message>
             <location line="+2" />
             <location line="+29" />
             <source>Area center X (0–1)</source>
-            <translation type="unfinished" />
+            <translation>Bereichszentrum X (0–1)</translation>
         </message>
         <message>
             <location line="-28" />
             <location line="+30" />
             <source>Area center Y (0–1)</source>
-            <translation type="unfinished" />
+            <translation>Bereichszentrum Y (0–1)</translation>
         </message>
         <message>
             <location line="-28" />
             <source>Amplifies Sobel edges in linear light; HDR edges remain available.</source>
-            <translation type="unfinished" />
+            <translation>Verstärkt Sobel-Kanten in linearem Licht; HDR-Kanten bleiben erhalten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Whole pixel distance used by the edge detector.</source>
-            <translation type="unfinished" />
+            <translation>Ganzzahliger Pixelabstand des Kantendetektors.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Suppresses gradients below this threshold.</source>
-            <translation type="unfinished" />
+            <translation>Unterdrückt Gradienten unterhalb dieses Schwellenwerts.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Twirl mix</source>
-            <translation type="unfinished" />
+            <translation>Wirbel-Mischanteil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Maximum turns</source>
-            <translation type="unfinished" />
+            <translation>Maximale Umdrehungen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Radial falloff</source>
-            <translation type="unfinished" />
+            <translation>Radialer Abfall</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Direction / depth</source>
-            <translation type="unfinished" />
+            <translation>Richtung / Tiefe</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Maximum rotation near the center, measured in turns.</source>
-            <translation type="unfinished" />
+            <translation>Maximale Drehung nahe dem Zentrum, gemessen in Umdrehungen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Negative values reverse direction; zero is neutral.</source>
-            <translation type="unfinished" />
+            <translation>Negative Werte kehren die Richtung um; null ist neutral.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Refraction mix</source>
-            <translation type="unfinished" />
+            <translation>Brechungs-Mischanteil</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Peak refraction (short-edge fraction)</source>
-            <translation type="unfinished" />
+            <translation>Maximale Brechung (Anteil der kurzen Kante)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Wave density</source>
-            <translation type="unfinished" />
+            <translation>Wellendichte</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Cross-wave complexity</source>
-            <translation type="unfinished" />
+            <translation>Komplexität der Kreuzwellen</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Blends the incoming image with the refracted water sample.</source>
-            <translation type="unfinished" />
+            <translation>Mischt das Eingangsbild mit dem durch Wasser gebrochenen Abtastwert.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Spatial density of the three directional wave components.</source>
-            <translation type="unfinished" />
+            <translation>Räumliche Dichte der drei gerichteten Wellenkomponenten.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Adds cross-wave detail while preserving the exact project loop.</source>
-            <translation type="unfinished" />
+            <translation>Fügt Kreuzwellendetails hinzu und erhält dabei die exakte Projektschleife.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Rotates the analytic wave field without changing its loop.</source>
-            <translation type="unfinished" />
+            <translation>Dreht das analytische Wellenfeld, ohne seine Schleife zu verändern.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Spark brightness</source>
-            <translation type="unfinished" />
+            <translation>Funkenhelligkeit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Travel per loop</source>
-            <translation type="unfinished" />
+            <translation>Weg pro Schleife</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle count</source>
-            <translation type="unfinished" />
+            <translation>Partikelzahl</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Trail amount</source>
-            <translation type="unfinished" />
+            <translation>Spuranteil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Travel angle (degrees)</source>
-            <translation type="unfinished" />
+            <translation>Bewegungswinkel (Grad)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Exact base radius (output pixels)</source>
-            <translation type="unfinished" />
+            <translation>Exakter Basisradius (Ausgabepixel)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>White-hot core</source>
-            <translation type="unfinished" />
+            <translation>Weißglühender Kern</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Glow softness</source>
-            <translation type="unfinished" />
+            <translation>Weichheit des Leuchtens</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Adds HDR ember light over the incoming layer.</source>
-            <translation type="unfinished" />
+            <translation>Fügt HDR-Glutlicht über der eingehenden Ebene hinzu.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>A deterministic whole particle count fitting the signed-int renderer index.</source>
-            <translation type="unfinished" />
+            <translation>Deterministische ganzzahlige Partikelzahl innerhalb des vorzeichenbehafteten Ganzzahlindex des Renderers.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Extends a fading trail behind each moving spark.</source>
-            <translation type="unfinished" />
+            <translation>Verlängert eine verblassende Spur hinter jedem bewegten Funken.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Exact base radius in full-resolution output pixels. Use the size slider for playful exploration and this editor for precise renders.</source>
-            <translation type="unfinished" />
+            <translation>Exakter Basisradius in Ausgabepixeln bei voller Auflösung. Nutzen Sie den Größenregler zum Experimentieren und dieses Feld für präzise Renderings.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Moves the particle color from warm ember toward a white-hot core.</source>
-            <translation type="unfinished" />
+            <translation>Verschiebt die Partikelfarbe von warmer Glut zu einem weißglühenden Kern.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Controls the softness of each particle's glow falloff.</source>
-            <translation type="unfinished" />
+            <translation>Steuert die Weichheit des Leuchtabfalls jedes Partikels.</translation>
         </message>
         <message>
             <location line="+429" />
             <source>Add or enable a wave, then choose at least one output below.</source>
-            <translation type="unfinished" />
+            <translation>Fügen Sie eine Welle hinzu oder aktivieren Sie eine und wählen Sie dann unten mindestens eine Ausgabe.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>This layer's enabled waves cannot affect pixels because both wave outputs are off.</source>
-            <translation type="unfinished" />
+            <translation>Aktivierte Wellen dieser Ebene können keine Pixel beeinflussen, da beide Wellenausgaben deaktiviert sind.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Enabled waves drive both generated-pattern displacement and slope lighting.</source>
-            <translation type="unfinished" />
+            <translation>Aktivierte Wellen steuern sowohl die Verschiebung des generierten Musters als auch die Steigungsbeleuchtung.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Enabled waves drive generated-pattern displacement.</source>
-            <translation type="unfinished" />
+            <translation>Aktivierte Wellen steuern die Verschiebung des generierten Musters.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Enabled waves drive slope lighting.</source>
-            <translation type="unfinished" />
+            <translation>Aktivierte Wellen steuern die Steigungsbeleuchtung.</translation>
         </message>
         <message>
             <location line="+31" />
             <source>Transparent crops the transformed Plane; Keep Source retains the original canvas outside it; Reflect tiles the source across Plane edges.</source>
-            <translation type="unfinished" />
+            <translation>Transparent beschneidet die transformierte ebene Fläche; Quelle beibehalten erhält die ursprüngliche Leinwand außerhalb; Spiegeln kachelt die Quelle über die Flächenränder hinaus.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Transparent removes pixels outside the surface. Keep Source and Reflect both retain the original canvas outside closed 3D surfaces.</source>
-            <translation type="unfinished" />
+            <translation>Transparent entfernt Pixel außerhalb der Oberfläche. Quelle beibehalten und Spiegeln erhalten beide die ursprüngliche Leinwand außerhalb geschlossener 3D-Oberflächen.</translation>
         </message>
         <message>
             <location line="+8" />
             <location line="+11" />
             <source>Embedded project asset: %1</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Projektressource: %1</translation>
         </message>
         <message>
             <location line="-8" />
             <source>Choose remains available while displacement use is off.</source>
-            <translation type="unfinished" />
+            <translation>Auswählen bleibt auch bei deaktivierter Verschiebung verfügbar.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Choose a PNG or OpenEXR environment map to enable lighting.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine PNG- oder OpenEXR-Umgebungskarte, um die Beleuchtung zu aktivieren.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Fragment animation is evaluated on this mesh surface and closes at the project loop seam.</source>
-            <translation type="unfinished" />
+            <translation>Die Fragmentanimation wird auf dieser Netzoberfläche ausgewertet und schließt am Übergang der Projektschleife.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Choose a Custom OBJ or enable a displaced Plane. Existing construction settings are preserved while unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie ein benutzerdefiniertes OBJ oder aktivieren Sie eine verformte ebene Fläche. Bestehende Konstruktionseinstellungen bleiben erhalten, solange sie nicht verfügbar sind.</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Crossfade from the original flat image at 0 to the fully projected displacement mesh at 1.</source>
-            <translation type="unfinished" />
+            <translation>Überblendung vom ursprünglichen flachen Bild bei 0 zum vollständig projizierten Verschiebungsnetz bei 1.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>A flat Plane uses its authored projection and transform directly; curvature is reserved for a Plane displacement mesh.</source>
-            <translation type="unfinished" />
+            <translation>Eine flache ebene Fläche verwendet direkt ihre festgelegte Projektion und Transformation; Krümmung ist dem Verschiebungsnetz vorbehalten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Crossfade from the original flat image at 0 to the fully mapped 3D surface at 1.</source>
-            <translation type="unfinished" />
+            <translation>Überblendung vom ursprünglichen flachen Bild bei 0 zur vollständig abgebildeten 3D-Oberfläche bei 1.</translation>
         </message>
         <message>
             <location line="+34" />
             <source>Normalized offset added to every point sampled from the reusable path. Zero is neutral.</source>
-            <translation type="unfinished" />
+            <translation>Normierter Versatz, der jedem Abtastpunkt des wiederverwendbaren Pfads hinzugefügt wird. Null ist neutral.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Normalized canvas location used as the built-in path center.</source>
-            <translation type="unfinished" />
+            <translation>Normierte Leinwandposition als Zentrum des mitgelieferten Pfads.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Adds seamless oscillating travel to the reusable path. Zero preserves the path exactly.</source>
-            <translation type="unfinished" />
+            <translation>Fügt dem wiederverwendbaren Pfad eine nahtlose Schwingbewegung hinzu. Null erhält den Pfad exakt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Travel distance around the built-in path center, as a fraction of the canvas dimension.</source>
-            <translation type="unfinished" />
+            <translation>Weg um das Zentrum des mitgelieferten Pfads als Anteil der Leinwandabmessung.</translation>
         </message>
         <message>
             <location line="+35" />
             <source>No post effect selected. Add any effect type to the stack; types may be added more than once.</source>
-            <translation type="unfinished" />
+            <translation>Kein Nachbearbeitungseffekt ausgewählt. Fügen Sie dem Stapel einen beliebigen Effekttyp hinzu; jeder Typ kann mehrfach hinzugefügt werden.</translation>
         </message>
         <message>
             <location line="+26" />
             <source>Routing off — no swap: R ← input red · G ← input green · B ← input blue · A ← input alpha</source>
-            <translation type="unfinished" />
+            <translation>Zuordnung aus — kein Tausch: R ← Eingangsrot · G ← Eingangsgrün · B ← Eingangsblau · A ← Eingangsalpha</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Routing on: R ← %1 · G ← %2 · B ← %3 · A ← %4</source>
-            <translation type="unfinished" />
+            <translation>Zuordnung an: R ← %1 · G ← %2 · B ← %3 · A ← %4</translation>
         </message>
         <message>
             <location line="+191" />
             <source>Post-effect limit</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffektlimit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The Qt item-index limit is %1 post effects.</source>
-            <translation type="unfinished" />
+            <translation>Die Qt-Elementindexgrenze beträgt %1 Nachbearbeitungseffekte.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Added %1 to the post-effect stack.</source>
-            <translation type="unfinished" />
+            <translation>%1 zum Nachbearbeitungsstapel hinzugefügt.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Add post effect</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekt hinzufügen</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Duplicated the selected post effect.</source>
-            <translation type="unfinished" />
+            <translation>Ausgewählten Nachbearbeitungseffekt dupliziert.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Duplicate post effect</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekt duplizieren</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Removed %1 from the post-effect stack.</source>
-            <translation type="unfinished" />
+            <translation>%1 aus dem Nachbearbeitungsstapel entfernt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Remove post effect</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekt entfernen</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Moved finishing stage to position %1.</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungsstufe auf Position %1 verschoben.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Reorder finishing stages</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungsstufen umordnen</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Channel routing is off; original RGBA channels are preserved.</source>
-            <translation type="unfinished" />
+            <translation>Kanalzuordnung ist aus; die ursprünglichen RGBA-Kanäle bleiben erhalten.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Keep original RGBA channels</source>
-            <translation type="unfinished" />
+            <translation>Ursprüngliche RGBA-Kanäle beibehalten</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Unnamed</source>
-            <translation type="unfinished" />
+            <translation>Unbenannt</translation>
         </message>
         <message>
             <location line="+3" />
             <source>%1. %2 — %3 · %4 · RGBA(%5, %6, %7, %8)</source>
-            <translation type="unfinished" />
+            <translation>%1. %2 — %3 · %4 · RGBA(%5, %6, %7, %8)</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Linear-light values are preserved exactly. This list swatch is tone-clipped to the displayable sRGB range.</source>
-            <translation type="unfinished" />
+            <translation>Werte in linearem Licht bleiben exakt erhalten. Das Farbmuster dieser Liste wird auf den darstellbaren sRGB-Bereich begrenzt.</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Use palette preset</source>
-            <translation type="unfinished" />
+            <translation>Palettenvorgabe verwenden</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Nothing to save</source>
-            <translation type="unfinished" />
+            <translation>Nichts zu speichern</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+328" />
             <source>Add at least one palette color first.</source>
-            <translation type="unfinished" />
+            <translation>Fügen Sie zuerst mindestens eine Palettenfarbe hinzu.</translation>
         </message>
         <message>
             <location line="-323" />
             <source>Save palette</source>
-            <translation type="unfinished" />
+            <translation>Palette speichern</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Library name</source>
-            <translation type="unfinished" />
+            <translation>Bibliotheksname</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Invalid palette name</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Palettenname</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Enter a non-empty palette name without control characters.</source>
-            <translation type="unfinished" />
+            <translation>Geben Sie einen nicht leeren Palettennamen ohne Steuerzeichen ein.</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Replace saved palette?</source>
-            <translation type="unfinished" />
+            <translation>Gespeicherte Palette ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>A palette named “%1” already exists. Replace it?</source>
-            <translation type="unfinished" />
+            <translation>Eine Palette namens „%1“ existiert bereits. Ersetzen?</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Palette library limit</source>
-            <translation type="unfinished" />
+            <translation>Limit der Palettenbibliothek</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The local palette library would exceed its 64 MiB safety limit. Export this palette to a file instead.</source>
-            <translation type="unfinished" />
+            <translation>Die lokale Palettenbibliothek würde ihr Sicherheitslimit von 64 MiB überschreiten. Exportieren Sie diese Palette stattdessen in eine Datei.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Could not save palette</source>
-            <translation type="unfinished" />
+            <translation>Palette konnte nicht gespeichert werden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The local palette library could not be written.</source>
-            <translation type="unfinished" />
+            <translation>Die lokale Palettenbibliothek konnte nicht geschrieben werden.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Saved “%1” to the local palette library.</source>
-            <translation type="unfinished" />
+            <translation>„%1“ in der lokalen Palettenbibliothek gespeichert.</translation>
         </message>
         <message>
             <location line="+101" />
             <source>Saved palette: %1</source>
-            <translation type="unfinished" />
+            <translation>Gespeicherte Palette: %1</translation>
         </message>
         <message>
             <location line="+8" />
             <source>No reusable palettes</source>
-            <translation type="unfinished" />
+            <translation>Keine wiederverwendbaren Paletten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>No other layer or locally saved palette is available yet.</source>
-            <translation type="unfinished" />
+            <translation>Noch keine andere Ebene oder lokal gespeicherte Palette verfügbar.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Load starting palette</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette laden</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Palette</source>
-            <translation type="unfinished" />
+            <translation>Palette</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Load reusable palette</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Palette laden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Loaded %1.</source>
-            <translation type="unfinished" />
+            <translation>%1 geladen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Import starting palette</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette importieren</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Could not import palette</source>
-            <translation type="unfinished" />
+            <translation>Palette konnte nicht importiert werden</translation>
         </message>
         <message>
             <location line="+1" />
@@ -8615,725 +8631,731 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
             <source>%1
 
 %2</source>
-            <translation type="unfinished" />
+            <translation>%1
+
+%2</translation>
         </message>
         <message>
             <location line="-139" />
             <source>Palette import summary</source>
-            <translation type="unfinished" />
+            <translation>Zusammenfassung des Palettenimports</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Review the import before changing this layer.</source>
-            <translation type="unfinished" />
+            <translation>Prüfen Sie den Import, bevor Sie diese Ebene verändern.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>
 
 Replace the current palette or append these values?</source>
-            <translation type="unfinished" />
+            <translation>
+
+Aktuelle Palette ersetzen oder diese Werte anhängen?</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Replace Palette</source>
-            <translation type="unfinished" />
+            <translation>Palette ersetzen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Append Values</source>
-            <translation type="unfinished" />
+            <translation>Werte anhängen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Appending would exceed the signed-int palette index limit.</source>
-            <translation type="unfinished" />
+            <translation>Das Anhängen würde die vorzeichenbehaftete Ganzzahlindexgrenze der Palette überschreiten.</translation>
         </message>
         <message>
             <location line="+41" />
             <source>Palette cannot be used by this project</source>
-            <translation type="unfinished" />
+            <translation>Palette kann von diesem Projekt nicht verwendet werden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The file was imported without changing the layer, but the result would violate a renderer limit:
 
 %1</source>
-            <translation type="unfinished" />
+            <translation>Die Datei wurde importiert, ohne die Ebene zu ändern. Das Ergebnis würde jedoch ein Rendererlimit verletzen:
+
+%1</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Append imported palette</source>
-            <translation type="unfinished" />
+            <translation>Importierte Palette anhängen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Import palette</source>
-            <translation type="unfinished" />
+            <translation>Palette importieren</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Imported %1 palette value(s) from %2.</source>
-            <translation type="unfinished" />
+            <translation>Aus %2 importierte Palettenwerte: %1.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Nothing to export</source>
-            <translation type="unfinished" />
+            <translation>Nichts zu exportieren</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Export starting palette</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette exportieren</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Replace palette file?</source>
-            <translation type="unfinished" />
+            <translation>Palettendatei ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>%1 already exists. Replace it atomically?</source>
-            <translation type="unfinished" />
+            <translation>%1 existiert bereits. Atomar ersetzen?</translation>
         </message>
         <message>
             <location line="+34" />
             <source>Could not export palette</source>
-            <translation type="unfinished" />
+            <translation>Palette konnte nicht exportiert werden</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Palette exported</source>
-            <translation type="unfinished" />
+            <translation>Palette exportiert</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Exported %1 palette value(s) to %2.</source>
-            <translation type="unfinished" />
+            <translation>Nach %2 exportierte Palettenwerte: %1.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Generate constrained random palette</source>
-            <translation type="unfinished" />
+            <translation>Zufallspalette mit Vorgaben erzeugen</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Manual deterministic seed</source>
-            <translation type="unfinished" />
+            <translation>Manueller deterministischer Startwert</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Very poor: fixed seed 1</source>
-            <translation type="unfinished" />
+            <translation>Sehr schlecht: fester Startwert 1</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Poor: wall-clock seconds</source>
-            <translation type="unfinished" />
+            <translation>Schlecht: Sekunden der Systemzeit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Fast pseudorandom seed</source>
-            <translation type="unfinished" />
+            <translation>Schneller Pseudozufallsstartwert</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Secure operating-system entropy</source>
-            <translation type="unfinished" />
+            <translation>Sichere Entropie des Betriebssystems</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Unsigned 64-bit integer</source>
-            <translation type="unfinished" />
+            <translation>Vorzeichenlose 64-Bit-Ganzzahl</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Discards this many generator outputs before palette creation. Each draw is already uniform; this is exposed for experimentation and reproducibility.</source>
-            <translation type="unfinished" />
+            <translation>Verwirft so viele Generatorausgaben vor der Palettenerstellung. Jede Ziehung ist bereits gleichverteilt; diese Einstellung dient dem Experimentieren und der Reproduzierbarkeit.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Use aesthetic relationship rules</source>
-            <translation type="unfinished" />
+            <translation>Ästhetische Beziehungsregeln verwenden</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Choose relationship rules…</source>
-            <translation type="unfinished" />
+            <translation>Beziehungsregeln wählen…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Number of colors</source>
-            <translation type="unfinished" />
+            <translation>Anzahl der Farben</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Seed source</source>
-            <translation type="unfinished" />
+            <translation>Startwertquelle</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Manual seed</source>
-            <translation type="unfinished" />
+            <translation>Manueller Startwert</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Generator warm-up draws</source>
-            <translation type="unfinished" />
+            <translation>Vorlaufziehungen des Generators</translation>
         </message>
         <message>
             <location line="+77" />
             <source>Generate</source>
-            <translation type="unfinished" />
+            <translation>Erzeugen</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Invalid channel range</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Kanalbereich</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Every channel minimum must be no greater than its maximum.</source>
-            <translation type="unfinished" />
+            <translation>Das Minimum jedes Kanals darf nicht größer als sein Maximum sein.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Invalid seed</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Startwert</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The manual seed must be an unsigned 64-bit integer.</source>
-            <translation type="unfinished" />
+            <translation>Der manuelle Startwert muss eine vorzeichenlose 64-Bit-Ganzzahl sein.</translation>
         </message>
         <message>
             <location line="+50" />
             <source>Random %1</source>
-            <translation type="unfinished" />
+            <translation>Zufällig %1</translation>
         </message>
         <message>
             <location line="+56" />
             <source>Generate random palette</source>
-            <translation type="unfinished" />
+            <translation>Zufallspalette erzeugen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Generated %1 colors with seed %2%3.</source>
-            <translation type="unfinished" />
+            <translation>%1 Farben mit Startwert %2%3 erzeugt.</translation>
         </message>
         <message>
             <location line="+4" />
             <source> and one selected relationship rule</source>
-            <translation type="unfinished" />
+            <translation> und einer ausgewählten Beziehungsregel</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Palette limit</source>
-            <translation type="unfinished" />
+            <translation>Palettenlimit</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The signed-int UI/API palette-color index is exhausted.</source>
-            <translation type="unfinished" />
+            <translation>Der vorzeichenbehaftete Ganzzahlindex für Palettenfarben in Oberfläche/API ist ausgeschöpft.</translation>
         </message>
         <message>
             <location line="+8" />
             <location line="+27" />
             <source>Add palette color</source>
-            <translation type="unfinished" />
+            <translation>Palettenfarbe hinzufügen</translation>
         </message>
         <message>
             <location line="-23" />
             <location line="+48" />
             <source>Name palette color</source>
-            <translation type="unfinished" />
+            <translation>Palettenfarbe benennen</translation>
         </message>
         <message>
             <location line="-47" />
             <location line="+48" />
             <source>Optional entry name (preserved by GPL and KPL)</source>
-            <translation type="unfinished" />
+            <translation>Optionaler Eintragsname (von GPL und KPL beibehalten)</translation>
         </message>
         <message>
             <location line="-44" />
             <location line="+49" />
             <source>Invalid color name</source>
-            <translation type="unfinished" />
+            <translation>Ungültiger Farbname</translation>
         </message>
         <message>
             <location line="-48" />
             <location line="+49" />
             <source>Use UTF-8 text without control characters.</source>
-            <translation type="unfinished" />
+            <translation>Verwenden Sie UTF-8-Text ohne Steuerzeichen.</translation>
         </message>
         <message>
             <location line="-19" />
             <source>Convert linear/HDR color?</source>
-            <translation type="unfinished" />
+            <translation>Lineare/HDR-Farbe konvertieren?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The standard color picker edits display sRGB. Continuing converts this one entry to sRGB and clips values outside the displayable range. The other imported values remain unchanged.</source>
-            <translation type="unfinished" />
+            <translation>Die Standardfarbauswahl bearbeitet Anzeige-sRGB. Beim Fortfahren wird nur dieser Eintrag in sRGB konvertiert; Werte außerhalb des darstellbaren Bereichs werden begrenzt. Andere importierte Werte bleiben unverändert.</translation>
         </message>
         <message>
             <location line="+7" />
             <location line="+27" />
             <source>Edit palette color</source>
-            <translation type="unfinished" />
+            <translation>Palettenfarbe bearbeiten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Converted the edited entry to display sRGB.</source>
-            <translation type="unfinished" />
+            <translation>Bearbeiteten Eintrag in Anzeige-sRGB konvertiert.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>The empty palette was disabled.</source>
-            <translation type="unfinished" />
+            <translation>Die leere Palette wurde deaktiviert.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Remove palette color</source>
-            <translation type="unfinished" />
+            <translation>Palettenfarbe entfernen</translation>
         </message>
         <message>
             <location line="+51" />
             <source>Edit wave</source>
-            <translation type="unfinished" />
+            <translation>Welle bearbeiten</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Toggle swing block</source>
-            <translation type="unfinished" />
+            <translation>Swing-Block umschalten</translation>
         </message>
         <message>
             <location line="+40" />
             <source>Edit swing</source>
-            <translation type="unfinished" />
+            <translation>Swing bearbeiten</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Select an editable layer before assigning its microphone clock.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine bearbeitbare Ebene, bevor Sie ihren Mikrofontakt zuweisen.</translation>
         </message>
         <message>
             <location line="+161" />
             <source>System default</source>
-            <translation type="unfinished" />
+            <translation>Systemstandard</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Unavailable</source>
-            <translation type="unfinished" />
+            <translation>Nicht verfügbar</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Unavailable · %1</source>
-            <translation type="unfinished" />
+            <translation>Nicht verfügbar · %1</translation>
         </message>
         <message>
             <location line="+8" />
             <source>All standard Mic clocks share this input. Changing it also changes the existing Mic clock; choose Mic (Live)… above to add this scope.</source>
-            <translation type="unfinished" />
+            <translation>Alle Standard-Mikrofontakte teilen diesen Eingang. Eine Änderung wirkt auch auf den vorhandenen Mikrofontakt; wählen Sie oben Mikrofon (Live)…, um diesen Geltungsbereich hinzuzufügen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Choose Mic (Live)… above to use this input; System default works immediately.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie oben Mikrofon (Live)…, um diesen Eingang zu verwenden; Systemstandard funktioniert sofort.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Saved input unavailable — LIVE will not silently switch to System default.</source>
-            <translation type="unfinished" />
+            <translation>Gespeicherter Eingang nicht verfügbar — LIVE wechselt nicht stillschweigend zum Systemstandard.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>LIVE beat clock · offline fallback remains %1.</source>
-            <translation type="unfinished" />
+            <translation>LIVE-Beat-Takt · Offline-Rückfall bleibt %1.</translation>
         </message>
         <message>
             <location line="+19" />
             <source> · default</source>
-            <translation type="unfinished" />
+            <translation> · Standard</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Finish the active export, project operation, or music analysis before starting microphone LIVE controls.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie den laufenden Export, Projektvorgang oder die Musikanalyse, bevor Sie die LIVE-Mikrofonsteuerung starten.</translation>
         </message>
         <message>
             <location line="+57" />
             <location line="+142" />
             <source>Finish the active export or project operation before enabling a microphone clock.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie den laufenden Export oder Projektvorgang, bevor Sie einen Mikrofontakt aktivieren.</translation>
         </message>
         <message>
             <location line="-130" />
             <source>Layer Mic clock was not enabled: %1</source>
-            <translation type="unfinished" />
+            <translation>Mikrofontakt der Ebene wurde nicht aktiviert: %1</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Use microphone for active-layer clock</source>
-            <translation type="unfinished" />
+            <translation>Mikrofon für den Takt der aktiven Ebene verwenden</translation>
         </message>
         <message>
             <location line="+59" />
             <source>The layer meter expression was not changed.</source>
-            <translation type="unfinished" />
+            <translation>Der Taktartausdruck der Ebene wurde nicht geändert.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Edit active-layer clock</source>
-            <translation type="unfinished" />
+            <translation>Takt der aktiven Ebene bearbeiten</translation>
         </message>
         <message>
             <location line="+35" />
             <source>Project Mic clock was not enabled: %1</source>
-            <translation type="unfinished" />
+            <translation>Mikrofontakt des Projekts wurde nicht aktiviert: %1</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Use microphone for project clock</source>
-            <translation type="unfinished" />
+            <translation>Mikrofon für den Projekttakt verwenden</translation>
         </message>
         <message>
             <location line="+48" />
             <source>The meter expression was not changed.</source>
-            <translation type="unfinished" />
+            <translation>Der Taktartausdruck wurde nicht geändert.</translation>
         </message>
         <message>
             <location line="+41" />
             <source>Edit synchronized clock</source>
-            <translation type="unfinished" />
+            <translation>Synchronisierten Takt bearbeiten</translation>
         </message>
         <message>
             <location line="+98" />
             <source>Edit project audio response</source>
-            <translation type="unfinished" />
+            <translation>Projekt-Audioreaktion bearbeiten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Edit layer audio response</source>
-            <translation type="unfinished" />
+            <translation>Ebenen-Audioreaktion bearbeiten</translation>
         </message>
         <message>
             <location line="+36" />
             <source>Enable surface mapping?</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenabbildung aktivieren?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>This effect will run after the layer's surface and motion stage.</source>
-            <translation type="unfinished" />
+            <translation>Dieser Effekt läuft nach der Oberflächen- und Bewegungsstufe der Ebene.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>3D surface mapping is off for this layer. Enable a neutral Plane now? The neutral Plane is visually identical to the flat artwork until you shape or move it. Embedded surface source files remain available, and the placement choice is kept either way.</source>
-            <translation type="unfinished" />
+            <translation>Die 3D-Oberflächenabbildung ist für diese Ebene aus. Jetzt eine neutrale ebene Fläche aktivieren? Sie ist optisch identisch mit dem flachen Motiv, bis Sie sie formen oder bewegen. Eingebettete Oberflächenquelldateien bleiben verfügbar; die Platzierungswahl bleibt in jedem Fall erhalten.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Enable Neutral Plane</source>
-            <translation type="unfinished" />
+            <translation>Neutrale ebene Fläche aktivieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Keep Surface Off</source>
-            <translation type="unfinished" />
+            <translation>Oberfläche ausgeschaltet lassen</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Enable visually neutral surface defaults as part of this effect edit.</source>
-            <translation type="unfinished" />
+            <translation>Optisch neutrale Oberflächenvorgaben als Teil dieser Effektbearbeitung aktivieren.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Keep the after-surface placement on the current flat layer.</source>
-            <translation type="unfinished" />
+            <translation>Die Platzierung nach der Oberfläche auf der aktuellen flachen Ebene beibehalten.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Enabled a neutral Plane surface. The artwork stays flat until you change its surface controls.</source>
-            <translation type="unfinished" />
+            <translation>Neutrale ebene Fläche aktiviert. Das Motiv bleibt flach, bis Sie die Oberflächenregler ändern.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Kept 3D surface mapping off. This effect still runs after whole-layer motion on the flat layer.</source>
-            <translation type="unfinished" />
+            <translation>3D-Oberflächenabbildung bleibt aus. Dieser Effekt läuft weiterhin nach der Bewegung der gesamten Ebene auf der flachen Ebene.</translation>
         </message>
         <message>
             <location line="+78" />
             <source>Particle seed must be an unsigned 64-bit whole number.</source>
-            <translation type="unfinished" />
+            <translation>Der Partikelstartwert muss eine vorzeichenlose 64-Bit-Ganzzahl sein.</translation>
         </message>
         <message>
             <location line="+96" />
             <source>Edit effect</source>
-            <translation type="unfinished" />
+            <translation>Effekt bearbeiten</translation>
         </message>
         <message>
             <location line="+113" />
             <source>Domain-warp seed must be an unsigned 64-bit integer.</source>
-            <translation type="unfinished" />
+            <translation>Der Startwert der Bereichsverzerrung muss eine vorzeichenlose 64-Bit-Ganzzahl sein.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Choose a PNG or OpenEXR image before enabling the starting image.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie ein PNG- oder OpenEXR-Bild, bevor Sie das Ausgangsbild aktivieren.</translation>
         </message>
         <message>
             <location line="+101" />
             <source>Loaded the Ember preset because a starting palette needs at least one color.</source>
-            <translation type="unfinished" />
+            <translation>Vorgabe Glut geladen, da eine Ausgangspalette mindestens eine Farbe benötigt.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Starting palette enabled.</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette aktiviert.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Starting palette disabled.</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette deaktiviert.</translation>
         </message>
         <message>
             <location line="+110" />
             <source>Choose a PNG or OpenEXR height map before enabling plane displacement.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine PNG- oder OpenEXR-Höhenkarte, bevor Sie die Flächenverschiebung aktivieren.</translation>
         </message>
         <message>
             <location line="+49" />
             <source>Choose a PNG or OpenEXR environment map before enabling it.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie vor der Aktivierung eine PNG- oder OpenEXR-Umgebungskarte.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Mesh construction requires a Custom OBJ or an enabled displaced Plane.</source>
-            <translation type="unfinished" />
+            <translation>Die Netzkonstruktion benötigt ein benutzerdefiniertes OBJ oder eine aktivierte verformte ebene Fläche.</translation>
         </message>
         <message>
             <location line="+41" />
             <source>Mesh-construction seed must be an unsigned 64-bit integer.</source>
-            <translation type="unfinished" />
+            <translation>Der Startwert der Netzkonstruktion muss eine vorzeichenlose 64-Bit-Ganzzahl sein.</translation>
         </message>
         <message>
             <location line="+329" />
             <source>Edit project setting</source>
-            <translation type="unfinished" />
+            <translation>Projekteinstellung bearbeiten</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Final alpha output was enabled because the visible stack can be transparent.</source>
-            <translation type="unfinished" />
+            <translation>Die endgültige Alpha-Ausgabe wurde aktiviert, da der sichtbare Stapel transparent sein kann.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Output directory must contain 1 to %1 UTF-8 bytes without control characters.</source>
-            <translation type="unfinished" />
+            <translation>Das Ausgabeverzeichnis muss 1 bis %1 UTF-8-Bytes ohne Steuerzeichen enthalten.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Filename prefix must contain 1 to %1 UTF-8 bytes and cannot contain &lt;, &gt;, :, ", /, \, |, ?, or *.</source>
-            <translation type="unfinished" />
+            <translation>Das Dateinamenpräfix muss 1 bis %1 UTF-8-Bytes enthalten und darf keine der Zeichen &lt;, &gt;, :, ", /, \, |, ? oder * enthalten.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Required; at most %1 UTF-8 bytes and no control characters.</source>
-            <translation type="unfinished" />
+            <translation>Erforderlich; höchstens %1 UTF-8-Bytes ohne Steuerzeichen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Required; at most %1 UTF-8 bytes and no filename separator or reserved character.</source>
-            <translation type="unfinished" />
+            <translation>Erforderlich; höchstens %1 UTF-8-Bytes ohne Dateitrennzeichen oder reservierte Zeichen.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Move wave up</source>
-            <translation type="unfinished" />
+            <translation>Welle nach oben verschieben</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Move wave down</source>
-            <translation type="unfinished" />
+            <translation>Welle nach unten verschieben</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Move swing up</source>
-            <translation type="unfinished" />
+            <translation>Swing nach oben verschieben</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Move swing down</source>
-            <translation type="unfinished" />
+            <translation>Swing nach unten verschieben</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Move effect up</source>
-            <translation type="unfinished" />
+            <translation>Effekt nach oben verschieben</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Move effect down</source>
-            <translation type="unfinished" />
+            <translation>Effekt nach unten verschieben</translation>
         </message>
         <message>
             <location line="+9" />
             <location line="+46" />
             <source>Select an unlocked layer before randomizing it.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie vor der Zufallserzeugung eine entsperrte Ebene.</translation>
         </message>
         <message>
             <location line="-24" />
             <source>Could not find a safe randomized value set for this canvas; the layer was left unchanged.</source>
-            <translation type="unfinished" />
+            <translation>Für diese Leinwand wurde kein sicherer Zufallswertsatz gefunden; die Ebene bleibt unverändert.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Randomized values for %1 waves, %2 swings, and %3 effects; counts, types, names, and enabled states were preserved.</source>
-            <translation type="unfinished" />
+            <translation>Werte für %1 Wellen, %2 Swings und %3 Effekte zufällig gewählt; Anzahl, Typen, Namen und Aktivierungszustände bleiben erhalten.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Randomize layer values</source>
-            <translation type="unfinished" />
+            <translation>Ebenenwerte zufällig wählen</translation>
         </message>
         <message>
             <location line="+104" />
             <source>Random choices exceeded this canvas's safe rendering workload; a fresh default layer mix was created instead.</source>
-            <translation type="unfinished" />
+            <translation>Die Zufallsauswahl überschritt die sichere Renderlast dieser Leinwand; stattdessen wurde eine neue Standard-Ebenenmischung erstellt.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Created a new mix with %1 waves, %2 swings, and %3 effects.</source>
-            <translation type="unfinished" />
+            <translation>Neue Mischung mit %1 Wellen, %2 Swings und %3 Effekten erstellt.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Randomize layer mix</source>
-            <translation type="unfinished" />
+            <translation>Ebenenmischung zufällig erzeugen</translation>
         </message>
         <message>
             <location line="+72" />
             <location line="+108" />
             <source>Layer clock: %1 — %2</source>
-            <translation type="unfinished" />
+            <translation>Ebenentakt: %1 — %2</translation>
         </message>
         <message>
             <location line="-102" />
             <location line="+112" />
             <source>Analyze a different audio file from disk…</source>
-            <translation type="unfinished" />
+            <translation>Andere Audiodatei vom Datenträger analysieren…</translation>
         </message>
         <message>
             <location line="-109" />
             <source>Choose project music asset</source>
-            <translation type="unfinished" />
+            <translation>Projektmusikressource wählen</translation>
         </message>
         <message>
             <location line="+13" />
             <location line="+113" />
             <source>Could not reuse audio</source>
-            <translation type="unfinished" />
+            <translation>Audio konnte nicht wiederverwendet werden</translation>
         </message>
         <message>
             <location line="-98" />
             <source>Reuse embedded project music</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Projektmusik wiederverwenden</translation>
         </message>
         <message>
             <location line="+6" />
             <location line="+113" />
             <source>Reused %1 without reanalysis or duplicate bytes.</source>
-            <translation type="unfinished" />
+            <translation>%1 ohne erneute Analyse oder doppelte Daten wiederverwendet.</translation>
         </message>
         <message>
             <location line="-106" />
             <source>Choose music source</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle wählen</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+113" />
             <source>Supported audio (*.wav *.wave *.flac *.mp3);;WAV audio (*.wav *.wave);;FLAC audio (*.flac);;MP3 audio (*.mp3);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>Unterstütztes Audio (*.wav *.wave *.flac *.mp3);;WAV-Audio (*.wav *.wave);;FLAC-Audio (*.flac);;MP3-Audio (*.mp3);;Alle Dateien (*)</translation>
         </message>
         <message>
             <location line="-109" />
             <source>Replace project music asset?</source>
-            <translation type="unfinished" />
+            <translation>Projektmusikressource ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Analyze %1 and replace the current internal project-music binding?</source>
-            <translation type="unfinished" />
+            <translation>%1 analysieren und die aktuelle interne Projektmusikbindung ersetzen?</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Relink embedded music source</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Musikquelle neu verknüpfen</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+114" />
             <source>Supported audio (*.wav *.wave *.flac *.mp3);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>Unterstütztes Audio (*.wav *.wave *.flac *.mp3);;Alle Dateien (*)</translation>
         </message>
         <message>
             <location line="-103" />
             <source>The embedded music source is unavailable. Relink the matching file first.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Musikquelle ist nicht verfügbar. Verknüpfen Sie zuerst die passende Datei.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Project clock — %1</source>
-            <translation type="unfinished" />
+            <translation>Projekttakt — %1</translation>
         </message>
         <message>
             <location line="+23" />
             <source>Choose active-layer music asset</source>
-            <translation type="unfinished" />
+            <translation>Musikressource der aktiven Ebene wählen</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Reuse embedded active-layer music</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Musik der aktiven Ebene wiederverwenden</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Choose active-layer music source</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle der aktiven Ebene wählen</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Replace active-layer music asset?</source>
-            <translation type="unfinished" />
+            <translation>Musikressource der aktiven Ebene ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Analyze %1 and replace the active layer's internal audio binding?</source>
-            <translation type="unfinished" />
+            <translation>%1 analysieren und die interne Audiobindung der aktiven Ebene ersetzen?</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Relink active-layer music source</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle der aktiven Ebene neu verknüpfen</translation>
         </message>
         <message>
             <location line="+11" />
             <source>The embedded layer source is unavailable. Relink the matching file first.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Ebenenquelle ist nicht verfügbar. Verknüpfen Sie zuerst die passende Datei.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>active-layer music</source>
-            <translation type="unfinished" />
+            <translation>Musik der aktiven Ebene</translation>
         </message>
         <message>
             <location line="+0" />
             <source>project music</source>
-            <translation type="unfinished" />
+            <translation>Projektmusik</translation>
         </message>
         <message>
             <location line="+33" />
@@ -9343,158 +9365,158 @@ Replace the current palette or append these values?</source>
         <message>
             <location line="+1" />
             <source>The embedded music bytes are unavailable. Relink the source before changing pre-analysis filters or frequency streams.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebetteten Musikdaten sind nicht verfügbar. Verknüpfen Sie die Quelle neu, bevor Sie Filter vor der Analyse oder Frequenzströme ändern.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Edit active-layer music input processing</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverarbeitung der Musik der aktiven Ebene bearbeiten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Edit project music input processing</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverarbeitung der Projektmusik bearbeiten</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Input processing saved. It will run before analysis when music is chosen.</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverarbeitung gespeichert. Sie läuft vor der Analyse, sobald Musik ausgewählt wird.</translation>
         </message>
         <message>
             <location line="+48" />
             <location line="+122" />
             <source>Music analysis could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Musikanalyse konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="-114" />
             <source>The project could not be staged for music analysis.</source>
-            <translation type="unfinished" />
+            <translation>Das Projekt konnte nicht für die Musikanalyse vorbereitet werden.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Verifying music source…</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle wird geprüft…</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Analyzing music source…</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle wird analysiert…</translation>
         </message>
         <message>
             <location line="+74" />
             <source>Embedding analyzed music in the project cache…</source>
-            <translation type="unfinished" />
+            <translation>Analysierte Musik wird in den Projektcache eingebettet…</translation>
         </message>
         <message>
             <location line="+37" />
             <source>The background music-analysis task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zur Musikanalyse konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+34" />
             <source>The completed analysis was discarded because the project changed while it was running.</source>
-            <translation type="unfinished" />
+            <translation>Die abgeschlossene Analyse wurde verworfen, da sich das Projekt währenddessen geändert hat.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Discarded stale music analysis.</source>
-            <translation type="unfinished" />
+            <translation>Veraltete Musikanalyse verworfen.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Music analysis cancelled; the previous source was kept.</source>
-            <translation type="unfinished" />
+            <translation>Musikanalyse abgebrochen; die vorherige Quelle bleibt erhalten.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Music analysis failed.</source>
-            <translation type="unfinished" />
+            <translation>Musikanalyse fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Music analysis failed; the previous source was kept.</source>
-            <translation type="unfinished" />
+            <translation>Musikanalyse fehlgeschlagen; die vorherige Quelle bleibt erhalten.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The analyzed source did not produce a complete staged project attachment.</source>
-            <translation type="unfinished" />
+            <translation>Die analysierte Quelle ergab keine vollständige vorbereitete Projektanlage.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Rejected an incomplete music import transaction.</source>
-            <translation type="unfinished" />
+            <translation>Unvollständige Musikimporttransaktion abgelehnt.</translation>
         </message>
         <message>
             <location line="+45" />
             <source>Relink active-layer music</source>
-            <translation type="unfinished" />
+            <translation>Musik der aktiven Ebene neu verknüpfen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Relink embedded music</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Musik neu verknüpfen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Reanalyze active-layer music</source>
-            <translation type="unfinished" />
+            <translation>Musik der aktiven Ebene erneut analysieren</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Reanalyze embedded music</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Musik erneut analysieren</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embed active-layer music</source>
-            <translation type="unfinished" />
+            <translation>Musik der aktiven Ebene einbetten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Embed music source</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle einbetten</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Verified and embedded the relinked music source.</source>
-            <translation type="unfinished" />
+            <translation>Neu verknüpfte Musikquelle geprüft und eingebettet.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Analyzed and embedded %1.</source>
-            <translation type="unfinished" />
+            <translation>%1 analysiert und eingebettet.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Could not clear music source</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Clear embedded music</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Musik entfernen</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Cleared the embedded music source; manual frames were preserved.</source>
-            <translation type="unfinished" />
+            <translation>Eingebettete Musikquelle entfernt; manuelle Bildanzahl bleibt erhalten.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Could not clear layer music source</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle der Ebene konnte nicht entfernt werden</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Clear active-layer music</source>
-            <translation type="unfinished" />
+            <translation>Musik der aktiven Ebene entfernen</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Cleared the active-layer music source; the layer-clock settings were preserved.</source>
-            <translation type="unfinished" />
+            <translation>Musikquelle der aktiven Ebene entfernt; Ebenentakteinstellungen bleiben erhalten.</translation>
         </message>
         <message>
             <location line="+102" />
@@ -9504,54 +9526,56 @@ Replace the current palette or append these values?</source>
         <message>
             <location line="+21" />
             <source>Preview could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Vorschau konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+2" />
             <source>The background preview task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe für die Vorschau konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+49" />
             <location line="+8" />
             <location line="+13" />
             <location line="+12" />
+            <location line="+4618" />
             <source>Preview cancelled.</source>
-            <translation type="unfinished" />
+            <translation>Vorschau abgebrochen.</translation>
         </message>
         <message>
-            <location line="-7" />
+            <location line="-4625" />
             <source>The preview image buffer could not be allocated.</source>
-            <translation type="unfinished" />
+            <translation>Der Vorschaubildpuffer konnte nicht zugewiesen werden.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Preview failed: %1</source>
-            <translation type="unfinished" />
+            <translation>Vorschau fehlgeschlagen: %1</translation>
         </message>
         <message>
             <location line="+11" />
             <location line="+81" />
             <location line="+88" />
             <source>Stop LIVE or Live Preview Output before exporting.</source>
-            <translation type="unfinished" />
+            <translation>Beenden Sie LIVE oder die Live-Vorschauausgabe vor dem Export.</translation>
         </message>
         <message>
             <location line="-163" />
             <source>Rendering current frame at full resolution…</source>
-            <translation type="unfinished" />
+            <translation>Aktuelles Bild wird in voller Auflösung gerendert…</translation>
         </message>
         <message>
             <location line="+50" />
             <source>The current full-resolution frame was exported to:
 %1</source>
-            <translation type="unfinished" />
+            <translation>Das aktuelle Bild wurde in voller Auflösung exportiert nach:
+%1</translation>
         </message>
         <message>
             <location line="+7" />
             <location line="+6" />
             <source>Current-frame export could not start</source>
-            <translation type="unfinished" />
+            <translation>Export des aktuellen Bildes konnte nicht gestartet werden</translation>
         </message>
         <message>
             <location line="-5" />
@@ -9561,122 +9585,122 @@ Replace the current palette or append these values?</source>
             <location line="+5" />
             <location line="+1" />
             <source>Export could not start</source>
-            <translation type="unfinished" />
+            <translation>Export konnte nicht gestartet werden</translation>
         </message>
         <message>
             <location line="-86" />
             <source>The background current-frame export task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Export des aktuellen Bildes konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Exporting image sequence…</source>
-            <translation type="unfinished" />
+            <translation>Bildsequenz wird exportiert…</translation>
         </message>
         <message>
             <location line="+35" />
             <source>Exporting frame %1/%2…</source>
-            <translation type="unfinished" />
+            <translation>Bild %1/%2 wird exportiert…</translation>
         </message>
         <message>
             <location line="+23" />
             <source>The image sequence was exported successfully.</source>
-            <translation type="unfinished" />
+            <translation>Die Bildsequenz wurde erfolgreich exportiert.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>The background export task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Export konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Video export unavailable</source>
-            <translation type="unfinished" />
+            <translation>Videoexport nicht verfügbar</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Export native video</source>
-            <translation type="unfinished" />
+            <translation>Natives Video exportieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>QuickTime movie (*.mov)</source>
-            <translation type="unfinished" />
+            <translation>QuickTime-Video (*.mov)</translation>
         </message>
         <message>
             <location line="+48" />
             <source>Invalid video destination</source>
-            <translation type="unfinished" />
+            <translation>Ungültiges Videoziel</translation>
         </message>
         <message>
             <location line="+1" />
             <source>A video output path is a directory: %1</source>
-            <translation type="unfinished" />
+            <translation>Ein Videoausgabepfad ist ein Verzeichnis: %1</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Invalid concat-script destination</source>
-            <translation type="unfinished" />
+            <translation>Ungültiges Ziel für das Verkettungsskript</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The concat-script path is a directory: %1</source>
-            <translation type="unfinished" />
+            <translation>Der Pfad des Verkettungsskripts ist ein Verzeichnis: %1</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Replace existing chunk outputs?</source>
-            <translation type="unfinished" />
+            <translation>Vorhandene Ausgabeteile ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Replace existing video?</source>
-            <translation type="unfinished" />
+            <translation>Vorhandenes Video ersetzen?</translation>
         </message>
         <message>
             <location line="+1" />
             <source>%1 selected output file(s) already exist. Each movie remains untouched unless its complete replacement is ready. Replace them?</source>
-            <translation type="unfinished" />
+            <translation>Bereits vorhandene ausgewählte Ausgabedateien: %1. Jedes Video bleibt unverändert, bis sein vollständiger Ersatz bereit ist. Ersetzen?</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Exporting native video…</source>
-            <translation type="unfinished" />
+            <translation>Natives Video wird exportiert…</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Preparing synchronized movie audio…</source>
-            <translation type="unfinished" />
+            <translation>Synchronisiertes Videoaudio wird vorbereitet…</translation>
         </message>
         <message>
             <location line="+52" />
             <source>Exporting video frame %1/%2 (chunk %3/%4)…</source>
-            <translation type="unfinished" />
+            <translation>Videobild %1/%2 wird exportiert (Teil %3/%4)…</translation>
         </message>
         <message>
             <location line="+56" />
             <source>, %1 parallel render worker(s)</source>
-            <translation type="unfinished" />
+            <translation>, parallele Renderprozesse: %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>, synchronized audio mix included</source>
-            <translation type="unfinished" />
+            <translation>, synchronisierte Audiomischung enthalten</translation>
         </message>
         <message>
             <location line="+4" />
             <source>, hardware encoding required</source>
-            <translation type="unfinished" />
+            <translation>, Hardwarekodierung erforderlich</translation>
         </message>
         <message>
             <location line="+2" />
             <source>, hardware encoder available/preferred</source>
-            <translation type="unfinished" />
+            <translation>, Hardwareencoder verfügbar/bevorzugt</translation>
         </message>
         <message>
             <location line="+1" />
             <source>, software fallback allowed</source>
-            <translation type="unfinished" />
+            <translation>, Software-Rückfall erlaubt</translation>
         </message>
         <message>
             <location line="+3" />
@@ -9686,210 +9710,217 @@ Replace the current palette or append these values?</source>
 Run it directly for the default relative output, or pass an output file or directory as its one optional argument.
 
 %3</source>
-            <translation type="unfinished" />
+            <translation>%1 native QuickTime-Teile exportiert und ausführbares Verkettungsskript geschrieben:
+%2
+
+Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie eine Ausgabedatei oder ein Verzeichnis als einziges optionales Argument.
+
+%3</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The native QuickTime movie was exported to %1.
 
 %2</source>
-            <translation type="unfinished" />
+            <translation>Das native QuickTime-Video wurde nach %1 exportiert.
+
+%2</translation>
         </message>
         <message>
             <location line="+7" />
             <location line="+6" />
             <source>Video export could not start</source>
-            <translation type="unfinished" />
+            <translation>Videoexport konnte nicht gestartet werden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The background video-export task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Videoexport konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+37" />
             <source>The loaded project contains no layers.</source>
-            <translation type="unfinished" />
+            <translation>Das geladene Projekt enthält keine Ebenen.</translation>
         </message>
         <message>
             <location line="+58" />
             <source>Loading %1 in the background…</source>
-            <translation type="unfinished" />
+            <translation>%1 wird im Hintergrund geladen…</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Unexpected project-load error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Fehler beim Laden des Projekts: %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Project loading failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Das Laden des Projekts ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The background project-load task could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Laden des Projekts konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The background project-load task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Laden des Projekts konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+130" />
             <source>Rig</source>
-            <translation type="unfinished" />
+            <translation>Live-Setup</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Control Map</source>
-            <translation type="unfinished" />
+            <translation>Steuerungszuordnung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Scenes</source>
-            <translation type="unfinished" />
+            <translation>Szenen</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Input trim</source>
-            <translation type="unfinished" />
+            <translation>Eingangsverstärkung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>gate</source>
-            <translation type="unfinished" />
+            <translation>Gate</translation>
         </message>
         <message>
             <location line="+32" />
             <source>The toolbar, Edit/LIVE mode host, or guarded settings actions are incomplete or exposed in the wrong place.</source>
-            <translation type="unfinished" />
+            <translation>Symbolleiste, Bearbeitungs-/LIVE-Modushost oder geschützte Einstellungsaktionen sind unvollständig oder an der falschen Stelle sichtbar.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Smoke test</source>
-            <translation type="unfinished" />
+            <translation>Funktionstest</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The built-in audio EQ preset controls are incomplete.</source>
-            <translation type="unfinished" />
+            <translation>Die Regler der mitgelieferten Audio-EQ-Vorgaben sind unvollständig.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Applying an audio EQ preset did not update the editable EQ state.</source>
-            <translation type="unfinished" />
+            <translation>Das Anwenden einer Audio-EQ-Vorgabe hat den bearbeitbaren EQ-Zustand nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+62" />
             <source>Live Preview Output settings did not persist or synchronize with LIVE quality controls.</source>
-            <translation type="unfinished" />
+            <translation>Die Einstellungen der Live-Vorschauausgabe wurden nicht gespeichert oder mit den LIVE-Qualitätsreglern synchronisiert.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Live Preview Output did not coalesce repeated requests into a visible presentation-only frame (frames=%1, presentation=%2, performance=%3, companion=%4, stage=%5, visible=%6, checked=%7).</source>
-            <translation type="unfinished" />
+            <translation>Die Live-Vorschauausgabe hat wiederholte Anforderungen nicht zu einem sichtbaren reinen Präsentationsbild zusammengefasst (Bilder=%1, Präsentation=%2, Performance=%3, Begleitfenster=%4, Bühne=%5, sichtbar=%6, aktiviert=%7).</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Escape did not fully stop presentation-only output.</source>
-            <translation type="unfinished" />
+            <translation>Escape hat die reine Präsentationsausgabe nicht vollständig beendet.</translation>
         </message>
         <message>
             <location line="+62" />
             <source>Live Preview Output did not leave the native full-screen desktop before hiding or did not restart windowed.</source>
-            <translation type="unfinished" />
+            <translation>Die Live-Vorschauausgabe hat den nativen Vollbild-Desktop vor dem Ausblenden nicht verlassen oder ist nicht im Fenstermodus neu gestartet.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Blocked Live edit during project transaction</source>
-            <translation type="unfinished" />
+            <translation>Live-Bearbeitung während der Projekttransaktion blockiert</translation>
         </message>
         <message>
             <location line="+33" />
             <source>A project transaction did not stop presentation output, block the reverse transition into performance LIVE, or lock and restore authored Live controls without changing the staged document.</source>
-            <translation type="unfinished" />
+            <translation>Eine Projekttransaktion hat die Präsentationsausgabe nicht gestoppt, den Rückwechsel zur LIVE-Performance nicht blockiert oder festgelegte Live-Regler nicht gesperrt und wiederhergestellt, ohne das vorbereitete Dokument zu ändern.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Opening LIVE did not create a populated, visible companion window while preserving the editor.</source>
-            <translation type="unfinished" />
+            <translation>Beim Öffnen von LIVE wurde kein gefülltes, sichtbares Begleitfenster unter Erhalt des Editors erstellt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Performance Live could not open its stage output.</source>
-            <translation type="unfinished" />
+            <translation>Live-Performance konnte ihre Bühnenausgabe nicht öffnen.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Escape from the performance stage incorrectly stopped LIVE.</source>
-            <translation type="unfinished" />
+            <translation>Escape auf der Performance-Bühne hat LIVE fälschlich beendet.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>The GO LIVE transport did not release editor/export state when stopped and reclaim the realtime render budget when restarted.</source>
-            <translation type="unfinished" />
+            <translation>LIVE STARTEN hat beim Stoppen den Editor-/Exportzustand nicht freigegeben oder beim Neustart das Echtzeit-Renderbudget nicht wieder übernommen.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Opening the project editor interrupted the Live runtime.</source>
-            <translation type="unfinished" />
+            <translation>Das Öffnen des Projekteditors hat den Live-Betrieb unterbrochen.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Editor playback remained reachable while performance LIVE was active.</source>
-            <translation type="unfinished" />
+            <translation>Die Editorwiedergabe blieb während der LIVE-Performance erreichbar.</translation>
         </message>
         <message>
             <location line="+47" />
             <source>Between pulses could not be edited through an active Mic route without stopping performance LIVE: %1</source>
-            <translation type="unfinished" />
+            <translation>Zwischen Impulsen konnte über eine aktive Mikrofonzuordnung nicht ohne Beenden der LIVE-Performance bearbeitet werden: %1</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Closing the LIVE window did not stop and restore its workspace cleanly.</source>
-            <translation type="unfinished" />
+            <translation>Das Schließen des LIVE-Fensters hat den Arbeitsbereich nicht sauber beendet und wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>LIVE could not be reopened after its companion window was closed.</source>
-            <translation type="unfinished" />
+            <translation>LIVE konnte nach dem Schließen seines Begleitfensters nicht wieder geöffnet werden.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The reopened LIVE window did not clean up correctly.</source>
-            <translation type="unfinished" />
+            <translation>Das erneut geöffnete LIVE-Fenster wurde nicht korrekt aufgeräumt.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>The Layers &amp; Groups panel could not be restored from a floating or hidden state.</source>
-            <translation type="unfinished" />
+            <translation>Das Panel Ebenen und Gruppen konnte aus dem schwebenden oder ausgeblendeten Zustand nicht wiederhergestellt werden.</translation>
         </message>
         <message>
             <location line="+70" />
             <source>Export suspension did not guard playback, restore its exact state, or re-enable export actions.</source>
-            <translation type="unfinished" />
+            <translation>Die Exportpause hat die Wiedergabe nicht geschützt, ihren exakten Zustand nicht wiederhergestellt oder Exportaktionen nicht erneut aktiviert.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Undo History Limit…</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig-Verlaufslimit…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Rendering Backend</source>
-            <translation type="unfinished" />
+            <translation>Render-Backend</translation>
         </message>
         <message>
             <location line="+2" />
             <source>A program preference is still exposed in the Edit menu.</source>
-            <translation type="unfinished" />
+            <translation>Eine Programmeinstellung ist weiterhin im Menü Bearbeiten sichtbar.</translation>
         </message>
         <message>
             <location line="+89" />
             <source>Application preferences were not restored from per-user settings.</source>
-            <translation type="unfinished" />
+            <translation>Die Anwendungseinstellungen wurden nicht aus den Benutzereinstellungen wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+124" />
@@ -9904,247 +9935,247 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+34" />
             <source>The extensible Application Settings dialog is incomplete or malformed.</source>
-            <translation type="unfinished" />
+            <translation>Der erweiterbare Dialog Anwendungseinstellungen ist unvollständig oder fehlerhaft aufgebaut.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>A numeric editor still replaces zero with words.</source>
-            <translation type="unfinished" />
+            <translation>Ein Zahleneditor ersetzt null weiterhin durch Wörter.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Reusable paths are trapped inside the whole-layer motion prerequisite.</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Pfade sind an die Voraussetzung der Bewegung der gesamten Ebene gebunden.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Reusable paths cannot be edited while whole-layer motion is disabled.</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Pfade können bei deaktivierter Bewegung der gesamten Ebene nicht bearbeitet werden.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The Wave page does not expose its output prerequisites.</source>
-            <translation type="unfinished" />
+            <translation>Die Wellenseite zeigt ihre Ausgabevoraussetzungen nicht an.</translation>
         </message>
         <message>
             <location line="+39" />
             <source>The surface asset or mesh-construction editor is incomplete.</source>
-            <translation type="unfinished" />
+            <translation>Der Editor für Oberflächenressourcen oder Netzkonstruktion ist unvollständig.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>Plane displacement is unreachable while off or overlaps the Custom OBJ source editor.</source>
-            <translation type="unfinished" />
+            <translation>Die Flächenverschiebung ist im ausgeschalteten Zustand nicht erreichbar oder überlappt den Editor der benutzerdefinierten OBJ-Quelle.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Environment-map controls are not discoverable while empty or permit an invalid enabled state.</source>
-            <translation type="unfinished" />
+            <translation>Die Umgebungskartenregler sind im leeren Zustand nicht auffindbar oder erlauben einen ungültigen Aktivierungszustand.</translation>
         </message>
         <message>
             <location line="+123" />
             <source>Live surface asset and loop-safe mesh targets are incomplete or can create an invalid prerequisite combination.</source>
-            <translation type="unfinished" />
+            <translation>Live-Ziele für Oberflächenressourcen und nahtlose Netze sind unvollständig oder können eine ungültige Kombination von Voraussetzungen erzeugen.</translation>
         </message>
         <message>
             <location line="+86" />
             <source>Live effect targets do not expose or enforce the core effect domains.</source>
-            <translation type="unfinished" />
+            <translation>Live-Effektziele zeigen die Wertebereiche des Effektkerns nicht an oder setzen sie nicht durch.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>A Live effect update can leave a frame-invalid transient effect.</source>
-            <translation type="unfinished" />
+            <translation>Eine Live-Effektaktualisierung kann vorübergehend einen für das Bild ungültigen Effekt hinterlassen.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>An opaque-decoded starting image unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein als undurchsichtig dekodiertes Ausgangsbild hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>A displaced Plane did not request alpha for its mesh exterior.</source>
-            <translation type="unfinished" />
+            <translation>Eine verformte ebene Fläche hat kein Alpha für den Außenbereich ihres Netzes angefordert.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>A neutral displaced Plane unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Eine neutrale verformte ebene Fläche hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>A source-alpha starting image did not request alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein Ausgangsbild mit Quellalpha hat keine Alpha-Ausgabe angefordert.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Generated alpha was incorrectly disabled by the palette/image source-alpha switch.</source>
-            <translation type="unfinished" />
+            <translation>Generiertes Alpha wurde fälschlich durch den Quellalpha-Schalter für Palette/Bild deaktiviert.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>A Numeric LFO that can reveal alpha did not request alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein numerischer LFO, der Alpha sichtbar machen kann, hat keine Alpha-Ausgabe angefordert.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>The built-in first layer disagrees with normal layer alpha defaults.</source>
-            <translation type="unfinished" />
+            <translation>Die mitgelieferte erste Ebene weicht von den normalen Alpha-Ebenenvorgaben ab.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>A zero-travel built-in motion path unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein mitgelieferter Bewegungspfad ohne Weg hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>A constant neutral scale pulse unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein konstanter neutraler Skalierungspuls hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>A neutral lens distortion unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Eine neutrale Linsenverzerrung hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>An active lens distortion with transparent edges did not request alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Eine aktive Linsenverzerrung mit transparenten Rändern hat keine Alpha-Ausgabe angefordert.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Edge Detect incorrectly treated transparent luminance samples as output transparency.</source>
-            <translation type="unfinished" />
+            <translation>Kantenerkennung hat transparente Luminanzabtastwerte fälschlich als Ausgabetransparenz behandelt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>A reusable whole-layer path was not recognized as alpha-expanding motion.</source>
-            <translation type="unfinished" />
+            <translation>Ein wiederverwendbarer Pfad für die gesamte Ebene wurde nicht als alphaerweiternde Bewegung erkannt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>A static whole-layer rotation was not recognized as alpha-expanding motion.</source>
-            <translation type="unfinished" />
+            <translation>Eine statische Drehung der gesamten Ebene wurde nicht als alphaerweiternde Bewegung erkannt.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>A guaranteed zero-alpha eraser unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein Radierer mit garantiertem Alpha null hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>An animated eraser alpha range did not request alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein animierter Radierer-Alphabereich hat keine Alpha-Ausgabe angefordert.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>A particle-producing eraser failed to request alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Ein partikelerzeugender Radierer hat keine Alpha-Ausgabe angefordert.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Reflected plane rotation unnecessarily forced alpha output.</source>
-            <translation type="unfinished" />
+            <translation>Eine Flächendrehung mit Spiegelung hat unnötig Alpha-Ausgabe erzwungen.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Layer motion is missing its starting-rotation editor.</source>
-            <translation type="unfinished" />
+            <translation>Bei der Ebenenbewegung fehlt der Editor für die Anfangsdrehung.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>The starting-rotation editor did not update layer motion.</source>
-            <translation type="unfinished" />
+            <translation>Der Editor für die Anfangsdrehung hat die Ebenenbewegung nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+44" />
             <source>The numeric LFO editor is incomplete or malformed.</source>
-            <translation type="unfinished" />
+            <translation>Der Editor für numerische LFOs ist unvollständig oder fehlerhaft aufgebaut.</translation>
         </message>
         <message>
             <location line="+167" />
             <source>LFO phase arrangement failed selection, reproducibility, cancellation, persistence, or undo/redo checks.</source>
-            <translation type="unfinished" />
+            <translation>Die LFO-Phasenanordnung hat Prüfungen für Auswahl, Reproduzierbarkeit, Abbruch, Speicherung oder Rückgängig/Wiederholen nicht bestanden.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Reusable paths do not appear as selectable closed layer-motion paths.</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbare Pfade erscheinen nicht als auswählbare geschlossene Ebenenbewegungspfade.</translation>
         </message>
         <message>
             <location line="+48" />
             <source>Zero is neutral</source>
-            <translation type="unfinished" />
+            <translation>Null ist neutral</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Reusable path selection or neutral-default motion modifiers are not bound to the active layer.</source>
-            <translation type="unfinished" />
+            <translation>Die Auswahl wiederverwendbarer Pfade oder standardmäßig neutraler Bewegungsmodifikatoren ist nicht an die aktive Ebene gebunden.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>The reusable motion-path editor is incomplete or malformed.</source>
-            <translation type="unfinished" />
+            <translation>Der Editor für wiederverwendbare Bewegungspfade ist unvollständig oder fehlerhaft aufgebaut.</translation>
         </message>
         <message>
             <location line="+34" />
             <source>About PVT is missing its version or reporting links.</source>
-            <translation type="unfinished" />
+            <translation>In Über PVT fehlen Version oder Meldelinks.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The removed MP4 export target is still exposed by the GUI.</source>
-            <translation type="unfinished" />
+            <translation>Das entfernte MP4-Exportziel ist weiterhin in der Oberfläche sichtbar.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>A form can still compress a long label/control row instead of wrapping it.</source>
-            <translation type="unfinished" />
+            <translation>Ein Formular kann eine lange Beschriftungs-/Reglerzeile weiterhin zusammendrücken, statt sie umzubrechen.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>A button can still shrink below the width required by its text: %1</source>
-            <translation type="unfinished" />
+            <translation>Eine Schaltfläche kann weiterhin schmaler als ihr Text werden: %1</translation>
         </message>
         <message>
             <location line="+9" />
             <source>A choice control can still shrink below its readable width: %1 (%2 &lt; %3, current: %4)</source>
-            <translation type="unfinished" />
+            <translation>Ein Auswahlfeld kann weiterhin unter seine lesbare Breite schrumpfen: %1 (%2 &lt; %3, aktuell: %4)</translation>
         </message>
         <message>
             <location line="+20" />
             <source>The first file dialog did not restore its saved location or home fallback.</source>
-            <translation type="unfinished" />
+            <translation>Der erste Dateidialog hat weder den gespeicherten Ort noch das Benutzerverzeichnis als Rückfall wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>A relative dot output directory resolved to filesystem root.</source>
-            <translation type="unfinished" />
+            <translation>Ein relativer Punkt-Ausgabepfad wurde zur Dateisystemwurzel aufgelöst.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>The starting-image chooser became unreachable while its source was disabled.</source>
-            <translation type="unfinished" />
+            <translation>Die Ausgangsbildauswahl wurde bei deaktivierter Quelle unerreichbar.</translation>
         </message>
         <message>
             <location line="+75" />
             <source>Could not create the GUI smoke-test directory.</source>
-            <translation type="unfinished" />
+            <translation>Das Verzeichnis für den GUI-Funktionstest konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>The video concat script could not be generated: %1</source>
-            <translation type="unfinished" />
+            <translation>Das Video-Verkettungsskript konnte nicht erzeugt werden: %1</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The generated concat script could not be read.</source>
-            <translation type="unfinished" />
+            <translation>Das erzeugte Verkettungsskript konnte nicht gelesen werden.</translation>
         </message>
         <message>
             <location line="+34" />
             <source>The generated concat script is not portable, executable, or syntactically valid.</source>
-            <translation type="unfinished" />
+            <translation>Das erzeugte Verkettungsskript ist nicht portabel, ausführbar oder syntaktisch gültig.</translation>
         </message>
         <message>
             <location line="+284" />
@@ -10154,1365 +10185,1347 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+15" />
             <source>The Flow Workbench stages, persistent Drivers strip, or project settings navigation were not constructed correctly.</source>
-            <translation type="unfinished" />
+            <translation>Die Stufen des Flow-Arbeitsbereichs, die dauerhafte Steuerungsleiste oder die Navigation der Projekteinstellungen wurden nicht korrekt aufgebaut.</translation>
         </message>
         <message>
             <location line="+26" />
             <source>The active post-effect stack is not presented before its selected-instance controls.</source>
-            <translation type="unfinished" />
+            <translation>Der aktive Nachbearbeitungsstapel wird nicht vor den Reglern der ausgewählten Instanz angezeigt.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The post-effect type catalog is incomplete or out of order.</source>
-            <translation type="unfinished" />
+            <translation>Der Katalog der Nachbearbeitungseffekttypen ist unvollständig oder falsch sortiert.</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Legacy post-effect settings or LFO targets were not migrated to stable instances.</source>
-            <translation type="unfinished" />
+            <translation>Frühere Nachbearbeitungseinstellungen oder LFO-Ziele wurden nicht auf stabile Instanzen migriert.</translation>
         </message>
         <message>
             <location line="+46" />
             <source>Repeated post-effect instances do not retain independent settings.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholte Nachbearbeitungseffektinstanzen behalten keine unabhängigen Einstellungen.</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Post-effect duplicate, remove, move, or bypass controls are not instance-safe.</source>
-            <translation type="unfinished" />
+            <translation>Die Regler zum Duplizieren, Entfernen, Verschieben oder Umgehen von Nachbearbeitungseffekten behandeln Instanzen nicht unabhängig.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Post-effect controls, dependencies, or alpha-output safety are not wired correctly.</source>
-            <translation type="unfinished" />
+            <translation>Regler, Abhängigkeiten oder Alpha-Ausgabeschutz der Nachbearbeitungseffekte sind nicht korrekt verbunden.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Instance-based alpha post effects are not included in output-alpha safety.</source>
-            <translation type="unfinished" />
+            <translation>Instanzbasierte Alpha-Nachbearbeitungseffekte werden im Alpha-Ausgabeschutz nicht berücksichtigt.</translation>
         </message>
         <message>
             <location line="+30" />
             <location line="+7" />
             <source>Output-pixel controls were not scaled consistently for preview rendering.</source>
-            <translation type="unfinished" />
+            <translation>Regler in Ausgabepixeln wurden für das Vorschaurendering nicht einheitlich skaliert.</translation>
         </message>
         <message>
             <location line="+42" />
-            <location line="+18" />
+            <location line="+21" />
             <source>Artwork (before surface)</source>
-            <translation type="unfinished" />
+            <translation>Motiv (vor Oberfläche)</translation>
         </message>
         <message>
-            <location line="-16" />
+            <location line="-19" />
             <source>Layer canvas (after surface)</source>
-            <translation type="unfinished" />
+            <translation>Ebenenleinwand (nach Oberfläche)</translation>
         </message>
         <message>
-            <location line="+2" />
-            <source>instead of being clipped</source>
-            <translation type="unfinished" />
-        </message>
-        <message>
-            <location line="+16" />
+            <location line="+21" />
             <source>Layer / object (after surface)</source>
-            <translation type="unfinished" />
+            <translation>Ebene / Objekt (nach Oberfläche)</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Movement placement</source>
-            <translation type="unfinished" />
+            <translation>Bewegungsplatzierung</translation>
         </message>
         <message>
             <location line="+43" />
             <source>Effect editor ranges or placement guidance do not match validation (particle %1, glow %2, blur %3, block %4, placement %5).</source>
-            <translation type="unfinished" />
+            <translation>Wertebereiche des Effekteditors oder Platzierungshinweise stimmen nicht mit der Validierung überein (Partikel %1, Leuchten %2, Unschärfe %3, Block %4, Platzierung %5).</translation>
         </message>
         <message>
             <location line="+116" />
             <source>Mapped placement did not offer a neutral, visually lossless surface setup as one undoable edit.</source>
-            <translation type="unfinished" />
+            <translation>Die Platzierung nach der Abbildung bot keine neutrale, optisch verlustfreie Oberflächeneinrichtung als einzelne rückgängig machbare Änderung an.</translation>
         </message>
         <message>
             <location line="+36" />
             <source>the project Mic sentinel is missing</source>
-            <translation type="unfinished" />
+            <translation>der Mikrofon-Marker des Projekts fehlt</translation>
         </message>
         <message>
             <location line="+12" />
             <source>the export admission guard changed a clock or undo state</source>
-            <translation type="unfinished" />
+            <translation>der Exportzulassungsschutz hat einen Takt oder Rückgängig-Zustand verändert</translation>
         </message>
         <message>
             <location line="+15" />
             <source>first Mic selection failed (route=%1, mode=%2, live=%3, audio=%4, editor=%5, undo count %6→%7, index %8→%9)</source>
-            <translation type="unfinished" />
+            <translation>erste Mikrofonauswahl fehlgeschlagen (Zuordnung=%1, Modus=%2, Live=%3, Audio=%4, Editor=%5, Rückgängig-Anzahl %6→%7, Index %8→%9)</translation>
         </message>
         <message>
             <location line="+30" />
             <source>project/layer Mic routes did not share one role or altered the offline layer clock</source>
-            <translation type="unfinished" />
+            <translation>Projekt-/Ebenen-Mikrofonzuordnungen teilten keine gemeinsame Rolle oder änderten den Offline-Ebenentakt</translation>
         </message>
         <message>
             <location line="+11" />
             <source>a deterministic project clock removed the wrong Live route or produced an invalid project</source>
-            <translation type="unfinished" />
+            <translation>ein deterministischer Projekttakt entfernte die falsche Live-Zuordnung oder erzeugte ein ungültiges Projekt</translation>
         </message>
         <message>
             <location line="+89" />
             <source>Mic clock smoke failed: %1</source>
-            <translation type="unfinished" />
+            <translation>Mikrofontakt-Funktionstest fehlgeschlagen: %1</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Deleting a layer did not clean its Live clock routes without disturbing project routes.</source>
-            <translation type="unfinished" />
+            <translation>Das Entfernen einer Ebene hat ihre Live-Taktzuordnungen nicht bereinigt, ohne Projektzuordnungen zu stören.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Default clock mode did not hide pulse-only and music-only controls.</source>
-            <translation type="unfinished" />
+            <translation>Der Standardtaktmodus hat Impuls- und Musikregler nicht ausgeblendet.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Frame clock mode did not expose only its frame interval.</source>
-            <translation type="unfinished" />
+            <translation>Der Bildtaktmodus hat nicht ausschließlich sein Bildintervall angezeigt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Time clock mode did not expose only its elapsed-time interval.</source>
-            <translation type="unfinished" />
+            <translation>Der Zeittaktmodus hat nicht ausschließlich sein Zeitintervall angezeigt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Meter clock mode did not expose its meter and tempo controls.</source>
-            <translation type="unfinished" />
+            <translation>Der Taktartmodus hat seine Taktart- und Temporegler nicht angezeigt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Music clock mode did not expose Audio Response controls.</source>
-            <translation type="unfinished" />
+            <translation>Der Musiktaktmodus hat die Audioreaktionsregler nicht angezeigt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>A non-Music active-layer clock did not hide Audio Response controls.</source>
-            <translation type="unfinished" />
+            <translation>Ein Nicht-Musiktakt der aktiven Ebene hat die Audioreaktionsregler nicht ausgeblendet.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>A Music active-layer override did not expose Audio Response controls.</source>
-            <translation type="unfinished" />
+            <translation>Eigene Musikeinstellungen der aktiven Ebene haben die Audioreaktionsregler nicht angezeigt.</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Render-ready Music did not preserve manual frames while deriving the exact timeline length.</source>
-            <translation type="unfinished" />
+            <translation>Renderbereite Musik hat die manuelle Bildanzahl beim Ableiten der exakten Zeitleistenlänge nicht bewahrt.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Beat 2</source>
-            <translation type="unfinished" />
+            <translation>Beat 2</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Music beat navigation or the time/beat readout was incorrect.</source>
-            <translation type="unfinished" />
+            <translation>Musik-Beat-Navigation oder Zeit-/Beat-Anzeige war fehlerhaft.</translation>
         </message>
         <message>
             <location line="+35" />
             <source>project-wide defaults</source>
-            <translation type="unfinished" />
+            <translation>Projektstandard</translation>
         </message>
         <message>
             <location line="+3" />
             <source>A first music import did not enable inheritable project-wide Audio Response correctly.</source>
-            <translation type="unfinished" />
+            <translation>Ein erster Musikimport hat die vererbbare projektweite Audioreaktion nicht korrekt aktiviert.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Returning to Music overrode the user's Audio Response choice.</source>
-            <translation type="unfinished" />
+            <translation>Die Rückkehr zu Musik hat die Audioreaktionswahl des Benutzers überschrieben.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Replacing music overrode the user's Audio Response choice.</source>
-            <translation type="unfinished" />
+            <translation>Das Ersetzen der Musik hat die Audioreaktionswahl des Benutzers überschrieben.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>A stale music-analysis completion changed the active project.</source>
-            <translation type="unfinished" />
+            <translation>Der Abschluss einer veralteten Musikanalyse hat das aktive Projekt verändert.</translation>
         </message>
         <message>
             <location line="+21" />
             <source>The active-layer Swings master toggle was not synchronized.</source>
-            <translation type="unfinished" />
+            <translation>Der Swing-Hauptschalter der aktiven Ebene war nicht synchronisiert.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Undo did not restore the active-layer Swings master toggle.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat den Swing-Hauptschalter der aktiven Ebene nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>The active-layer Audio Response override toggle was not synchronized.</source>
-            <translation type="unfinished" />
+            <translation>Der Schalter für die eigene Audioreaktion der aktiven Ebene war nicht synchronisiert.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Undo did not restore the active-layer Audio Response override toggle.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat den Schalter für die eigene Audioreaktion der aktiven Ebene nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>The project-wide Audio Response toggle was not synchronized.</source>
-            <translation type="unfinished" />
+            <translation>Der projektweite Audioreaktionsschalter war nicht synchronisiert.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Undo did not restore the project-wide Audio Response toggle.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat den projektweiten Audioreaktionsschalter nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Copying project Audio Response into a layer override failed.</source>
-            <translation type="unfinished" />
+            <translation>Das Kopieren der Projekt-Audioreaktion in die eigenen Ebeneneinstellungen ist fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Undo did not restore the pre-copy layer Audio Response state.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat den Audioreaktionszustand der Ebene vor dem Kopieren nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+21" />
             <source>Wave Audio Response was artificially gated by synchronization state.</source>
-            <translation type="unfinished" />
+            <translation>Die Wellen-Audioreaktion wurde künstlich vom Synchronisationszustand abhängig gemacht.</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Effect Audio Response was artificially gated by synchronization state.</source>
-            <translation type="unfinished" />
+            <translation>Die Effekt-Audioreaktion wurde künstlich vom Synchronisationszustand abhängig gemacht.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Could not save the GUI smoke-test setup: %1</source>
-            <translation type="unfinished" />
+            <translation>GUI-Funktionstestkonfiguration konnte nicht gespeichert werden: %1</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Could not reload the GUI smoke-test setup: %1</source>
-            <translation type="unfinished" />
+            <translation>GUI-Funktionstestkonfiguration konnte nicht erneut geladen werden: %1</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Legacy import did not remain a dirty, Save-As-only project or lost its alpha-output flag.</source>
-            <translation type="unfinished" />
+            <translation>Der Altformatimport blieb nicht als geändertes, nur per Speichern unter speicherbares Projekt erhalten oder verlor sein Alpha-Ausgabeflag.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>PVT</source>
-            <translation type="unfinished" />
+            <translation>PVT</translation>
         </message>
         <message>
             <location line="+2" />
             <source>The imported path and project name were not reflected in the window title (expected prefix '%1'; actual title '%2'; browser action available %3).</source>
-            <translation type="unfinished" />
+            <translation>Importierter Pfad und Projektname wurden nicht im Fenstertitel abgebildet (erwartetes Präfix „%1“; tatsächlicher Titel „%2“; Dateimanageraktion verfügbar %3).</translation>
         </message>
         <message>
             <location line="+23" />
             <source>GUI setup loading did not preserve the configured stacks.</source>
-            <translation type="unfinished" />
+            <translation>Das Laden der GUI-Konfiguration hat die konfigurierten Stapel nicht erhalten.</translation>
         </message>
         <message>
             <location line="+86" />
             <source>GUI editors clamped values accepted by central validation.</source>
-            <translation type="unfinished" />
+            <translation>GUI-Editoren haben Werte begrenzt, die die zentrale Validierung akzeptiert.</translation>
         </message>
         <message>
             <location line="+31" />
             <source>The Neutral surface preset changed the surface type, retained a hidden view transform, or bypassed Undo.</source>
-            <translation type="unfinished" />
+            <translation>Die neutrale Oberflächenvorgabe änderte den Oberflächentyp, behielt eine versteckte Ansichtstransformation bei oder umging Rückgängig.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Undo did not restore the authored surface view after the Neutral preset.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat die festgelegte Oberflächenansicht nach der neutralen Vorgabe nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>The Classic surface preset changed the surface type, omitted its visible view values, or bypassed Undo.</source>
-            <translation type="unfinished" />
+            <translation>Die klassische Oberflächenvorgabe änderte den Oberflächentyp, ließ sichtbare Ansichtswerte aus oder umging Rückgängig.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Undo did not restore the authored surface view after the Classic preset.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat die festgelegte Oberflächenansicht nach der klassischen Vorgabe nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Turning off the starting palette did not update the active layer or Undo history.</source>
-            <translation type="unfinished" />
+            <translation>Das Deaktivieren der Ausgangspalette hat die aktive Ebene oder den Rückgängig-Verlauf nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Undo did not restore starting-palette enablement.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat die Aktivierung der Ausgangspalette nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Redo did not turn the starting palette back off.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die Ausgangspalette nicht erneut deaktiviert.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Applying a preset silently re-enabled the starting palette.</source>
-            <translation type="unfinished" />
+            <translation>Das Anwenden einer Vorgabe hat die Ausgangspalette stillschweigend erneut aktiviert.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Turning the starting palette back on did not create an independent Undo step.</source>
-            <translation type="unfinished" />
+            <translation>Das erneute Aktivieren der Ausgangspalette hat keinen eigenen Rückgängig-Schritt erzeugt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Consecutive palette toggles merged into a phantom Undo step.</source>
-            <translation type="unfinished" />
+            <translation>Aufeinanderfolgende Palettenumschaltungen wurden zu einem Phantom-Rückgängig-Schritt zusammengeführt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Redo did not restore the independently recorded palette toggle.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die unabhängig aufgezeichnete Palettenumschaltung nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The surface enable toggle did not update its backing configuration.</source>
-            <translation type="unfinished" />
+            <translation>Der Oberflächenschalter hat seine zugrunde liegende Konfiguration nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Editing an unrelated surface control changed loaded values.</source>
-            <translation type="unfinished" />
+            <translation>Das Bearbeiten eines anderen Oberflächenreglers hat geladene Werte verändert.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The effect enable toggle did not update its backing configuration.</source>
-            <translation type="unfinished" />
+            <translation>Der Effektschalter hat seine zugrunde liegende Konfiguration nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Editing an unrelated effect control changed loaded values.</source>
-            <translation type="unfinished" />
+            <translation>Das Bearbeiten eines anderen Effektreglers hat geladene Werte verändert.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>The wave enable toggle did not update its backing configuration.</source>
-            <translation type="unfinished" />
+            <translation>Der Wellenschalter hat seine zugrunde liegende Konfiguration nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Editing an unrelated wave control changed loaded precision.</source>
-            <translation type="unfinished" />
+            <translation>Das Bearbeiten eines anderen Wellenreglers hat die geladene Genauigkeit verändert.</translation>
         </message>
         <message>
             <location line="+16" />
             <location line="+10" />
             <source>cannot affect pixels</source>
-            <translation type="unfinished" />
+            <translation>können keine Pixel beeinflussen</translation>
         </message>
         <message>
             <location line="-8" />
             <source>The Wave page did not expose its silent-output state.</source>
-            <translation type="unfinished" />
+            <translation>Die Wellenseite hat den wirkungslosen Ausgabezustand nicht angezeigt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The Wave page output controls did not update the layer.</source>
-            <translation type="unfinished" />
+            <translation>Die Ausgaberegler der Wellenseite haben die Ebene nicht aktualisiert.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>The Swing enable toggle failed or changed unrelated precision.</source>
-            <translation type="unfinished" />
+            <translation>Der Swing-Schalter ist fehlgeschlagen oder hat die Genauigkeit anderer Werte verändert.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>GUI text validators did not preserve semantic checks while allowing text beyond the former policy caps.</source>
-            <translation type="unfinished" />
+            <translation>Die GUI-Textvalidatoren haben semantische Prüfungen bei Text über den früheren Grenzen nicht erhalten.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>A valid item name containing Qt placeholder text was corrupted in a list label.</source>
-            <translation type="unfinished" />
+            <translation>Ein gültiger Elementname mit Qt-Platzhaltertext wurde in einer Listenbeschriftung beschädigt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The display-name-to-bundle-name sanitizer was not portable.</source>
-            <translation type="unfinished" />
+            <translation>Die Bereinigung vom Anzeigenamen zum Paketnamen war nicht portabel.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The transparent edge option is missing from the GUI.</source>
-            <translation type="unfinished" />
+            <translation>Die Option für transparente Ränder fehlt in der Oberfläche.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Transparent edge handling did not enable final alpha without altering procedural alpha.</source>
-            <translation type="unfinished" />
+            <translation>Die Behandlung transparenter Ränder hat das endgültige Alpha nicht aktiviert, ohne prozedurales Alpha zu verändern.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Final alpha could be disabled while active transparency required it.</source>
-            <translation type="unfinished" />
+            <translation>Endgültiges Alpha konnte deaktiviert werden, obwohl aktive Transparenz es erforderte.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The GUI timeline did not follow a frame-count edit.</source>
-            <translation type="unfinished" />
+            <translation>Die GUI-Zeitleiste hat eine Änderung der Bildanzahl nicht übernommen.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Space did not start playback without toggling the focused group.</source>
-            <translation type="unfinished" />
+            <translation>Die Leertaste hat die Wiedergabe nicht gestartet, ohne die fokussierte Gruppe umzuschalten.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Space did not pause playback without toggling the focused group.</source>
-            <translation type="unfinished" />
+            <translation>Die Leertaste hat die Wiedergabe nicht angehalten, ohne die fokussierte Gruppe umzuschalten.</translation>
         </message>
         <message>
             <location line="+26" />
             <source>Playback did not install advancing preview frames.</source>
-            <translation type="unfinished" />
+            <translation>Die Wiedergabe hat keine fortschreitenden Vorschaubilder eingesetzt.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Editor playback did not follow elapsed time or reanchor after a seek.</source>
-            <translation type="unfinished" />
+            <translation>Die Editorwiedergabe folgte nicht der verstrichenen Zeit oder setzte nach einem Positionssprung keinen neuen Anker.</translation>
         </message>
         <message>
-            <location line="+10" />
-            <source>cancel</source>
-            <translation type="unfinished" />
-        </message>
-        <message>
-            <location line="+2" />
+            <location line="+12" />
             <source>A stale preview did not honor its cancellation token.</source>
-            <translation type="unfinished" />
+            <translation>Eine veraltete Vorschau hat ihr Abbruchtoken nicht beachtet.</translation>
         </message>
         <message>
             <location line="+41" />
             <source>Randomize values changed stack identity or made it invalid.</source>
-            <translation type="unfinished" />
+            <translation>Zufällige Werte hat die Stapelidentität verändert oder den Stapel ungültig gemacht.</translation>
         </message>
         <message>
             <location line="+34" />
             <source>Randomize mix produced an invalid stack composition.</source>
-            <translation type="unfinished" />
+            <translation>Zufallsmischung hat eine ungültige Stapelzusammensetzung erzeugt.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Randomize mix produced invalid values: %1</source>
-            <translation type="unfinished" />
+            <translation>Zufallsmischung hat ungültige Werte erzeugt: %1</translation>
         </message>
         <message>
             <location line="+44" />
             <source>Could not create the embedded-attachment smoke fixture.</source>
-            <translation type="unfinished" />
+            <translation>Die Testdaten für eingebettete Anlagen konnten nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>The GUI could not embed a custom OBJ immediately.</source>
-            <translation type="unfinished" />
+            <translation>Die Oberfläche konnte ein benutzerdefiniertes OBJ nicht sofort einbetten.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Custom OBJ embedding did not update render and attachment state atomically.</source>
-            <translation type="unfinished" />
+            <translation>Die OBJ-Einbettung hat Render- und Anlagenzustand nicht atomar aktualisiert.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Could not create the concurrent attachment smoke fixture.</source>
-            <translation type="unfinished" />
+            <translation>Die Testdaten für gleichzeitige Anlagen konnten nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+33" />
             <source>Copied documents could not safely share concurrent attachment materialization: %1 %2</source>
-            <translation type="unfinished" />
+            <translation>Kopierte Dokumente konnten die gleichzeitige Anlagenmaterialisierung nicht sicher gemeinsam nutzen: %1 %2</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Undo did not remove both custom OBJ render metadata and its attachment reference.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat die OBJ-Rendermetadaten und ihre Anlagenreferenz nicht gemeinsam entfernt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Redo did not restore the embedded custom OBJ attachment.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die eingebettete benutzerdefinierte OBJ-Anlage nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>The embedded custom OBJ could not be cleared.</source>
-            <translation type="unfinished" />
+            <translation>Das eingebettete benutzerdefinierte OBJ konnte nicht entfernt werden.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Clearing a custom OBJ left attachment or digest state behind.</source>
-            <translation type="unfinished" />
+            <translation>Das Entfernen eines benutzerdefinierten OBJ hat Anlagen- oder Prüfsummenzustand zurückgelassen.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Undo did not restore a cleared custom OBJ attachment.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat eine entfernte benutzerdefinierte OBJ-Anlage nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Redo did not clear the custom OBJ attachment again.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die benutzerdefinierte OBJ-Anlage nicht erneut entfernt.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Could not create the Plane height-map smoke fixture.</source>
-            <translation type="unfinished" />
+            <translation>Die Testdaten für die Höhenkarte der ebenen Fläche konnten nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>The GUI could not embed a Plane height map immediately.</source>
-            <translation type="unfinished" />
+            <translation>Die Oberfläche konnte eine Höhenkarte der ebenen Fläche nicht sofort einbetten.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Plane height-map embedding did not update geometry, alpha, and attachment state atomically.</source>
-            <translation type="unfinished" />
+            <translation>Die Einbettung der Flächenhöhenkarte hat Geometrie, Alpha und Anlagenzustand nicht atomar aktualisiert.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Undo did not remove both Plane displacement metadata and its attachment reference.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat die Flächenverschiebungsmetadaten und ihre Anlagenreferenz nicht gemeinsam entfernt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Redo did not restore the embedded Plane height map.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die eingebettete Flächenhöhenkarte nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The embedded Plane height map could not be cleared.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Flächenhöhenkarte konnte nicht entfernt werden.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Clearing a Plane height map left attachment or enabled state behind.</source>
-            <translation type="unfinished" />
+            <translation>Das Entfernen einer Flächenhöhenkarte hat Anlagen- oder Aktivierungszustand zurückgelassen.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Undo did not restore a cleared Plane height map.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat eine entfernte Flächenhöhenkarte nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Redo did not clear the Plane height map again.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die Flächenhöhenkarte nicht erneut entfernt.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>The GUI could not embed an environment map immediately.</source>
-            <translation type="unfinished" />
+            <translation>Die Oberfläche konnte eine Umgebungskarte nicht sofort einbetten.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Environment-map embedding did not update lighting and attachment state atomically.</source>
-            <translation type="unfinished" />
+            <translation>Die Einbettung der Umgebungskarte hat Beleuchtung und Anlagenzustand nicht atomar aktualisiert.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Undo did not remove environment-map metadata and its attachment reference.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat die Umgebungskartenmetadaten und ihre Anlagenreferenz nicht entfernt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Redo did not restore the embedded environment map.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die eingebettete Umgebungskarte nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The embedded environment map could not be cleared.</source>
-            <translation type="unfinished" />
+            <translation>Die eingebettete Umgebungskarte konnte nicht entfernt werden.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Clearing an environment map left attachment or enabled state behind.</source>
-            <translation type="unfinished" />
+            <translation>Das Entfernen einer Umgebungskarte hat Anlagen- oder Aktivierungszustand zurückgelassen.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Undo did not restore a cleared environment map.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig hat eine entfernte Umgebungskarte nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Redo did not clear the environment map again.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen hat die Umgebungskarte nicht erneut entfernt.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>A valid layer name containing Qt placeholder text was corrupted.</source>
-            <translation type="unfinished" />
+            <translation>Ein gültiger Ebenenname mit Qt-Platzhaltertext wurde beschädigt.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Project naming, title binding, or rename undo registration failed (model '%1'; title '%2'; undo %3).</source>
-            <translation type="unfinished" />
+            <translation>Projektbenennung, Titelbindung oder Rückgängig-Aufzeichnung der Umbenennung fehlgeschlagen (Modell „%1“; Titel „%2“; Rückgängig %3).</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Project rename did not undo.</source>
-            <translation type="unfinished" />
+            <translation>Die Projektumbenennung wurde nicht rückgängig gemacht.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Project rename did not redo.</source>
-            <translation type="unfinished" />
+            <translation>Die Projektumbenennung wurde nicht wiederholt.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>The Add Layer regression setup has no default layer template.</source>
-            <translation type="unfinished" />
+            <translation>Die Regressionstestkonfiguration für Ebene hinzufügen hat keine Standard-Ebenenvorlage.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Add Layer did not use the selected saved layer template or preserve a valid compositing state.</source>
-            <translation type="unfinished" />
+            <translation>Ebene hinzufügen hat die gewählte gespeicherte Ebenenvorlage nicht verwendet oder keinen gültigen Kompositionszustand erhalten.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The Add layer blend mode is missing.</source>
-            <translation type="unfinished" />
+            <translation>Der Ebenenmischmodus Addieren fehlt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Layer Solo was not session-only.</source>
-            <translation type="unfinished" />
+            <translation>Ebenen-Solo war nicht auf die Sitzung beschränkt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Switching layers did not isolate Render data or preserve global Canvas data.</source>
-            <translation type="unfinished" />
+            <translation>Der Ebenenwechsel hat Renderdaten nicht isoliert oder globale Leinwanddaten nicht erhalten.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>The top layer did not reload its Render data.</source>
-            <translation type="unfinished" />
+            <translation>Die obere Ebene hat ihre Renderdaten nicht erneut geladen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The Alpha Under layer mode is missing.</source>
-            <translation type="unfinished" />
+            <translation>Der Ebenenmodus Alpha darunter fehlt.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Changing Alpha Mode did not update the selected layer as one undoable edit.</source>
-            <translation type="unfinished" />
+            <translation>Die Änderung des Alphamodus hat die ausgewählte Ebene nicht als einzelne rückgängig machbare Änderung aktualisiert.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Alpha Mode did not undo to Alpha Over.</source>
-            <translation type="unfinished" />
+            <translation>Der Alphamodus wurde nicht auf Alpha darüber zurückgesetzt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Adding a group did not create a selected folder around the active layer.</source>
-            <translation type="unfinished" />
+            <translation>Das Hinzufügen einer Gruppe hat keinen ausgewählten Ordner um die aktive Ebene erstellt.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Group Solo did not isolate the folder in preview.</source>
-            <translation type="unfinished" />
+            <translation>Gruppen-Solo hat den Ordner in der Vorschau nicht isoliert.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Locking a group did not protect its contained layer editors.</source>
-            <translation type="unfinished" />
+            <translation>Das Sperren einer Gruppe hat die Editoren der enthaltenen Ebenen nicht geschützt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Selecting a group did not keep project controls reachable while protecting layer controls.</source>
-            <translation type="unfinished" />
+            <translation>Die Gruppenauswahl hat Projektregler nicht erreichbar gehalten und gleichzeitig Ebenenregler geschützt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>A layer group did not move as one folder block.</source>
-            <translation type="unfinished" />
+            <translation>Eine Ebenengruppe wurde nicht als zusammenhängender Ordnerblock verschoben.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Removing a group did not preserve and ungroup its layers.</source>
-            <translation type="unfinished" />
+            <translation>Das Entfernen einer Gruppe hat ihre Ebenen nicht erhalten und aus der Gruppe gelöst.</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Current-frame export could not start during smoke testing.</source>
-            <translation type="unfinished" />
+            <translation>Der Export des aktuellen Bildes konnte während des Funktionstests nicht gestartet werden.</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Export Current Frame did not write the full canvas dimensions or restore export state.</source>
-            <translation type="unfinished" />
+            <translation>Aktuelles Bild exportieren hat nicht die vollen Leinwandabmessungen geschrieben oder den Exportzustand wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>A translucent top layer over an opaque base unnecessarily forced RGBA.</source>
-            <translation type="unfinished" />
+            <translation>Eine durchscheinende obere Ebene über einer undurchsichtigen Basis hat unnötig RGBA erzwungen.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Transparency in a non-active visible layer was not enforced globally.</source>
-            <translation type="unfinished" />
+            <translation>Transparenz in einer nicht aktiven sichtbaren Ebene wurde nicht global berücksichtigt.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>A transparent-only stack allowed RGB export.</source>
-            <translation type="unfinished" />
+            <translation>Ein ausschließlich transparenter Stapel erlaubte RGB-Export.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>A rejected final-alpha edit created a no-op Undo entry.</source>
-            <translation type="unfinished" />
+            <translation>Eine abgelehnte Änderung des endgültigen Alphas hat einen wirkungslosen Rückgängig-Eintrag erzeugt.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>An opaque base did not restore the RGB export option.</source>
-            <translation type="unfinished" />
+            <translation>Eine undurchsichtige Basis hat die RGB-Exportoption nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>The Erase layer blend mode is missing.</source>
-            <translation type="unfinished" />
+            <translation>Der Ebenenmischmodus Radieren fehlt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>An eraser above an opaque base did not enable RGBA as one previewed edit.</source>
-            <translation type="unfinished" />
+            <translation>Ein Radierer über einer undurchsichtigen Basis hat RGBA nicht als einzelne Änderung mit Vorschau aktiviert.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Undoing an eraser did not restore its matching RGB output state.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig für einen Radierer hat den zugehörigen RGB-Ausgabezustand nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Redoing an eraser did not restore its matching RGBA output state.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen für einen Radierer hat den zugehörigen RGBA-Ausgabezustand nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Soloing a transparent layer did not produce a valid preview-only RGBA snapshot.</source>
-            <translation type="unfinished" />
+            <translation>Solo für eine transparente Ebene hat keine gültige RGBA-Momentaufnahme nur für die Vorschau erzeugt.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Layer reorder or top-first display order failed.</source>
-            <translation type="unfinished" />
+            <translation>Ebenenumordnung oder Anzeige mit oberster Ebene zuerst fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Layer reorder did not undo.</source>
-            <translation type="unfinished" />
+            <translation>Die Ebenenumordnung wurde nicht rückgängig gemacht.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Layer reorder did not redo.</source>
-            <translation type="unfinished" />
+            <translation>Die Ebenenumordnung wurde nicht wiederholt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Could not prepare the environment-map layer lifecycle smoke fixture.</source>
-            <translation type="unfinished" />
+            <translation>Die Testdaten für den Ebenenlebenszyklus mit Umgebungskarte konnten nicht vorbereitet werden.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Layer duplication did not allocate unique identities.</source>
-            <translation type="unfinished" />
+            <translation>Die Ebenenduplizierung hat keine eindeutigen Kennungen zugewiesen.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Layer removal selected the wrong survivor.</source>
-            <translation type="unfinished" />
+            <translation>Nach dem Entfernen einer Ebene wurde die falsche verbleibende Ebene ausgewählt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Removing duplicated layers left environment-map attachment references behind.</source>
-            <translation type="unfinished" />
+            <translation>Das Entfernen duplizierter Ebenen hat Anlagenreferenzen auf Umgebungskarten zurückgelassen.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>The GUI allowed removal of the final layer.</source>
-            <translation type="unfinished" />
+            <translation>Die Oberfläche erlaubte das Entfernen der letzten Ebene.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>The default project has no draggable wave.</source>
-            <translation type="unfinished" />
+            <translation>Das Standardprojekt hat keine verschiebbare Welle.</translation>
         </message>
         <message>
             <location line="+50" />
             <source>A numbered preview handle could not be dragged after workflow navigation.</source>
-            <translation type="unfinished" />
+            <translation>Ein nummerierter Vorschaugriff konnte nach der Arbeitsbereichsnavigation nicht gezogen werden.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Clicking a wave handle without dragging changed the project.</source>
-            <translation type="unfinished" />
+            <translation>Ein Klick auf einen Wellengriff ohne Ziehen hat das Projekt verändert.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Separate wave drags were merged into one undo step.</source>
-            <translation type="unfinished" />
+            <translation>Getrennte Wellenverschiebungen wurden zu einem Rückgängig-Schritt zusammengeführt.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The latest wave drag did not undo as one gesture.</source>
-            <translation type="unfinished" />
+            <translation>Die letzte Wellenverschiebung wurde nicht als einzelne Geste rückgängig gemacht.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The earlier wave drag did not have its own undo step.</source>
-            <translation type="unfinished" />
+            <translation>Die vorherige Wellenverschiebung hatte keinen eigenen Rückgängig-Schritt.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Wave drag redo did not restore the final gesture.</source>
-            <translation type="unfinished" />
+            <translation>Wiederholen der Wellenverschiebung hat die letzte Geste nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+26" />
             <source>An unsaved project incorrectly exposed its file-browser location action.</source>
-            <translation type="unfinished" />
+            <translation>Ein ungespeichertes Projekt zeigte fälschlich seine Dateimanager-Ortsaktion an.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The project-name save regression could not finish the editor.</source>
-            <translation type="unfinished" />
+            <translation>Der Regressionstest zum Speichern des Projektnamens konnte die Bearbeitung nicht abschließen.</translation>
         </message>
         <message>
             <location line="+19" />
             <source>test Save-As path was not consumed</source>
-            <translation type="unfinished" />
+            <translation>der Testpfad für Speichern unter wurde nicht verwendet</translation>
         </message>
         <message>
             <location line="+3" />
             <source>active name is '%1'</source>
-            <translation type="unfinished" />
+            <translation>der aktive Name ist „%1“</translation>
         </message>
         <message>
             <location line="+4" />
             <source>saved document is missing</source>
-            <translation type="unfinished" />
+            <translation>das gespeicherte Dokument fehlt</translation>
         </message>
         <message>
             <location line="+2" />
             <source>saved document name is '%1'</source>
-            <translation type="unfinished" />
+            <translation>der Name des gespeicherten Dokuments ist „%1“</translation>
         </message>
         <message>
             <location line="+5" />
             <source>active path is '%1', expected '%2'</source>
-            <translation type="unfinished" />
+            <translation>der aktive Pfad ist „%1“, erwartet „%2“</translation>
         </message>
         <message>
             <location line="+3" />
             <source>project is dirty</source>
-            <translation type="unfinished" />
+            <translation>das Projekt hat ungespeicherte Änderungen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>window is modified</source>
-            <translation type="unfinished" />
+            <translation>das Fenster ist als geändert markiert</translation>
         </message>
         <message>
             <location line="+3" />
             <source>file-browser action is unavailable</source>
-            <translation type="unfinished" />
+            <translation>die Dateimanageraktion ist nicht verfügbar</translation>
         </message>
         <message>
             <location line="+3" />
             <source>window file path is '%1', expected '%2'</source>
-            <translation type="unfinished" />
+            <translation>der Dateipfad des Fensters ist „%1“, erwartet „%2“</translation>
         </message>
         <message>
             <location line="+4" />
             <source>title is '%1', expected prefix '%2'</source>
-            <translation type="unfinished" />
+            <translation>der Titel ist „%1“, erwartetes Präfix „%2“</translation>
         </message>
         <message>
             <location line="+5" />
             <source>title does not contain the product version</source>
-            <translation type="unfinished" />
+            <translation>der Titel enthält keine Produktversion</translation>
         </message>
         <message>
             <location line="+3" />
             <source>saved project could not reload: %1</source>
-            <translation type="unfinished" />
+            <translation>das gespeicherte Projekt konnte nicht erneut geladen werden: %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>reloaded name is '%1'</source>
-            <translation type="unfinished" />
+            <translation>der erneut geladene Name ist „%1“</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Save did not commit the project-name editor, persist that name, and leave the completed %1 project clean: %2</source>
-            <translation type="unfinished" />
+            <translation>Speichern hat den Projektnameneditor nicht übernommen, den Namen nicht gespeichert oder das fertige %1-Projekt nicht ohne ungespeicherte Änderungen hinterlassen: %2</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+12" />
             <location line="+18" />
             <source>folder</source>
-            <translation type="unfinished" />
+            <translation>Ordner</translation>
         </message>
         <message>
             <location line="-30" />
             <location line="+12" />
             <location line="+18" />
             <source>ZIP</source>
-            <translation type="unfinished" />
+            <translation>ZIP</translation>
         </message>
         <message>
             <location line="-19" />
             <source>A late project-name focus event dirtied the saved %1 project.</source>
-            <translation type="unfinished" />
+            <translation>Ein spätes Fokusereignis des Projektnamens hat das gespeicherte %1-Projekt als geändert markiert.</translation>
         </message>
         <message>
             <location line="+18" />
             <source>A verified no-change Save changed the %1 project state (dirty %2; window modified %3; versions %4, expected %5; current version %6, expected %7).</source>
-            <translation type="unfinished" />
+            <translation>Ein überprüftes Speichern ohne Änderungen hat den Zustand des %1-Projekts verändert (geändert %2; Fenster geändert %3; Versionen %4, erwartet %5; aktuelle Version %6, erwartet %7).</translation>
         </message>
         <message>
             <location line="+36" />
             <source>The GUI could not create the first bundle version.</source>
-            <translation type="unfinished" />
+            <translation>Die Oberfläche konnte die erste Paketversion nicht erstellen.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Saving navigated away from the user's selected workflow stage.</source>
-            <translation type="unfinished" />
+            <translation>Das Speichern hat die vom Benutzer ausgewählte Arbeitsstufe verlassen.</translation>
         </message>
         <message>
             <location line="+27" />
             <source>Canceling the saved-project rename changed the active project.</source>
-            <translation type="unfinished" />
+            <translation>Das Abbrechen der Umbenennung des gespeicherten Projekts hat das aktive Projekt verändert.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Keeping the bundle filename did not register an undoable project rename.</source>
-            <translation type="unfinished" />
+            <translation>Das Beibehalten des Paketdateinamens hat keine rückgängig machbare Projektumbenennung aufgezeichnet.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Undoing the in-place project rename did not restore the saved state.</source>
-            <translation type="unfinished" />
+            <translation>Rückgängig für die Projektumbenennung am selben Ort hat den gespeicherten Zustand nicht wiederhergestellt.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>The GUI did not append a changed bundle version.</source>
-            <translation type="unfinished" />
+            <translation>Die Oberfläche hat keine geänderte Paketversion angehängt.</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Could not compare</source>
-            <translation type="unfinished" />
+            <translation>Vergleich nicht möglich</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The Versions page could not show a semantic diff.</source>
-            <translation type="unfinished" />
+            <translation>Die Versionsseite konnte keinen semantischen Vergleich anzeigen.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The saved GUI bundle did not validate: %1</source>
-            <translation type="unfinished" />
+            <translation>Das von der Oberfläche gespeicherte Paket bestand die Validierung nicht: %1</translation>
         </message>
         <message>
             <location line="+16" />
             <source>The saved-project rename prompt could not dispatch Save Copy and Stay.</source>
-            <translation type="unfinished" />
+            <translation>Der Umbenennungsdialog des gespeicherten Projekts konnte Kopie speichern und bleiben nicht auslösen.</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Save Copy and Stay did not restore the old displayed name, preserve the original project, or reset the copy history.</source>
-            <translation type="unfinished" />
+            <translation>Kopie speichern und bleiben hat den alten Anzeigenamen nicht wiederhergestellt, das Originalprojekt nicht erhalten oder den Kopieverlauf nicht zurückgesetzt.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>The first saved version is missing from the Versions page.</source>
-            <translation type="unfinished" />
+            <translation>Die erste gespeicherte Version fehlt auf der Versionsseite.</translation>
         </message>
         <message>
             <location line="+31" />
             <source>Make Current did not replace the saved name, title, playback, or clean version state.</source>
-            <translation type="unfinished" />
+            <translation>Als aktuelle Version festlegen hat den gespeicherten Namen, Titel, die Wiedergabe oder den unveränderten Versionszustand nicht ersetzt.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The second saved version is missing from the Versions page.</source>
-            <translation type="unfinished" />
+            <translation>Die zweite gespeicherte Version fehlt auf der Versionsseite.</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Revert did not create and cleanly select a new immutable version (versions %1, expected %2; current %3, source %4; dirty %5; undo %6).</source>
-            <translation type="unfinished" />
+            <translation>Wiederherstellen hat keine neue unveränderliche Version erstellt und sauber ausgewählt (Versionen %1, erwartet %2; aktuell %3, Quelle %4; geändert %5; Rückgängig %6).</translation>
         </message>
         <message>
             <location line="+35" />
             <source>Save As and Open did not replace the active document cleanly.</source>
-            <translation type="unfinished" />
+            <translation>Speichern unter und öffnen hat das aktive Dokument nicht sauber ersetzt.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>An opened independent copy retained an original layer UUID.</source>
-            <translation type="unfinished" />
+            <translation>Eine geöffnete unabhängige Kopie hat eine ursprüngliche Ebenen-UUID behalten.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>A version number alone incorrectly produced a save-risk warning.</source>
-            <translation type="unfinished" />
+            <translation>Eine Versionsnummer allein hat fälschlich eine Speicher-Risikowarnung erzeugt.</translation>
         </message>
         <message>
-            <location line="+8" />
-            <source>keeps</source>
-            <translation type="unfinished" />
-        </message>
-        <message>
-            <location line="+3" />
+            <location line="+18" />
             <source>Preserved future data did not produce an accurate recovery notice.</source>
-            <translation type="unfinished" />
+            <translation>Beibehaltene Daten aus künftigen Versionen haben keinen zutreffenden Wiederherstellungshinweis erzeugt.</translation>
         </message>
         <message>
             <location line="+10" />
             <source>The Versions page regression setup has no saved version to replace.</source>
-            <translation type="unfinished" />
+            <translation>Die Regressionstestkonfiguration der Versionsseite hat keine gespeicherte Version zum Ersetzen.</translation>
         </message>
         <message>
             <location line="+8" />
             <source>The New Project focus regression could not establish a non-Project starting state.</source>
-            <translation type="unfinished" />
+            <translation>Der Fokus-Regressionstest für Neues Projekt konnte keinen Startzustand außerhalb von Projekt herstellen.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>New Project retained stale version rows, selectors, actions, or bundle details.</source>
-            <translation type="unfinished" />
+            <translation>Neues Projekt hat veraltete Versionszeilen, Auswahlfelder, Aktionen oder Paketdetails behalten.</translation>
         </message>
         <message>
             <location line="+25" />
             <source>Use a nonempty project name without control characters or path separators.</source>
-            <translation type="unfinished" />
+            <translation>Verwenden Sie einen nicht leeren Projektnamen ohne Steuerzeichen oder Pfadtrennzeichen.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Project rename canceled; no project was changed.</source>
-            <translation type="unfinished" />
+            <translation>Projektumbenennung abgebrochen; kein Projekt wurde verändert.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Project renamed. The existing bundle filename is unchanged; Save will append the rename as a new version.</source>
-            <translation type="unfinished" />
+            <translation>Projekt umbenannt. Der vorhandene Paketdateiname bleibt unverändert; Speichern hängt die Umbenennung als neue Version an.</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Project copy canceled; the current project was not changed.</source>
-            <translation type="unfinished" />
+            <translation>Projektkopie abgebrochen; das aktuelle Projekt bleibt unverändert.</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Could not create independent project</source>
-            <translation type="unfinished" />
+            <translation>Unabhängiges Projekt konnte nicht erstellt werden</translation>
         </message>
         <message>
             <location line="+14" />
             <source>Rename project</source>
-            <translation type="unfinished" />
+            <translation>Projekt umbenennen</translation>
         </message>
         <message>
             <location line="+19" />
             <source>Rename saved project</source>
-            <translation type="unfinished" />
-        </message>
-        <message>
-            <location line="+5" />
-            <source>” is currently saved as “</source>
-            <translation type="unfinished" />
-        </message>
-        <message>
-            <location line="+3" />
-            <source>Keep the existing filename and record the rename on the next Save, or create a new independent bundle named from “</source>
-            <translation type="unfinished" />
-        </message>
-        <message>
-            <location line="+3" />
-            <source>”. An independent copy contains only the current working state as version 0 and receives new project and layer UUIDs.</source>
-            <translation type="unfinished" />
+            <translation>Gespeichertes Projekt umbenennen</translation>
         </message>
         <message>
             <location line="+4" />
+            <source>“%1” is currently saved as “%2”.</source>
+            <translation>„%1“ ist derzeit als „%2“ gespeichert.</translation>
+        </message>
+        <message>
+            <location line="+3" />
+            <source>Keep the existing filename and record the rename on the next Save, or create a new independent bundle named from “%1”. An independent copy contains only the current working state as version 0 and receives new project and layer UUIDs.</source>
+            <translation>Behalten Sie den vorhandenen Dateinamen bei und übernehmen Sie die Umbenennung beim nächsten Speichern, oder erstellen Sie ein neues unabhängiges Paket mit einem Namen aus „%1“. Eine unabhängige Kopie enthält nur den aktuellen Arbeitsstand als Version 0 und erhält neue Projekt- und Ebenen-UUIDs.</translation>
+        </message>
+        <message>
+            <location line="+6" />
             <source>Keep Existing Filename</source>
-            <translation type="unfinished" />
+            <translation>Vorhandenen Dateinamen beibehalten</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Save As and Open</source>
-            <translation type="unfinished" />
+            <translation>Speichern unter und öffnen</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Save Copy, Stay Here</source>
-            <translation type="unfinished" />
+            <translation>Kopie speichern und hier bleiben</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Rename this project but leave its current bundle path unchanged.</source>
-            <translation type="unfinished" />
+            <translation>Dieses Projekt umbenennen, ohne seinen aktuellen Paketpfad zu ändern.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Create and switch to an independent one-version project copy.</source>
-            <translation type="unfinished" />
+            <translation>Eine unabhängige Projektkopie mit einer Version erstellen und zu ihr wechseln.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Create the independent copy, then continue editing this project under its old name.</source>
-            <translation type="unfinished" />
+            <translation>Die unabhängige Kopie erstellen und dieses Projekt anschließend unter seinem bisherigen Namen weiterbearbeiten.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Finish or cancel the active export before switching projects.</source>
-            <translation type="unfinished" />
+            <translation>Beenden oder brechen Sie den laufenden Export ab, bevor Sie das Projekt wechseln.</translation>
         </message>
         <message>
             <location line="+32" />
             <source>Save independent project copy</source>
-            <translation type="unfinished" />
+            <translation>Unabhängige Projektkopie speichern</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+266" />
             <source>PVT project bundle (*.zip);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>PVT-Projektpaket (*.zip);;Alle Dateien (*)</translation>
         </message>
         <message>
             <location line="-255" />
             <source>Choose a new bundle filename</source>
-            <translation type="unfinished" />
+            <translation>Neuen Paketdateinamen wählen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>An independent project cannot replace the bundle that is currently open. Choose a different filename.</source>
-            <translation type="unfinished" />
+            <translation>Ein unabhängiges Projekt kann das aktuell geöffnete Paket nicht ersetzen. Wählen Sie einen anderen Dateinamen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Destination already exists</source>
-            <translation type="unfinished" />
+            <translation>Ziel existiert bereits</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Independent project copies never overwrite an existing file or directory. Choose a new destination.</source>
-            <translation type="unfinished" />
+            <translation>Unabhängige Projektkopien überschreiben niemals vorhandene Dateien oder Verzeichnisse. Wählen Sie ein neues Ziel.</translation>
         </message>
         <message>
             <location line="+15" />
             <source>The copied project name is invalid.</source>
-            <translation type="unfinished" />
+            <translation>Der Name des kopierten Projekts ist ungültig.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The copied project needs a destination path.</source>
-            <translation type="unfinished" />
+            <translation>Das kopierte Projekt benötigt einen Zielpfad.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Fix the invalid output settings before copying the project.
 
 </source>
-            <translation type="unfinished" />
+            <translation>Korrigieren Sie die ungültigen Ausgabeeinstellungen, bevor Sie das Projekt kopieren.
+
+</translation>
         </message>
         <message>
             <location line="+11" />
             <source>An independent project cannot replace the bundle that is currently open.</source>
-            <translation type="unfinished" />
+            <translation>Ein unabhängiges Projekt kann das aktuell geöffnete Paket nicht ersetzen.</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Independent project copies never overwrite an existing file or directory.</source>
-            <translation type="unfinished" />
+            <translation>Unabhängige Projektkopien überschreiben niemals vorhandene Dateien oder Verzeichnisse.</translation>
         </message>
         <message>
             <location line="+21" />
             <source>The active layer is missing from the project.</source>
-            <translation type="unfinished" />
+            <translation>Die aktive Ebene fehlt im Projekt.</translation>
         </message>
         <message>
             <location line="+47" />
             <source>The copied project did not preserve its active layer.</source>
-            <translation type="unfinished" />
+            <translation>Das kopierte Projekt hat seine aktive Ebene nicht erhalten.</translation>
         </message>
         <message>
             <location line="+26" />
             <source>There was not enough memory to create the independent project copy.</source>
-            <translation type="unfinished" />
+            <translation>Nicht genügend Speicher zum Erstellen der unabhängigen Projektkopie.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Unexpected independent-copy error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Fehler bei unabhängiger Kopie: %1</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Created independent version-0 project copy at %1; continuing in the original project.</source>
-            <translation type="unfinished" />
+            <translation>Unabhängige Projektkopie mit Version 0 unter %1 erstellt; das Originalprojekt bleibt geöffnet.</translation>
         </message>
         <message>
             <location line="+34" />
             <source>Created and opened independent version-0 project at %1.</source>
-            <translation type="unfinished" />
+            <translation>Unabhängiges Projekt mit Version 0 unter %1 erstellt und geöffnet.</translation>
         </message>
         <message>
             <location line="+38" />
             <source>Save project as</source>
-            <translation type="unfinished" />
+            <translation>Projekt speichern unter</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Choose the project bundle form.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie die Form des Projektpakets.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>An unpacked folder is recommended for large projects because each save updates files directly without rebuilding a ZIP archive.</source>
-            <translation type="unfinished" />
+            <translation>Für große Projekte wird ein entpackter Ordner empfohlen, da jeder Speichervorgang die Dateien direkt aktualisiert, ohne ein ZIP-Archiv neu zu erstellen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Unpacked Folder…</source>
-            <translation type="unfinished" />
+            <translation>Entpackter Ordner…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>ZIP File…</source>
-            <translation type="unfinished" />
+            <translation>ZIP-Datei…</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Choose parent folder for unpacked project</source>
-            <translation type="unfinished" />
+            <translation>Übergeordneten Ordner für das entpackte Projekt wählen</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Save ZIP project bundle</source>
-            <translation type="unfinished" />
+            <translation>ZIP-Projektpaket speichern</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Saving %1 in the background…</source>
-            <translation type="unfinished" />
+            <translation>%1 wird im Hintergrund gespeichert…</translation>
         </message>
         <message>
             <location line="+15" />
             <source>There was not enough memory to prepare the project for saving.</source>
-            <translation type="unfinished" />
+            <translation>Nicht genügend Speicher, um das Projekt zum Speichern vorzubereiten.</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The project could not be prepared for saving: %1</source>
-            <translation type="unfinished" />
+            <translation>Das Projekt konnte nicht zum Speichern vorbereitet werden: %1</translation>
         </message>
         <message>
             <location line="+7" />
             <source>The project could not be prepared for background saving.</source>
-            <translation type="unfinished" />
+            <translation>Das Projekt konnte nicht zum Speichern im Hintergrund vorbereitet werden.</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Unexpected project-save error: %1</source>
-            <translation type="unfinished" />
+            <translation>Unerwarteter Fehler beim Speichern des Projekts: %1</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Project saving failed because of an unexpected error.</source>
-            <translation type="unfinished" />
+            <translation>Das Speichern des Projekts ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
         </message>
         <message>
             <location line="+9" />
             <source>The background project-save task could not start: %1</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Speichern des Projekts konnte nicht gestartet werden: %1</translation>
         </message>
         <message>
             <location line="+6" />
             <source>The background project-save task could not be created.</source>
-            <translation type="unfinished" />
+            <translation>Die Hintergrundaufgabe zum Speichern des Projekts konnte nicht erstellt werden.</translation>
         </message>
         <message>
             <location line="+23" />
             <source>No project changes; verified current state and compacted shared music analysis at %1</source>
-            <translation type="unfinished" />
+            <translation>Keine Projektänderungen; aktuellen Zustand geprüft und gemeinsame Musikanalyse unter %1 komprimiert</translation>
         </message>
         <message>
             <location line="+4" />
             <location line="+39" />
             <source>No changes; verified the bundle state at %1</source>
-            <translation type="unfinished" />
+            <translation>Keine Änderungen; Paketzustand unter %1 geprüft</translation>
         </message>
         <message>
             <location line="-36" />
             <location line="+39" />
             <source>Saved external changes/integrity mismatch as version %1 in %2</source>
-            <translation type="unfinished" />
+            <translation>Externe Änderungen/Integritätsabweichung als Version %1 in %2 gespeichert</translation>
         </message>
         <message>
             <location line="-36" />
             <location line="+39" />
             <source>Saved version %1 to %2</source>
-            <translation type="unfinished" />
+            <translation>Version %1 in %2 gespeichert</translation>
         </message>
         <message>
             <location line="-10" />
             <source>No project changes; verified state and compacted shared storage at %1</source>
-            <translation type="unfinished" />
+            <translation>Keine Projektänderungen; Zustand geprüft und gemeinsamer Speicher unter %1 komprimiert</translation>
         </message>
         <message>
             <location line="+18" />
             <source>Open / Import</source>
-            <translation type="unfinished" />
+            <translation>Öffnen / Importieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Choose a project file or an unpacked project folder.</source>
-            <translation type="unfinished" />
+            <translation>Wählen Sie eine Projektdatei oder einen entpackten Projektordner.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Project files include ZIP bundles and legacy .pvt setups. Unpacked folders are the recommended form for large projects.</source>
-            <translation type="unfinished" />
+            <translation>Projektdateien umfassen ZIP-Pakete und ältere .pvt-Konfigurationen. Entpackte Ordner werden für große Projekte empfohlen.</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Project File…</source>
-            <translation type="unfinished" />
+            <translation>Projektdatei…</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Project Folder…</source>
-            <translation type="unfinished" />
+            <translation>Projektordner…</translation>
         </message>
         <message>
             <location line="+16" />
             <source>Open project or import legacy setup</source>
-            <translation type="unfinished" />
+            <translation>Projekt öffnen oder alte Konfiguration importieren</translation>
         </message>
         <message>
             <location line="+2" />
             <source>PVT projects (*.zip *.pvt);;Project bundles (*.zip);;Legacy setups (*.pvt);;All files (*)</source>
-            <translation type="unfinished" />
+            <translation>PVT-Projekte (*.zip *.pvt);;Projektpakete (*.zip);;Alte Konfigurationen (*.pvt);;Alle Dateien (*)</translation>
         </message>
     </context>
     <context>
@@ -11583,53 +11596,53 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location filename="../gui/application_settings_dialog.cpp" line="-653" />
             <source>%1 GiB</source>
-            <translation type="unfinished" />
+            <translation>%1 GiB</translation>
         </message>
         <message>
             <location line="+5" />
             <source>%1 MiB</source>
-            <translation type="unfinished" />
+            <translation>%1 MiB</translation>
         </message>
         <message>
             <location filename="../gui/live_frame_controller.cpp" line="+124" />
             <source>The live frame display buffer could not be allocated.</source>
-            <translation type="unfinished" />
+            <translation>Der Anzeigepuffer für Live-Bilder konnte nicht zugewiesen werden.</translation>
         </message>
         <message>
             <location line="+20" />
             <source>Live render failed: %1</source>
-            <translation type="unfinished" />
+            <translation>Live-Rendering fehlgeschlagen: %1</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Live render failed unexpectedly.</source>
-            <translation type="unfinished" />
+            <translation>Live-Rendering unerwartet fehlgeschlagen.</translation>
         </message>
         <message>
             <location filename="../gui/live_midi_mac.mm" line="-473" />
             <location line="+10" />
             <source>Unnamed MIDI endpoint</source>
-            <translation type="unfinished" />
+            <translation>Unbenannter MIDI-Endpunkt</translation>
         </message>
         <message>
             <location filename="../gui/live_target_registry.cpp" line="+93" />
             <source>%1 — %2</source>
-            <translation type="unfinished" />
+            <translation>%1 — %2</translation>
         </message>
         <message>
             <location line="+29" />
             <source>Playback FPS</source>
-            <translation type="unfinished" />
+            <translation>Wiedergabe (Bilder/s)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Project</source>
-            <translation type="unfinished" />
+            <translation>Projekt</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Project tempo</source>
-            <translation type="unfinished" />
+            <translation>Projekttempo</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11641,17 +11654,17 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="-11" />
             <source>Project clock phase</source>
-            <translation type="unfinished" />
+            <translation>Projekttaktphase</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Reverse project clock</source>
-            <translation type="unfinished" />
+            <translation>Projekttakt umkehren</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Project audio response</source>
-            <translation type="unfinished" />
+            <translation>Projekt-Audioreaktion</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11666,82 +11679,82 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+9" />
             <location line="+7" />
             <source>Project audio</source>
-            <translation type="unfinished" />
+            <translation>Projektaudio</translation>
         </message>
         <message>
             <location line="-72" />
             <location line="+234" />
             <source>Synchronized items only</source>
-            <translation type="unfinished" />
+            <translation>Nur synchronisierte Elemente</translation>
         </message>
         <message>
             <location line="-227" />
             <location line="+230" />
             <source>Audio drives waves</source>
-            <translation type="unfinished" />
+            <translation>Audio steuert Wellen</translation>
         </message>
         <message>
             <location line="-223" />
             <location line="+226" />
             <source>Wave audio feature</source>
-            <translation type="unfinished" />
+            <translation>Audio-Wellenmerkmal</translation>
         </message>
         <message>
             <location line="-218" />
             <location line="+221" />
             <source>Wave response amount</source>
-            <translation type="unfinished" />
+            <translation>Wellenreaktionsstärke</translation>
         </message>
         <message>
             <location line="-212" />
             <location line="+222" />
             <source>Effect response amount</source>
-            <translation type="unfinished" />
+            <translation>Effektreaktionsstärke</translation>
         </message>
         <message>
             <location line="-213" />
             <location line="+207" />
             <source>Audio drives effects</source>
-            <translation type="unfinished" />
+            <translation>Audio steuert Effekte</translation>
         </message>
         <message>
             <location line="-200" />
             <location line="+203" />
             <source>Effect audio feature</source>
-            <translation type="unfinished" />
+            <translation>Audio-Effektmerkmal</translation>
         </message>
         <message>
             <location line="-195" />
             <location line="+208" />
             <source>Color response degrees</source>
-            <translation type="unfinished" />
+            <translation>Farbreaktion in Grad</translation>
         </message>
         <message>
             <location line="-199" />
             <location line="+193" />
             <source>Audio drives color</source>
-            <translation type="unfinished" />
+            <translation>Audio steuert Farbe</translation>
         </message>
         <message>
             <location line="-186" />
             <location line="+189" />
             <source>Color audio feature</source>
-            <translation type="unfinished" />
+            <translation>Audio-Farbmerkmal</translation>
         </message>
         <message>
             <location line="-176" />
             <source>Group visible</source>
-            <translation type="unfinished" />
+            <translation>Gruppe sichtbar</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Group — %1</source>
-            <translation type="unfinished" />
+            <translation>Gruppe — %1</translation>
         </message>
         <message>
             <location line="+30" />
             <source>Layer visible</source>
-            <translation type="unfinished" />
+            <translation>Ebene sichtbar</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11750,27 +11763,27 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+6" />
             <location line="+822" />
             <source>Mix</source>
-            <translation type="unfinished" />
+            <translation>Mischung</translation>
         </message>
         <message>
             <location line="-833" />
             <source>Layer opacity</source>
-            <translation type="unfinished" />
+            <translation>Ebenendeckkraft</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Blend mode</source>
-            <translation type="unfinished" />
+            <translation>Mischmodus</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Alpha order</source>
-            <translation type="unfinished" />
+            <translation>Alpha-Reihenfolge</translation>
         </message>
         <message>
             <location line="+34" />
             <source>Phrase warp</source>
-            <translation type="unfinished" />
+            <translation>Phrasenverformung</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11778,22 +11791,22 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+3" />
             <location line="+45" />
             <source>Rhythm</source>
-            <translation type="unfinished" />
+            <translation>Rhythmus</translation>
         </message>
         <message>
             <location line="-49" />
             <source>Ghost mix</source>
-            <translation type="unfinished" />
+            <translation>Geistermischung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Ghost lag</source>
-            <translation type="unfinished" />
+            <translation>Geisterverzögerung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Displacement</source>
-            <translation type="unfinished" />
+            <translation>Verschiebung</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11810,78 +11823,78 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+3" />
             <location line="+3" />
             <source>Modifiers</source>
-            <translation type="unfinished" />
+            <translation>Modifikatoren</translation>
         </message>
         <message>
             <location line="-641" />
             <source>Displacement amount</source>
-            <translation type="unfinished" />
+            <translation>Verschiebungsstärke</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Slope lighting</source>
-            <translation type="unfinished" />
+            <translation>Steigungsbeleuchtung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Lighting depth</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtungstiefe</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Spiral</source>
-            <translation type="unfinished" />
+            <translation>Spirale</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Spiral frequency</source>
-            <translation type="unfinished" />
+            <translation>Spiralfrequenz</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Spiral arms</source>
-            <translation type="unfinished" />
+            <translation>Spiralarme</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Wall reflection</source>
-            <translation type="unfinished" />
+            <translation>Wandreflexion</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Wall frequency</source>
-            <translation type="unfinished" />
+            <translation>Wandfrequenz</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Wall mix</source>
-            <translation type="unfinished" />
+            <translation>Wandmischung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Hue cycles</source>
-            <translation type="unfinished" />
+            <translation>Farbtonzyklen</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+4" />
             <source>Color</source>
-            <translation type="unfinished" />
+            <translation>Farbe</translation>
         </message>
         <message>
             <location line="-1" />
             <source>Saturation</source>
-            <translation type="unfinished" />
+            <translation>Sättigung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Swing master</source>
-            <translation type="unfinished" />
+            <translation>Swing-Hauptschalter</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Override project audio</source>
-            <translation type="unfinished" />
+            <translation>Projektaudio überschreiben</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11897,14 +11910,14 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+3" />
             <location line="+3" />
             <source>Audio</source>
-            <translation type="unfinished" />
+            <translation>Audio</translation>
         </message>
         <message>
             <location line="-33" />
             <location line="+827" />
             <location line="+72" />
             <source>Audio response</source>
-            <translation type="unfinished" />
+            <translation>Audioreaktion</translation>
         </message>
         <message>
             <location line="-863" />
@@ -11920,42 +11933,42 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+3" />
             <location line="+3" />
             <source>Clock</source>
-            <translation type="unfinished" />
+            <translation>Takt</translation>
         </message>
         <message>
             <location line="-18" />
             <source>Layer tempo</source>
-            <translation type="unfinished" />
+            <translation>Ebenentempo</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Layer clock phase</source>
-            <translation type="unfinished" />
+            <translation>Ebenentaktphase</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Reverse layer clock</source>
-            <translation type="unfinished" />
+            <translation>Ebenentakt umkehren</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Layer clock fit</source>
-            <translation type="unfinished" />
+            <translation>Ebenentaktanpassung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Mix layer clock</source>
-            <translation type="unfinished" />
+            <translation>Ebenentakt mischen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Layer clock mix mode</source>
-            <translation type="unfinished" />
+            <translation>Ebenentakt-Mischmodus</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Procedural alpha</source>
-            <translation type="unfinished" />
+            <translation>Prozedurales Alpha</translation>
         </message>
         <message>
             <location line="+1" />
@@ -11972,37 +11985,37 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="-25" />
             <location line="+589" />
             <source>Alpha minimum</source>
-            <translation type="unfinished" />
+            <translation>Minimales Alpha</translation>
         </message>
         <message>
             <location line="-583" />
             <location line="+584" />
             <source>Alpha maximum</source>
-            <translation type="unfinished" />
+            <translation>Maximales Alpha</translation>
         </message>
         <message>
             <location line="-578" />
             <source>Alpha frequency</source>
-            <translation type="unfinished" />
+            <translation>Alphafrequenz</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Alpha cycles</source>
-            <translation type="unfinished" />
+            <translation>Alphazyklen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Alpha phase</source>
-            <translation type="unfinished" />
+            <translation>Alphaphase</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Use palette/image alpha</source>
-            <translation type="unfinished" />
+            <translation>Paletten-/Bildalpha verwenden</translation>
         </message>
         <message>
             <location line="+4" />
-            <location filename="../gui/main_window.cpp" line="-24163" />
+            <location filename="../gui/main_window.cpp" line="-24171" />
             <source>Quantization</source>
             <translation>Quantisierung</translation>
         </message>
@@ -12032,32 +12045,32 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+3" />
             <location line="+3" />
             <source>Post Effects</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekte</translation>
         </message>
         <message>
             <location line="-68" />
             <source>Quantization levels</source>
-            <translation type="unfinished" />
+            <translation>Quantisierungsstufen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Quantization mix</source>
-            <translation type="unfinished" />
+            <translation>Quantisierungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Quantization mode</source>
-            <translation type="unfinished" />
+            <translation>Quantisierungsmodus</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Invert colors</source>
-            <translation type="unfinished" />
+            <translation>Farben invertieren</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Invert color mix</source>
-            <translation type="unfinished" />
+            <translation>Farbinvertierungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
@@ -12068,7 +12081,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+3" />
             <source>Invert red mix</source>
-            <translation type="unfinished" />
+            <translation>Rot-Invertierungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
@@ -12079,7 +12092,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+3" />
             <source>Invert green mix</source>
-            <translation type="unfinished" />
+            <translation>Grün-Invertierungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
@@ -12090,7 +12103,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+3" />
             <source>Invert blue mix</source>
-            <translation type="unfinished" />
+            <translation>Blau-Invertierungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
@@ -12101,67 +12114,67 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+3" />
             <source>Invert alpha mix</source>
-            <translation type="unfinished" />
+            <translation>Alpha-Invertierungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
             <location filename="../gui/main_window.cpp" line="+2" />
             <source>Channel routing</source>
-            <translation type="unfinished" />
+            <translation>Kanalzuordnung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Channel routing mix</source>
-            <translation type="unfinished" />
+            <translation>Kanalzuordnungsanteil</translation>
         </message>
         <message>
             <location line="+3" />
             <location line="+598" />
             <source>Output red source</source>
-            <translation type="unfinished" />
+            <translation>Quelle für Rot-Ausgang</translation>
         </message>
         <message>
             <location line="-595" />
             <location line="+601" />
             <source>Output green source</source>
-            <translation type="unfinished" />
+            <translation>Quelle für Grün-Ausgang</translation>
         </message>
         <message>
             <location line="-598" />
             <location line="+604" />
             <source>Output blue source</source>
-            <translation type="unfinished" />
+            <translation>Quelle für Blau-Ausgang</translation>
         </message>
         <message>
             <location line="-601" />
             <location line="+607" />
             <source>Output alpha source</source>
-            <translation type="unfinished" />
+            <translation>Quelle für Alpha-Ausgang</translation>
         </message>
         <message>
             <location line="-604" />
             <source>Edge antialias</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Antialias strength</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättungsstärke</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Antialias threshold</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättungsschwelle</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Antialias passes</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättungsdurchläufe</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Layer motion</source>
-            <translation type="unfinished" />
+            <translation>Ebenenbewegung</translation>
         </message>
         <message>
             <location line="+1" />
@@ -12177,67 +12190,67 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+10" />
             <location line="+4" />
             <source>Movement</source>
-            <translation type="unfinished" />
+            <translation>Bewegung</translation>
         </message>
         <message>
             <location line="-79" />
             <source>Motion center X</source>
-            <translation type="unfinished" />
+            <translation>Bewegungszentrum X</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Motion center Y</source>
-            <translation type="unfinished" />
+            <translation>Bewegungszentrum Y</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Horizontal travel</source>
-            <translation type="unfinished" />
+            <translation>Horizontaler Weg</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Vertical travel</source>
-            <translation type="unfinished" />
+            <translation>Vertikaler Weg</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Motion phase</source>
-            <translation type="unfinished" />
+            <translation>Bewegungsphase</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Motion scale pulse</source>
-            <translation type="unfinished" />
+            <translation>Skalierungspuls der Bewegung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Motion path</source>
-            <translation type="unfinished" />
+            <translation>Bewegungspfad</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Motion X cycles</source>
-            <translation type="unfinished" />
+            <translation>X-Bewegungszyklen</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Motion Y cycles</source>
-            <translation type="unfinished" />
+            <translation>Y-Bewegungszyklen</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Motion rotations</source>
-            <translation type="unfinished" />
+            <translation>Bewegungsdrehungen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Motion rotation offset</source>
-            <translation type="unfinished" />
+            <translation>Drehversatz der Bewegung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface mapping</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenabbildung</translation>
         </message>
         <message>
             <location line="+1" />
@@ -12290,267 +12303,267 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+11" />
             <location line="+11" />
             <source>Surface</source>
-            <translation type="unfinished" />
+            <translation>Oberfläche</translation>
         </message>
         <message>
             <location line="-320" />
             <source>Surface curvature</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenkrümmung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Surface lighting</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenbeleuchtung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface type</source>
-            <translation type="unfinished" />
+            <translation>Oberflächentyp</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Surface projection</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenprojektion</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Surface fit policy</source>
-            <translation type="unfinished" />
+            <translation>Oberflächeneinpassung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Surface outside pixels</source>
-            <translation type="unfinished" />
+            <translation>Pixel außerhalb der Oberfläche</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Surface rotation order</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Drehreihenfolge</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Surface X rotations</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-X-Drehungen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Y rotations</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Y-Drehungen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Z rotations</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Z-Drehungen</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface X angle</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-X-Winkel</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Y angle</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Y-Winkel</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Z angle</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Z-Winkel</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface visible size</source>
-            <translation type="unfinished" />
+            <translation>Sichtbare Oberflächengröße</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface X scale</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-X-Skalierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Y scale</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Y-Skalierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Z scale</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Z-Skalierung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface X position</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-X-Position</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Y position</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Y-Position</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface Z position</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-Z-Position</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface camera distance</source>
-            <translation type="unfinished" />
+            <translation>Kameraabstand der Oberfläche</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface focal length</source>
-            <translation type="unfinished" />
+            <translation>Brennweite der Oberfläche</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface light X</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenlicht X</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface light Y</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenlicht Y</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface light Z</source>
-            <translation type="unfinished" />
+            <translation>Oberflächenlicht Z</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface ambient light</source>
-            <translation type="unfinished" />
+            <translation>Umgebungslicht der Oberfläche</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Surface diffuse light</source>
-            <translation type="unfinished" />
+            <translation>Diffuslicht der Oberfläche</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Environment-map lighting</source>
-            <translation type="unfinished" />
+            <translation>Beleuchtung durch Umgebungskarte</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Environment-map encoding</source>
-            <translation type="unfinished" />
+            <translation>Kodierung der Umgebungskarte</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Environment rotation</source>
-            <translation type="unfinished" />
+            <translation>Umgebungsdrehung</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Environment exposure</source>
-            <translation type="unfinished" />
+            <translation>Umgebungsbelichtung</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Environment intensity</source>
-            <translation type="unfinished" />
+            <translation>Umgebungsintensität</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Direct / environment mix</source>
-            <translation type="unfinished" />
+            <translation>Direkt-/Umgebungsmischung</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Mesh construction mode</source>
-            <translation type="unfinished" />
+            <translation>Netzkonstruktionsmodus</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Mesh fragmentation</source>
-            <translation type="unfinished" />
+            <translation>Netzfragmentierung</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Target mesh fragments</source>
-            <translation type="unfinished" />
+            <translation>Angestrebte Netzfragmentzahl</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Mesh construction cycles</source>
-            <translation type="unfinished" />
+            <translation>Netzkonstruktionszyklen</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Mesh construction phase</source>
-            <translation type="unfinished" />
+            <translation>Netzkonstruktionsphase</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Mesh fragment distance</source>
-            <translation type="unfinished" />
+            <translation>Netzfragmentabstand</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Mesh fragment rotation</source>
-            <translation type="unfinished" />
+            <translation>Netzfragmentdrehung</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Minimum mesh-fragment scale</source>
-            <translation type="unfinished" />
+            <translation>Minimale Netzfragmentskalierung</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Mesh-fragment stagger</source>
-            <translation type="unfinished" />
+            <translation>Netzfragmentstaffelung</translation>
         </message>
         <message>
             <location line="+9" />
             <source>Surface rear compositing</source>
-            <translation type="unfinished" />
+            <translation>Komposition der Oberflächenrückseiten</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Normalize surface OBJ</source>
-            <translation type="unfinished" />
+            <translation>Oberflächen-OBJ normieren</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Plane displacement</source>
-            <translation type="unfinished" />
+            <translation>Flächenverschiebung</translation>
         </message>
         <message>
             <location line="+13" />
             <source>Plane minimum height</source>
-            <translation type="unfinished" />
+            <translation>Minimale Flächenhöhe</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Plane maximum height</source>
-            <translation type="unfinished" />
+            <translation>Maximale Flächenhöhe</translation>
         </message>
         <message>
             <location line="+11" />
             <source>Plane neutral midpoint</source>
-            <translation type="unfinished" />
+            <translation>Neutraler Flächenmittelpunkt</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Flip horizontal</source>
-            <translation type="unfinished" />
+            <translation>Horizontal spiegeln</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Flip vertical</source>
-            <translation type="unfinished" />
+            <translation>Vertikal spiegeln</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Mirror mode</source>
-            <translation type="unfinished" />
+            <translation>Spiegelmodus</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Starting palette</source>
-            <translation type="unfinished" />
+            <translation>Ausgangspalette</translation>
         </message>
         <message>
             <location line="+1" />
@@ -12570,112 +12583,112 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+4" />
             <location line="+4" />
             <source>Starting Colors</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsfarben</translation>
         </message>
         <message>
             <location line="-87" />
             <source>Starting image</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbild</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Starting image fit</source>
-            <translation type="unfinished" />
+            <translation>Ausgangsbildeinpassung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Generated color pattern</source>
-            <translation type="unfinished" />
+            <translation>Generiertes Farbmuster</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Generate alpha</source>
-            <translation type="unfinished" />
+            <translation>Alpha erzeugen</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Legacy alpha ordering</source>
-            <translation type="unfinished" />
+            <translation>Klassische Alpha-Reihenfolge</translation>
         </message>
         <message>
             <location line="+36" />
             <source>Red minimum</source>
-            <translation type="unfinished" />
+            <translation>Minimales Rot</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Red maximum</source>
-            <translation type="unfinished" />
+            <translation>Maximales Rot</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Green minimum</source>
-            <translation type="unfinished" />
+            <translation>Minimales Grün</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Green maximum</source>
-            <translation type="unfinished" />
+            <translation>Maximales Grün</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blue minimum</source>
-            <translation type="unfinished" />
+            <translation>Minimales Blau</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blue maximum</source>
-            <translation type="unfinished" />
+            <translation>Maximales Blau</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Kaleidoscope</source>
-            <translation type="unfinished" />
+            <translation>Kaleidoskop</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Kaleidoscope segments</source>
-            <translation type="unfinished" />
+            <translation>Kaleidoskopsegmente</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Kaleidoscope rotation</source>
-            <translation type="unfinished" />
+            <translation>Kaleidoskopdrehung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Kaleidoscope mix</source>
-            <translation type="unfinished" />
+            <translation>Kaleidoskopanteil</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Domain warp</source>
-            <translation type="unfinished" />
+            <translation>Bereichsverzerrung</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Domain warp strength</source>
-            <translation type="unfinished" />
+            <translation>Stärke der Bereichsverzerrung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Domain warp scale</source>
-            <translation type="unfinished" />
+            <translation>Skalierung der Bereichsverzerrung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Domain warp octaves</source>
-            <translation type="unfinished" />
+            <translation>Oktaven der Bereichsverzerrung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Domain warp cycles</source>
-            <translation type="unfinished" />
+            <translation>Zyklen der Bereichsverzerrung</translation>
         </message>
         <message>
             <location line="+12" />
             <source>Post Effect — %1</source>
-            <translation type="unfinished" />
+            <translation>Nachbearbeitungseffekt — %1</translation>
         </message>
         <message>
             <location line="+20" />
@@ -12683,276 +12696,276 @@ Run it directly for the default relative output, or pass an output file or direc
             <location line="+31" />
             <location line="+35" />
             <source>Enabled</source>
-            <translation type="unfinished" />
+            <translation>Aktiviert</translation>
         </message>
         <message>
             <location line="-129" />
             <source>Strength</source>
-            <translation type="unfinished" />
+            <translation>Stärke</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Edge threshold</source>
-            <translation type="unfinished" />
+            <translation>Kantenschwelle</translation>
         </message>
         <message>
             <location line="+7" />
             <source>Passes</source>
-            <translation type="unfinished" />
+            <translation>Durchläufe</translation>
         </message>
         <message>
             <location line="+10" />
             <source>Levels</source>
-            <translation type="unfinished" />
+            <translation>Stufen</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Mode</source>
-            <translation type="unfinished" />
+            <translation>Modus</translation>
         </message>
         <message>
             <location line="+15" />
             <source>Wave — %1</source>
-            <translation type="unfinished" />
+            <translation>Welle — %1</translation>
         </message>
         <message>
             <location line="+17" />
             <location line="+71" />
             <source>Use master clock</source>
-            <translation type="unfinished" />
+            <translation>Haupttakt verwenden</translation>
         </message>
         <message>
             <location line="-69" />
             <source>Amplitude</source>
-            <translation type="unfinished" />
+            <translation>Amplitude</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Spatial frequency</source>
-            <translation type="unfinished" />
+            <translation>Räumliche Frequenz</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+29" />
             <location line="+52" />
             <source>Cycles per loop</source>
-            <translation type="unfinished" />
+            <translation>Zyklen pro Schleife</translation>
         </message>
         <message>
             <location line="-80" />
             <location line="+29" />
             <location line="+52" />
             <source>Phase</source>
-            <translation type="unfinished" />
+            <translation>Phase</translation>
         </message>
         <message>
             <location line="-80" />
             <source>Direction</source>
-            <translation type="unfinished" />
+            <translation>Richtung</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+29" />
             <location line="+42" />
             <source>Center X</source>
-            <translation type="unfinished" />
+            <translation>Zentrum X</translation>
         </message>
         <message>
             <location line="-70" />
             <location line="+29" />
             <location line="+42" />
             <source>Center Y</source>
-            <translation type="unfinished" />
+            <translation>Zentrum Y</translation>
         </message>
         <message>
             <location line="-65" />
             <source>Swing — %1</source>
-            <translation type="unfinished" />
+            <translation>Swing — %1</translation>
         </message>
         <message>
             <location line="+17" />
             <source>Waveform</source>
-            <translation type="unfinished" />
+            <translation>Wellenform</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Amount</source>
-            <translation type="unfinished" />
+            <translation>Stärke</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Shape</source>
-            <translation type="unfinished" />
+            <translation>Form</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Local radius</source>
-            <translation type="unfinished" />
+            <translation>Lokaler Radius</translation>
         </message>
         <message>
             <location line="+6" />
             <source>Effect — %1</source>
-            <translation type="unfinished" />
+            <translation>Effekt — %1</translation>
         </message>
         <message>
             <location line="+22" />
             <source>Effect type</source>
-            <translation type="unfinished" />
+            <translation>Effekttyp</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Effect space</source>
-            <translation type="unfinished" />
+            <translation>Effektraum</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Edge mode</source>
-            <translation type="unfinished" />
+            <translation>Randmodus</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Intensity</source>
-            <translation type="unfinished" />
+            <translation>Intensität</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Peak refraction</source>
-            <translation type="unfinished" />
+            <translation>Maximale Brechung</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Magnitude</source>
-            <translation type="unfinished" />
+            <translation>Ausmaß</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle count</source>
-            <translation type="unfinished" />
+            <translation>Partikelzahl</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Wave density</source>
-            <translation type="unfinished" />
+            <translation>Wellendichte</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Frequency</source>
-            <translation type="unfinished" />
+            <translation>Frequenz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Cross-wave complexity</source>
-            <translation type="unfinished" />
+            <translation>Komplexität der Kreuzwellen</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Secondary</source>
-            <translation type="unfinished" />
+            <translation>Sekundär</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Angle</source>
-            <translation type="unfinished" />
+            <translation>Winkel</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle size (output-pixel radius)</source>
-            <translation type="unfinished" />
+            <translation>Partikelgröße (Radius in Ausgabepixeln)</translation>
         </message>
         <message>
             <location line="+0" />
             <source>Radius</source>
-            <translation type="unfinished" />
+            <translation>Radius</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Threshold</source>
-            <translation type="unfinished" />
+            <translation>Schwellenwert</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Soft knee</source>
-            <translation type="unfinished" />
+            <translation>Weicher Übergang</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Local area</source>
-            <translation type="unfinished" />
+            <translation>Lokaler Bereich</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Particle shape</source>
-            <translation type="unfinished" />
+            <translation>Partikelform</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle render profile</source>
-            <translation type="unfinished" />
+            <translation>Partikel-Renderprofil</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle size variation</source>
-            <translation type="unfinished" />
+            <translation>Partikelgrößenvariation</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Shape definition</source>
-            <translation type="unfinished" />
+            <translation>Formschärfe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Twinkle amount</source>
-            <translation type="unfinished" />
+            <translation>Funkelstärke</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle orientation</source>
-            <translation type="unfinished" />
+            <translation>Partikelausrichtung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particle rotation</source>
-            <translation type="unfinished" />
+            <translation>Partikeldrehung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Blur type</source>
-            <translation type="unfinished" />
+            <translation>Unschärfetyp</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Blur passes</source>
-            <translation type="unfinished" />
+            <translation>Unschärfedurchläufe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blur samples</source>
-            <translation type="unfinished" />
+            <translation>Unschärfeabtastungen</translation>
         </message>
         <message>
             <location line="+5" />
             <source>Blur minimum</source>
-            <translation type="unfinished" />
+            <translation>Minimale Unschärfe</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Blur maximum</source>
-            <translation type="unfinished" />
+            <translation>Maximale Unschärfe</translation>
         </message>
         <message>
             <location filename="../gui/live_workspace.cpp" line="-4815" />
             <source> · display %1 of %2</source>
-            <translation type="unfinished" />
+            <translation> · Bildschirm %1 von %2</translation>
         </message>
         <message>
             <location line="+4" />
             <source> · primary</source>
-            <translation type="unfinished" />
+            <translation> · primär</translation>
         </message>
         <message>
             <location line="+0" />
             <source> · stage</source>
-            <translation type="unfinished" />
+            <translation> · Bühne</translation>
         </message>
         <message>
             <location line="+175" />
@@ -13002,7 +13015,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+1" />
             <source>MIDI pressure</source>
-            <translation type="unfinished" />
+            <translation>MIDI-Druck</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13037,7 +13050,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+1" />
             <source>Audio onset</source>
-            <translation>Audio-Einsatz</translation>
+            <translation>Audio-Anschlag</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13047,12 +13060,12 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+2" />
             <source>Audio brightness</source>
-            <translation type="unfinished" />
+            <translation>Audiohelligkeit</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Audio noisiness</source>
-            <translation type="unfinished" />
+            <translation>Audio-Rauschanteil</translation>
         </message>
         <message>
             <location line="+2" />
@@ -13062,7 +13075,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+2" />
             <source>Audio tonality</source>
-            <translation type="unfinished" />
+            <translation>Audiotonalität</translation>
         </message>
         <message>
             <location line="+7" />
@@ -13072,7 +13085,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+1" />
             <source>Blackout</source>
-            <translation>Abdunkeln</translation>
+            <translation>Blackout</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13097,22 +13110,22 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+14" />
             <source> · omni</source>
-            <translation type="unfinished" />
+            <translation> · Omni</translation>
         </message>
         <message>
             <location line="+1" />
             <source> · ch %1</source>
-            <translation type="unfinished" />
+            <translation> · Kanal %1</translation>
         </message>
         <message>
             <location line="+2" />
             <source> · %1 · ch %2</source>
-            <translation type="unfinished" />
+            <translation> · %1 · Kanal %2</translation>
         </message>
         <message>
             <location line="+3" />
             <source>omni</source>
-            <translation type="unfinished" />
+            <translation>Omni</translation>
         </message>
         <message>
             <location filename="../gui/main_window.cpp" line="-10" />
@@ -13122,77 +13135,77 @@ Run it directly for the default relative output, or pass an output file or direc
         <message>
             <location line="+12" />
             <source>Edge antialiasing</source>
-            <translation type="unfinished" />
+            <translation>Kantenglättung</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Unknown effect</source>
-            <translation type="unfinished" />
+            <translation>Unbekannter Effekt</translation>
         </message>
         <message>
             <location line="+112" />
             <source>%1. %2</source>
-            <translation type="unfinished" />
+            <translation>%1. %2</translation>
         </message>
         <message>
             <location line="+3" />
             <source> (bypassed)</source>
-            <translation type="unfinished" />
+            <translation> (umgangen)</translation>
         </message>
         <message>
             <location line="+2" />
             <source> — mix %1</source>
-            <translation type="unfinished" />
+            <translation> — Mischanteil %1</translation>
         </message>
         <message>
             <location line="+7" />
             <source>input red</source>
-            <translation type="unfinished" />
+            <translation>Eingangsrot</translation>
         </message>
         <message>
             <location line="+1" />
             <source>input green</source>
-            <translation type="unfinished" />
+            <translation>Eingangsgrün</translation>
         </message>
         <message>
             <location line="+1" />
             <source>input blue</source>
-            <translation type="unfinished" />
+            <translation>Eingangsblau</translation>
         </message>
         <message>
             <location line="+1" />
             <source>input alpha</source>
-            <translation type="unfinished" />
+            <translation>Eingangsalpha</translation>
         </message>
         <message>
             <location line="+1" />
             <source>constant 0</source>
-            <translation type="unfinished" />
+            <translation>Konstante 0</translation>
         </message>
         <message>
             <location line="+1" />
             <source>constant 1</source>
-            <translation type="unfinished" />
+            <translation>Konstante 1</translation>
         </message>
         <message>
             <location line="+2" />
             <source>unknown</source>
-            <translation type="unfinished" />
+            <translation>unbekannt</translation>
         </message>
         <message>
             <location line="+189" />
             <source>A concat script needs at least two chunks.</source>
-            <translation type="unfinished" />
+            <translation>Ein Verkettungsskript benötigt mindestens zwei Teile.</translation>
         </message>
         <message>
             <location line="+46" />
             <source>Could not create concat script %1: %2</source>
-            <translation type="unfinished" />
+            <translation>Verkettungsskript %1 konnte nicht erstellt werden: %2</translation>
         </message>
         <message>
             <location line="+8" />
             <source>Could not atomically write concat script %1: %2</source>
-            <translation type="unfinished" />
+            <translation>Verkettungsskript %1 konnte nicht atomar geschrieben werden: %2</translation>
         </message>
         <message>
             <location line="+172" />
@@ -13205,81 +13218,93 @@ Fully transparent ignored: %5
 Duplicates ignored: %6
 Skipped: %7
 Unsupported: %8</source>
-            <translation type="unfinished" />
+            <translation>%1
+%2
+
+Geprüft: %3
+Akzeptiert: %4
+Vollständig transparent, ignoriert: %5
+Duplikate ignoriert: %6
+Übersprungen: %7
+Nicht unterstützt: %8</translation>
         </message>
         <message>
             <location line="+10" />
             <source>entry names were not preserved</source>
-            <translation type="unfinished" />
+            <translation>Eintragsnamen wurden nicht beibehalten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>alpha was not preserved</source>
-            <translation type="unfinished" />
+            <translation>Alpha wurde nicht beibehalten</translation>
         </message>
         <message>
             <location line="+1" />
             <source>numeric precision was reduced</source>
-            <translation type="unfinished" />
+            <translation>die numerische Genauigkeit wurde verringert</translation>
         </message>
         <message>
             <location line="+2" />
             <source>color encoding was converted</source>
-            <translation type="unfinished" />
+            <translation>die Farbkodierung wurde konvertiert</translation>
         </message>
         <message>
             <location line="+3" />
             <source>
 
 Format limitations: %1.</source>
-            <translation type="unfinished" />
+            <translation>
+
+Formatbeschränkungen: %1.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>
 
 Notes:</source>
-            <translation type="unfinished" />
+            <translation>
+
+Hinweise:</translation>
         </message>
         <message>
             <location line="+9" />
             <source>All supported palettes (*.gpl *.kpl *.css *.py *.php *.java *.txt *.hex *.png *.exr);;GIMP palette (*.gpl);;Krita palette (*.kpl);;CSS stylesheet (*.css);;Python dictionary (*.py);;PHP dictionary (*.php);;Java map (*.java);;Hex text (*.txt *.hex);;PNG palette image (*.png);;HALF/FLOAT OpenEXR palette image (*.exr)</source>
-            <translation type="unfinished" />
+            <translation>Alle unterstützten Paletten (*.gpl *.kpl *.css *.py *.php *.java *.txt *.hex *.png *.exr);;GIMP-Palette (*.gpl);;Krita-Palette (*.kpl);;CSS-Stylesheet (*.css);;Python-Dictionary (*.py);;PHP-Dictionary (*.php);;Java-Map (*.java);;Hex-Text (*.txt *.hex);;PNG-Palettenbild (*.png);;HALF/FLOAT-OpenEXR-Palettenbild (*.exr)</translation>
         </message>
         <message>
             <location line="+93" />
             <source>Movement &amp; Distortion</source>
-            <translation type="unfinished" />
+            <translation>Bewegung und Verzerrung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Light &amp; Energy</source>
-            <translation type="unfinished" />
+            <translation>Licht und Energie</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Stylize</source>
-            <translation type="unfinished" />
+            <translation>Stilisierung</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particles</source>
-            <translation type="unfinished" />
+            <translation>Partikel</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Blur</source>
-            <translation>Weichzeichnung</translation>
+            <translation>Unschärfe</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Effects</source>
-            <translation type="unfinished" />
+            <translation>Effekte</translation>
         </message>
         <message>
             <location line="+64" />
             <source>Particle placement</source>
-            <translation type="unfinished" />
+            <translation>Partikelplatzierung</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13287,84 +13312,85 @@ Notes:</source>
             <location line="+17" />
             <location line="+14" />
             <source>Artwork (before surface)</source>
-            <translation type="unfinished" />
+            <translation>Motiv (vor Oberfläche)</translation>
         </message>
         <message>
             <location line="-49" />
             <source>Layer canvas (after surface)</source>
-            <translation type="unfinished" />
+            <translation>Ebenenleinwand (nach Oberfläche)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Particles are generated on the artwork first, then wrap, clip, move, and rotate with any mapped surface.</source>
-            <translation type="unfinished" />
+            <translation>Partikel werden zuerst auf dem Motiv erzeugt und anschließend mit einer abgebildeten Oberfläche umhüllt, beschnitten, bewegt und gedreht.</translation>
         </message>
         <message>
             <location line="+3" />
+            <location line="+20058" />
             <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
-            <translation type="unfinished" />
+            <translation>Partikel werden nach der Oberflächenabbildung und der Bewegung der gesamten Ebene erzeugt. Sie überlagern die Ebenenleinwand, statt auf das Objekt beschnitten oder um dieses gelegt zu werden.</translation>
         </message>
         <message>
-            <location line="+13" />
+            <location line="-20045" />
             <source>Movement placement</source>
-            <translation type="unfinished" />
+            <translation>Bewegungsplatzierung</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Layer / object (after surface)</source>
-            <translation type="unfinished" />
+            <translation>Ebene / Objekt (nach Oberfläche)</translation>
         </message>
         <message>
             <location line="+1" />
             <source>The effect moves or deforms pixels inside the artwork before surface wrapping. Any mapped object then carries that result.</source>
-            <translation type="unfinished" />
+            <translation>Der Effekt bewegt oder verformt Pixel innerhalb des Motivs vor der Oberflächenabbildung. Ein abgebildetes Objekt trägt anschließend dieses Ergebnis.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The effect runs after surface mapping and whole-layer motion, so it moves or deforms the completed layer/object and its silhouette. Follow placement leaves newly exposed space transparent, including around a full-size Plane. Reflected pattern instead fills exposed canvas and can hide the outline's movement.</source>
-            <translation type="unfinished" />
+            <translation>Der Effekt läuft nach der Oberflächenabbildung und der Bewegung der gesamten Ebene. Er bewegt oder verformt die fertige Ebene bzw. das fertige Objekt samt Silhouette. Platzierung folgen lässt neu freigelegte Bereiche transparent, auch um eine ebene Fläche in voller Größe. Gespiegeltes Muster füllt dagegen freigelegte Leinwandbereiche und kann die Bewegung des Umrisses verdecken.</translation>
         </message>
         <message>
             <location line="+11" />
             <location line="+14" />
             <source>Effect placement</source>
-            <translation type="unfinished" />
+            <translation>Effektplatzierung</translation>
         </message>
         <message>
             <location line="-12" />
             <location line="+14" />
             <source>Mapped result (after surface)</source>
-            <translation type="unfinished" />
+            <translation>Abgebildetes Ergebnis (nach Oberfläche)</translation>
         </message>
         <message>
             <location line="-13" />
             <source>The stylization is painted into the artwork before it is wrapped onto a surface or moved as a layer.</source>
-            <translation type="unfinished" />
+            <translation>Die Stilisierung wird in das Motiv gemalt, bevor es auf eine Oberfläche abgebildet oder als Ebene bewegt wird.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The stylization is applied in canvas coordinates after surface mapping and whole-layer motion.</source>
-            <translation type="unfinished" />
+            <translation>Die Stilisierung wird nach der Oberflächenabbildung und der Bewegung der gesamten Ebene in Leinwandkoordinaten angewendet.</translation>
         </message>
         <message>
             <location line="+11" />
             <source>The effect is applied before surface wrapping, so it becomes part of the artwork carried by the mapped object.</source>
-            <translation type="unfinished" />
+            <translation>Der Effekt wird vor der Oberflächenabbildung angewendet und wird damit Teil des Motivs auf dem abgebildeten Objekt.</translation>
         </message>
         <message>
             <location line="+3" />
             <source>The effect is applied to the completed canvas result after surface mapping and whole-layer motion.</source>
-            <translation type="unfinished" />
+            <translation>Der Effekt wird nach der Oberflächenabbildung und der Bewegung der gesamten Ebene auf das fertige Leinwandergebnis angewendet.</translation>
         </message>
         <message>
             <location line="+45" />
             <source>Default (use effective profile)</source>
-            <translation type="unfinished" />
+            <translation>Standard (wirksames Profil verwenden)</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Inherit both the category switch and source from the effective project/layer profile.</source>
-            <translation type="unfinished" />
+            <translation>Sowohl Kategorieschalter als auch Quelle aus dem wirksamen Projekt-/Ebenenprofil übernehmen.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13374,17 +13400,17 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Respond to the analyzed beat pulse and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf den analysierten Beat-Impuls reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Onset</source>
-            <translation>Einsatz</translation>
+            <translation>Anschlag</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Respond to detected note and transient attacks and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf erkannte Notenanschläge und Transienten reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13394,7 +13420,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Respond to overall signal energy and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf die gesamte Signalenergie reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13404,7 +13430,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Respond to low-frequency energy and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf tieffrequente Energie reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13414,7 +13440,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Respond to midrange energy and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf Energie im Mittenbereich reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13424,7 +13450,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Respond to high-frequency energy and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf hochfrequente Energie reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13434,17 +13460,17 @@ Notes:</source>
         <message>
             <location line="+2" />
             <source>Respond to the normalized spectral centroid and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf den normierten spektralen Schwerpunkt reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Spectral noisiness</source>
-            <translation>Spektralrauschigkeit</translation>
+            <translation>Spektraler Rauschanteil</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Respond to spectral flatness and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf die spektrale Flachheit reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13454,7 +13480,7 @@ Notes:</source>
         <message>
             <location line="+2" />
             <source>Respond to pitch-class hue weighted by tonal confidence and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf den mit tonaler Konfidenz gewichteten Tonklassenfarbton reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13464,7 +13490,7 @@ Notes:</source>
         <message>
             <location line="+2" />
             <source>Respond to tonal confidence and opt this item in.</source>
-            <translation type="unfinished" />
+            <translation>Auf tonale Konfidenz reagieren und die Reaktion dieses Elements aktivieren.</translation>
         </message>
         <message>
             <location line="+2" />
@@ -13474,7 +13500,7 @@ Notes:</source>
         <message>
             <location line="+2" />
             <source>Use the effective profile's source and opt this item in even when its category switch is off. The profile master switch must still be enabled.</source>
-            <translation type="unfinished" />
+            <translation>Die Quelle des wirksamen Profils verwenden und die Reaktion dieses Elements auch bei ausgeschalteter Kategorie aktivieren. Der Profilhauptschalter muss weiterhin eingeschaltet sein.</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13484,79 +13510,123 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Keep this item's authored value independent of audio response.</source>
-            <translation type="unfinished" />
+            <translation>Den festgelegten Wert dieses Elements unabhängig von der Audioreaktion beibehalten.</translation>
         </message>
         <message>
             <location line="+40" />
             <source>Reusable: %1</source>
-            <translation type="unfinished" />
+            <translation>Wiederverwendbar: %1</translation>
         </message>
         <message>
-            <location line="+706" />
+            <location line="+125" />
+            <location line="+27" />
+            <source>, audio </source>
+            <translation>, Audio </translation>
+        </message>
+        <message>
+            <location line="-20" />
+            <location line="+9" />
+            <location line="+22" />
+            <source>on</source>
+            <translation>an</translation>
+        </message>
+        <message>
+            <location line="-31" />
+            <location line="+9" />
+            <location line="+22" />
+            <source>off</source>
+            <translation>aus</translation>
+        </message>
+        <message>
+            <location line="-29" />
+            <location line="+31" />
+            <source>sync</source>
+            <translation>synchron</translation>
+        </message>
+        <message>
+            <location line="-31" />
+            <location line="+31" />
+            <source>free</source>
+            <translation>frei</translation>
+        </message>
+        <message>
+            <location line="-21" />
+            <source>, local</source>
+            <translation>, lokal</translation>
+        </message>
+        <message>
+            <location line="+0" />
+            <source>, global</source>
+            <translation>, global</translation>
+        </message>
+        <message>
+            <location line="+562" />
             <source>The reusable asset is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Die wiederverwendbare Ressource ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+14" />
             <source>The project attachment-reference limit has been reached.</source>
-            <translation type="unfinished" />
+            <translation>Das Limit für Projektanlagenreferenzen wurde erreicht.</translation>
         </message>
         <message>
             <location line="+5805" />
             <source>Could not open link</source>
-            <translation type="unfinished" />
+            <translation>Link konnte nicht geöffnet werden</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Open this address in a browser:
 
 %1</source>
-            <translation type="unfinished" />
+            <translation>Öffnen Sie diese Adresse in einem Browser:
+
+%1</translation>
         </message>
         <message>
             <location line="+2140" />
             <source>A managed asset required by the new-layer template is unavailable.</source>
-            <translation type="unfinished" />
+            <translation>Eine verwaltete Ressource der Vorlage für neue Ebenen ist nicht verfügbar.</translation>
         </message>
         <message>
             <location line="+3293" />
             <source>Full filtered signal</source>
-            <translation type="unfinished" />
+            <translation>Vollständiges gefiltertes Signal</translation>
         </message>
         <message>
             <location line="+3" />
             <source>%1 (%2–%3 Hz)</source>
-            <translation type="unfinished" />
+            <translation>%1 (%2–%3 Hz)</translation>
         </message>
         <message>
             <location line="+1368" />
             <source>Aesthetic relationship rules</source>
-            <translation type="unfinished" />
+            <translation>Ästhetische Beziehungsregeln</translation>
         </message>
         <message>
             <location line="+3" />
             <source>Monochrome RGB shades with a small complementary accent</source>
-            <translation type="unfinished" />
+            <translation>Monochrome RGB-Abstufungen mit kleinem Komplementärakzent</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Complementary RGB hue pairs</source>
-            <translation type="unfinished" />
+            <translation>Komplementäre RGB-Farbtonpaare</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Analogous RGB hues within a narrow neighborhood</source>
-            <translation type="unfinished" />
+            <translation>Analoge RGB-Farbtöne in einem engen Bereich</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Alternating light and dark RGB luminance</source>
-            <translation type="unfinished" />
+            <translation>Abwechselnd helle und dunkle RGB-Luminanz</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Even alpha cadence from the allowed minimum to maximum</source>
-            <translation type="unfinished" />
+            <translation>Gleichmäßige Alpha-Abstufung vom erlaubten Minimum bis zum Maximum</translation>
         </message>
     </context>
     <context>
@@ -13569,7 +13639,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Add</source>
-            <translation>Hinzufügen</translation>
+            <translation>Addieren</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13619,7 +13689,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Audio onset</source>
-            <translation>Audio-Einsatz</translation>
+            <translation>Audio-Anschlag</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13634,7 +13704,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Audio spectral flatness</source>
-            <translation>Audio-Spektralflachheit</translation>
+            <translation>Spektrale Flachheit des Audios</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13684,7 +13754,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Blackout</source>
-            <translation>Abdunkeln</translation>
+            <translation>Blackout</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13704,7 +13774,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Blur</source>
-            <translation>Weichzeichnung</translation>
+            <translation>Unschärfe</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13819,7 +13889,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Defined silhouette</source>
-            <translation>Definierte Silhouette</translation>
+            <translation>Klare Silhouette</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13864,12 +13934,12 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Ease in</source>
-            <translation>Sanft einblenden</translation>
+            <translation>Sanft beschleunigen</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Ease out</source>
-            <translation>Sanft ausblenden</translation>
+            <translation>Sanft abbremsen</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13889,7 +13959,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Erase</source>
-            <translation>Löschen</translation>
+            <translation>Radieren</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13934,7 +14004,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Follow placement</source>
-            <translation>An Platzierung anpassen</translation>
+            <translation>Platzierung folgen</translation>
         </message>
         <message>
             <location line="+1" />
@@ -13954,7 +14024,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Frame</source>
-            <translation>Frame</translation>
+            <translation>Bild</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14069,7 +14139,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Last good frame</source>
-            <translation>Letzter fehlerfreier Frame</translation>
+            <translation>Letztes gültiges Bild</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14084,7 +14154,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Legacy glow</source>
-            <translation>Altes Leuchten</translation>
+            <translation>Klassisches Leuchten</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14119,7 +14189,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>MIDI</source>
-            <translation type="unfinished" />
+            <translation>MIDI</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14199,7 +14269,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>OSC</source>
-            <translation type="unfinished" />
+            <translation>OSC</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14219,7 +14289,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Onset</source>
-            <translation>Einsatz</translation>
+            <translation>Anschlag</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14269,7 +14339,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Plane</source>
-            <translation>Ebene</translation>
+            <translation>Ebene Fläche</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14339,7 +14409,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Reflect plane</source>
-            <translation>Ebene spiegeln</translation>
+            <translation>An Flächenrändern spiegeln</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14374,7 +14444,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Ripple</source>
-            <translation>Wellen</translation>
+            <translation>Kräuseln</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14414,7 +14484,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Smooth pulse</source>
-            <translation>Weicher Impuls</translation>
+            <translation>Weicher Puls</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14454,7 +14524,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Spectral noisiness</source>
-            <translation>Spektralrauschigkeit</translation>
+            <translation>Spektraler Rauschanteil</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14474,7 +14544,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Square spiral rainbow</source>
-            <translation>Rechteckiger Spiralregenbogen</translation>
+            <translation>Quadratischer Spiralregenbogen</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14484,7 +14554,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Starburst</source>
-            <translation>Sternenexplosion</translation>
+            <translation>Sternstrahlen</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14574,7 +14644,7 @@ Notes:</source>
         <message>
             <location line="+1" />
             <source>Twirl</source>
-            <translation>Verwirbeln</translation>
+            <translation>Wirbel</translation>
         </message>
         <message>
             <location line="+1" />
@@ -14685,12 +14755,12 @@ Notes:</source>
         <message>
             <location line="+4" />
             <source>Perceptually lossless+ — ProRes 4444 XQ</source>
-            <translation>Wahrnehmbar verlustfrei+ — ProRes 4444 XQ</translation>
+            <translation>Visuell verlustfrei+ — ProRes 4444 XQ</translation>
         </message>
         <message>
             <location line="+4" />
             <source>Perceptually lossless — ProRes 4444 (Recommended)</source>
-            <translation>Wahrnehmbar verlustfrei — ProRes 4444 (empfohlen)</translation>
+            <translation>Visuell verlustfrei — ProRes 4444 (empfohlen)</translation>
         </message>
         <message>
             <location line="+4" />
@@ -14725,17 +14795,17 @@ Notes:</source>
         <message>
             <location line="+4" />
             <source>Maximum fidelity — about 1.5 bits/pixel/frame</source>
-            <translation>Maximale Qualität — etwa 1,5 Bit/Pixel/Frame</translation>
+            <translation>Maximale Qualität — etwa 1,5 Bit/Pixel/Bild</translation>
         </message>
         <message>
             <location line="+2" />
             <source>Very light compression — about 0.75 bits/pixel/frame</source>
-            <translation>Sehr geringe Komprimierung — etwa 0,75 Bit/Pixel/Frame</translation>
+            <translation>Sehr geringe Komprimierung — etwa 0,75 Bit/Pixel/Bild</translation>
         </message>
         <message>
             <location line="+2" />
             <source>High quality — about 0.35 bits/pixel/frame</source>
-            <translation>Hohe Qualität — etwa 0,35 Bit/Pixel/Frame</translation>
+            <translation>Hohe Qualität — etwa 0,35 Bit/Pixel/Bild</translation>
         </message>
         <message>
             <location line="+2" />
@@ -14765,7 +14835,7 @@ Notes:</source>
         <message>
             <location line="+2" />
             <source>Split by frame count</source>
-            <translation>Nach Frameanzahl aufteilen</translation>
+            <translation>Nach Bildanzahl aufteilen</translation>
         </message>
         <message>
             <location line="+2" />
@@ -14780,12 +14850,12 @@ Notes:</source>
         <message>
             <location line="+6" />
             <source> frames</source>
-            <translation> Frames</translation>
+            <translation> Bilder</translation>
         </message>
         <message>
             <location line="+1" />
             <source>Frames per chunk</source>
-            <translation>Frames pro Abschnitt</translation>
+            <translation>Bilder pro Abschnitt</translation>
         </message>
         <message>
             <location line="+8" />
@@ -14800,12 +14870,12 @@ Notes:</source>
         <message>
             <location line="+60" />
             <source>Each frame is stored as a lossless PNG sample. This preserves the exact exported 8-bit sRGB pixels and alpha, but files can be enormous.</source>
-            <translation>Jeder Frame wird als verlustfreies PNG-Sample gespeichert. Dadurch bleiben die exakt exportierten 8-Bit-sRGB-Pixel und Alpha erhalten, die Dateien können jedoch sehr groß werden.</translation>
+            <translation>Jedes Bild wird als verlustfreies PNG-Abtastwert gespeichert. Dadurch bleiben die exakt exportierten 8-Bit-sRGB-Pixel und Alpha erhalten, die Dateien können jedoch sehr groß werden.</translation>
         </message>
         <message>
             <location line="+4" />
             <source>ProRes 4444 XQ is the highest-fidelity editing codec offered here. It preserves alpha and is perceptually, not mathematically, lossless.</source>
-            <translation>ProRes 4444 XQ ist der hier angebotene Schnittcodec mit der höchsten Qualität. Er erhält Alpha und ist wahrnehmbar, nicht mathematisch, verlustfrei.</translation>
+            <translation>ProRes 4444 XQ ist der hier angebotene Schnittcodec mit der höchsten Qualität. Er erhält Alpha und ist visuell, aber nicht mathematisch verlustfrei.</translation>
         </message>
         <message>
             <location line="+4" />

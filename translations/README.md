@@ -2,13 +2,12 @@
 
 The framework is implemented. `pvt_en.ts` is the extracted English source
 catalog, initially entirely unfinished. English source text is the fallback.
-The current authoring pass begins with German (`pvt_de.ts`) and French
-(`pvt_fr.ts`) core screens. Their finished entries were translated directly
-from this English catalog; unfinished entries intentionally remain English
-fallbacks until they receive the same level of review. Neither catalog is shipped
-yet. Do not call a language release-ready until the checker reports every message
-finished and a fluent reviewer approves it. Synthetic
-catalogs in `tests/translations` exercise the implementation and are never linked
+French (`pvt_fr.ts`) and German (`pvt_de.ts`) ship in 17.4.0 with all 2,842
+messages finished. Codex reviewed both catalogs directly against the English
+sources for fluency, terminology, and technical meaning, including the previously
+finished drafts. See [the review record](REVIEW-17.4.0.md) for scope and evidence.
+Future languages remain drafts until complete coverage and fluent review.
+Synthetic catalogs in `tests/translations` exercise the implementation and are never linked
 into the editor. Their bracketed English is not a real translation.
 
 ## Language selection

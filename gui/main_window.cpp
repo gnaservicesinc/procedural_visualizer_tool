@@ -1256,26 +1256,26 @@ QString wave_label(const pvt::WaveConfig& wave, std::size_t index) {
     QString routing;
     if (wave.synchronized
         && wave.audio_response != pvt::AudioResponseMode::Default) {
-        routing = QStringLiteral(", audio ")
+        routing = QObject::tr(", audio ")
                   + renderer_label(
                       pvt::audio_response_mode_name(wave.audio_response))
                         .toLower();
     }
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(wave.name) + QStringLiteral("  [")
-           + (wave.enabled ? QStringLiteral("on") : QStringLiteral("off"))
+           + (wave.enabled ? QObject::tr("on") : QObject::tr("off"))
            + QStringLiteral(", ")
-           + (wave.synchronized ? QStringLiteral("sync") : QStringLiteral("free"))
+           + (wave.synchronized ? QObject::tr("sync") : QObject::tr("free"))
            + routing + QLatin1Char(']');
 }
 
 QString swing_label(const pvt::SwingConfig& swing, std::size_t index) {
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(swing.name) + QStringLiteral("  [")
-           + (swing.enabled ? QStringLiteral("on") : QStringLiteral("off"))
+           + (swing.enabled ? QObject::tr("on") : QObject::tr("off"))
            + QStringLiteral(", ")
            + renderer_label(pvt::waveform_name(swing.waveform))
-           + (swing.radius > 0.0 ? QStringLiteral(", local") : QStringLiteral(", global"))
+           + (swing.radius > 0.0 ? QObject::tr(", local") : QObject::tr(", global"))
            + QLatin1Char(']');
 }
 
@@ -1283,7 +1283,7 @@ QString effect_label(const pvt::EffectConfig& effect, std::size_t index) {
     QString routing;
     if (effect.synchronized
         && effect.audio_response != pvt::AudioResponseMode::Default) {
-        routing = QStringLiteral(", audio ")
+        routing = QObject::tr(", audio ")
                   + renderer_label(
                       pvt::audio_response_mode_name(effect.audio_response))
                         .toLower();
@@ -1294,9 +1294,9 @@ QString effect_label(const pvt::EffectConfig& effect, std::size_t index) {
            + QStringLiteral(", ")
            + renderer_label(pvt::effect_space_name(effect.space))
            + QStringLiteral(", ")
-           + (effect.enabled ? QStringLiteral("on") : QStringLiteral("off"))
+           + (effect.enabled ? QObject::tr("on") : QObject::tr("off"))
            + QStringLiteral(", ")
-           + (effect.synchronized ? QStringLiteral("sync") : QStringLiteral("free"))
+           + (effect.synchronized ? QObject::tr("sync") : QObject::tr("free"))
            + routing + QLatin1Char(']');
 }
 
@@ -21022,7 +21022,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
             && particle_surface_label
                    == tr("Layer canvas (after surface)")
             && effect_space_->itemData(surface_placement, Qt::ToolTipRole)
-                   .toString().contains(tr("instead of being clipped"))
+                   .toString() == QObject::tr(
+                       "Particles are generated after surface mapping and whole-layer "
+                       "motion. They overlay the layer canvas instead of being clipped "
+                       "or wrapped to the object.")
             && effect_placement_help_ != nullptr
             && effect_placement_help_->objectName()
                    == QStringLiteral("effectPlacementExplanation");
@@ -22334,7 +22337,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         previewProjectSnapshot(), 0, preview_generation_, document_revision_, 25,
         frameRenderOptions(), cancelled_preview_token);
     if (!cancelled_preview.image.isNull()
-        || !cancelled_preview.error.contains(tr("cancel"), Qt::CaseInsensitive)) {
+        || cancelled_preview.error != tr("Preview cancelled.")) {
         if (error != nullptr) {
             *error = tr("A stale preview did not honor its cancellation token.");
         }
@@ -23722,9 +23725,16 @@ bool MainWindow::runSmokeChecks(QString* error) {
     document_->project.canvas.output_compatibility.records.push_back(
         {"future.output.sparkle", "maximum", false});
     updateCompatibilityWarning();
+    const auto smoke_recovery = pvt::project_recovery_info(document_->project);
+    const QString expected_recovery_warning = tr(
+        "Recovered this save by applying every safe setting and repairing "
+        "missing or unusable data. Preserved %1 original/unrecognized "
+        "field(s); %2 were not safe to use. Saving keeps them.")
+        .arg(smoke_recovery.preserved_fields)
+        .arg(smoke_recovery.rejected_fields);
     if (compatibility_warning_.isEmpty() || compatibility_warning_label_->isHidden()
-        || !compatibility_warning_.contains(tr("keeps"),
-                                            Qt::CaseInsensitive)) {
+        || smoke_recovery.preserved_fields == 0U
+        || compatibility_warning_ != expected_recovery_warning) {
         if (error != nullptr) {
             *error = tr("Preserved future data did not produce an accurate recovery notice.");
         }
@@ -23867,15 +23877,13 @@ MainWindow::SavedProjectRenameAction MainWindow::promptForSavedProjectRename(
     const QString old_name = QString::fromStdString(before);
     const QString new_name = QString::fromStdString(after);
     const QString bundle_name = QFileInfo(current_project_path_).fileName();
-    prompt.setText(QStringLiteral("“") + old_name
-                   + tr("” is currently saved as “") + bundle_name
-                   + QStringLiteral("”."));
+    prompt.setText(tr("“%1” is currently saved as “%2”.")
+                       .arg(old_name, bundle_name));
     prompt.setInformativeText(
         tr("Keep the existing filename and record the rename on the next Save, "
-           "or create a new independent bundle named from “")
-        + new_name
-        + tr("”. An independent copy contains only the current working state as "
-             "version 0 and receives new project and layer UUIDs."));
+           "or create a new independent bundle named from “%1”. An independent "
+           "copy contains only the current working state as version 0 and "
+           "receives new project and layer UUIDs.").arg(new_name));
 
     auto* keep = prompt.addButton(
         tr("Keep Existing Filename"), QMessageBox::AcceptRole);

@@ -93,6 +93,8 @@ jobs:
           )
           if [[ "${{ matrix.qt-source }}" == "source" ]]; then
             packages+=(
+              libclang-18-dev
+              llvm-18-dev
               libegl1-mesa-dev
               libfontconfig1-dev
               libfreetype-dev
@@ -293,7 +295,7 @@ jobs:
       - name: Run macOS tests
         if: runner.os == 'macOS'
         shell: bash
-        run: ctest --test-dir build --output-on-failure --timeout 300 -E '^pvt_gui_smoke$'
+        run: ctest --test-dir build --output-on-failure --timeout 300 -E '^pvt_gui_smoke'
 
       - name: Install Linux package
         if: runner.os == 'Linux'
@@ -306,8 +308,11 @@ jobs:
           fi
           xvfb-run --auto-servernum \
             ./package/bin/procedural-visualizer-tool --language en --smoke-test
-          QT_QPA_PLATFORM=offscreen ./package/bin/procedural-visualizer-tool \
+          xvfb-run --auto-servernum ./package/bin/procedural-visualizer-tool \
             --language system --localization-info
+          xvfb-run --auto-servernum cmake \
+            -DPROGRAM="$GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool" \
+            -P cmake/TestReleasedTranslations.cmake
           ./package/bin/pvt-render --self-test
           cmake -S tests/consumer -B installed-consumer -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -387,6 +392,11 @@ jobs:
           Invoke-PackageCheck `
             "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" `
             "--language system --localization-info"
+          cmake "-DPROGRAM=$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" `
+            -P cmake/TestReleasedTranslations.cmake
+          if ($LASTEXITCODE -ne 0) {
+            throw "Released localization package check failed"
+          }
           Invoke-PackageCheck `
             "$env:GITHUB_WORKSPACE/package/bin/pvt-render.exe" "--self-test"
           $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
@@ -411,7 +421,12 @@ jobs:
         run: |
           app="build/Procedural Visualizer Tool.app"
           "$app/Contents/MacOS/Procedural Visualizer Tool" --language en --smoke-test
+          for locale in de fr; do
+            "$app/Contents/MacOS/Procedural Visualizer Tool" --language "$locale" --smoke-test
+          done
           "$app/Contents/MacOS/Procedural Visualizer Tool" --language system --localization-info
+          cmake -DPROGRAM="$app/Contents/MacOS/Procedural Visualizer Tool" \
+            -P cmake/TestReleasedTranslations.cmake
           lipo "$app/Contents/MacOS/Procedural Visualizer Tool" \
             -verify_arch arm64
           lipo "$app/Contents/MacOS/pvt-render" -verify_arch arm64
@@ -499,6 +514,8 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 17.4.0 ships complete French and German interfaces alongside English. Both catalogs received a full AI linguistic review for fluency and terminology against the English sources, covering the editor, Live controls, audio processing, LFOs, export, help text, and native permission prompts. Choose Settings > Application Settings > General > Language and restart, or follow the system language. Application and standard Qt translations are embedded in all desktop packages. Saved-project rename prompts now translate as complete sentences. Project formats, rendering, and SONAME 17 remain unchanged.
+
           Version 17.3.1 unifies alpha admission across the renderer, project compositor, and editor. Numeric LFO ranges and controllers, transformed surfaces and exterior policies, motion, source alpha, effects, erasers, and ordered finishing stages use shared reachability rules. Neutral Twirl and Edge Detect no longer require alpha when their output is opaque; Black/White effect borders that create eraser coverage are correctly accounted for, including a later alpha-zero route that clears it.
 
           Effect parameter domains are shared by the editor, Live mappings/scenes, and render-time Numeric LFOs. Animated values retain valid ranges and whole-number counts, and type changes repair dependent values such as Gaussian blur samples. The motion.scale destination works alongside the persisted motion.scale_pulse spelling, Numeric LFO edits enable alpha when needed, and Live display frames preserve transparency without changing saved export choices. Public structure layout, project formats, and SONAME 17 remain unchanged.

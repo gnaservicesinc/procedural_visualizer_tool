@@ -956,6 +956,13 @@ if(BUILD_TESTING)
         endif()
         set_tests_properties(pvt_gui_smoke PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=${PVT_GUI_SMOKE_PLATFORM}")
+        foreach(locale IN LISTS PVT_RELEASED_TRANSLATION_LOCALES)
+            add_test(NAME pvt_gui_smoke_${locale}
+                COMMAND ProceduralVisualizerToolGui --language ${locale} --smoke-test)
+            set_tests_properties(pvt_gui_smoke_${locale} PROPERTIES
+                ENVIRONMENT "QT_QPA_PLATFORM=${PVT_GUI_SMOKE_PLATFORM}"
+                RUN_SERIAL TRUE)
+        endforeach()
     endif()
 endif()
 

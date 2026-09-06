@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.3.1**. The version is read from `VERSION` by every
+Current product version: **17.4.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -10,11 +10,20 @@ independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
 
-Localization infrastructure is available under **Settings > Application Settings >
-General > Language**. It follows the system's preferred languages by default and
-supports a saved override after restart. Translation authoring is a separate pass;
-the initial framework ships English. See [the translation guide](translations/README.md)
-for adding any Qt-supported language, validation, and packaging details.
+## 17.4.0 French and German interfaces
+
+French and German now ship alongside English, with complete catalogs reviewed
+for fluency, consistent terminology, and technical meaning. This covers the
+editor, Live controls, audio processing, LFOs, export dialogs, help text, and
+native permission prompts. The saved-project rename dialog uses whole translated
+sentences so names and quotation marks remain natural in each language.
+
+Choose **Settings > Application Settings > General > Language** and restart.
+The default follows the system's preferred languages. Application and standard
+Qt dialog translations are embedded in every desktop package. Project data,
+rendering, file formats, and the public ABI remain unchanged.
+See [the translation guide](translations/README.md) and
+[the review record](translations/REVIEW-17.4.0.md) for coverage and validation.
 
 ## 17.3.1 alpha and animated-control reliability
 
