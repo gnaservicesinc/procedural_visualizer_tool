@@ -1,0 +1,3 @@
+/* Native permission prompts. Translate values, preserving the keys. */
+"NSMicrophoneUsageDescription" = "Procedural Visualizer Tool uses the audio input you select to drive real-time visuals in Live mode.";
+"NSLocalNetworkUsageDescription" = "Procedural Visualizer Tool receives OSC control messages from devices on your local network in Live mode.";

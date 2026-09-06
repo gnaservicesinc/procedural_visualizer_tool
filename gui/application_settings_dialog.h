@@ -15,6 +15,7 @@ class QShowEvent;
 class QResizeEvent;
 
 class ApplicationSettingsDialog final : public QDialog {
+    Q_OBJECT
 public:
     enum class NewProjectDefaultsAction {
         Keep,
@@ -31,6 +32,7 @@ public:
                                   capabilitiesOverride = nullptr);
 
     int undoLimit() const;
+    QString language() const;
     PerformanceSettings performanceSettings() const;
     int recentProjectLimit() const;
     NewProjectDefaultsAction newProjectDefaultsAction() const;
@@ -43,6 +45,7 @@ private:
     void scheduleResponsiveLabelLayout();
 
     QSpinBox* undo_limit_ = nullptr;
+    QComboBox* language_ = nullptr;
     QComboBox* render_backend_ = nullptr;
     QSpinBox* preview_live_cpu_workers_ = nullptr;
     QSpinBox* export_frame_workers_ = nullptr;

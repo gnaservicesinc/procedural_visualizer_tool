@@ -773,9 +773,9 @@ void LiveWorkspace::Impl::buildUi() {
     auto* header_layout = new QHBoxLayout(header);
     header_layout->setContentsMargins(14, 9, 10, 9);
     auto* names = new QVBoxLayout;
-    auto* title = new QLabel(q->tr("LIVE / PERFORMANCE"));
+    auto* title = new QLabel(LiveWorkspace::tr("LIVE / PERFORMANCE"));
     title->setObjectName(QStringLiteral("liveTitle"));
-    auto* subtitle = new QLabel(q->tr(
+    auto* subtitle = new QLabel(LiveWorkspace::tr(
         "Portable roles and scenes · machine bindings stay on this computer"));
     subtitle->setObjectName(QStringLiteral("liveSubTitle"));
     names->addWidget(title);
@@ -783,16 +783,16 @@ void LiveWorkspace::Impl::buildUi() {
     header_layout->addLayout(names);
     header_layout->addStretch(1);
     render_lamp = new StatusLamp;
-    render_lamp->setText(q->tr("STANDBY"));
+    render_lamp->setText(LiveWorkspace::tr("STANDBY"));
     header_layout->addWidget(render_lamp);
-    live_button = new QPushButton(q->tr("GO LIVE"));
+    live_button = new QPushButton(LiveWorkspace::tr("GO LIVE"));
     live_button->setObjectName(QStringLiteral("liveRuntimeButton"));
     live_button->setCheckable(true);
     live_button->setMinimumWidth(105);
     header_layout->addWidget(live_button);
-    auto* edit = new QPushButton(q->tr("Edit Project"));
+    auto* edit = new QPushButton(LiveWorkspace::tr("Edit Project"));
     edit->setObjectName(QStringLiteral("editLiveProjectButton"));
-    edit->setToolTip(q->tr(
+    edit->setToolTip(LiveWorkspace::tr(
         "Bring the full project editor forward without stopping Live input, rendering, or stage output."));
     header_layout->addWidget(edit);
     root->addWidget(header);
@@ -808,7 +808,7 @@ void LiveWorkspace::Impl::buildUi() {
     program_frame->setObjectName(QStringLiteral("liveProgramFrame"));
     auto* program_frame_layout = new QVBoxLayout(program_frame);
     program_frame_layout->setContentsMargins(6, 6, 6, 6);
-    monitor = new QLabel(q->tr("PROGRAM OUTPUT\nStandby"));
+    monitor = new QLabel(LiveWorkspace::tr("PROGRAM OUTPUT\nStandby"));
     monitor->setObjectName(QStringLiteral("liveProgramLabel"));
     monitor->setAlignment(Qt::AlignCenter);
     monitor->setMinimumSize(420, 240);
@@ -817,14 +817,14 @@ void LiveWorkspace::Impl::buildUi() {
     program_layout->addWidget(program_frame, 1);
 
     auto* transport = new QHBoxLayout;
-    output_button = new QPushButton(q->tr("Full-screen Output"));
+    output_button = new QPushButton(LiveWorkspace::tr("Full-screen Output"));
     output_button->setObjectName(QStringLiteral("liveStageOutputButton"));
     output_button->setCheckable(true);
-    freeze_button = new QPushButton(q->tr("FREEZE"));
+    freeze_button = new QPushButton(LiveWorkspace::tr("FREEZE"));
     freeze_button->setObjectName(QStringLiteral("freezeButton"));
     freeze_button->setCheckable(true);
     freeze_button->setMinimumHeight(38);
-    blackout_button = new QPushButton(q->tr("BLACKOUT"));
+    blackout_button = new QPushButton(LiveWorkspace::tr("BLACKOUT"));
     blackout_button->setObjectName(QStringLiteral("blackoutButton"));
     blackout_button->setCheckable(true);
     blackout_button->setMinimumHeight(38);
@@ -838,15 +838,15 @@ void LiveWorkspace::Impl::buildUi() {
     auto* telemetry_layout = new QHBoxLayout(telemetry);
     telemetry_layout->setContentsMargins(10, 7, 10, 7);
     audio_lamp = new StatusLamp;
-    audio_lamp->setText(q->tr("AUDIO"));
+    audio_lamp->setText(LiveWorkspace::tr("AUDIO"));
     midi_lamp = new StatusLamp;
-    midi_lamp->setText(q->tr("MIDI"));
-    fps_readout = new QLabel(q->tr("— fps"));
-    fps_readout->setToolTip(q->tr(
+    midi_lamp->setText(LiveWorkspace::tr("MIDI"));
+    fps_readout = new QLabel(LiveWorkspace::tr("— fps"));
+    fps_readout->setToolTip(LiveWorkspace::tr(
         "Completed frames per second, measured over a quarter-second window. "
         "This measures frame delivery to the UI, not the display refresh rate."));
-    frame_readout = new QLabel(q->tr("No frame"));
-    scene_readout = new QLabel(q->tr("Scene: —"));
+    frame_readout = new QLabel(LiveWorkspace::tr("No frame"));
+    scene_readout = new QLabel(LiveWorkspace::tr("Scene: —"));
     telemetry_layout->addWidget(audio_lamp);
     telemetry_layout->addWidget(midi_lamp);
     telemetry_layout->addSpacing(8);
@@ -857,9 +857,9 @@ void LiveWorkspace::Impl::buildUi() {
     program_layout->addWidget(telemetry);
 
     tabs = new QTabWidget;
-    tabs->addTab(buildRigTab(), q->tr("Rig"));
-    tabs->addTab(buildMappingTab(), q->tr("Control Map"));
-    tabs->addTab(buildSceneTab(), q->tr("Scenes"));
+    tabs->addTab(buildRigTab(), LiveWorkspace::tr("Rig"));
+    tabs->addTab(buildMappingTab(), LiveWorkspace::tr("Control Map"));
+    tabs->addTab(buildSceneTab(), LiveWorkspace::tr("Scenes"));
     splitter->addWidget(program_column);
     splitter->addWidget(tabs);
     splitter->setStretchFactor(0, 3);
@@ -898,32 +898,32 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     layout->setSpacing(10);
 
     auto* rig_actions = new QHBoxLayout;
-    auto* starter = new QPushButton(q->tr("Create Starter Rig"));
-    starter->setToolTip(q->tr(
+    auto* starter = new QPushButton(LiveWorkspace::tr("Create Starter Rig"));
+    starter->setToolTip(LiveWorkspace::tr(
         "Adds portable Audio, MIDI, OSC, foot-controller, and MIDI-out roles. "
         "No device identity is saved in the project."));
-    auto* add_role = new QPushButton(q->tr("Add Logical Role…"));
+    auto* add_role = new QPushButton(LiveWorkspace::tr("Add Logical Role…"));
     rig_actions->addWidget(starter);
     rig_actions->addWidget(add_role);
     rig_actions->addStretch(1);
     layout->addLayout(rig_actions);
 
     QFormLayout* form = nullptr;
-    QWidget* inputs = titled_group(q->tr("INPUT RACK"), form);
+    QWidget* inputs = titled_group(LiveWorkspace::tr("INPUT RACK"), form);
     audio_role = new QComboBox;
     audio_device = new QComboBox;
     audio_role->setObjectName(QStringLiteral("liveAudioRole"));
     audio_device->setObjectName(QStringLiteral("liveAudioDevice"));
-    auto* audio_refresh = new QPushButton(q->tr("Refresh"));
+    auto* audio_refresh = new QPushButton(LiveWorkspace::tr("Refresh"));
     audio_refresh->setObjectName(QStringLiteral("liveAudioRefresh"));
-    audio_refresh->setToolTip(q->tr("Detect connected microphone and audio-interface inputs again."));
+    audio_refresh->setToolTip(LiveWorkspace::tr("Detect connected microphone and audio-interface inputs again."));
     auto* audio_row = new QWidget;
     auto* audio_row_layout = new QHBoxLayout(audio_row);
     audio_row_layout->setContentsMargins(0, 0, 0, 0);
     audio_row_layout->addWidget(audio_role, 1);
     audio_row_layout->addWidget(audio_device, 2);
     audio_row_layout->addWidget(audio_refresh);
-    form->addRow(q->tr("Audio role / device"), audio_row);
+    form->addRow(LiveWorkspace::tr("Audio role / device"), audio_row);
     midi_role = new QComboBox;
     midi_device = new QComboBox;
     auto* midi_row = new QWidget;
@@ -931,7 +931,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     midi_row_layout->setContentsMargins(0, 0, 0, 0);
     midi_row_layout->addWidget(midi_role, 1);
     midi_row_layout->addWidget(midi_device, 2);
-    form->addRow(q->tr("MIDI role / source"), midi_row);
+    form->addRow(LiveWorkspace::tr("MIDI role / source"), midi_row);
     foot_role = new QComboBox;
     foot_device = new QComboBox;
     auto* foot_row = new QWidget;
@@ -939,12 +939,12 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     foot_row_layout->setContentsMargins(0, 0, 0, 0);
     foot_row_layout->addWidget(foot_role, 1);
     foot_row_layout->addWidget(foot_device, 2);
-    form->addRow(q->tr("Foot role / source"), foot_row);
+    form->addRow(LiveWorkspace::tr("Foot role / source"), foot_row);
     osc_role = new QComboBox;
     osc_port = new QSpinBox;
     osc_port->setRange(1, 65535);
     osc_port->setValue(QSettings().value(QStringLiteral("live/oscPort"), 7000).toInt());
-    osc_local = new QCheckBox(q->tr("Local only"));
+    osc_local = new QCheckBox(LiveWorkspace::tr("Local only"));
     osc_local->setChecked(QSettings().value(QStringLiteral("live/oscLocalOnly"), true).toBool());
     auto* osc_row = new QWidget;
     auto* osc_row_layout = new QHBoxLayout(osc_row);
@@ -952,31 +952,31 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     osc_row_layout->addWidget(osc_role, 1);
     osc_row_layout->addWidget(osc_port);
     osc_row_layout->addWidget(osc_local);
-    form->addRow(q->tr("OSC role / UDP port"), osc_row);
+    form->addRow(LiveWorkspace::tr("OSC role / UDP port"), osc_row);
     layout->addWidget(inputs);
 
     QFormLayout* audio_form = nullptr;
-    QWidget* analysis = titled_group(q->tr("AUDIO ANALYSIS + CALIBRATION"), audio_form);
-    auto* signal_path = new QLabel(q->tr(
+    QWidget* analysis = titled_group(LiveWorkspace::tr("AUDIO ANALYSIS + CALIBRATION"), audio_form);
+    auto* signal_path = new QLabel(LiveWorkspace::tr(
         "Input trim  →  high/low-pass filters  →  10-band EQ  →  gate  →  "
         "adaptive level  →  response  →  analysis + routes"));
     signal_path->setObjectName(QStringLiteral("liveAudioSignalPath"));
     signal_path->setWordWrap(true);
-    signal_path->setToolTip(q->tr(
+    signal_path->setToolTip(LiveWorkspace::tr(
         "The fixed order matches a conventional channel-strip starting point. "
         "The gate listens to the trimmed, filtered, and equalized signal; "
         "Response is applied later and cannot change the gate threshold."));
-    audio_form->addRow(q->tr("Signal path"), signal_path);
+    audio_form->addRow(LiveWorkspace::tr("Signal path"), signal_path);
     audio_period = new QSpinBox;
     audio_period->setObjectName(QStringLiteral("liveAudioPeriodFrames"));
     audio_period->setRange(1, kMaximumUiInteger);
-    audio_period->setSuffix(q->tr(" frames"));
+    audio_period->setSuffix(LiveWorkspace::tr(" frames"));
     const int stored_period = QSettings().value(
         QStringLiteral("live/audioPeriodFrames"), 128).toInt();
     audio_period->setValue(std::max(1, stored_period));
-    audio_period->setToolTip(q->tr(
+    audio_period->setToolTip(LiveWorkspace::tr(
         "Machine-local capture callback size. Smaller buffers reduce latency but demand steadier CPU scheduling."));
-    audio_form->addRow(q->tr("Input buffer"), audio_period);
+    audio_form->addRow(LiveWorkspace::tr("Input buffer"), audio_period);
     auto* knob_row = new QWidget;
     auto* knob_layout = new QHBoxLayout(knob_row);
     knob_layout->setContentsMargins(0, 0, 0, 0);
@@ -1010,8 +1010,8 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gain_decibels->setDecimals(1);
     gain_decibels->setSingleStep(0.1);
     gain_decibels->setAccelerated(true);
-    gain_decibels->setSuffix(q->tr(" dB"));
-    gain_decibels->setSpecialValueText(q->tr("Mute"));
+    gain_decibels->setSuffix(LiveWorkspace::tr(" dB"));
+    gain_decibels->setSpecialValueText(LiveWorkspace::tr("Mute"));
     gain_decibels->setValue(std::clamp(
         audioPercentToDecibels(stored_gain), kMinimumInputTrimDecibels,
         kMaximumInputTrimDecibels));
@@ -1031,43 +1031,43 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     sensitivity_value->setSuffix(QStringLiteral("%"));
     sensitivity_value->setValue(stored_sensitivity);
     sensitivity_value->setMaximumWidth(145);
-    gain->setToolTip(q->tr(
+    gain->setToolTip(LiveWorkspace::tr(
         "Input trim before filters, EQ, and the gate. Use the dB field for "
         "familiar 0.1 dB adjustments or enter an exact percentage."));
-    gain_value->setToolTip(q->tr(
+    gain_value->setToolTip(LiveWorkspace::tr(
         "Exact input-trim multiplier. 100% is unity gain. Values beyond the "
         "knob's quick 0–400% range remain supported here."));
-    gain_decibels->setToolTip(q->tr(
+    gain_decibels->setToolTip(LiveWorkspace::tr(
         "A synchronized dB view of Input trim. Mute is 0%; 0 dB is 100%. "
         "The percentage field retains values outside this quick ±dB range."));
-    sensitivity->setToolTip(q->tr(
+    sensitivity->setToolTip(LiveWorkspace::tr(
         "Analysis response after the gate and adaptive level stage. Lower it "
         "for more visual headroom; raise it for stronger movement."));
-    sensitivity_value->setToolTip(q->tr(
+    sensitivity_value->setToolTip(LiveWorkspace::tr(
         "Exact post-normalization response multiplier. It changes visual "
         "features and beat sensitivity, but not input level or gate threshold. "
         "Values beyond the knob's quick 0–400% range remain supported."));
     audio_meter = new LiveLevelMeter;
     audio_meter->setObjectName(QStringLiteral("livePreGateMeter"));
-    audio_meter->setAccessibleName(q->tr("Pre-gate input peak meter"));
-    audio_meter->setCaption(q->tr("PRE-GATE PEAK"));
+    audio_meter->setAccessibleName(LiveWorkspace::tr("Pre-gate input peak meter"));
+    audio_meter->setCaption(LiveWorkspace::tr("PRE-GATE PEAK"));
     audio_meter->setDecibelScale(true);
-    audio_meter->setToolTip(q->tr(
+    audio_meter->setToolTip(LiveWorkspace::tr(
         "Peak dBFS after Input trim, high/low-pass filters, and EQ, before the "
         "gate. Set trim so normal peaks stay below the red region."));
-    knob_layout->addWidget(new QLabel(q->tr("INPUT TRIM")));
+    knob_layout->addWidget(new QLabel(LiveWorkspace::tr("INPUT TRIM")));
     knob_layout->addWidget(gain);
     knob_layout->addWidget(gain_value);
     knob_layout->addWidget(gain_decibels);
-    knob_layout->addWidget(new QLabel(q->tr("RESPONSE")));
+    knob_layout->addWidget(new QLabel(LiveWorkspace::tr("RESPONSE")));
     knob_layout->addWidget(sensitivity);
     knob_layout->addWidget(sensitivity_value);
     knob_layout->addWidget(audio_meter, 1);
     audio_form->addRow(knob_row);
     audio_spectrum = new LiveSpectrumMeter;
     audio_spectrum->setObjectName(QStringLiteral("liveAudioSpectrum"));
-    audio_form->addRow(q->tr("Incoming sound"), audio_spectrum);
-    gate_enabled = new QCheckBox(q->tr("Enable noise gate"));
+    audio_form->addRow(LiveWorkspace::tr("Incoming sound"), audio_spectrum);
+    gate_enabled = new QCheckBox(LiveWorkspace::tr("Enable noise gate"));
     gate_enabled->setObjectName(QStringLiteral("liveNoiseGateEnabled"));
     gate_enabled->setChecked(QSettings().value(
         QStringLiteral("live/noiseGateEnabled"), false).toBool());
@@ -1076,10 +1076,10 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_threshold->setRange(-96.0, 0.0);
     gate_threshold->setDecimals(1);
     gate_threshold->setSingleStep(1.0);
-    gate_threshold->setSuffix(q->tr(" dBFS"));
+    gate_threshold->setSuffix(LiveWorkspace::tr(" dBFS"));
     gate_threshold->setValue(QSettings().value(
         QStringLiteral("live/noiseGateThresholdDb"), -50.0).toDouble());
-    gate_threshold->setToolTip(q->tr(
+    gate_threshold->setToolTip(LiveWorkspace::tr(
         "The post-EQ dBFS level that opens the gate. Compare it with the "
         "pre-gate meter while the wanted source is playing."));
     gate_hysteresis = new QDoubleSpinBox;
@@ -1088,10 +1088,10 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_hysteresis->setRange(0.0, 24.0);
     gate_hysteresis->setDecimals(1);
     gate_hysteresis->setSingleStep(0.5);
-    gate_hysteresis->setSuffix(q->tr(" dB return"));
+    gate_hysteresis->setSuffix(LiveWorkspace::tr(" dB return"));
     gate_hysteresis->setValue(QSettings().value(
         QStringLiteral("live/noiseGateHysteresisDb"), 0.0).toDouble());
-    gate_hysteresis->setToolTip(q->tr(
+    gate_hysteresis->setToolTip(LiveWorkspace::tr(
         "How much quieter the signal must become before the gate may close. "
         "A few dB prevents chatter near the opening threshold."));
     gate_attack = new QDoubleSpinBox;
@@ -1099,28 +1099,28 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_attack->setRange(0.1, 1000.0);
     gate_attack->setDecimals(1);
     gate_attack->setSingleStep(0.1);
-    gate_attack->setSuffix(q->tr(" ms attack"));
+    gate_attack->setSuffix(LiveWorkspace::tr(" ms attack"));
     gate_attack->setValue(QSettings().value(
         QStringLiteral("live/noiseGateAttackMs"), 5.0).toDouble());
-    gate_attack->setToolTip(q->tr(
+    gate_attack->setToolTip(LiveWorkspace::tr(
         "How quickly the gate opens. Short attack preserves drum and pick "
         "transients; a longer attack rejects brief clicks."));
     gate_hold = new QSpinBox;
     gate_hold->setObjectName(QStringLiteral("liveNoiseGateHold"));
     gate_hold->setRange(0, 5000);
-    gate_hold->setSuffix(q->tr(" ms hold"));
+    gate_hold->setSuffix(LiveWorkspace::tr(" ms hold"));
     gate_hold->setValue(QSettings().value(
         QStringLiteral("live/noiseGateHoldMs"), 0).toInt());
-    gate_hold->setToolTip(q->tr(
+    gate_hold->setToolTip(LiveWorkspace::tr(
         "Minimum time the gate stays open after the signal falls below its "
         "return level. Hold prevents rapid open/close chatter."));
     gate_release = new QSpinBox;
     gate_release->setObjectName(QStringLiteral("liveNoiseGateRelease"));
     gate_release->setRange(1, 5000);
-    gate_release->setSuffix(q->tr(" ms release"));
+    gate_release->setSuffix(LiveWorkspace::tr(" ms release"));
     gate_release->setValue(QSettings().value(
         QStringLiteral("live/noiseGateReleaseMs"), 120).toInt());
-    gate_release->setToolTip(q->tr(
+    gate_release->setToolTip(LiveWorkspace::tr(
         "How gradually the gate closes after hold. Longer release preserves "
         "natural decays; shorter release makes a tighter rhythmic cut."));
     auto* gate_row = new QWidget;
@@ -1130,10 +1130,10 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_layout->addWidget(gate_threshold);
     gate_layout->addWidget(gate_hysteresis);
     gate_layout->addStretch(1);
-    gate_row->setToolTip(q->tr(
+    gate_row->setToolTip(LiveWorkspace::tr(
         "Machine-local post-EQ gate. Threshold opens it; Return hysteresis "
         "sets a quieter closing level."));
-    audio_form->addRow(q->tr("Gate threshold"), gate_row);
+    audio_form->addRow(LiveWorkspace::tr("Gate threshold"), gate_row);
     auto* gate_timing_row = new QWidget;
     auto* gate_timing_layout = new QHBoxLayout(gate_timing_row);
     gate_timing_layout->setContentsMargins(0, 0, 0, 0);
@@ -1141,44 +1141,44 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_timing_layout->addWidget(gate_hold);
     gate_timing_layout->addWidget(gate_release);
     gate_timing_layout->addStretch(1);
-    gate_timing_row->setToolTip(q->tr(
+    gate_timing_row->setToolTip(LiveWorkspace::tr(
         "Machine-local gate timing. Existing installations retain 5 ms "
         "attack, no hold, and 120 ms release until changed."));
-    audio_form->addRow(q->tr("Gate timing"), gate_timing_row);
+    audio_form->addRow(LiveWorkspace::tr("Gate timing"), gate_timing_row);
     latency = new QSpinBox;
     latency->setRange((std::numeric_limits<int>::min)(), kMaximumUiInteger);
-    latency->setSuffix(q->tr(" ms"));
-    latency->setToolTip(q->tr(
+    latency->setSuffix(LiveWorkspace::tr(" ms"));
+    latency->setToolTip(LiveWorkspace::tr(
         "Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source."));
-    auto* calibrate = new QPushButton(q->tr("Tap beat to align"));
+    auto* calibrate = new QPushButton(LiveWorkspace::tr("Tap beat to align"));
     auto* latency_row = new QWidget;
     auto* latency_layout = new QHBoxLayout(latency_row);
     latency_layout->setContentsMargins(0, 0, 0, 0);
     latency_layout->addWidget(latency);
     latency_layout->addWidget(calibrate);
-    audio_form->addRow(q->tr("Portable input offset"), latency_row);
+    audio_form->addRow(LiveWorkspace::tr("Portable input offset"), latency_row);
     device_latency = new QSpinBox;
     device_latency->setObjectName(QStringLiteral("liveAudioDeviceLatency"));
     device_latency->setRange((std::numeric_limits<int>::min)(),
                              kMaximumUiInteger);
-    device_latency->setSuffix(q->tr(" ms"));
-    device_latency->setToolTip(q->tr(
+    device_latency->setSuffix(LiveWorkspace::tr(" ms"));
+    device_latency->setToolTip(LiveWorkspace::tr(
         "Machine-local correction for this logical role and selected device. Positive values advance late capture; it is never saved in the project."));
-    audio_form->addRow(q->tr("This device correction"), device_latency);
-    detected_tempo = new QLabel(q->tr("Waiting for audio…"));
-    audio_form->addRow(q->tr("Causal analysis"), detected_tempo);
-    audio_processing = new QPushButton(q->tr("Filters, EQ + Frequency Streams…"));
-    audio_processing->setToolTip(q->tr(
+    audio_form->addRow(LiveWorkspace::tr("This device correction"), device_latency);
+    detected_tempo = new QLabel(LiveWorkspace::tr("Waiting for audio…"));
+    audio_form->addRow(LiveWorkspace::tr("Causal analysis"), detected_tempo);
+    audio_processing = new QPushButton(LiveWorkspace::tr("Filters, EQ + Frequency Streams…"));
+    audio_processing->setToolTip(LiveWorkspace::tr(
         "Configure the portable processing chain that runs before every Live analysis feature."));
-    audio_form->addRow(q->tr("Before analysis"), audio_processing);
+    audio_form->addRow(LiveWorkspace::tr("Before analysis"), audio_processing);
     layout->addWidget(analysis);
 
     QFormLayout* clock_form = nullptr;
-    QWidget* clocks = titled_group(q->tr("CLOCK PATCH BAY"), clock_form);
+    QWidget* clocks = titled_group(LiveWorkspace::tr("CLOCK PATCH BAY"), clock_form);
     project_clock = new QComboBox;
-    project_clock->addItem(q->tr("Project timeline"), -1);
-    project_clock->addItem(q->tr("MIDI Clock in"), static_cast<int>(pvt::LiveClockInputSource::MidiClock));
-    project_clock->addItem(q->tr("Audio beat clock"), static_cast<int>(pvt::LiveClockInputSource::AudioStream));
+    project_clock->addItem(LiveWorkspace::tr("Project timeline"), -1);
+    project_clock->addItem(LiveWorkspace::tr("MIDI Clock in"), static_cast<int>(pvt::LiveClockInputSource::MidiClock));
+    project_clock->addItem(LiveWorkspace::tr("Audio beat clock"), static_cast<int>(pvt::LiveClockInputSource::AudioStream));
     project_clock_role = new QComboBox;
     project_clock_stream = new QComboBox;
     auto* project_clock_row = new QWidget;
@@ -1187,11 +1187,11 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     pcr->addWidget(project_clock, 1);
     pcr->addWidget(project_clock_role, 1);
     pcr->addWidget(project_clock_stream, 1);
-    clock_form->addRow(q->tr("Project clock"), project_clock_row);
+    clock_form->addRow(LiveWorkspace::tr("Project clock"), project_clock_row);
     layer_clock = new QComboBox;
-    layer_clock->addItem(q->tr("Follow project"), -1);
-    layer_clock->addItem(q->tr("MIDI Clock in"), static_cast<int>(pvt::LiveClockInputSource::MidiClock));
-    layer_clock->addItem(q->tr("Audio beat clock"), static_cast<int>(pvt::LiveClockInputSource::AudioStream));
+    layer_clock->addItem(LiveWorkspace::tr("Follow project"), -1);
+    layer_clock->addItem(LiveWorkspace::tr("MIDI Clock in"), static_cast<int>(pvt::LiveClockInputSource::MidiClock));
+    layer_clock->addItem(LiveWorkspace::tr("Audio beat clock"), static_cast<int>(pvt::LiveClockInputSource::AudioStream));
     layer_clock_role = new QComboBox;
     layer_clock_stream = new QComboBox;
     auto* layer_clock_row = new QWidget;
@@ -1200,81 +1200,81 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     lcr->addWidget(layer_clock, 1);
     lcr->addWidget(layer_clock_role, 1);
     lcr->addWidget(layer_clock_stream, 1);
-    clock_form->addRow(q->tr("Active-layer clock"), layer_clock_row);
-    project_clock_out = new QCheckBox(q->tr("Send project clock"));
+    clock_form->addRow(LiveWorkspace::tr("Active-layer clock"), layer_clock_row);
+    project_clock_out = new QCheckBox(LiveWorkspace::tr("Send project clock"));
     project_clock_out_role = new QComboBox;
     auto* project_out_row = new QWidget;
     auto* por = new QHBoxLayout(project_out_row);
     por->setContentsMargins(0, 0, 0, 0);
     por->addWidget(project_clock_out);
     por->addWidget(project_clock_out_role, 1);
-    clock_form->addRow(q->tr("Virtual MIDI Clock out"), project_out_row);
-    layer_clock_out = new QCheckBox(q->tr("Send active layer"));
+    clock_form->addRow(LiveWorkspace::tr("Virtual MIDI Clock out"), project_out_row);
+    layer_clock_out = new QCheckBox(LiveWorkspace::tr("Send active layer"));
     layer_clock_out_role = new QComboBox;
     auto* layer_out_row = new QWidget;
     auto* lor = new QHBoxLayout(layer_out_row);
     lor->setContentsMargins(0, 0, 0, 0);
     lor->addWidget(layer_clock_out);
     lor->addWidget(layer_clock_out_role, 1);
-    clock_form->addRow(q->tr("Layer Clock out"), layer_out_row);
+    clock_form->addRow(LiveWorkspace::tr("Layer Clock out"), layer_out_row);
     layout->addWidget(clocks);
 
     QFormLayout* output_form = nullptr;
-    QWidget* output = titled_group(q->tr("STAGE OUTPUT"), output_form);
+    QWidget* output = titled_group(LiveWorkspace::tr("STAGE OUTPUT"), output_form);
     screen = new QComboBox;
     screen->setObjectName(QStringLiteral("liveOutputDisplay"));
     quality = new QComboBox;
     quality->setObjectName(QStringLiteral("liveOutputQuality"));
-    quality->addItem(q->tr("Auto · watchdog managed"), 0.0);
-    quality->addItem(q->tr("100% of output size"), 1.0);
-    quality->addItem(q->tr("75%"), 0.75);
-    quality->addItem(q->tr("50%"), 0.5);
-    quality->addItem(q->tr("25%"), 0.25);
-    quality->setToolTip(q->tr(
+    quality->addItem(LiveWorkspace::tr("Auto · watchdog managed"), 0.0);
+    quality->addItem(LiveWorkspace::tr("100% of output size"), 1.0);
+    quality->addItem(LiveWorkspace::tr("75%"), 0.75);
+    quality->addItem(LiveWorkspace::tr("50%"), 0.5);
+    quality->addItem(LiveWorkspace::tr("25%"), 0.25);
+    quality->setToolTip(LiveWorkspace::tr(
         "Fits the project to the output window's pixels, capped at project resolution. "
         "Auto reduces resolution when frames miss their deadline. Choose a fixed "
         "percentage for performance comparisons and compare the delivered dimensions."));
     const double stored_quality = QSettings().value(QStringLiteral("live/resolutionScale"), 0.0).toDouble();
     const int quality_index = quality->findData(stored_quality);
     quality->setCurrentIndex(quality_index < 0 ? 0 : quality_index);
-    output_form->addRow(q->tr("Display"), screen);
-    output_form->addRow(q->tr("Render quality"), quality);
-    portable_fullscreen = new QCheckBox(q->tr("Open as full-screen stage output"));
-    prefer_secondary = new QCheckBox(q->tr("Prefer a secondary display on a new machine"));
-    hide_stage_cursor = new QCheckBox(q->tr("Hide the pointer over stage output"));
-    output_form->addRow(q->tr("Portable output policy"), portable_fullscreen);
+    output_form->addRow(LiveWorkspace::tr("Display"), screen);
+    output_form->addRow(LiveWorkspace::tr("Render quality"), quality);
+    portable_fullscreen = new QCheckBox(LiveWorkspace::tr("Open as full-screen stage output"));
+    prefer_secondary = new QCheckBox(LiveWorkspace::tr("Prefer a secondary display on a new machine"));
+    hide_stage_cursor = new QCheckBox(LiveWorkspace::tr("Hide the pointer over stage output"));
+    output_form->addRow(LiveWorkspace::tr("Portable output policy"), portable_fullscreen);
     output_form->addRow({}, prefer_secondary);
     output_form->addRow({}, hide_stage_cursor);
     dropout_behavior = new QComboBox;
-    dropout_behavior->addItem(q->tr("Hold last good frame"),
+    dropout_behavior->addItem(LiveWorkspace::tr("Hold last good frame"),
         static_cast<int>(pvt::LiveDropoutBehavior::LastGoodFrame));
-    dropout_behavior->addItem(q->tr("Blackout immediately"),
+    dropout_behavior->addItem(LiveWorkspace::tr("Blackout immediately"),
         static_cast<int>(pvt::LiveDropoutBehavior::Blackout));
-    output_form->addRow(q->tr("On dropout"), dropout_behavior);
-    watchdog_enabled = new QCheckBox(q->tr("Enable frame-time watchdog"));
+    output_form->addRow(LiveWorkspace::tr("On dropout"), dropout_behavior);
+    watchdog_enabled = new QCheckBox(LiveWorkspace::tr("Enable frame-time watchdog"));
     watchdog_timeout = new QSpinBox;
     watchdog_timeout->setRange(1, kMaximumUiInteger);
-    watchdog_timeout->setSuffix(q->tr(" ms"));
+    watchdog_timeout->setSuffix(LiveWorkspace::tr(" ms"));
     auto* watchdog_row = new QWidget;
     auto* watchdog_layout = new QHBoxLayout(watchdog_row);
     watchdog_layout->setContentsMargins(0, 0, 0, 0);
     watchdog_layout->addWidget(watchdog_enabled);
     watchdog_layout->addWidget(watchdog_timeout);
-    output_form->addRow(q->tr("Frame deadline"), watchdog_row);
+    output_form->addRow(LiveWorkspace::tr("Frame deadline"), watchdog_row);
     audio_grace = new QSpinBox;
     audio_grace->setRange(0, kMaximumUiInteger);
-    audio_grace->setSuffix(q->tr(" ms"));
+    audio_grace->setSuffix(LiveWorkspace::tr(" ms"));
     last_good_timeout = new QSpinBox;
     last_good_timeout->setObjectName(QStringLiteral("liveLastGoodTimeout"));
     last_good_timeout->setRange(0, kMaximumUiInteger);
-    last_good_timeout->setSuffix(q->tr(" ms"));
-    output_form->addRow(q->tr("Audio dropout grace"), audio_grace);
-    output_form->addRow(q->tr("Last-good then black (0 = hold)"),
+    last_good_timeout->setSuffix(LiveWorkspace::tr(" ms"));
+    output_form->addRow(LiveWorkspace::tr("Audio dropout grace"), audio_grace);
+    output_form->addRow(LiveWorkspace::tr("Last-good then black (0 = hold)"),
                         last_good_timeout);
-    prevent_sleep = new QCheckBox(q->tr(
+    prevent_sleep = new QCheckBox(LiveWorkspace::tr(
         "Prevent device sleep while Live is running (supported platforms)"));
-    output_form->addRow(q->tr("Show continuity"), prevent_sleep);
-    auto* safety_label = new QLabel(q->tr(
+    output_form->addRow(LiveWorkspace::tr("Show continuity"), prevent_sleep);
+    auto* safety_label = new QLabel(LiveWorkspace::tr(
         "The renderer keeps only one pending frame. A missed frame holds the last good image; "
         "the project watchdog may switch to black according to its saved safety policy."));
     safety_label->setWordWrap(true);
@@ -1404,7 +1404,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
         const std::string role = narrow(audio_role->currentData().toString());
         if (auto* item = endpoint(next, role)) {
             item->input_latency_microseconds = static_cast<std::int64_t>(value) * 1000;
-            commitConfig(std::move(next), q->tr("Change live input calibration"));
+            commitConfig(std::move(next), LiveWorkspace::tr("Change live input calibration"));
         }
     });
     QObject::connect(
@@ -1420,11 +1420,11 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     QObject::connect(calibrate, &QPushButton::clicked, q, [this] { calibrateLatency(); });
     QObject::connect(audio_processing, &QPushButton::clicked, q, [this] {
         AudioProcessingDialog dialog(config.audio_processing,
-                                     q->tr("Live input"), q);
+                                     LiveWorkspace::tr("Live input"), q);
         if (dialog.exec() != QDialog::Accepted) return;
         pvt::LiveConfig next = config;
         next.audio_processing = dialog.processing();
-        commitConfig(std::move(next), q->tr("Change live audio input processing"));
+        commitConfig(std::move(next), LiveWorkspace::tr("Change live audio input processing"));
     });
     const auto apply_gate_calibration = [this] {
         if (rebuilding) return;
@@ -1496,7 +1496,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
         next.safety.audio_dropout_grace_milliseconds = audio_grace->value();
         next.safety.last_good_frame_timeout_milliseconds = last_good_timeout->value();
         next.safety.prevent_device_sleep = prevent_sleep->isChecked();
-        commitConfig(std::move(next), q->tr("Change portable live output safety"));
+        commitConfig(std::move(next), LiveWorkspace::tr("Change portable live output safety"));
     };
     QObject::connect(portable_fullscreen, &QCheckBox::toggled, q,
                      [author_output_safety] { author_output_safety(); });
@@ -1523,21 +1523,21 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(10, 10, 10, 10);
-    auto* intro = new QLabel(q->tr(
+    auto* intro = new QLabel(LiveWorkspace::tr(
         "Map analyzed audio, MIDI, OSC, or a foot-controller input to any render-safe "
         "setting, performance action, or scene. Live values are an ephemeral "
         "overlay—sound and controller motion do not flood project history."));
     intro->setWordWrap(true);
     layout->addWidget(intro);
     auto* tools = new QHBoxLayout;
-    auto* add = new QPushButton(q->tr("Add Mapping…"));
-    auto* audio_starter = new QPushButton(q->tr("Add Audio Starter Map"));
+    auto* add = new QPushButton(LiveWorkspace::tr("Add Mapping…"));
+    auto* audio_starter = new QPushButton(LiveWorkspace::tr("Add Audio Starter Map"));
     audio_starter->setObjectName(QStringLiteral("addAudioStarterMap"));
-    audio_starter->setToolTip(q->tr(
+    audio_starter->setToolTip(LiveWorkspace::tr(
         "Add editable bass, onset, and treble mappings for the active layer so incoming sound visibly changes more than its clock."));
-    auto* edit = new QPushButton(q->tr("Edit…"));
-    auto* remove = new QPushButton(q->tr("Remove"));
-    learn_button = new QPushButton(q->tr("MIDI Learn"));
+    auto* edit = new QPushButton(LiveWorkspace::tr("Edit…"));
+    auto* remove = new QPushButton(LiveWorkspace::tr("Remove"));
+    learn_button = new QPushButton(LiveWorkspace::tr("MIDI Learn"));
     tools->addWidget(add);
     tools->addWidget(audio_starter);
     tools->addWidget(edit);
@@ -1547,8 +1547,8 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
     layout->addLayout(tools);
     mapping_table = new QTableWidget(0, 5);
     mapping_table->setHorizontalHeaderLabels(
-        {q->tr("On"), q->tr("Name"), q->tr("Source"),
-         q->tr("Target"), q->tr("Mode")});
+        {LiveWorkspace::tr("On"), LiveWorkspace::tr("Name"), LiveWorkspace::tr("Source"),
+         LiveWorkspace::tr("Target"), LiveWorkspace::tr("Mode")});
     mapping_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     mapping_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     mapping_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -1560,7 +1560,7 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
     mapping_table->setAlternatingRowColors(true);
     mapping_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     layout->addWidget(mapping_table, 1);
-    auto* hint = new QLabel(q->tr(
+    auto* hint = new QLabel(LiveWorkspace::tr(
         "Tip: MIDI Learn changes only the selected portable mapping. Runtime "
         "source names remain in this machine's preferences."));
     hint->setWordWrap(true);
@@ -1582,7 +1582,7 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
         pvt::LiveConfig next = config;
         next.mappings[static_cast<std::size_t>(row)].enabled =
             !next.mappings[static_cast<std::size_t>(row)].enabled;
-        commitConfig(std::move(next), q->tr("Toggle live mapping"));
+        commitConfig(std::move(next), LiveWorkspace::tr("Toggle live mapping"));
     });
     return page;
 }
@@ -1591,7 +1591,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(10, 10, 10, 10);
-    auto* intro = new QLabel(q->tr(
+    auto* intro = new QLabel(LiveWorkspace::tr(
         "Scenes snapshot every currently resolved Live target. Numeric controls "
         "crossfade; switches and modes change at the end of the transition."));
     intro->setWordWrap(true);
@@ -1601,32 +1601,32 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     scene_list->setSelectionMode(QAbstractItemView::SingleSelection);
     layout->addWidget(scene_list, 1);
     auto* transition_row = new QHBoxLayout;
-    transition_row->addWidget(new QLabel(q->tr("Transition")));
+    transition_row->addWidget(new QLabel(LiveWorkspace::tr("Transition")));
     scene_transition_ms = new QSpinBox;
     scene_transition_ms->setRange(0, kMaximumUiInteger);
-    scene_transition_ms->setSuffix(q->tr(" ms"));
+    scene_transition_ms->setSuffix(LiveWorkspace::tr(" ms"));
     scene_transition_ms->setSingleStep(50);
     transition_row->addWidget(scene_transition_ms);
     transition_row->addStretch(1);
     layout->addLayout(transition_row);
     auto* capture_row = new QHBoxLayout;
-    auto* capture = new QPushButton(q->tr("Capture New…"));
-    auto* update = new QPushButton(q->tr("Update Snapshot"));
-    auto* remove = new QPushButton(q->tr("Remove"));
+    auto* capture = new QPushButton(LiveWorkspace::tr("Capture New…"));
+    auto* update = new QPushButton(LiveWorkspace::tr("Update Snapshot"));
+    auto* remove = new QPushButton(LiveWorkspace::tr("Remove"));
     capture_row->addWidget(capture);
     capture_row->addWidget(update);
     capture_row->addWidget(remove);
     layout->addLayout(capture_row);
     auto* take_row = new QHBoxLayout;
-    auto* previous = new QPushButton(q->tr("◀ Previous"));
-    auto* take = new QPushButton(q->tr("TAKE SCENE"));
+    auto* previous = new QPushButton(LiveWorkspace::tr("◀ Previous"));
+    auto* take = new QPushButton(LiveWorkspace::tr("TAKE SCENE"));
     take->setMinimumHeight(38);
-    auto* next = new QPushButton(q->tr("Next ▶"));
+    auto* next = new QPushButton(LiveWorkspace::tr("Next ▶"));
     take_row->addWidget(previous);
     take_row->addWidget(take, 1);
     take_row->addWidget(next);
     layout->addLayout(take_row);
-    auto* startup = new QCheckBox(q->tr("Use selected scene when Live starts"));
+    auto* startup = new QCheckBox(LiveWorkspace::tr("Use selected scene when Live starts"));
     layout->addWidget(startup);
 
     QObject::connect(capture, &QPushButton::clicked, q,
@@ -1655,7 +1655,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
         if (row < 0 || row >= static_cast<int>(config.scenes.size())) return;
         pvt::LiveConfig next = config;
         next.scenes[static_cast<std::size_t>(row)].transition_milliseconds = value;
-        commitConfig(std::move(next), q->tr("Change live scene transition"));
+        commitConfig(std::move(next), LiveWorkspace::tr("Change live scene transition"));
     });
     QObject::connect(startup, &QCheckBox::toggled, q, [this](bool checked) {
         if (rebuilding) return;
@@ -1664,7 +1664,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
         next.startup_scene_uuid = checked && row >= 0
                 && row < static_cast<int>(next.scenes.size())
             ? next.scenes[static_cast<std::size_t>(row)].uuid : std::string{};
-        commitConfig(std::move(next), q->tr("Change live startup scene"));
+        commitConfig(std::move(next), LiveWorkspace::tr("Change live startup scene"));
     });
     QObject::connect(scene_list, &QListWidget::currentRowChanged, q,
                      [this, startup](int row) {
@@ -1695,14 +1695,14 @@ void LiveWorkspace::Impl::connectRuntime() {
         ++late_streak;
         good_streak = 0;
         render_lamp->setState(StatusLamp::State::Warning);
-        render_lamp->setText(q->tr("WATCHDOG"));
-        render_lamp->setToolTip(q->tr("Frame %1 exceeded its live deadline; the last good frame remains on stage.")
+        render_lamp->setText(LiveWorkspace::tr("WATCHDOG"));
+        render_lamp->setToolTip(LiveWorkspace::tr("Frame %1 exceeded its live deadline; the last good frame remains on stage.")
                                     .arg(sequence));
         if (quality->currentData().toDouble() == 0.0) {
             adaptive_scale = std::max(0.25, adaptive_scale * 0.8);
         }
         if (presentation_active) {
-            emit q->runtimeStatusChanged(q->tr(
+            emit q->runtimeStatusChanged(LiveWorkspace::tr(
                 "Live Preview Output frame %1 exceeded its 60-second render watchdog; the last delivered frame remains visible and Auto quality was reduced.")
                 .arg(sequence));
         }
@@ -1760,8 +1760,8 @@ void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
     }
     const pvt::ValidationResult validation = pvt::validate(next);
     if (!validation.ok) {
-        QMessageBox::warning(q, q->tr("Live configuration"),
-                             q->tr("That patch would make the Live rig invalid:\n%1")
+        QMessageBox::warning(q, LiveWorkspace::tr("Live configuration"),
+                             LiveWorkspace::tr("That patch would make the Live rig invalid:\n%1")
                                  .arg(qtext(validation.message)));
         return;
     }
@@ -1953,7 +1953,7 @@ void LiveWorkspace::Impl::refreshRoleCombos() {
             ? combo->currentData().toString() : preferred;
         QSignalBlocker block(combo);
         combo->clear();
-        combo->addItem(q->tr("No logical role"), QString{});
+        combo->addItem(LiveWorkspace::tr("No logical role"), QString{});
         for (const auto& item : config.endpoints) {
             if (item.protocol != protocol
                 || (input && !direction_has_input(item.direction))
@@ -1994,7 +1994,7 @@ void LiveWorkspace::Impl::refreshMappings() {
                         return narrow(item.path) == mapping.target_path;
                     });
                 if (found != registry.end()) target = found->section + QStringLiteral(" · ") + found->label;
-                else target = q->tr("Unresolved · %1").arg(target);
+                else target = LiveWorkspace::tr("Unresolved · %1").arg(target);
             }
         } else if (mapping.target == pvt::LiveMappingTarget::Action) {
             target = action_name(mapping.action);
@@ -2005,7 +2005,7 @@ void LiveWorkspace::Impl::refreshMappings() {
                     return scene.uuid == mapping.scene_uuid;
                 });
             target = found == config.scenes.end()
-                ? q->tr("Unresolved scene") : qtext(found->name);
+                ? LiveWorkspace::tr("Unresolved scene") : qtext(found->name);
         }
         auto* enabled = new QTableWidgetItem(mapping.enabled ? QStringLiteral("●")
                                                              : QStringLiteral("○"));
@@ -2020,7 +2020,7 @@ void LiveWorkspace::Impl::refreshMappings() {
         mapping_table->selectRow(selected);
     }
     if (learn_mapping >= static_cast<int>(config.mappings.size())) learn_mapping = -1;
-    learn_button->setText(learn_mapping >= 0 ? q->tr("Listening…") : q->tr("MIDI Learn"));
+    learn_button->setText(learn_mapping >= 0 ? LiveWorkspace::tr("Listening…") : LiveWorkspace::tr("MIDI Learn"));
 }
 
 void LiveWorkspace::Impl::refreshScenes() {
@@ -2030,7 +2030,7 @@ void LiveWorkspace::Impl::refreshScenes() {
     scene_list->clear();
     for (const auto& scene : config.scenes) {
         auto* item = new QListWidgetItem(
-            q->tr("%1    %2 targets    %3 ms")
+            LiveWorkspace::tr("%1    %2 targets    %3 ms")
                 .arg(qtext(scene.name))
                 .arg(scene.values.size())
                 .arg(scene.transition_milliseconds));
@@ -2077,7 +2077,7 @@ void LiveWorkspace::Impl::refreshClockRouting() {
             ? -1 : static_cast<int>(found->source);
         source->setCurrentIndex(std::max(0, source->findData(source_value)));
         role->clear();
-        role->addItem(q->tr("Choose role"), QString{});
+        role->addItem(LiveWorkspace::tr("Choose role"), QString{});
         const pvt::LiveEndpointProtocol protocol =
             source_value == static_cast<int>(pvt::LiveClockInputSource::AudioStream)
                 ? pvt::LiveEndpointProtocol::Audio : pvt::LiveEndpointProtocol::Midi;
@@ -2092,7 +2092,7 @@ void LiveWorkspace::Impl::refreshClockRouting() {
         }
         role->setEnabled(source_value >= 0);
         stream->clear();
-        stream->addItem(q->tr("Full filtered signal"), QString{});
+        stream->addItem(LiveWorkspace::tr("Full filtered signal"), QString{});
         for (const auto& item : config.audio_processing.frequency_streams) {
             stream->addItem(qtext(item.name), qtext(item.uuid));
         }
@@ -2145,13 +2145,13 @@ void LiveWorkspace::Impl::refreshClockRouting() {
         latency->setValue(static_cast<int>(displayed));
         const bool clipped = displayed != authored_milliseconds;
         latency->setToolTip(clipped
-            ? q->tr("The authored portable offset is outside this editor's range. The boundary is displayed, but the exact project value is preserved until you edit it.")
-            : q->tr("Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source."));
+            ? LiveWorkspace::tr("The authored portable offset is outside this editor's range. The boundary is displayed, but the exact project value is preserved until you edit it.")
+            : LiveWorkspace::tr("Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source."));
         if (clipped && audio_endpoint != nullptr) {
             warnRouteOnce(
                 qtext(audio_endpoint->uuid)
                     + QStringLiteral(":portable-latency-ui-range"),
-                q->tr("The portable input offset for %1 is outside the millisecond editor range; its exact authored value remains preserved.")
+                LiveWorkspace::tr("The portable input offset for %1 is outside the millisecond editor range; its exact authored value remains preserved.")
                     .arg(qtext(audio_endpoint->name)));
         }
     }
@@ -2172,14 +2172,14 @@ void LiveWorkspace::Impl::refreshDevices() {
     {
         QSignalBlocker block(audio_device);
         audio_device->clear();
-        audio_device->addItem(q->tr("System default"), QString{});
-        audio_device->setItemData(0, q->tr("System default"),
+        audio_device->addItem(LiveWorkspace::tr("System default"), QString{});
+        audio_device->setItemData(0, LiveWorkspace::tr("System default"),
                                   Qt::UserRole + 1);
         std::string discovery_error;
         audio_devices = audio.devices(&discovery_error);
         for (const auto& device : audio_devices) {
             audio_device->addItem(device.is_default
-                                      ? q->tr("%1 · default").arg(
+                                      ? LiveWorkspace::tr("%1 · default").arg(
                                             qtext(device.display_name))
                                       : qtext(device.display_name),
                                   qtext(device.runtime_id));
@@ -2211,9 +2211,9 @@ void LiveWorkspace::Impl::refreshDevices() {
             QString hint = settings.value(
                 endpoint_key(role, QStringLiteral("audioDeviceName")))
                                .toString().trimmed();
-            if (hint.isEmpty()) hint = q->tr("previously selected input");
+            if (hint.isEmpty()) hint = LiveWorkspace::tr("previously selected input");
             audio_device->insertItem(
-                1, q->tr("Unavailable · %1").arg(hint), stored);
+                1, LiveWorkspace::tr("Unavailable · %1").arg(hint), stored);
             audio_device->setItemData(1, hint, Qt::UserRole + 1);
             index = 1;
         }
@@ -2229,15 +2229,15 @@ void LiveWorkspace::Impl::refreshDevices() {
             device_latency->setEnabled(!role.empty());
         }
         if (!discovery_error.empty()) {
-            audio_device->setToolTip(q->tr("Input discovery failed: %1")
+            audio_device->setToolTip(LiveWorkspace::tr("Input discovery failed: %1")
                                          .arg(qtext(discovery_error)));
         } else if (!stored.isEmpty() && index == 1
                    && audio_device->itemText(1).startsWith(
-                       q->tr("Unavailable"))) {
-            audio_device->setToolTip(q->tr(
+                       LiveWorkspace::tr("Unavailable"))) {
+            audio_device->setToolTip(LiveWorkspace::tr(
                 "The saved microphone is unavailable. Live will not capture the system default unless you choose it explicitly."));
         } else {
-            audio_device->setToolTip(q->tr(
+            audio_device->setToolTip(LiveWorkspace::tr(
                 "This device binding is stored only on this computer."));
         }
     }
@@ -2246,7 +2246,7 @@ void LiveWorkspace::Impl::refreshDevices() {
         const std::string uuid = narrow(role->currentData().toString());
         const QString stored = QSettings().value(
             endpoint_key(uuid, QStringLiteral("midiSource"))).toString();
-        restore_combo(device, midi_names, stored, q->tr("Any MIDI source"));
+        restore_combo(device, midi_names, stored, LiveWorkspace::tr("Any MIDI source"));
     };
     fill_midi(midi_role, midi_device);
     fill_midi(foot_role, foot_device);
@@ -2384,7 +2384,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
     {
         QSignalBlocker block(live_button);
         live_button->setChecked(value);
-        live_button->setText(value ? q->tr("LIVE · ON") : q->tr("GO LIVE"));
+        live_button->setText(value ? LiveWorkspace::tr("LIVE · ON") : LiveWorkspace::tr("GO LIVE"));
     }
     if (value) {
         // Publish ownership before launching the first realtime render so the
@@ -2417,7 +2417,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         midi_clock_timer.start();
         if (!config.startup_scene_uuid.empty()) takeScene(config.startup_scene_uuid);
         requestFrame();
-        emit q->runtimeStatusChanged(q->tr("Live performance runtime started."));
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("Live performance runtime started."));
     } else {
         ++render_generation;
         (void)sleep_guard.setPrevented(false);
@@ -2457,7 +2457,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         presented_frame_clock.invalidate();
         output_button->setChecked(false);
         showStandbyState();
-        emit q->runtimeStatusChanged(q->tr("Live performance runtime stopped."));
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("Live performance runtime stopped."));
         // A false transition is published only after the synchronous renderer
         // drain so editor export/preview work cannot overlap teardown.
         emit q->liveActiveChanged(false);
@@ -2494,7 +2494,7 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
         showOutput();
         requestFrame();
         emit q->runtimeStatusChanged(
-            q->tr("Live Preview Output started without performance inputs."));
+            LiveWorkspace::tr("Live Preview Output started without performance inputs."));
     } else {
         render_timer.stop();
         stage.setFrozen(false);
@@ -2511,7 +2511,7 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
         presented_frame_clock.invalidate();
         output_button->setChecked(false);
         showStandbyState();
-        emit q->runtimeStatusChanged(q->tr("Live Preview Output stopped."));
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("Live Preview Output stopped."));
         emit q->presentationActiveChanged(false);
     }
 }
@@ -2539,7 +2539,7 @@ void LiveWorkspace::Impl::startIo() {
     QString midi_error;
     if (midi.start(&midi_error)) {
         midi_lamp->setState(StatusLamp::State::Ready);
-        midi_lamp->setToolTip(q->tr("Core MIDI routing is active."));
+        midi_lamp->setToolTip(LiveWorkspace::tr("Core MIDI routing is active."));
     } else {
         midi_lamp->setState(StatusLamp::State::Warning);
         midi_lamp->setToolTip(midi_error);
@@ -2568,7 +2568,7 @@ void LiveWorkspace::Impl::restartAudio() {
     audio.stop();
     if (audio_role->currentData().toString().isEmpty()) {
         audio_lamp->setState(StatusLamp::State::Off);
-        audio_lamp->setToolTip(q->tr("Add or select an Audio input role."));
+        audio_lamp->setToolTip(LiveWorkspace::tr("Add or select an Audio input role."));
         return;
     }
     audio.set_gain(gain_value->value() / 100.0);
@@ -2579,7 +2579,7 @@ void LiveWorkspace::Impl::restartAudio() {
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
         emit q->runtimeStatusChanged(
-            q->tr("Audio input processing could not start: %1")
+            LiveWorkspace::tr("Audio input processing could not start: %1")
                 .arg(qtext(error)));
         return;
     }
@@ -2591,7 +2591,7 @@ void LiveWorkspace::Impl::restartAudio() {
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
         emit q->runtimeStatusChanged(
-            q->tr("Live noise gate could not start: %1").arg(qtext(error)));
+            LiveWorkspace::tr("Live noise gate could not start: %1").arg(qtext(error)));
         return;
     }
     const int period = std::clamp(
@@ -2600,12 +2600,12 @@ void LiveWorkspace::Impl::restartAudio() {
     if (!audio.start(narrow(device), static_cast<std::uint32_t>(period), &error)) {
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
-        emit q->runtimeStatusChanged(q->tr("Audio input could not start: %1")
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("Audio input could not start: %1")
                                          .arg(qtext(error)));
         return;
     }
     audio_lamp->setState(StatusLamp::State::Warning);
-    audio_lamp->setToolTip(q->tr("Audio capture started; waiting for callbacks."));
+    audio_lamp->setToolTip(LiveWorkspace::tr("Audio capture started; waiting for callbacks."));
     audio_dropout_clock.restart();
 }
 
@@ -2616,7 +2616,7 @@ void LiveWorkspace::Impl::restartOsc() {
     QString error;
     if (!osc.listen(static_cast<std::uint16_t>(osc_port->value()),
                     osc_local->isChecked(), &error)) {
-        emit q->runtimeStatusChanged(q->tr("OSC could not listen: %1").arg(error));
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("OSC could not listen: %1").arg(error));
     }
 }
 
@@ -2625,11 +2625,11 @@ void LiveWorkspace::Impl::configureClockOutputs() {
     for (const auto& output : config.midi_clock_outputs) {
         if (!output.enabled) continue;
         const auto* role = endpoint(output.endpoint_uuid);
-        QString name = role == nullptr ? q->tr("PVT Clock") : qtext(role->name);
+        QString name = role == nullptr ? LiveWorkspace::tr("PVT Clock") : qtext(role->name);
         if (output.source == pvt::LiveClockTarget::Layer) {
-            name += q->tr(" · Layer");
+            name += LiveWorkspace::tr(" · Layer");
         } else {
-            name += q->tr(" · Project");
+            name += LiveWorkspace::tr(" · Project");
         }
         names.push_back(name);
     }
@@ -2763,17 +2763,17 @@ void LiveWorkspace::Impl::restoreOutputOwnerFocus() {
 
 void LiveWorkspace::Impl::showStartingState() {
     render_lamp->setState(StatusLamp::State::Warning);
-    render_lamp->setText(q->tr("STARTING"));
+    render_lamp->setText(LiveWorkspace::tr("STARTING"));
     render_lamp->setToolTip({});
-    fps_readout->setText(q->tr("0.0 fps delivered"));
-    frame_readout->setText(q->tr("Waiting for first frame"));
+    fps_readout->setText(LiveWorkspace::tr("0.0 fps delivered"));
+    frame_readout->setText(LiveWorkspace::tr("Waiting for first frame"));
     monitor->setPixmap({});
-    monitor->setText(q->tr("PROGRAM OUTPUT\nWaiting for first frame"));
+    monitor->setText(LiveWorkspace::tr("PROGRAM OUTPUT\nWaiting for first frame"));
 }
 
 void LiveWorkspace::Impl::showStandbyState() {
     render_lamp->setState(StatusLamp::State::Off);
-    render_lamp->setText(q->tr("STANDBY"));
+    render_lamp->setText(LiveWorkspace::tr("STANDBY"));
     render_lamp->setToolTip({});
     audio_lamp->setState(StatusLamp::State::Off);
     audio_lamp->setToolTip({});
@@ -2785,13 +2785,13 @@ void LiveWorkspace::Impl::showStandbyState() {
         audio_spectrum->setBands({});
         audio_spectrum->setGateOpen(true);
     }
-    detected_tempo->setText(q->tr("Waiting for audio…"));
-    fps_readout->setText(q->tr("— fps"));
-    frame_readout->setText(q->tr("No frame"));
+    detected_tempo->setText(LiveWorkspace::tr("Waiting for audio…"));
+    fps_readout->setText(LiveWorkspace::tr("— fps"));
+    frame_readout->setText(LiveWorkspace::tr("No frame"));
     monitor->setPixmap({});
-    monitor->setText(q->tr("PROGRAM OUTPUT\nStandby"));
-    freeze_button->setText(q->tr("FREEZE"));
-    blackout_button->setText(q->tr("BLACKOUT"));
+    monitor->setText(LiveWorkspace::tr("PROGRAM OUTPUT\nStandby"));
+    freeze_button->setText(LiveWorkspace::tr("FREEZE"));
+    blackout_button->setText(LiveWorkspace::tr("BLACKOUT"));
 }
 
 void LiveWorkspace::Impl::toggleOutput() {
@@ -2810,14 +2810,14 @@ void LiveWorkspace::Impl::setFreeze(bool value) {
         safety_blackout = false;
     }
     stage.setFrozen(value);
-    freeze_button->setText(value ? q->tr("FROZEN") : q->tr("FREEZE"));
+    freeze_button->setText(value ? LiveWorkspace::tr("FROZEN") : LiveWorkspace::tr("FREEZE"));
     updateOutputState();
     if (!value) requestFrame();
 }
 
 void LiveWorkspace::Impl::setBlackout(bool value) {
     user_blackout = value;
-    blackout_button->setText(value ? q->tr("BLACK") : q->tr("BLACKOUT"));
+    blackout_button->setText(value ? LiveWorkspace::tr("BLACK") : LiveWorkspace::tr("BLACKOUT"));
     updateOutputState();
 }
 
@@ -2827,8 +2827,8 @@ void LiveWorkspace::Impl::updateOutputState() {
     if (user_blackout || safety_blackout) {
         monitor->setPixmap({});
         monitor->setText(safety_blackout && !user_blackout
-                             ? q->tr("SAFETY BLACKOUT\nLast-good watchdog")
-                             : q->tr("BLACKOUT"));
+                             ? LiveWorkspace::tr("SAFETY BLACKOUT\nLast-good watchdog")
+                             : LiveWorkspace::tr("BLACKOUT"));
     } else {
         updateMonitor();
     }
@@ -2852,7 +2852,7 @@ void LiveWorkspace::Impl::requestFrame() {
                 warnRouteOnce(
                     qtext(input.endpoint_uuid)
                         + QStringLiteral(":wrong-audio-role"),
-                    q->tr("An effective audio clock uses a different logical role than the active microphone. The last good frame is being held; choose the same role in Live or edit the advanced route."));
+                    LiveWorkspace::tr("An effective audio clock uses a different logical role than the active microphone. The last good frame is being held; choose the same role in Live or edit the advanced route."));
             } else if (!input.frequency_stream_uuid.empty()
                        && std::none_of(
                            audio_snapshot.frequency_streams.begin(),
@@ -2864,7 +2864,7 @@ void LiveWorkspace::Impl::requestFrame() {
                 warnRouteOnce(
                     qtext(input.frequency_stream_uuid)
                         + QStringLiteral(":missing-frequency-stream"),
-                    q->tr("An effective audio clock's named frequency stream is unavailable. The last good frame is being held; choose an authored stream or edit the advanced route."));
+                    LiveWorkspace::tr("An effective audio clock's named frequency stream is unavailable. The last good frame is being held; choose an authored stream or edit the advanced route."));
             }
         }
         updateSafety();
@@ -2949,12 +2949,12 @@ void LiveWorkspace::Impl::frameFinished(
         ++late_streak;
         good_streak = 0;
         render_lamp->setState(StatusLamp::State::Fault);
-        render_lamp->setText(q->tr("HOLDING"));
+        render_lamp->setText(LiveWorkspace::tr("HOLDING"));
         render_lamp->setToolTip(result.error);
-        frame_readout->setText(q->tr("Last good · %1 dropped")
+        frame_readout->setText(LiveWorkspace::tr("Last good · %1 dropped")
                                    .arg(result.dropped_requests));
         if (presentation_active) {
-            emit q->runtimeStatusChanged(q->tr(
+            emit q->runtimeStatusChanged(LiveWorkspace::tr(
                 "Live Preview Output is holding the last frame: %1")
                     .arg(result.error));
             return;
@@ -2974,7 +2974,7 @@ void LiveWorkspace::Impl::frameFinished(
     last_good_clock.restart();
     if (presentation_active || !user_freeze) stage.setFrame(result.image);
     if (!user_blackout && !safety_blackout) updateMonitor();
-    frame_readout->setText(q->tr("%1 × %2 · %3 ms · %4 dropped")
+    frame_readout->setText(LiveWorkspace::tr("%1 × %2 · %3 ms · %4 dropped")
                                .arg(result.image.width()).arg(result.image.height())
                                .arg(result.render_milliseconds, 0, 'f', 1)
                                .arg(result.dropped_requests));
@@ -2984,14 +2984,14 @@ void LiveWorkspace::Impl::frameFinished(
     }
     if (const auto delivered_fps = delivered_frame_rate.record(
             presented_frame_clock.nsecsElapsed())) {
-        fps_readout->setText(q->tr("%1 fps delivered")
+        fps_readout->setText(LiveWorkspace::tr("%1 fps delivered")
                                   .arg(*delivered_fps, 0, 'f', 1));
     }
     if (result.late) {
         ++late_streak;
         good_streak = 0;
         render_lamp->setState(StatusLamp::State::Warning);
-        render_lamp->setText(q->tr("LATE"));
+        render_lamp->setText(LiveWorkspace::tr("LATE"));
         if (quality->currentData().toDouble() == 0.0 && late_streak >= 3) {
             adaptive_scale = std::max(0.25, adaptive_scale * 0.8);
             late_streak = 0;
@@ -3000,7 +3000,7 @@ void LiveWorkspace::Impl::frameFinished(
         late_streak = 0;
         ++good_streak;
         render_lamp->setState(StatusLamp::State::Ready);
-        render_lamp->setText(q->tr("ON AIR"));
+        render_lamp->setText(LiveWorkspace::tr("ON AIR"));
         if (quality->currentData().toDouble() == 0.0 && good_streak >= 120) {
             adaptive_scale = std::min(1.0, adaptive_scale * 1.1);
             good_streak = 0;
@@ -3071,11 +3071,11 @@ void LiveWorkspace::Impl::runtimeTick() {
         }
     }
     detected_tempo->setText(display_bpm > 0.0
-        ? q->tr("%1 BPM · phase %2 · %3 ms input")
+        ? LiveWorkspace::tr("%1 BPM · phase %2 · %3 ms input")
               .arg(display_bpm, 0, 'f', 1)
               .arg(display_phase, 0, 'f', 2)
               .arg(audio_snapshot.estimated_input_latency_ms, 0, 'f', 1)
-        : q->tr("Listening · causal features active"));
+        : LiveWorkspace::tr("Listening · causal features active"));
     const auto midi_clock = midi.clockSnapshot();
     midi_lamp->setState(midi_clock.receiving ? StatusLamp::State::Ready
                                               : (midi.isRunning()
@@ -3182,8 +3182,8 @@ void LiveWorkspace::Impl::createStarterRig() {
                 || item.protocol == pvt::LiveEndpointProtocol::FootController;
         });
     if (already_has_roles
-        && QMessageBox::question(q, q->tr("Create starter rig"),
-             q->tr("This project already has Live roles. Add a complete starter set as well?"))
+        && QMessageBox::question(q, LiveWorkspace::tr("Create starter rig"),
+             LiveWorkspace::tr("This project already has Live roles. Add a complete starter set as well?"))
                != QMessageBox::Yes) return;
     pvt::LiveConfig next = config;
     const auto append = [&next](const QString& name,
@@ -3199,15 +3199,15 @@ void LiveWorkspace::Impl::createStarterRig() {
         return uuid;
     };
     const std::string audio_uuid = append(
-        q->tr("Stage audio"), pvt::LiveEndpointProtocol::Audio,
+        LiveWorkspace::tr("Stage audio"), pvt::LiveEndpointProtocol::Audio,
         pvt::LiveEndpointDirection::Input);
-    append(q->tr("Stage MIDI"), pvt::LiveEndpointProtocol::Midi,
+    append(LiveWorkspace::tr("Stage MIDI"), pvt::LiveEndpointProtocol::Midi,
            pvt::LiveEndpointDirection::Bidirectional);
-    append(q->tr("Stage OSC"), pvt::LiveEndpointProtocol::Osc,
+    append(LiveWorkspace::tr("Stage OSC"), pvt::LiveEndpointProtocol::Osc,
            pvt::LiveEndpointDirection::Input);
-    append(q->tr("Foot controller"), pvt::LiveEndpointProtocol::FootController,
+    append(LiveWorkspace::tr("Foot controller"), pvt::LiveEndpointProtocol::FootController,
            pvt::LiveEndpointDirection::Input);
-    append(q->tr("Layer clock return"), pvt::LiveEndpointProtocol::Midi,
+    append(LiveWorkspace::tr("Layer clock return"), pvt::LiveEndpointProtocol::Midi,
            pvt::LiveEndpointDirection::Output);
     const bool has_project_clock = std::any_of(
         next.clock_inputs.begin(), next.clock_inputs.end(),
@@ -3224,7 +3224,7 @@ void LiveWorkspace::Impl::createStarterRig() {
         next.clock_inputs.push_back(std::move(route));
     }
     next.enabled = true;
-    commitConfig(std::move(next), q->tr("Create portable live starter rig"));
+    commitConfig(std::move(next), LiveWorkspace::tr("Create portable live starter rig"));
 }
 
 void LiveWorkspace::Impl::addAudioStarterMappings() {
@@ -3242,8 +3242,8 @@ void LiveWorkspace::Impl::addAudioStarterMappings() {
     }
     if (endpoint_uuid.empty()) {
         QMessageBox::information(
-            q, q->tr("Audio starter map"),
-            q->tr("Create or add an Audio input role on the Rig tab first."));
+            q, LiveWorkspace::tr("Audio starter map"),
+            LiveWorkspace::tr("Create or add an Audio input role on the Rig tab first."));
         return;
     }
 
@@ -3293,7 +3293,7 @@ void LiveWorkspace::Impl::addAudioStarterMappings() {
             const double span = std::max(0.35, std::fabs(descriptor->current_value) * 1.25);
             starters.push_back({
                 pvt::LiveControlInput::AudioBass,
-                q->tr("Bass → %1 wave amplitude").arg(qtext(layer->name)),
+                LiveWorkspace::tr("Bass → %1 wave amplitude").arg(qtext(layer->name)),
                 path,
                 std::clamp(descriptor->current_value - span * 0.35,
                            descriptor->minimum, descriptor->maximum),
@@ -3313,7 +3313,7 @@ void LiveWorkspace::Impl::addAudioStarterMappings() {
                 descriptor->minimum, descriptor->maximum);
             starters.push_back({
                 pvt::LiveControlInput::AudioOnset,
-                q->tr("Onset → %1 effect strength").arg(qtext(layer->name)),
+                LiveWorkspace::tr("Onset → %1 effect strength").arg(qtext(layer->name)),
                 path,
                 std::clamp(descriptor->current_value * 0.4,
                            descriptor->minimum, descriptor->maximum),
@@ -3324,7 +3324,7 @@ void LiveWorkspace::Impl::addAudioStarterMappings() {
     if (target(saturation_path) != nullptr) {
         starters.push_back({
             pvt::LiveControlInput::AudioTreble,
-            q->tr("Treble → %1 saturation").arg(qtext(layer->name)),
+            LiveWorkspace::tr("Treble → %1 saturation").arg(qtext(layer->name)),
             saturation_path, 0.25, 1.0, 0.03, 140});
     }
 
@@ -3357,39 +3357,39 @@ void LiveWorkspace::Impl::addAudioStarterMappings() {
     }
     if (added == 0U) {
         QMessageBox::information(
-            q, q->tr("Audio starter map"),
-            q->tr("The available starter routes already exist, or this layer has no compatible wave/effect/color targets."));
+            q, LiveWorkspace::tr("Audio starter map"),
+            LiveWorkspace::tr("The available starter routes already exist, or this layer has no compatible wave/effect/color targets."));
         return;
     }
-    commitConfig(std::move(next), q->tr("Add live audio starter mappings"));
+    commitConfig(std::move(next), LiveWorkspace::tr("Add live audio starter mappings"));
     tabs->setCurrentWidget(mapping_table->parentWidget());
     emit q->runtimeStatusChanged(
-        q->tr("Added %1 editable audio mappings. Bass, onsets, and treble now drive visible layer settings.")
+        LiveWorkspace::tr("Added %1 editable audio mappings. Bass, onsets, and treble now drive visible layer settings.")
             .arg(static_cast<qulonglong>(added)));
 }
 
 void LiveWorkspace::Impl::addLogicalRole() {
     QDialog dialog(q);
-    dialog.setWindowTitle(q->tr("Add Logical Live Role"));
+    dialog.setWindowTitle(LiveWorkspace::tr("Add Logical Live Role"));
     auto* layout = new QFormLayout(&dialog);
-    auto* name = new QLineEdit(q->tr("Live control"));
+    auto* name = new QLineEdit(LiveWorkspace::tr("Live control"));
     auto* protocol = new QComboBox;
-    protocol->addItem(q->tr("Audio"), static_cast<int>(pvt::LiveEndpointProtocol::Audio));
-    protocol->addItem(q->tr("MIDI"), static_cast<int>(pvt::LiveEndpointProtocol::Midi));
-    protocol->addItem(q->tr("OSC"), static_cast<int>(pvt::LiveEndpointProtocol::Osc));
-    protocol->addItem(q->tr("Foot controller"), static_cast<int>(pvt::LiveEndpointProtocol::FootController));
+    protocol->addItem(LiveWorkspace::tr("Audio"), static_cast<int>(pvt::LiveEndpointProtocol::Audio));
+    protocol->addItem(LiveWorkspace::tr("MIDI"), static_cast<int>(pvt::LiveEndpointProtocol::Midi));
+    protocol->addItem(LiveWorkspace::tr("OSC"), static_cast<int>(pvt::LiveEndpointProtocol::Osc));
+    protocol->addItem(LiveWorkspace::tr("Foot controller"), static_cast<int>(pvt::LiveEndpointProtocol::FootController));
     auto* direction = new QComboBox;
-    direction->addItem(q->tr("Input"), static_cast<int>(pvt::LiveEndpointDirection::Input));
-    direction->addItem(q->tr("Output"), static_cast<int>(pvt::LiveEndpointDirection::Output));
-    direction->addItem(q->tr("Input + output"), static_cast<int>(pvt::LiveEndpointDirection::Bidirectional));
-    auto* note = new QLabel(q->tr(
+    direction->addItem(LiveWorkspace::tr("Input"), static_cast<int>(pvt::LiveEndpointDirection::Input));
+    direction->addItem(LiveWorkspace::tr("Output"), static_cast<int>(pvt::LiveEndpointDirection::Output));
+    direction->addItem(LiveWorkspace::tr("Input + output"), static_cast<int>(pvt::LiveEndpointDirection::Bidirectional));
+    auto* note = new QLabel(LiveWorkspace::tr(
         "The project stores this role and its calibration. Device names, network "
         "addresses, and port identities stay in local preferences."));
     note->setWordWrap(true);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    layout->addRow(q->tr("Name"), name);
-    layout->addRow(q->tr("Protocol"), protocol);
-    layout->addRow(q->tr("Direction"), direction);
+    layout->addRow(LiveWorkspace::tr("Name"), name);
+    layout->addRow(LiveWorkspace::tr("Protocol"), protocol);
+    layout->addRow(LiveWorkspace::tr("Direction"), direction);
     layout->addRow(note);
     layout->addRow(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -3420,7 +3420,7 @@ void LiveWorkspace::Impl::addLogicalRole() {
         next.clock_inputs.push_back(std::move(route));
     }
     next.enabled = true;
-    commitConfig(std::move(next), q->tr("Add portable live role"));
+    commitConfig(std::move(next), LiveWorkspace::tr("Add portable live role"));
 }
 
 void LiveWorkspace::Impl::calibrateLatency() {
@@ -3449,8 +3449,8 @@ void LiveWorkspace::Impl::calibrateLatency() {
     }
     if (!audio_snapshot.receiving || detected_bpm <= 0.0
         || audio_role->currentData().toString().isEmpty()) {
-        QMessageBox::information(q, q->tr("Align audio beat"),
-            q->tr("Start Live and play a steady beat first. Tap this button on the beat; "
+        QMessageBox::information(q, LiveWorkspace::tr("Align audio beat"),
+            LiveWorkspace::tr("Start Live and play a steady beat first. Tap this button on the beat; "
                   "the current causal beat phase becomes a correction for this computer and device."));
         return;
     }
@@ -3467,7 +3467,7 @@ void LiveWorkspace::Impl::calibrateLatency() {
         static_cast<double>((std::numeric_limits<int>::min)()),
         static_cast<double>(kMaximumUiInteger)));
     device_latency->setValue(correction);
-    emit q->runtimeStatusChanged(q->tr(
+    emit q->runtimeStatusChanged(LiveWorkspace::tr(
         "Saved a %1 ms machine-local correction for this microphone. The portable rig offset was left unchanged.")
         .arg(correction));
 }
@@ -3499,13 +3499,13 @@ void LiveWorkspace::Impl::editMapping(int index) {
     if (editing) initial = config.mappings[static_cast<std::size_t>(index)];
 
     QDialog dialog(q);
-    dialog.setWindowTitle(editing ? q->tr("Edit Live Mapping")
-                                  : q->tr("Add Live Mapping"));
+    dialog.setWindowTitle(editing ? LiveWorkspace::tr("Edit Live Mapping")
+                                  : LiveWorkspace::tr("Add Live Mapping"));
     dialog.resize(760, 720);
     auto* outer = new QVBoxLayout(&dialog);
     auto* form = new QFormLayout;
-    auto* name = new QLineEdit(editing ? qtext(initial.name) : q->tr("Performance control"));
-    auto* enabled = new QCheckBox(q->tr("Enabled"));
+    auto* name = new QLineEdit(editing ? qtext(initial.name) : LiveWorkspace::tr("Performance control"));
+    auto* enabled = new QCheckBox(LiveWorkspace::tr("Enabled"));
     enabled->setChecked(!editing || initial.enabled);
     auto* input = new QComboBox;
     const std::initializer_list<pvt::LiveControlInput> inputs = {
@@ -3543,33 +3543,33 @@ void LiveWorkspace::Impl::editMapping(int index) {
         mode->addItem(mapping_mode_name(item), value);
     }
     mode->setCurrentIndex(std::max(0, mode->findData(static_cast<int>(initial.mode))));
-    form->addRow(q->tr("Name"), name);
+    form->addRow(LiveWorkspace::tr("Name"), name);
     form->addRow({}, enabled);
-    form->addRow(q->tr("Input"), input);
-    form->addRow(q->tr("Logical role"), endpoint_combo);
-    form->addRow(q->tr("MIDI channel (0 = omni)"), channel);
-    form->addRow(q->tr("Control / note"), number);
-    form->addRow(q->tr("OSC address"), address);
-    form->addRow(q->tr("Behavior"), mode);
+    form->addRow(LiveWorkspace::tr("Input"), input);
+    form->addRow(LiveWorkspace::tr("Logical role"), endpoint_combo);
+    form->addRow(LiveWorkspace::tr("MIDI channel (0 = omni)"), channel);
+    form->addRow(LiveWorkspace::tr("Control / note"), number);
+    form->addRow(LiveWorkspace::tr("OSC address"), address);
+    form->addRow(LiveWorkspace::tr("Behavior"), mode);
     outer->addLayout(form);
 
     auto* target_kind = new QComboBox;
-    target_kind->addItem(q->tr("Setting"), static_cast<int>(pvt::LiveMappingTarget::Setting));
-    target_kind->addItem(q->tr("Performance action"), static_cast<int>(pvt::LiveMappingTarget::Action));
-    target_kind->addItem(q->tr("Scene"), static_cast<int>(pvt::LiveMappingTarget::Scene));
+    target_kind->addItem(LiveWorkspace::tr("Setting"), static_cast<int>(pvt::LiveMappingTarget::Setting));
+    target_kind->addItem(LiveWorkspace::tr("Performance action"), static_cast<int>(pvt::LiveMappingTarget::Action));
+    target_kind->addItem(LiveWorkspace::tr("Scene"), static_cast<int>(pvt::LiveMappingTarget::Scene));
     target_kind->setCurrentIndex(std::max(0, target_kind->findData(static_cast<int>(initial.target))));
-    outer->addWidget(new QLabel(q->tr("TARGET")));
+    outer->addWidget(new QLabel(LiveWorkspace::tr("TARGET")));
     outer->addWidget(target_kind);
     auto* targets = new QStackedWidget;
     auto* setting_page = new QWidget;
     auto* setting_layout = new QVBoxLayout(setting_page);
     setting_layout->setContentsMargins(0, 0, 0, 0);
     auto* setting_search = new QLineEdit;
-    setting_search->setPlaceholderText(q->tr(
+    setting_search->setPlaceholderText(LiveWorkspace::tr(
         "Search targets by layer, section, or control…"));
     setting_search->setClearButtonEnabled(true);
     auto* setting = new QTreeWidget;
-    setting->setHeaderLabels({q->tr("Target"), q->tr("Current")});
+    setting->setHeaderLabels({LiveWorkspace::tr("Target"), LiveWorkspace::tr("Current")});
     setting->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     setting->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     setting->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -3611,7 +3611,7 @@ void LiveWorkspace::Impl::editMapping(int index) {
         }
         if (selected == nullptr) {
             auto* unresolved = new QTreeWidgetItem(
-                setting, {q->tr("Unresolved · %1").arg(qtext(initial.target_path))});
+                setting, {LiveWorkspace::tr("Unresolved · %1").arg(qtext(initial.target_path))});
             unresolved->setData(0, Qt::UserRole, qtext(initial.target_path));
             unresolved->setData(0, Qt::UserRole + 1, initial.output_minimum);
             unresolved->setData(0, Qt::UserRole + 2, initial.output_maximum);
@@ -3673,7 +3673,7 @@ void LiveWorkspace::Impl::editMapping(int index) {
     dead->setValue(editing ? initial.dead_zone : 0.0);
     auto* smoothing = new QSpinBox;
     smoothing->setRange(0, kMaximumUiInteger);
-    smoothing->setSuffix(q->tr(" ms"));
+    smoothing->setSuffix(LiveWorkspace::tr(" ms"));
     smoothing->setValue(editing ? initial.smoothing_milliseconds : 0);
     auto* input_range = new QWidget;
     auto* ir = new QHBoxLayout(input_range);
@@ -3683,11 +3683,11 @@ void LiveWorkspace::Impl::editMapping(int index) {
     auto* orow = new QHBoxLayout(output_range);
     orow->setContentsMargins(0, 0, 0, 0);
     orow->addWidget(output_min); orow->addWidget(output_max);
-    transform->addRow(q->tr("Input range"), input_range);
-    transform->addRow(q->tr("Output range"), output_range);
-    transform->addRow(q->tr("Response curve"), curve);
-    transform->addRow(q->tr("Dead zone"), dead);
-    transform->addRow(q->tr("Smoothing"), smoothing);
+    transform->addRow(LiveWorkspace::tr("Input range"), input_range);
+    transform->addRow(LiveWorkspace::tr("Output range"), output_range);
+    transform->addRow(LiveWorkspace::tr("Response curve"), curve);
+    transform->addRow(LiveWorkspace::tr("Dead zone"), dead);
+    transform->addRow(LiveWorkspace::tr("Smoothing"), smoothing);
     outer->addLayout(transform);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     outer->addWidget(buttons);
@@ -3767,13 +3767,13 @@ void LiveWorkspace::Impl::editMapping(int index) {
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() != QDialog::Accepted) return;
     if (name->text().trimmed().isEmpty() || endpoint_combo->currentData().toString().isEmpty()) {
-        QMessageBox::warning(q, q->tr("Live mapping"),
-                             q->tr("A mapping needs a name and a compatible logical role."));
+        QMessageBox::warning(q, LiveWorkspace::tr("Live mapping"),
+                             LiveWorkspace::tr("A mapping needs a name and a compatible logical role."));
         return;
     }
     if (input_min->value() >= input_max->value()) {
-        QMessageBox::warning(q, q->tr("Live mapping"),
-                             q->tr("The input maximum must be greater than its minimum."));
+        QMessageBox::warning(q, LiveWorkspace::tr("Live mapping"),
+                             LiveWorkspace::tr("The input maximum must be greater than its minimum."));
         return;
     }
     pvt::LiveControlMapping mapping;
@@ -3795,8 +3795,8 @@ void LiveWorkspace::Impl::editMapping(int index) {
     if (mapping.target == pvt::LiveMappingTarget::Setting) {
         const QTreeWidgetItem* selected = setting->currentItem();
         if (selected == nullptr || selected->data(0, Qt::UserRole).toString().isEmpty()) {
-            QMessageBox::warning(q, q->tr("Live mapping"),
-                                 q->tr("Choose a setting target."));
+            QMessageBox::warning(q, LiveWorkspace::tr("Live mapping"),
+                                 LiveWorkspace::tr("Choose a setting target."));
             return;
         }
         mapping.target_path = narrow(selected->data(0, Qt::UserRole).toString());
@@ -3816,8 +3816,8 @@ void LiveWorkspace::Impl::editMapping(int index) {
     pvt::LiveConfig next = config;
     if (editing) next.mappings[static_cast<std::size_t>(index)] = std::move(mapping);
     else next.mappings.push_back(std::move(mapping));
-    commitConfig(std::move(next), editing ? q->tr("Edit live mapping")
-                                          : q->tr("Add live mapping"));
+    commitConfig(std::move(next), editing ? LiveWorkspace::tr("Edit live mapping")
+                                          : LiveWorkspace::tr("Add live mapping"));
 }
 
 void LiveWorkspace::Impl::removeMapping() {
@@ -3825,18 +3825,18 @@ void LiveWorkspace::Impl::removeMapping() {
     if (row < 0 || row >= static_cast<int>(config.mappings.size())) return;
     pvt::LiveConfig next = config;
     next.mappings.erase(next.mappings.begin() + row);
-    commitConfig(std::move(next), q->tr("Remove live mapping"));
+    commitConfig(std::move(next), LiveWorkspace::tr("Remove live mapping"));
 }
 
 void LiveWorkspace::Impl::beginMidiLearn() {
     const int row = mapping_table->currentRow();
     if (row < 0 || row >= static_cast<int>(config.mappings.size())) {
-        QMessageBox::information(q, q->tr("MIDI Learn"),
-                                 q->tr("Select a MIDI or foot-controller mapping first."));
+        QMessageBox::information(q, LiveWorkspace::tr("MIDI Learn"),
+                                 LiveWorkspace::tr("Select a MIDI or foot-controller mapping first."));
         return;
     }
     learn_mapping = learn_mapping == row ? -1 : row;
-    learn_button->setText(learn_mapping >= 0 ? q->tr("Listening…") : q->tr("MIDI Learn"));
+    learn_button->setText(learn_mapping >= 0 ? LiveWorkspace::tr("Listening…") : LiveWorkspace::tr("MIDI Learn"));
 }
 
 void LiveWorkspace::Impl::handleMidi(LiveMidiRouter::MessageKind kind,
@@ -3870,7 +3870,7 @@ void LiveWorkspace::Impl::handleMidi(LiveMidiRouter::MessageKind kind,
                                   || foot) ? number : 0;
         mapping.osc_address.clear();
         learn_mapping = -1;
-        commitConfig(std::move(next), q->tr("Learn live MIDI control"));
+        commitConfig(std::move(next), LiveWorkspace::tr("Learn live MIDI control"));
         return;
     }
     const QString midi_endpoint = sourceEndpoint(pvt::LiveEndpointProtocol::Midi, source);
@@ -4040,9 +4040,9 @@ void LiveWorkspace::Impl::captureScene(bool updateExisting) {
         name = qtext(config.scenes[static_cast<std::size_t>(row)].name);
     } else {
         bool ok = false;
-        name = QInputDialog::getText(q, q->tr("Capture Live Scene"),
-                                     q->tr("Scene name"), QLineEdit::Normal,
-                                     q->tr("Scene %1").arg(config.scenes.size() + 1),
+        name = QInputDialog::getText(q, LiveWorkspace::tr("Capture Live Scene"),
+                                     LiveWorkspace::tr("Scene name"), QLineEdit::Normal,
+                                     LiveWorkspace::tr("Scene %1").arg(config.scenes.size() + 1),
                                      &ok).trimmed();
         if (!ok || name.isEmpty()) return;
     }
@@ -4065,8 +4065,8 @@ void LiveWorkspace::Impl::captureScene(bool updateExisting) {
     pvt::LiveConfig next = config;
     if (updateExisting) next.scenes[static_cast<std::size_t>(row)] = std::move(scene);
     else next.scenes.push_back(std::move(scene));
-    commitConfig(std::move(next), updateExisting ? q->tr("Update live scene")
-                                                 : q->tr("Capture live scene"));
+    commitConfig(std::move(next), updateExisting ? LiveWorkspace::tr("Update live scene")
+                                                 : LiveWorkspace::tr("Capture live scene"));
     if (!updateExisting) scene_list->setCurrentRow(scene_list->count() - 1);
 }
 
@@ -4082,7 +4082,7 @@ void LiveWorkspace::Impl::removeScene() {
             return mapping.target == pvt::LiveMappingTarget::Scene
                 && mapping.scene_uuid == uuid;
         }), next.mappings.end());
-    commitConfig(std::move(next), q->tr("Remove live scene"));
+    commitConfig(std::move(next), LiveWorkspace::tr("Remove live scene"));
 }
 
 void LiveWorkspace::Impl::takeSelectedScene() {
@@ -4131,7 +4131,7 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
         }
     }
     scene_transition = std::move(next);
-    scene_readout->setText(q->tr("Scene: %1").arg(qtext(found->name)));
+    scene_readout->setText(LiveWorkspace::tr("Scene: %1").arg(qtext(found->name)));
     for (int row = 0; row < scene_list->count(); ++row) {
         if (scene_list->item(row)->data(Qt::UserRole).toString() == qtext(uuid)) {
             scene_list->setCurrentRow(row);
@@ -4264,7 +4264,7 @@ std::optional<double> LiveWorkspace::Impl::routedPhase(
     if (selected_role != input.endpoint_uuid) {
         warnRouteOnce(
             qtext(input.endpoint_uuid) + QStringLiteral(":wrong-audio-role"),
-            q->tr("An effective audio clock uses a different logical role than the active microphone. Its deterministic clock is being used instead; choose the same role in Live or edit the advanced route."));
+            LiveWorkspace::tr("An effective audio clock uses a different logical role than the active microphone. Its deterministic clock is being used instead; choose the same role in Live or edit the advanced route."));
         return std::nullopt;
     }
     const double callback_age_seconds = live_audio_loss_age_seconds(
@@ -4290,7 +4290,7 @@ std::optional<double> LiveWorkspace::Impl::routedPhase(
             warnRouteOnce(
                 qtext(input.frequency_stream_uuid)
                     + QStringLiteral(":missing-frequency-stream"),
-                q->tr("An audio clock's frequency stream is unavailable. Its deterministic clock is being used instead."));
+                LiveWorkspace::tr("An audio clock's frequency stream is unavailable. Its deterministic clock is being used instead."));
             return std::nullopt;
         }
         beat_count = stream->beat_count;
@@ -4657,8 +4657,8 @@ void LiveWorkspace::Impl::editClockRoute(bool layerTarget) {
         next.clock_inputs.push_back(std::move(route));
     }
     commitConfig(std::move(next), layerTarget
-        ? q->tr("Patch active-layer live clock")
-        : q->tr("Patch project live clock"));
+        ? LiveWorkspace::tr("Patch active-layer live clock")
+        : LiveWorkspace::tr("Patch project live clock"));
 }
 
 void LiveWorkspace::Impl::editClockOutput(bool layerTarget) {
@@ -4697,8 +4697,8 @@ void LiveWorkspace::Impl::editClockOutput(bool layerTarget) {
         next.midi_clock_outputs.push_back(std::move(output));
     }
     commitConfig(std::move(next), layerTarget
-        ? q->tr("Change active-layer MIDI clock output")
-        : q->tr("Change project MIDI clock output"));
+        ? LiveWorkspace::tr("Change active-layer MIDI clock output")
+        : LiveWorkspace::tr("Change project MIDI clock output"));
 }
 
 LiveWorkspace::LiveWorkspace(ProjectSnapshotProvider projectProvider,

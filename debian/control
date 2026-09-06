@@ -8,6 +8,9 @@ Build-Depends:
  libpng-dev,
  ninja-build,
  qt6-base-dev (>= 6.5.0~),
+ qt6-l10n-tools (>= 6.5.0~),
+ qt6-tools-dev (>= 6.5.0~),
+ qt6-translations-l10n,
  zlib1g-dev
 Standards-Version: 4.7.3
 Homepage: https://github.com/gnaservicesinc/procedural_visualizer_tool

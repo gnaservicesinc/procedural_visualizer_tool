@@ -2,6 +2,8 @@
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-procedural-visualizer-tool-project">
     <comment>Procedural Visualizer Tool project</comment>
+    <comment xml:lang="de">Projekt für Procedural Visualizer Tool</comment>
+    <comment xml:lang="fr">Projet Procedural Visualizer Tool</comment>
     <acronym>PVT</acronym>
     <icon name="procedural-visualizer-tool"/>
     <sub-class-of type="text/plain"/>

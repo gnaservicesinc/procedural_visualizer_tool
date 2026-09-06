@@ -13,6 +13,7 @@ class QSpinBox;
 class QShowEvent;
 
 class VideoExportDialog final : public QDialog {
+    Q_OBJECT
 public:
     VideoExportDialog(const pvt::video::Capabilities& capabilities,
                       bool projectHasAlpha, bool projectHasMusic,

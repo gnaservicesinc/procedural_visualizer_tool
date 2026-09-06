@@ -1,8 +1,14 @@
 [Desktop Entry]
 Version=1.0
 Name=Procedural Visualizer Tool
+Name[de]=Procedural Visualizer Tool
+Name[fr]=Procedural Visualizer Tool
 GenericName=Procedural Animation Editor
+GenericName[de]=Editor für prozedurale Animationen
+GenericName[fr]=Éditeur d’animations procédurales
 Comment=Create seamless looping procedural animations
+Comment[de]=Nahtlose, sich wiederholende prozedurale Animationen erstellen
+Comment[fr]=Créer des animations procédurales fluides en boucle
 Exec=procedural-visualizer-tool %f
 Terminal=false
 Type=Application
@@ -13,7 +19,11 @@ Icon=procedural-visualizer-tool
 Categories=Graphics;2DGraphics;Qt;
 Actions=NewWindow;
 Keywords=Animation;Audio;Loop;Procedural;Render;Video;Visualizer;
+Keywords[de]=Animation;Audio;Schleife;Prozedural;Rendern;Video;Visualisierung;
+Keywords[fr]=Animation;Audio;Boucle;Procédural;Rendu;Vidéo;Visualiseur;
 
 [Desktop Action NewWindow]
 Name=New Window
+Name[de]=Neues Fenster
+Name[fr]=Nouvelle fenêtre
 Exec=procedural-visualizer-tool

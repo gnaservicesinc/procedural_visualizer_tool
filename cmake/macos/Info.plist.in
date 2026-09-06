@@ -26,6 +26,10 @@
     <string>en</string>
     <key>CFBundleAllowMixedLocalizations</key>
     <true/>
+    <key>CFBundleLocalizations</key>
+    <array>
+        ${PVT_MACOS_LOCALIZATIONS}
+    </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>

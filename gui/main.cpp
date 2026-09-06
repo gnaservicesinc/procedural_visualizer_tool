@@ -1,9 +1,14 @@
 #include "main_window.h"
+#include "localization.h"
 
 #include <QApplication>
 #include <QColor>
 #include <QDebug>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
 #include <QPalette>
 #include <QPushButton>
 #include <QStyleFactory>
@@ -154,10 +159,34 @@ int main(int argc, char** argv) {
     QApplication::setApplicationVersion(QStringLiteral(PVT_PROGRAM_VERSION));
 #endif
     QApplication::setOrganizationName(QStringLiteral("GNA Services"));
+    const QStringList arguments = application.arguments();
+    QString requested_language = Localization::savedLanguage();
+    const qsizetype language_index = arguments.indexOf(QStringLiteral("--language"));
+    if (language_index >= 0) {
+        if (language_index + 1 >= arguments.size()
+            || arguments.at(language_index + 1).startsWith(QLatin1Char('-'))) {
+            std::fputs("--language requires a locale code or system\n", stderr);
+            return 1;
+        }
+        requested_language = arguments.at(language_index + 1);
+    }
+    Localization localization;
+    localization.install(application, requested_language, QLocale::system().uiLanguages());
+    if (arguments.contains(QStringLiteral("--localization-info"))) {
+        const QJsonObject info{
+            {QStringLiteral("requested"), requested_language},
+            {QStringLiteral("language"), localization.language()},
+            {QStringLiteral("available"), QJsonArray::fromStringList(localization.availableLanguages())},
+            {QStringLiteral("embeddedResources"), localization.resourcesAvailable()},
+            {QStringLiteral("qtTranslation"), localization.hasQtTranslation()},
+            {QStringLiteral("rightToLeft"), application.layoutDirection() == Qt::RightToLeft}};
+        const QByteArray json = QJsonDocument(info).toJson(QJsonDocument::Compact);
+        std::puts(json.constData());
+        return localization.resourcesAvailable() ? 0 : 1;
+    }
     apply_studio_theme(application);
 
     MainWindow window;
-    const QStringList arguments = application.arguments();
     if (arguments.contains(QStringLiteral("--smoke-test"))) {
         QString smoke_error;
         if (!window.runSmokeChecks(&smoke_error)) {
@@ -233,7 +262,8 @@ int main(int argc, char** argv) {
     QString startup_project;
     for (qsizetype index = 1; index < arguments.size(); ++index) {
         const QString& argument = arguments.at(index);
-        if (argument == QStringLiteral("--working-directory")) {
+        if (argument == QStringLiteral("--working-directory")
+            || argument == QStringLiteral("--language")) {
             ++index;
             continue;
         }

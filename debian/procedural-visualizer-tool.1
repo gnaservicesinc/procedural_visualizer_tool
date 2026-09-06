@@ -3,6 +3,7 @@
 procedural-visualizer-tool \- create seamless looping procedural animations
 .SH SYNOPSIS
 .B procedural-visualizer-tool
+.RI [ --language " locale|system" ]
 .RI [ project.pvt ]
 .SH DESCRIPTION
 .B procedural-visualizer-tool
@@ -11,6 +12,19 @@ music-responsive timing, project history, and PNG or OpenEXR frame export.
 .PP
 If a project path is supplied, the application opens it after creating the
 main window.
+.SH OPTIONS
+.TP
+.BI --language " locale|system"
+Override the interface language for this launch without changing the saved
+preference. Use a Qt locale such as de, pt-BR, or fa, or system to follow the
+operating system's preferred languages. Unavailable translations fall back to
+English. A persistent choice is available in Application Settings and takes
+effect after restarting the application.
+.TP
+.B --localization-info
+Print the selected language, available embedded catalogs, toolkit translation
+status, and layout direction as JSON, then exit. Return a failure status if
+required embedded translation resources are missing.
 .SH FILES
 .TP
 .B *.pvt

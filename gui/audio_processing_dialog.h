@@ -10,6 +10,7 @@ class QDoubleSpinBox;
 class QTableWidget;
 
 class AudioProcessingDialog final : public QDialog {
+    Q_OBJECT
 public:
     explicit AudioProcessingDialog(
         const pvt::AudioInputProcessingConfig& initial,

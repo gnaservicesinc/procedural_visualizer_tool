@@ -169,7 +169,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: .qt-source/${{ env.QT_VERSION }}
-          key: qtbase-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v1
+          key: qtbase-linguist-translations-${{ env.QT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Build Qt for Linux arm64
         if: matrix.qt-source == 'source' && steps.qt-source-cache.outputs.cache-hit != 'true'
@@ -195,6 +195,8 @@ jobs:
             -DQT_BUILD_TESTS=OFF
           cmake --build "$RUNNER_TEMP/qtbase-build" --parallel
           cmake --install "$RUNNER_TEMP/qtbase-build"
+          # LinguistTools and standard widget catalogs must match this Qt.
+          bash scripts/build-qt-linguist.sh "$QT_VERSION" "$install_directory" "$RUNNER_TEMP"
 
       - name: Use source-built Qt for Linux arm64
         if: matrix.qt-source == 'source'
@@ -303,7 +305,9 @@ jobs:
             exit 1
           fi
           xvfb-run --auto-servernum \
-            ./package/bin/procedural-visualizer-tool --smoke-test
+            ./package/bin/procedural-visualizer-tool --language en --smoke-test
+          QT_QPA_PLATFORM=offscreen ./package/bin/procedural-visualizer-tool \
+            --language system --localization-info
           ./package/bin/pvt-render --self-test
           cmake -S tests/consumer -B installed-consumer -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -379,7 +383,10 @@ jobs:
           }
           Invoke-PackageCheck `
             "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" `
-            "--smoke-test"
+            "--language en --smoke-test"
+          Invoke-PackageCheck `
+            "$env:GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool.exe" `
+            "--language system --localization-info"
           Invoke-PackageCheck `
             "$env:GITHUB_WORKSPACE/package/bin/pvt-render.exe" "--self-test"
           $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
@@ -403,7 +410,8 @@ jobs:
         shell: bash
         run: |
           app="build/Procedural Visualizer Tool.app"
-          "$app/Contents/MacOS/Procedural Visualizer Tool" --smoke-test
+          "$app/Contents/MacOS/Procedural Visualizer Tool" --language en --smoke-test
+          "$app/Contents/MacOS/Procedural Visualizer Tool" --language system --localization-info
           lipo "$app/Contents/MacOS/Procedural Visualizer Tool" \
             -verify_arch arm64
           lipo "$app/Contents/MacOS/pvt-render" -verify_arch arm64

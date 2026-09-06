@@ -1,0 +1,2 @@
+# Add one Qt locale code per line only after every catalog message has received
+# fluent/native review and scripts/translations.py reports complete coverage.

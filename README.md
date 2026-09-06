@@ -10,6 +10,12 @@ independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
 
+Localization infrastructure is available under **Settings > Application Settings >
+General > Language**. It follows the system's preferred languages by default and
+supports a saved override after restart. Translation authoring is a separate pass;
+the initial framework ships English. See [the translation guide](translations/README.md)
+for adding any Qt-supported language, validation, and packaging details.
+
 ## 17.3.1 alpha and animated-control reliability
 
 Renderer, project, and editor alpha checks now share the same rules for Numeric
@@ -880,9 +886,11 @@ phase, should be reviewed once after opening in 2.0.
   playback without a Qt Multimedia or system-installed audio dependency. WAV
   (including IEEE 32-bit float), FLAC, and MP3 are accepted. These private
   targets are omitted from a core-library-only build.
-- Qt 6.5 or newer with Gui, Widgets, Concurrent, and Network components for the
+- Qt 6.5 or newer with Gui, Widgets, Concurrent, Network, and LinguistTools components for the
   optional GUI, its bounded OSC listener, and the Windows/Linux offscreen
-  OpenGL generated-source/surface accelerator.
+  OpenGL generated-source/surface accelerator. GUI builds also require Qt's
+  standard translations (`qt6-translations-l10n` on Debian/Ubuntu). CLI/library-only
+  builds do not require LinguistTools or translation catalogs.
 - On Apple platforms, the optional Metal backend uses Apple's header-only
   [metal-cpp](https://developer.apple.com/metal/cpp/) from
   `../3rd_party/metal-cpp` plus the system Foundation and Metal frameworks. Set

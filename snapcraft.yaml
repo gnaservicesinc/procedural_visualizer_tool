@@ -21,6 +21,8 @@ grade: stable
 confinement: strict
 
 platforms:
+  # The KDE Qt6/KF6 core24 runtime and SDK snaps currently publish these two
+  # architectures. Others require replacing the desktop stack, not just flags.
   amd64:
   arm64:
 
@@ -58,6 +60,9 @@ parts:
       - -DPVT_BUILD_QT_GUI=ON
       - -DPVT_DEPLOY_QT_RUNTIME=OFF
       - -DPVT_ENABLE_METAL=OFF
+      # The extension supplies matching LinguistTools. Embed standard Qt
+      # dialog translations from this SDK alongside the application catalogs.
+      - -DPVT_QT_TRANSLATIONS_DIR=/snap/kde-qt6-core24-sdk/current/usr/share/qt6/translations
     build-packages:
       - git
       - libfreetype-dev

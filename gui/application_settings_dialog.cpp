@@ -1,4 +1,5 @@
 #include "application_settings_dialog.h"
+#include "localization.h"
 #include "../app/renderer_diagnostics.h"
 
 #include <QClipboard>
@@ -157,6 +158,32 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     auto* general_layout = new QVBoxLayout(general_page);
     general_layout->setContentsMargins(12, 12, 12, 12);
     general_layout->setSpacing(12);
+    auto* language_group = new QGroupBox(tr("Language"), general_page);
+    configure_section(language_group);
+    auto* language_form = new QFormLayout(language_group);
+    configure_form(language_form);
+    language_ = new QComboBox(language_group);
+    language_->setObjectName(QStringLiteral("languagePreference"));
+    language_->addItem(tr("System language"), QStringLiteral("system"));
+    const QString saved_language = Localization::savedLanguage();
+    for (const auto& code : Localization().availableLanguages()) {
+        const QLocale locale(code);
+        QString name = locale.nativeLanguageName();
+        if (name.isEmpty()) name = QLocale::languageToString(locale.language());
+        language_->addItem(QStringLiteral("%1 (%2)").arg(name, code), code);
+    }
+    int language_index = language_->findData(saved_language);
+    if (language_index < 0) {
+        language_->addItem(tr("%1 (unavailable; using fallback)").arg(saved_language),
+                           saved_language);
+        language_index = language_->count() - 1;
+    }
+    language_->setCurrentIndex(language_index);
+    language_form->addRow(tr("Interface language"), language_);
+    language_form->addRow(explanatory_label(
+        tr("Restart the application to apply a language change. "
+           "Untranslated text appears in English."), language_group));
+    general_layout->addWidget(language_group);
     auto* general_preferences = new QHBoxLayout;
     general_preferences->setSpacing(12);
     auto* history_group = new QGroupBox(tr("Editing History"), general_page);
@@ -743,6 +770,10 @@ void ApplicationSettingsDialog::scheduleResponsiveLabelLayout() {
             if (required > 0) label->setMinimumHeight(required);
         }
     });
+}
+
+QString ApplicationSettingsDialog::language() const {
+    return language_->currentData().toString();
 }
 
 int ApplicationSettingsDialog::undoLimit() const {

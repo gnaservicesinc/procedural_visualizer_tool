@@ -1,4 +1,6 @@
 #include "main_window.h"
+#include "localization.h"
+#include "renderer_labels.h"
 
 #include "application_settings_dialog.h"
 #include "audio_processing_dialog.h"
@@ -899,7 +901,7 @@ QString effect_ui_category_name(int category) {
 void populate_effect_types(QComboBox* combo, int category) {
     combo->clear();
     const auto add = [combo](pvt::EffectType type) {
-        add_enum_item(combo, QString::fromUtf8(pvt::effect_type_name(type)), type);
+        add_enum_item(combo, renderer_label(pvt::effect_type_name(type)), type);
     };
     switch (category) {
         case MovementEffects:
@@ -1120,7 +1122,7 @@ void populate_layer_motion_paths(
                             pvt::LayerMotionPath::Bounce,
                             pvt::LayerMotionPath::Lissajous}) {
         add_enum_item(combo,
-                      QString::fromUtf8(pvt::layer_motion_path_name(path)),
+                      renderer_label(pvt::layer_motion_path_name(path)),
                       path);
     }
 
@@ -1255,7 +1257,7 @@ QString wave_label(const pvt::WaveConfig& wave, std::size_t index) {
     if (wave.synchronized
         && wave.audio_response != pvt::AudioResponseMode::Default) {
         routing = QStringLiteral(", audio ")
-                  + QString::fromUtf8(
+                  + renderer_label(
                       pvt::audio_response_mode_name(wave.audio_response))
                         .toLower();
     }
@@ -1272,7 +1274,7 @@ QString swing_label(const pvt::SwingConfig& swing, std::size_t index) {
            + QString::fromStdString(swing.name) + QStringLiteral("  [")
            + (swing.enabled ? QStringLiteral("on") : QStringLiteral("off"))
            + QStringLiteral(", ")
-           + QString::fromUtf8(pvt::waveform_name(swing.waveform))
+           + renderer_label(pvt::waveform_name(swing.waveform))
            + (swing.radius > 0.0 ? QStringLiteral(", local") : QStringLiteral(", global"))
            + QLatin1Char(']');
 }
@@ -1282,15 +1284,15 @@ QString effect_label(const pvt::EffectConfig& effect, std::size_t index) {
     if (effect.synchronized
         && effect.audio_response != pvt::AudioResponseMode::Default) {
         routing = QStringLiteral(", audio ")
-                  + QString::fromUtf8(
+                  + renderer_label(
                       pvt::audio_response_mode_name(effect.audio_response))
                         .toLower();
     }
     return QString::number(index + 1U) + QStringLiteral(". ")
            + QString::fromStdString(effect.name) + QStringLiteral("  [")
-           + QString::fromUtf8(pvt::effect_type_name(effect.type))
+           + renderer_label(pvt::effect_type_name(effect.type))
            + QStringLiteral(", ")
-           + QString::fromUtf8(pvt::effect_space_name(effect.space))
+           + renderer_label(pvt::effect_space_name(effect.space))
            + QStringLiteral(", ")
            + (effect.enabled ? QStringLiteral("on") : QStringLiteral("off"))
            + QStringLiteral(", ")
@@ -3169,10 +3171,10 @@ void MainWindow::updateWorkflowSummaries() {
         const bool mic = standardMicRoute(false) != nullptr;
         driver_project_summary_->setText(mic
             ? tr("Project: Mic (Live) · offline %1")
-                  .arg(QString::fromUtf8(
+                  .arg(renderer_label(
                       pvt::clock_mode_name(config_.clock.mode)))
             : tr("Project: %1")
-                  .arg(QString::fromUtf8(
+                  .arg(renderer_label(
                       pvt::clock_mode_name(config_.clock.mode))));
         driver_project_summary_->setToolTip(
             tr("The project-wide clock is always the base timeline for synchronized items."));
@@ -3182,19 +3184,19 @@ void MainWindow::updateWorkflowSummaries() {
         driver_layer_summary_->setText(
             mic ? tr("Layer: Mic (Live) · offline %1")
                       .arg(config_.layer_clock.enabled
-                          ? QString::fromUtf8(pvt::clock_mode_name(
+                          ? renderer_label(pvt::clock_mode_name(
                                 config_.layer_clock.clock.mode))
                           : tr("Off"))
             : config_.layer_clock.enabled
                 ? (config_.layer_clock.mix_enabled
                        ? tr("Layer: %1 · %2")
-                             .arg(QString::fromUtf8(pvt::clock_mode_name(
+                             .arg(renderer_label(pvt::clock_mode_name(
                                       config_.layer_clock.clock.mode)),
-                                  QString::fromUtf8(
+                                  renderer_label(
                                       pvt::layer_clock_mix_mode_name(
                                           config_.layer_clock.mix)))
                        : tr("Layer: %1 · replace")
-                             .arg(QString::fromUtf8(pvt::clock_mode_name(
+                             .arg(renderer_label(pvt::clock_mode_name(
                                  config_.layer_clock.clock.mode))))
                 : tr("Layer: Off"));
         driver_layer_summary_->setToolTip(
@@ -3558,7 +3560,7 @@ QWidget* MainWindow::createSynchronizationPage() {
     for (const auto mode : {pvt::ClockMode::Default, pvt::ClockMode::Frame,
                             pvt::ClockMode::Time, pvt::ClockMode::Meter,
                             pvt::ClockMode::Music}) {
-        add_enum_item(clock_mode_, QString::fromUtf8(pvt::clock_mode_name(mode)), mode);
+        add_enum_item(clock_mode_, renderer_label(pvt::clock_mode_name(mode)), mode);
     }
     clock_mode_->addItem(tr("Mic (Live)…"), kMicLiveClockSentinel);
     clock_mode_->setItemData(
@@ -3590,13 +3592,13 @@ QWidget* MainWindow::createSynchronizationPage() {
                              pvt::ClockInterpolation::EaseOut,
                              pvt::ClockInterpolation::Smootherstep}) {
         add_enum_item(clock_interpolation_,
-                      QString::fromUtf8(pvt::clock_interpolation_name(value)), value);
+                      renderer_label(pvt::clock_interpolation_name(value)), value);
     }
     clock_interpolation_->setToolTip(
         tr("Interpolates the evaluated clock/parameters, not rendered frames."));
     clock_fit_ = new QComboBox;
     for (const auto value : {pvt::ClockFit::Exact, pvt::ClockFit::FitSequence}) {
-        add_enum_item(clock_fit_, QString::fromUtf8(pvt::clock_fit_name(value)), value);
+        add_enum_item(clock_fit_, renderer_label(pvt::clock_fit_name(value)), value);
     }
     clock_frame_interval_ = integer_editor(1, (std::numeric_limits<int>::max)());
     clock_frame_interval_->setObjectName(QStringLiteral("clockFrameInterval"));
@@ -3623,7 +3625,7 @@ QWidget* MainWindow::createSynchronizationPage() {
                              pvt::MusicTempoMode::Detected,
                              pvt::MusicTempoMode::Double}) {
         add_enum_item(music_tempo_mode_,
-                      QString::fromUtf8(pvt::music_tempo_mode_name(value)), value);
+                      renderer_label(pvt::music_tempo_mode_name(value)), value);
     }
     music_beat_offset_ms_ = real_editor(-kMaximumClockMilliseconds,
                                         kMaximumClockMilliseconds, 3, 1.0);
@@ -3727,7 +3729,7 @@ QWidget* MainWindow::createSynchronizationPage() {
                              pvt::LayerClockMixMode::SoftXor,
                              pvt::LayerClockMixMode::BitwiseXor}) {
         add_enum_item(layer_clock_mix_mode_,
-                      QString::fromUtf8(
+                      renderer_label(
                           pvt::layer_clock_mix_mode_name(value)),
                       value);
     }
@@ -3743,7 +3745,7 @@ QWidget* MainWindow::createSynchronizationPage() {
                              pvt::LayerClockScale::PlayOnceThenProject,
                              pvt::LayerClockScale::OriginalSpeedLoop}) {
         add_enum_item(layer_clock_scale_,
-                      QString::fromUtf8(pvt::layer_clock_scale_name(value)), value);
+                      renderer_label(pvt::layer_clock_scale_name(value)), value);
     }
     layer_clock_mode_ = new QComboBox;
     layer_clock_mode_->setObjectName(QStringLiteral("layerClockMode"));
@@ -3751,7 +3753,7 @@ QWidget* MainWindow::createSynchronizationPage() {
                             pvt::ClockMode::Time, pvt::ClockMode::Meter,
                             pvt::ClockMode::Music}) {
         add_enum_item(layer_clock_mode_,
-                      QString::fromUtf8(pvt::clock_mode_name(mode)), mode);
+                      renderer_label(pvt::clock_mode_name(mode)), mode);
     }
     layer_clock_mode_->addItem(tr("Mic (Live)…"), kMicLiveClockSentinel);
     layer_clock_mode_->setItemData(
@@ -3783,13 +3785,13 @@ QWidget* MainWindow::createSynchronizationPage() {
                              pvt::ClockInterpolation::EaseOut,
                              pvt::ClockInterpolation::Smootherstep}) {
         add_enum_item(layer_clock_interpolation_,
-                      QString::fromUtf8(pvt::clock_interpolation_name(value)), value);
+                      renderer_label(pvt::clock_interpolation_name(value)), value);
     }
     layer_clock_fit_ = new QComboBox;
     for (const auto value : {pvt::ClockFit::Exact,
                              pvt::ClockFit::FitSequence}) {
         add_enum_item(layer_clock_fit_,
-                      QString::fromUtf8(pvt::clock_fit_name(value)), value);
+                      renderer_label(pvt::clock_fit_name(value)), value);
     }
     layer_clock_frame_interval_ = integer_editor(
         1, (std::numeric_limits<int>::max)());
@@ -3817,7 +3819,7 @@ QWidget* MainWindow::createSynchronizationPage() {
                              pvt::MusicTempoMode::Detected,
                              pvt::MusicTempoMode::Double}) {
         add_enum_item(layer_music_tempo_mode_,
-                      QString::fromUtf8(pvt::music_tempo_mode_name(value)), value);
+                      renderer_label(pvt::music_tempo_mode_name(value)), value);
     }
     layer_music_beat_offset_ms_ = real_editor(
         -kMaximumClockMilliseconds, kMaximumClockMilliseconds, 3, 1.0);
@@ -3969,7 +3971,7 @@ QWidget* MainWindow::createSynchronizationPage() {
         const auto feature = static_cast<pvt::MusicFeature>(raw);
         const char* const name = pvt::music_feature_name(feature);
         if (name == nullptr || std::string_view(name) == "Unknown") continue;
-        const QString label = QString::fromUtf8(name);
+        const QString label = renderer_label(name);
         add_enum_item(project_audio_wave_source_, label, feature);
         add_enum_item(project_audio_effect_source_, label, feature);
         add_enum_item(project_audio_color_source_, label, feature);
@@ -4335,14 +4337,14 @@ QWidget* MainWindow::createEffectPage() {
                              pvt::ParticleShape::Diamond,
                              pvt::ParticleShape::Star}) {
         add_enum_item(effect_particle_shape_,
-                      QString::fromUtf8(pvt::particle_shape_name(shape)), shape);
+                      renderer_label(pvt::particle_shape_name(shape)), shape);
     }
     effect_particle_profile_ = new QComboBox;
     for (const auto profile : {pvt::ParticleRenderProfile::LegacyGlow,
                                pvt::ParticleRenderProfile::Defined}) {
         add_enum_item(
             effect_particle_profile_,
-            QString::fromUtf8(pvt::particle_render_profile_name(profile)),
+            renderer_label(pvt::particle_render_profile_name(profile)),
             profile);
     }
     effect_particle_size_scale_ = new QSlider(Qt::Horizontal);
@@ -4361,7 +4363,7 @@ QWidget* MainWindow::createEffectPage() {
                                    pvt::ParticleOrientation::Random}) {
         add_enum_item(
             effect_particle_orientation_,
-            QString::fromUtf8(pvt::particle_orientation_name(orientation)),
+            renderer_label(pvt::particle_orientation_name(orientation)),
             orientation);
     }
     effect_particle_rotation_ = real_editor(
@@ -4371,7 +4373,7 @@ QWidget* MainWindow::createEffectPage() {
                             pvt::BlurType::Directional, pvt::BlurType::Radial,
                             pvt::BlurType::Zoom}) {
         add_enum_item(effect_blur_type_,
-                      QString::fromUtf8(pvt::blur_type_name(type)), type);
+                      renderer_label(pvt::blur_type_name(type)), type);
     }
     effect_blur_passes_ = integer_editor(1, kMaximumIntegerParameter);
     effect_blur_samples_ = integer_editor(2, kMaximumIntegerParameter);
@@ -4607,7 +4609,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                            pvt::StartingImageFit::Cover,
                            pvt::StartingImageFit::Tile}) {
         add_enum_item(starting_image_fit_,
-                      QString::fromUtf8(pvt::starting_image_fit_name(fit)), fit);
+                      renderer_label(pvt::starting_image_fit_name(fit)), fit);
     }
     source_form->addRow(tr("Embedded image (PNG / OpenEXR)"), source_row);
     source_form->addRow(tr("Fit"), starting_image_fit_);
@@ -4618,7 +4620,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                               pvt::DitherMethod::OrderedBayer,
                               pvt::DitherMethod::FloydSteinberg}) {
         add_enum_item(starting_image_palette_dither_method_,
-                      QString::fromUtf8(pvt::dither_method_name(method)), method);
+                      renderer_label(pvt::dither_method_name(method)), method);
     }
     source_form->addRow(starting_image_palette_dither_);
     source_form->addRow(tr("Source quantization dither"),
@@ -4642,7 +4644,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                             pvt::StartingColorMode::SquareSpiralRainbow,
                             pvt::StartingColorMode::Random}) {
         add_enum_item(starting_color_mode_,
-                      QString::fromUtf8(pvt::starting_color_mode_name(mode)), mode);
+                      renderer_label(pvt::starting_color_mode_name(mode)), mode);
     }
     starting_color_include_alpha_ = new QCheckBox(
         tr("Include alpha as a generated color dimension"));
@@ -4792,7 +4794,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                             pvt::MirrorMode::BottomToTop,
                             pvt::MirrorMode::FourWay}) {
         add_enum_item(transform_mirror_,
-                      QString::fromUtf8(pvt::mirror_mode_name(mode)), mode);
+                      renderer_label(pvt::mirror_mode_name(mode)), mode);
     }
     transform_mirror_->setToolTip(
         tr("Copies an explicitly named source half into the opposite half. "
@@ -6620,7 +6622,7 @@ void MainWindow::createLayerDock() {
                             pvt::BlendMode::Add, pvt::BlendMode::Erase,
                             pvt::BlendMode::ColorEraseTones,
                             pvt::BlendMode::ColorEraseBrightness}) {
-        QString label = QString::fromUtf8(pvt::blend_mode_name(mode));
+        QString label = renderer_label(pvt::blend_mode_name(mode));
         if (mode == pvt::BlendMode::Normal) {
             label = tr("Normal (none)");
         }
@@ -7787,7 +7789,7 @@ void MainWindow::showParameterLfoEditor() {
              pvt::Waveform::Square, pvt::Waveform::SawtoothUp,
              pvt::Waveform::SawtoothDown}) {
         waveform->addItem(
-            QString::fromUtf8(pvt::waveform_name(value)),
+            renderer_label(pvt::waveform_name(value)),
             static_cast<int>(value));
     }
     auto* minimum = real_editor(-kMaximumRenderParameter,
@@ -7946,7 +7948,7 @@ void MainWindow::showParameterLfoEditor() {
             .arg(name)
             .arg(lfo.minimum, 0, 'g', 6)
             .arg(lfo.maximum, 0, 'g', 6)
-            .arg(QString::fromUtf8(pvt::waveform_name(lfo.waveform)));
+            .arg(renderer_label(pvt::waveform_name(lfo.waveform)));
         if (auto* item = list->item(row)) {
             item->setText((lfo.enabled ? QString{} : tr("Disabled — "))
                           + summary);
@@ -9543,10 +9545,10 @@ void MainWindow::refreshLayerList() {
                          + QStringLiteral(", ")
                          + (index == 0U
                                 ? tr("base")
-                                : QString::fromUtf8(
+                                : renderer_label(
                                       pvt::blend_mode_name(layer.blend_mode)))
                          + QStringLiteral(", ")
-                         + QString::fromUtf8(pvt::alpha_mode_name(
+                         + renderer_label(pvt::alpha_mode_name(
                                layer.alpha_mode))
                          + QStringLiteral(", ")
                          + QString::number(layer.opacity * 100.0, 'f', 0)
@@ -11505,6 +11507,8 @@ void MainWindow::showApplicationSettings() {
     const pvt::RenderBackend requested_backend = resolved_render_backend(
         requested_performance.backend);
     const int requested_recent_limit = dialog.recentProjectLimit();
+    const QString requested_language = dialog.language();
+    const bool language_changed = requested_language != Localization::savedLanguage();
     const auto defaults_action = dialog.newProjectDefaultsAction();
     const bool undo_limit_changed = requested_undo_limit != current_undo_limit;
     const bool performance_changed =
@@ -11520,7 +11524,7 @@ void MainWindow::showApplicationSettings() {
         || requested_performance.render_memory_budget_value
                != current_performance.render_memory_budget_value;
     const bool recent_limit_changed = requested_recent_limit != current_recent_limit;
-    if (!undo_limit_changed && !performance_changed && !recent_limit_changed
+    if (!undo_limit_changed && !performance_changed && !recent_limit_changed && !language_changed
         && defaults_action
                == ApplicationSettingsDialog::NewProjectDefaultsAction::Keep) {
         return;
@@ -11563,6 +11567,7 @@ void MainWindow::showApplicationSettings() {
     QSettings settings;
     settings.setValue(QStringLiteral("preferences/undoLimit"),
                       requested_undo_limit);
+    if (language_changed) Localization::saveLanguage(requested_language);
     settings.setValue(QStringLiteral("preferences/renderBackend"),
                       static_cast<int>(requested_backend));
     settings.setValue(QStringLiteral("performance/backendPreference"),
@@ -11601,7 +11606,8 @@ void MainWindow::showApplicationSettings() {
                       requested_recent_limit);
     settings.sync();
 
-    QString defaults_message;
+    QString defaults_message = language_changed
+        ? tr(" Restart the application to apply the language change.") : QString{};
     QString defaults_error;
     if (defaults_action
         == ApplicationSettingsDialog::NewProjectDefaultsAction::SaveCurrentProject) {
@@ -11613,7 +11619,7 @@ void MainWindow::showApplicationSettings() {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (choice == QMessageBox::Yes) {
             if (saveCurrentProjectAsDefaults(&defaults_error)) {
-                defaults_message = tr(" Current project saved as the new-project default.");
+                defaults_message += tr(" Current project saved as the new-project default.");
             }
         }
     } else if (defaults_action
@@ -11624,7 +11630,7 @@ void MainWindow::showApplicationSettings() {
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (choice == QMessageBox::Yes) {
             if (restoreBuiltInProjectDefaults(&defaults_error)) {
-                defaults_message = tr(" Built-in new-project default restored.");
+                defaults_message += tr(" Built-in new-project default restored.");
             }
         }
     }
@@ -11635,7 +11641,7 @@ void MainWindow::showApplicationSettings() {
     const QString backend_description =
         requested_performance.backend == RenderBackendPreference::Automatic
             ? tr("Automatic GPU-first")
-            : QString::fromUtf8(pvt::render_backend_name(requested_backend));
+            : renderer_label(pvt::render_backend_name(requested_backend));
     status_->setText(
         tr("Application settings saved — %1 undo steps, %2 rendering, %3 recent projects.%4")
             .arg(requested_undo_limit)
@@ -12294,7 +12300,7 @@ void MainWindow::updateMusicSummary() {
             std::ceil(music.duration_seconds * config_.fps));
         const QString mapping = layer_clock
             ? tr(" · %1")
-                  .arg(QString::fromUtf8(pvt::layer_clock_scale_name(
+                  .arg(renderer_label(pvt::layer_clock_scale_name(
                       config_.layer_clock.scale)))
             : QString{};
         summary->setText(
@@ -13941,7 +13947,7 @@ void MainWindow::refreshPaletteEditor() {
                 .arg(static_cast<qulonglong>(index + 1U))
                 .arg(entry_name)
                 .arg(color.name(QColor::HexArgb).toUpper())
-                .arg(QString::fromUtf8(
+                .arg(renderer_label(
                     pvt::palette_color_encoding_name(value.encoding)))
                 .arg(value.red, 0, 'g', 7)
                 .arg(value.green, 0, 'g', 7)
@@ -15055,7 +15061,7 @@ void MainWindow::refreshStandardMicControls() {
         } else {
             status->setText(tr(
                 "LIVE beat clock · offline fallback remains %1.")
-                    .arg(QString::fromUtf8(pvt::clock_mode_name(
+                    .arg(renderer_label(pvt::clock_mode_name(
                         layerTarget ? config_.layer_clock.clock.mode
                                     : config_.clock.mode))));
             status->setStyleSheet(QString{});

@@ -136,7 +136,7 @@ find_package(Threads REQUIRED)
 # context and function-loading APIs. CLI/library users can opt into Qt Gui
 # without Widgets or the editor; default core-only builds remain Qt-free.
 if(PVT_BUILD_QT_GUI)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Network)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Concurrent Network LinguistTools)
 elseif(PVT_ENABLE_QT_OPENGL_WITHOUT_GUI)
     if(NOT PVT_ENABLE_OPENGL_SURFACE)
         message(FATAL_ERROR
@@ -559,6 +559,8 @@ if(PVT_BUILD_QT_GUI)
         gui/device_sleep_guard.cpp
         gui/device_sleep_guard.h
         gui/main.cpp
+        gui/localization.cpp
+        gui/localization.h
         gui/main_window.cpp
         gui/main_window.h
         gui/live_midi.h
@@ -583,6 +585,7 @@ if(PVT_BUILD_QT_GUI)
         ${PVT_GUI_VIDEO_SOURCES}
         ${PVT_GUI_ICON_SOURCE}
     )
+    include(cmake/Translations.cmake)
     set_target_properties(ProceduralVisualizerToolGui PROPERTIES CXX_EXTENSIONS NO)
     if(APPLE)
         set_target_properties(ProceduralVisualizerToolGui PROPERTIES
@@ -945,7 +948,7 @@ if(BUILD_TESTING)
 
     if(PVT_BUILD_QT_GUI)
         add_test(NAME pvt_gui_smoke
-            COMMAND ProceduralVisualizerToolGui --smoke-test)
+            COMMAND ProceduralVisualizerToolGui --language en --smoke-test)
         if(APPLE)
             set(PVT_GUI_SMOKE_PLATFORM cocoa)
         else()
@@ -1043,6 +1046,8 @@ install(FILES include/procedural_visualizer_tool.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES README.md IMPLEMENTATION_STATUS.md PORTABILITY_ROADMAP.md LICENSE
     DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES translations/README.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}/translations)
 if(PVT_BUILD_CLI OR PVT_BUILD_QT_GUI)
     install(FILES third_party/miniaudio/LICENSE
         DESTINATION ${CMAKE_INSTALL_DOCDIR}
