@@ -76,6 +76,11 @@ file(GLOB PVT_TRANSLATION_SOURCES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/gui/*.cpp"
     "${PROJECT_SOURCE_DIR}/gui/*.h"
     "${PROJECT_SOURCE_DIR}/gui/*.mm")
+# Qt 6.10 lupdate mistakes nested Objective-C message expressions (`[[...`) for
+# C++ attributes. This backend has no Qt-translatable strings; keep the macOS
+# MIDI backend in the scan because it does.
+list(REMOVE_ITEM PVT_TRANSLATION_SOURCES
+    "${PROJECT_SOURCE_DIR}/gui/macos_video_export.mm")
 add_custom_target(pvt_update_translations
     COMMAND Qt6::lupdate ${PVT_TRANSLATION_SOURCES}
         -locations relative -source-language en -no-obsolete

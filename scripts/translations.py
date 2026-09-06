@@ -18,6 +18,7 @@ RELEASED_LOCALES = CATALOGS / "released-locales.txt"
 PLACEHOLDER = re.compile(r"%(?:L?[1-9][0-9]?|L?n)")
 LOCALE_CODE = re.compile(r"[a-z]{2,3}(?:_[A-Za-z0-9]+)*")
 LABEL_FILES = ["core.cpp", "composite.cpp", "config_io.cpp", "frame_renderer.cpp"]
+LUPDATE_EXCLUDED_GUI_SOURCES = {"macos_video_export.mm"}
 
 
 def released_locales():
@@ -150,7 +151,12 @@ class Markup(HTMLParser):
 
 
 def gui_sources():
-    return sorted(str(p) for p in (ROOT / "gui").iterdir() if p.suffix in {".cpp", ".h", ".mm"})
+    # Qt 6.10 lupdate mistakes nested Objective-C message expressions (`[[...`)
+    # for C++ attributes. The excluded backend has no Qt-translatable strings.
+    return sorted(
+        str(path) for path in (ROOT / "gui").iterdir()
+        if path.suffix in {".cpp", ".h", ".mm"}
+        and path.name not in LUPDATE_EXCLUDED_GUI_SOURCES)
 
 
 def plural_form_count(locale, lupdate):
