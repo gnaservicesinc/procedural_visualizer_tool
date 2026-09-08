@@ -45,6 +45,7 @@ class QTimer;
 class QUndoStack;
 class QWidget;
 class PreviewWidget;
+class PaletteRemixDialog;
 class LiveWorkspace;
 
 namespace pvt::audio {
@@ -226,6 +227,7 @@ private:
     void importPaletteFile();
     void exportPaletteFile();
     void generateRandomPalette();
+    void remixPalette();
     void addPaletteColor();
     void editSelectedPaletteColor();
     void removeSelectedPaletteColor();
@@ -395,6 +397,9 @@ private:
     bool loadSetupFile(const QString& path, QString* error = nullptr);
 
     pvt::ProjectConfig project_;
+    std::optional<pvt::PaletteConfig> palette_remix_preview_;
+    std::string palette_remix_layer_uuid_;
+    PaletteRemixDialog* palette_remix_dialog_ = nullptr;
     std::unique_ptr<pvt::ProjectDocument> document_;
     // Materialized active-layer view retained to keep the existing editors and
     // draggable-wave overlay independent from project-global storage.

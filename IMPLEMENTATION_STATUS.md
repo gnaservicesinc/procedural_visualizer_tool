@@ -6,6 +6,37 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.8.0 Palette Remix
+
+Starting Colors > Starting palette adds Palette Remix, a non-destructive color
+playground for the active layer. It previews hue rotation, saturation, exposure,
+whole-entry reversal and cyclic color ordering against the rendered artwork.
+Surprise me chooses editable settings, Show original provides an A/B comparison,
+and Reset returns exactly to the opening palette. Preview state lives in temporary
+project copies; Cancel does not dirty the document, while Apply records one
+undoable edit even when the original comparison is visible.
+
+Exposure operates in linear light. Ordinary sRGB results remain display-bounded;
+linear/HDR entries retain signed extended values within the renderer's float
+limits. Alpha, names, per-entry encodings, and whole entries survive every edit
+and reorder. Large palettes cap swatch work to the display width. Performance
+LIVE and paused-export ownership are reported clearly while the swatches remain
+usable. Existing library and file export workflows can save an applied remix.
+
+The implementation is entirely in the desktop authoring layer and uses the
+existing palette model, codec, and renderer. Project/setup/layer formats, renderer
+output, public ABI, and SONAME 17 are unchanged. The 26 new interface messages
+are complete and reviewed in French and German; both released catalogs contain
+2,905/2,905 finished messages.
+
+Validation before release preparation passed all 37 macOS Release tests. Focused
+coverage checks neutral/reset identity, signed HDR transforms, linear-light
+exposure, exact metadata preservation, ordering, finite bounds, rendered color
+change, codec round-trip, temporary preview isolation, comparison, Apply/Cancel,
+and undo/redo. Native Qt snapshots were inspected in English, French, and German
+at normal and compact sizes. The user accepted this evidence and requested that
+local tests not be repeated during release preparation.
+
 ## 17.7.0 Kaleidoscope effect and Scene Morph
 
 Layer Effects > Movement & Distortion adds a repeatable Kaleidoscope effect

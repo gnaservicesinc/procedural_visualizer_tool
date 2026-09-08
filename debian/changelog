@@ -1,3 +1,11 @@
+procedural-visualizer-tool (17.8.0) stonking; urgency=medium
+
+  * Add the Palette Remix artwork-preview workflow.
+  * Preserve palette alpha, names, color encodings, and HDR values.
+  * Include complete French and German interface translations.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Tue, 08 Sep 2026 18:51:52 -0400
+
 procedural-visualizer-tool (17.7.0) stonking; urgency=medium
 
   * New upstream release.

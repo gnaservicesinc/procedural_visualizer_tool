@@ -9,6 +9,7 @@
 #include "live_target_registry.h"
 #include "live_workspace.h"
 #include "preview_widget.h"
+#include "palette_remix_dialog.h"
 #include "video_export.h"
 #include "video_export_dialog.h"
 #include "../src/audio_analysis.h"
@@ -2492,6 +2493,8 @@ MainWindow::MainWindow(QWidget* parent)
                     && (workspace_stack_ == nullptr
                         || workspace_stack_->currentWidget() != live_workspace_)) {
                     preview_->setPreview(image);
+                    if (palette_remix_dialog_ && live_workspace_->isPresentationActive())
+                        palette_remix_dialog_->setArtwork(image);
                 }
             });
     connect(live_workspace_, &LiveWorkspace::runtimeStatusChanged,
@@ -2634,6 +2637,7 @@ MainWindow::MainWindow(QWidget* parent)
                     && live_workspace_->isRealtimeOutputActive();
                 if (!realtime_output) {
                     preview_->setPreview(result.image);
+                    if (palette_remix_dialog_) palette_remix_dialog_->setArtwork(result.image);
                     const int frame_count = std::max(1, effectiveFrameCount());
                     if (playback_timer_->isActive()) {
                         if (!preview_delivery_clock_.isValid()) {
@@ -2660,6 +2664,7 @@ MainWindow::MainWindow(QWidget* parent)
                     || !live_workspace_->isRealtimeOutputActive()) {
                     status_->setText(result.error);
                     status_->setToolTip(result.error);
+                    if (palette_remix_dialog_) palette_remix_dialog_->setPreviewError(result.error);
                 }
             }
         }
@@ -4913,6 +4918,9 @@ QWidget* MainWindow::createLayerSettingsPage() {
     auto* edit_color = new QPushButton(tr("Edit color…"));
     auto* remove_color = new QPushButton(tr("Remove color"));
     auto* random_palette = new QPushButton(tr("Generate random…"));
+    auto* remix_palette = new QPushButton(tr("Palette Remix…"));
+    remix_palette->setObjectName(QStringLiteral("paletteRemixButton"));
+    connect(remix_palette, &QPushButton::clicked, this, &MainWindow::remixPalette);
     auto* save_palette = new QPushButton(tr("Save to Library…"));
     auto* load_palette = new QPushButton(tr("Load Reusable…"));
     auto* import_palette = new QPushButton(tr("Import File…"));
@@ -4921,8 +4929,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     palette_buttons->addWidget(edit_color);
     palette_buttons->addWidget(remove_color);
     palette_layout->addLayout(palette_buttons);
+    auto* palette_creative_buttons = new QHBoxLayout;
+    palette_creative_buttons->addWidget(remix_palette);
+    palette_creative_buttons->addWidget(random_palette);
+    palette_creative_buttons->addStretch();
+    palette_layout->addLayout(palette_creative_buttons);
     auto* palette_library_buttons = new QHBoxLayout;
-    palette_library_buttons->addWidget(random_palette);
     palette_library_buttons->addWidget(save_palette);
     palette_library_buttons->addWidget(load_palette);
     palette_library_buttons->addStretch();
@@ -14445,6 +14457,45 @@ void MainWindow::exportPaletteFile() {
             .arg(QFileInfo(path).fileName()));
 }
 
+void MainWindow::remixPalette() {
+    if (populating_ || activeLayer() == nullptr || palette_remix_dialog_) return;
+    if (config_.palette.colors.empty()) {
+        QMessageBox::information(this, tr("Nothing to remix"),
+            tr("Add colors or choose a palette preset first."));
+        return;
+    }
+    palette_remix_layer_uuid_ = active_layer_uuid_;
+    const auto update_preview = [this](const pvt::PaletteConfig& palette) {
+        palette_remix_preview_ = palette;
+        if (palette_remix_dialog_) {
+            if (live_workspace_ && live_workspace_->isLiveActive()) {
+                palette_remix_dialog_->setPreviewError(tr(
+                    "Stop Performance LIVE to preview remixed artwork. You can still explore the palette swatches."));
+            } else if (export_active_ && performance_settings_.pause_editor_preview_during_export) {
+                palette_remix_dialog_->setPreviewError(tr(
+                    "Artwork preview is paused until the export finishes. You can still explore the palette swatches."));
+            }
+        }
+        schedulePreview();
+    };
+    PaletteRemixDialog dialog(config_.palette, update_preview, this);
+    palette_remix_dialog_ = &dialog;
+    update_preview(dialog.remixedPalette());
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    palette_remix_dialog_ = nullptr;
+    palette_remix_preview_.reset();
+    const bool same_layer = active_layer_uuid_ == palette_remix_layer_uuid_;
+    palette_remix_layer_uuid_.clear();
+    if (accepted && same_layer) {
+        auto before = captureActiveState();
+        config_.palette = dialog.remixedPalette();
+        syncActiveRender();
+        loadGlobalEditors();
+        recordActiveStateChange(tr("Remix palette"), std::move(before));
+    }
+    schedulePreview();
+}
+
 void MainWindow::generateRandomPalette() {
     QSettings settings;
     QDialog dialog(this);
@@ -17701,6 +17752,15 @@ void MainWindow::startPreview() {
 
 pvt::ProjectConfig MainWindow::previewProjectSnapshot() const {
     auto project = project_;
+    if (palette_remix_preview_) {
+        for (auto& layer : project.layers) {
+            if (layer.uuid == palette_remix_layer_uuid_)
+                layer.render.palette = *palette_remix_preview_;
+        }
+        // Trying an inactive palette can expose transparency. Preview that
+        // alpha without modifying the authored export setting.
+        project.output.write_alpha = true;
+    }
     if (solo_group_uuid_) {
         for (auto& group : project.groups) {
             if (group.uuid == *solo_group_uuid_) group.enabled = true;
@@ -22384,6 +22444,101 @@ bool MainWindow::runSmokeChecks(QString* error) {
         if (error != nullptr) {
             *error = tr("Redo did not restore the independently recorded palette toggle.");
         }
+        return false;
+    }
+
+    // Exercise the actual modal workflow: preview copies must never become
+    // authored state until Apply, and comparison must not change the candidate.
+    const auto remix_original = config_.palette;
+    const auto palette_equal = [](const pvt::PaletteConfig& a, const pvt::PaletteConfig& b) {
+        if (a.enabled != b.enabled || a.name != b.name || a.columns != b.columns
+            || a.colors.size() != b.colors.size()) return false;
+        for (std::size_t i = 0; i < a.colors.size(); ++i) {
+            const auto& x = a.colors[i];
+            const auto& y = b.colors[i];
+            if (x.red != y.red || x.green != y.green || x.blue != y.blue
+                || x.alpha != y.alpha || x.name != y.name || x.encoding != y.encoding) return false;
+        }
+        return true;
+    };
+    const auto preview_palette = [this] {
+        const auto snapshot = previewProjectSnapshot();
+        for (const auto& layer : snapshot.layers)
+            if (layer.uuid == active_layer_uuid_) return layer.render.palette;
+        return pvt::PaletteConfig{};
+    };
+    bool remix_ok = findChild<QPushButton*>(QStringLiteral("paletteRemixButton")) != nullptr;
+    const int remix_undo_index = undo_stack_->index();
+    const bool remix_dirty = document_->dirty;
+    pvt::PaletteConfig remix_candidate;
+    for (const bool accept : {false, true}) {
+        QTimer::singleShot(0, this, [&, accept] {
+            auto* dialog = findChild<PaletteRemixDialog*>(QStringLiteral("paletteRemixDialog"));
+            if (!dialog) { remix_ok = false; return; }
+            auto* hue = dialog->findChild<QSpinBox*>(QStringLiteral("paletteRemixHue"));
+            auto* saturation = dialog->findChild<QSpinBox*>(QStringLiteral("paletteRemixSaturation"));
+            auto* exposure = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("paletteRemixExposure"));
+            auto* compare = dialog->findChild<QCheckBox*>(QStringLiteral("paletteRemixCompare"));
+            auto* enabled = dialog->findChild<QCheckBox*>(QStringLiteral("paletteRemixEnabled"));
+            auto* reset = dialog->findChild<QPushButton*>(QStringLiteral("paletteRemixReset"));
+            auto* surprise = dialog->findChild<QPushButton*>(QStringLiteral("paletteRemixSurprise"));
+            if (!hue || !saturation || !exposure || !compare || !enabled || !reset || !surprise) {
+                remix_ok = false;
+                dialog->reject();
+                return;
+            }
+            surprise->click();
+            reset->click();
+            remix_ok = remix_ok && palette_equal(dialog->remixedPalette(), remix_original)
+                && palette_equal(preview_palette(), remix_original);
+            hue->setValue(115);
+            saturation->setValue(75);
+            exposure->setValue(-0.25);
+            enabled->setChecked(false);
+            remix_ok = remix_ok && !preview_palette().enabled && config_.palette.enabled;
+            enabled->setChecked(true);
+            remix_candidate = dialog->remixedPalette();
+            remix_ok = remix_ok && !palette_equal(remix_candidate, remix_original)
+                && palette_equal(preview_palette(), remix_candidate)
+                && palette_equal(config_.palette, remix_original)
+                && palette_equal(activeLayer()->render.palette, remix_original)
+                && document_->dirty == remix_dirty && undo_stack_->index() == remix_undo_index;
+            compare->setChecked(true);
+            remix_ok = remix_ok && palette_equal(preview_palette(), remix_original)
+                && palette_equal(dialog->remixedPalette(), remix_candidate);
+            // Applying while comparing must still keep the remixed candidate.
+            if (accept) dialog->accept(); else dialog->reject();
+        });
+        remixPalette();
+        remix_ok = remix_ok && !palette_remix_preview_ && palette_remix_dialog_ == nullptr;
+        if (!accept) {
+            remix_ok = remix_ok && palette_equal(config_.palette, remix_original)
+                && palette_equal(preview_palette(), remix_original)
+                && document_->dirty == remix_dirty && undo_stack_->index() == remix_undo_index;
+        } else {
+            remix_ok = remix_ok && palette_equal(config_.palette, remix_candidate)
+                && palette_equal(activeLayer()->render.palette, remix_candidate)
+                && undo_stack_->index() == remix_undo_index + 1;
+            undo_stack_->undo();
+            remix_ok = remix_ok && palette_equal(config_.palette, remix_original);
+            undo_stack_->redo();
+            remix_ok = remix_ok && palette_equal(config_.palette, remix_candidate);
+            std::string encoded, codec_error;
+            pvt::RenderConfig decoded;
+            remix_ok = remix_ok && pvt::detail::serialize_setup_config(config_, encoded, &codec_error)
+                && pvt::detail::deserialize_setup_config(encoded, decoded, &codec_error)
+                && palette_equal(decoded.palette, remix_candidate);
+            undo_stack_->undo();
+        }
+    }
+    QTimer::singleShot(0, this, [this] {
+        if (auto* dialog = findChild<PaletteRemixDialog*>(QStringLiteral("paletteRemixDialog")))
+            dialog->accept();
+    });
+    remixPalette();
+    remix_ok = remix_ok && undo_stack_->index() == remix_undo_index;
+    if (!remix_ok) {
+        if (error) *error = QStringLiteral("Palette Remix lost preview isolation, comparison, reset, cancellation, persistence, or undo/redo.");
         return false;
     }
 

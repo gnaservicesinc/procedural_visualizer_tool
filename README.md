@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.7.0**. The version is read from `VERSION` by every
+Current product version: **17.8.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,34 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.8.0 Palette Remix
+
+Open **Starting Colors > Starting palette > Palette Remix…** to explore new color moods
+for the active layer with an artwork preview. Rotate every hue together, adjust
+saturation and exposure, or reverse and rotate the order of the colors. **Surprise
+me** chooses a fresh combination and shows its settings so you can refine it.
+
+**Show original** compares the opening palette with the remix; **Reset** restores
+the opening settings exactly. Enable **Use this palette for starting colors** to
+try a disabled palette. **Apply remix** keeps the result in one undoable edit;
+Cancel discards the experiment. Apply always keeps the remix, even while comparing
+the original. Preview rendering uses temporary copies of the project.
+
+Entry names, alpha, and color encodings travel with their colors. Exposure works
+in linear light: +1 stop doubles brightness and −1 stop halves it. sRGB results
+stay in the displayable range, while linear/HDR entries retain their extended
+range (within the renderer's float limits). Swatches clip HDR for display only.
+Starting-image layers use the palette when palette dithering is enabled; lighting
+and later effects can change the resulting colors. The applied palette can be
+saved to the library or exported with the existing palette tools.
+
+Performance LIVE must be stopped to preview the remix in the artwork. If editor
+preview is paused during export, the artwork updates when export finishes. The
+palette swatches remain available in both cases.
+
+No project-format or renderer changes are needed. French and German controls
+are included.
 
 ## 17.7.0 Kaleidoscope effect and Scene Morph
 

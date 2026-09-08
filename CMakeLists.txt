@@ -581,6 +581,9 @@ if(PVT_BUILD_QT_GUI)
         gui/studio_widgets.h
         gui/preview_widget.cpp
         gui/preview_widget.h
+        gui/palette_remix.h
+        gui/palette_remix_dialog.cpp
+        gui/palette_remix_dialog.h
         gui/video_export.h
         gui/video_export_dialog.cpp
         gui/video_export_dialog.h
@@ -949,6 +952,14 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_palette_remix_tests tests/palette_remix_test.cpp)
+        target_compile_features(pvt_palette_remix_tests PRIVATE cxx_std_17)
+        set_target_properties(pvt_palette_remix_tests PROPERTIES
+            CXX_EXTENSIONS NO)
+        target_link_libraries(pvt_palette_remix_tests PRIVATE
+            ProceduralVisualizerTool::ProceduralVisualizerTool)
+        pvt_enable_warnings(pvt_palette_remix_tests)
+        add_test(NAME pvt_palette_remix COMMAND pvt_palette_remix_tests)
         add_executable(pvt_live_scene_morph_tests
             tests/live_scene_morph_test.cpp
             gui/live_scene_morph.cpp
