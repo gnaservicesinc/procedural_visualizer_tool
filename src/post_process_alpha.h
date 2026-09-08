@@ -2,6 +2,7 @@
 #define PVT_POST_PROCESS_ALPHA_H
 
 #include "procedural_visualizer_tool.h"
+#include "effect_parameter_domain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -257,7 +258,8 @@ inline bool effect_can_create_transparency(const RenderData& render,
         0.0, maximum_render_parameter_magnitude());
     const PostProcessMixRange magnitude = parameter_lfo_value_range(
         render, effect_lfo_target(effect, "magnitude"), effect.magnitude,
-        0.0, maximum_render_parameter_magnitude());
+        effect_parameter_domain(effect.type, effect.magnitude).magnitude_minimum,
+        maximum_render_parameter_magnitude());
     if (!range_can_be_positive(intensity)
         || !range_can_be_positive(magnitude)) {
         return false;
@@ -323,7 +325,8 @@ inline bool effect_can_create_coverage_from_transparent_input(
         0.0, maximum_render_parameter_magnitude());
     const PostProcessMixRange magnitude = parameter_lfo_value_range(
         render, effect_lfo_target(effect, "magnitude"), effect.magnitude,
-        0.0, maximum_render_parameter_magnitude());
+        effect_parameter_domain(effect.type, effect.magnitude).magnitude_minimum,
+        maximum_render_parameter_magnitude());
     if (!range_can_be_positive(intensity)
         || !range_can_be_positive(magnitude)) {
         return false;

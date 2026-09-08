@@ -83,6 +83,15 @@ inline EffectParameterDomain effect_parameter_domain(
             domain.secondary_minimum = 0.0;
             domain.secondary_maximum = 1.0;
             break;
+        case EffectType::Kaleidoscope:
+            domain.intensity_maximum = 1.0;
+            domain.magnitude_minimum = minimum_positive;
+            domain.frequency_minimum = 1.0;
+            domain.frequency_maximum = 256.0;
+            domain.frequency_is_integer = true;
+            domain.secondary_minimum = -1.0;
+            domain.secondary_maximum = 1.0;
+            break;
         case EffectType::Water:
             domain.intensity_maximum = 1.0;
             domain.secondary_minimum = 0.0;

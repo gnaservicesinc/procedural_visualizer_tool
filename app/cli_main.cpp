@@ -1112,7 +1112,8 @@ EffectType choose_effect_type() {
                  {EffectType::LensDistortion, "Lens distortion"},
                  {EffectType::EdgeDetect, "Edge detect"},
                  {EffectType::Twirl, "Twirl"},
-                 {EffectType::Water, "Water"}});
+                 {EffectType::Water, "Water"},
+                 {EffectType::Kaleidoscope, "Kaleidoscope"}});
     return type;
 }
 
@@ -1356,6 +1357,20 @@ bool configure_effect(RenderConfig& config, std::size_t index) {
                    && prompt_real("Direction/depth (-1 to +1)",
                                   effect.secondary, -1.0, 1.0)
                    && configure_edge_mode(effect.edge_mode);
+        case EffectType::Kaleidoscope: {
+            int sectors = static_cast<int>(effect.frequency);
+            if (!prompt_real("Source/effect mix", effect.intensity, 0.0, 1.0)
+                || !prompt_real("Source zoom", effect.magnitude, 0.000001, 1000.0)
+                || !prompt_int("Mirrored sectors", sectors, 1, 256)
+                || !prompt_real("Spiral twist", effect.secondary, -1.0, 1.0)
+                || !prompt_real("Sector rotation (degrees)", effect.angle_degrees,
+                                -36000.0, 36000.0)
+                || !configure_edge_mode(effect.edge_mode)) {
+                return false;
+            }
+            effect.frequency = static_cast<double>(sectors);
+            return true;
+        }
         case EffectType::Water:
             return prompt_real("Source/refraction mix", effect.intensity,
                                0.0, 1.0)

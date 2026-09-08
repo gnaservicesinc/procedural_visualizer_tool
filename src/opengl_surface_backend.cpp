@@ -44,10 +44,11 @@ void main() {
 }
 )PVT_GLSL";
 
-constexpr const char* kWaterFragmentShader = R"PVT_GLSL(#version 330 core
+constexpr const char* kCoordinateFragmentShader = R"PVT_GLSL(#version 330 core
 uniform sampler2D sourceImage;
 uniform ivec2 imageSize;
 uniform int edgeMode;
+uniform int effectType;
 uniform float phase;
 uniform float intensity;
 uniform float magnitude;
@@ -130,6 +131,7 @@ vec4 sampleBilinear(vec2 coordinate) {
         amount.x * amount.y);
     vec4 result = vec4(0.0);
     float rgbWeight = 0.0;
+    bool opaque = true;
     for (int index = 0; index < 4; ++index) {
         vec4 sampled = sampleTexel(coordinates[index]);
         if (edgeMode != 0 || insideImage(coordinates[index])) {
@@ -137,11 +139,13 @@ vec4 sampleBilinear(vec2 coordinate) {
             rgbWeight += weights[index];
         }
         result.a += sampled.a * weights[index];
+        opaque = opaque && (weights[index] == 0.0 || sampled.a == 1.0);
     }
     if (edgeMode == 0 && rgbWeight > 0.0) {
         result.rgb /= rgbWeight;
     }
-    result.a = clamp01(result.a);
+    // Keep opaque artwork exactly opaque after rounded bilinear weights.
+    result.a = opaque ? 1.0 : clamp01(result.a);
     return result;
 }
 
@@ -173,6 +177,22 @@ void main() {
     float perpendicularX = -axisY;
     float perpendicularY = axisX;
     vec2 relative = vec2(x, y) - selectedCenter;
+    if (effectType == 14) {
+        float distance = length(relative);
+        float sector = TAU / frequency;
+        float spiral = TAU * complexity * distance / shortSide;
+        float polar = distance > 1.0e-12 ? atan(relative.y, relative.x) : 0.0;
+        float folded = abs(fract((polar - angle + spiral) / sector + 0.5)
+                           - 0.5) * sector;
+        float sourceAngle = folded + angle + phase;
+        float sourceRadius = distance / magnitude;
+        vec4 mirrored = sampleBilinear(selectedCenter
+            + sourceRadius * vec2(cos(sourceAngle), sin(sourceAngle)));
+        outputColor = mix(original, mirrored,
+                          clamp01(max(0.0, intensity) * circularInfluence(x, y)));
+        outputColor.a = clamp01(outputColor.a);
+        return;
+    }
     float along = dot(relative, vec2(axisX, axisY)) / shortSide;
     float across = dot(relative, vec2(perpendicularX, perpendicularY))
                    / shortSide;
@@ -1346,7 +1366,8 @@ struct SurfaceUniformLocations {
     GLint environment_mix = -1;
 };
 
-struct WaterUniformLocations {
+struct CoordinateUniformLocations {
+    GLint effect_type = -1;
     GLint source_image = -1;
     GLint image_size = -1;
     GLint edge_mode = -1;
@@ -1441,9 +1462,10 @@ SurfaceUniformLocations load_surface_uniform_locations(
     return result;
 }
 
-WaterUniformLocations load_water_uniform_locations(
+CoordinateUniformLocations load_coordinate_uniform_locations(
     QOpenGLExtraFunctions* gl, GLuint program) {
-    WaterUniformLocations result;
+    CoordinateUniformLocations result;
+    result.effect_type = gl->glGetUniformLocation(program, "effectType");
     result.source_image = gl->glGetUniformLocation(program, "sourceImage");
     result.image_size = gl->glGetUniformLocation(program, "imageSize");
     result.edge_mode = gl->glGetUniformLocation(program, "edgeMode");
@@ -1578,17 +1600,18 @@ public:
         return true;
     }
 
-    bool render_water(const Image& source, Image& destination,
-                      const EffectConfig& effect, double phase,
-                      const std::atomic_bool* cancel, std::string* error) {
+    bool render_coordinate(const Image& source, Image& destination,
+                           const EffectConfig& effect, double phase,
+                           const std::atomic_bool* cancel, std::string* error) {
         if (cancelled(cancel)) {
             return fail(error,
-                        "OpenGL Water rendering was cancelled; destination "
+                        "OpenGL coordinate-effect rendering was cancelled; destination "
                         "was unchanged.");
         }
-        if (effect.type != EffectType::Water) {
+        if (effect.type != EffectType::Water
+            && effect.type != EffectType::Kaleidoscope) {
             return fail(error,
-                        "OpenGL Water rendering received a non-Water effect.");
+                        "OpenGL coordinate-effect rendering received an unsupported effect.");
         }
         std::lock_guard<std::mutex> guard(mutex_);
         ensure_initialized_locked();
@@ -1598,7 +1621,7 @@ public:
         Image candidate;
         std::string render_error;
         const auto work = [&] {
-            rendered = render_water_on_gpu_thread(
+            rendered = render_coordinate_on_gpu_thread(
                 source, candidate, effect, phase, &render_error);
         };
         if (QThread::currentThread() == render_thread_) {
@@ -1606,13 +1629,13 @@ public:
         } else if (!QMetaObject::invokeMethod(
                        worker_, work, Qt::BlockingQueuedConnection)) {
             return fail(error,
-                        "OpenGL could not dispatch Water work to its bounded "
+                        "OpenGL could not dispatch coordinate-effect work to its bounded "
                         "render thread.");
         }
         if (!rendered) return fail(error, std::move(render_error));
         if (cancelled(cancel)) {
             return fail(error,
-                        "OpenGL Water rendering was cancelled; destination "
+                        "OpenGL coordinate-effect rendering was cancelled; destination "
                         "was unchanged.");
         }
         destination = std::move(candidate);
@@ -1686,13 +1709,13 @@ public:
                             gl->glDeleteProgram(program_);
                             program_ = 0U;
                         }
-                        if (water_vertex_array_ != 0U) {
-                            gl->glDeleteVertexArrays(1, &water_vertex_array_);
-                            water_vertex_array_ = 0U;
+                        if (coordinate_vertex_array_ != 0U) {
+                            gl->glDeleteVertexArrays(1, &coordinate_vertex_array_);
+                            coordinate_vertex_array_ = 0U;
                         }
-                        if (water_program_ != 0U) {
-                            gl->glDeleteProgram(water_program_);
-                            water_program_ = 0U;
+                        if (coordinate_program_ != 0U) {
+                            gl->glDeleteProgram(coordinate_program_);
+                            coordinate_program_ = 0U;
                         }
                         if (base_vertex_array_ != 0U) {
                             gl->glDeleteVertexArrays(1, &base_vertex_array_);
@@ -1739,7 +1762,7 @@ public:
         }
 
         surface_uniforms_ = {};
-        water_uniforms_ = {};
+        coordinate_uniforms_ = {};
         base_uniforms_ = {};
         delete context_;
         context_ = nullptr;
@@ -1898,7 +1921,7 @@ private:
             render_thread_ = QThread::currentThread();
         }
         ready_ = true;
-        status_ = "OpenGL generated-source, Water, and surface rendering is ready on "
+        status_ = "OpenGL generated-source, Water, Kaleidoscope, and surface rendering is ready on "
                   + device_name_;
         if (!vendor.empty()) status_ += "; vendor: " + vendor;
         if (!version.empty()) status_ += "; OpenGL version: " + version;
@@ -2004,63 +2027,63 @@ private:
         return true;
     }
 
-    bool ensure_water_program(QOpenGLExtraFunctions* gl,
-                              std::string* error) {
-        if (water_program_ != 0U && water_vertex_array_ != 0U) return true;
-        water_uniforms_ = {};
-        if (water_vertex_array_ != 0U) {
-            gl->glDeleteVertexArrays(1, &water_vertex_array_);
-            water_vertex_array_ = 0U;
+    bool ensure_coordinate_program(QOpenGLExtraFunctions* gl,
+                                   std::string* error) {
+        if (coordinate_program_ != 0U && coordinate_vertex_array_ != 0U) return true;
+        coordinate_uniforms_ = {};
+        if (coordinate_vertex_array_ != 0U) {
+            gl->glDeleteVertexArrays(1, &coordinate_vertex_array_);
+            coordinate_vertex_array_ = 0U;
         }
-        if (water_program_ != 0U) {
-            gl->glDeleteProgram(water_program_);
-            water_program_ = 0U;
+        if (coordinate_program_ != 0U) {
+            gl->glDeleteProgram(coordinate_program_);
+            coordinate_program_ = 0U;
         }
         GLuint vertex = 0U;
         GLuint fragment = 0U;
         if (!compile_shader(gl, GL_VERTEX_SHADER, kVertexShader, vertex, error)
-            || !compile_shader(gl, GL_FRAGMENT_SHADER, kWaterFragmentShader,
+            || !compile_shader(gl, GL_FRAGMENT_SHADER, kCoordinateFragmentShader,
                                fragment, error)) {
             if (vertex != 0U) gl->glDeleteShader(vertex);
             if (fragment != 0U) gl->glDeleteShader(fragment);
             return false;
         }
-        water_program_ = gl->glCreateProgram();
-        if (water_program_ == 0U) {
+        coordinate_program_ = gl->glCreateProgram();
+        if (coordinate_program_ == 0U) {
             gl->glDeleteShader(vertex);
             gl->glDeleteShader(fragment);
             return fail(error,
-                        "OpenGL could not create the Water shader program.");
+                        "OpenGL could not create the coordinate-effect shader program.");
         }
-        gl->glAttachShader(water_program_, vertex);
-        gl->glAttachShader(water_program_, fragment);
-        gl->glLinkProgram(water_program_);
+        gl->glAttachShader(coordinate_program_, vertex);
+        gl->glAttachShader(coordinate_program_, fragment);
+        gl->glLinkProgram(coordinate_program_);
         gl->glDeleteShader(vertex);
         gl->glDeleteShader(fragment);
         GLint linked = GL_FALSE;
-        gl->glGetProgramiv(water_program_, GL_LINK_STATUS, &linked);
+        gl->glGetProgramiv(coordinate_program_, GL_LINK_STATUS, &linked);
         if (linked != GL_TRUE) {
             GLint length = 0;
-            gl->glGetProgramiv(water_program_, GL_INFO_LOG_LENGTH, &length);
+            gl->glGetProgramiv(coordinate_program_, GL_INFO_LOG_LENGTH, &length);
             std::vector<char> log(
                 static_cast<std::size_t>((std::max)(1, length)));
-            gl->glGetProgramInfoLog(water_program_, length, nullptr,
+            gl->glGetProgramInfoLog(coordinate_program_, length, nullptr,
                                     log.data());
             const std::string message =
-                std::string("OpenGL Water shader linking failed: ")
+                std::string("OpenGL coordinate-effect shader linking failed: ")
                 + log.data();
-            gl->glDeleteProgram(water_program_);
-            water_program_ = 0U;
+            gl->glDeleteProgram(coordinate_program_);
+            coordinate_program_ = 0U;
             return fail(error, message);
         }
-        gl->glGenVertexArrays(1, &water_vertex_array_);
-        if (water_vertex_array_ == 0U) {
-            gl->glDeleteProgram(water_program_);
-            water_program_ = 0U;
+        gl->glGenVertexArrays(1, &coordinate_vertex_array_);
+        if (coordinate_vertex_array_ == 0U) {
+            gl->glDeleteProgram(coordinate_program_);
+            coordinate_program_ = 0U;
             return fail(error,
-                        "OpenGL could not create the Water vertex array.");
+                        "OpenGL could not create the coordinate-effect vertex array.");
         }
-        water_uniforms_ = load_water_uniform_locations(gl, water_program_);
+        coordinate_uniforms_ = load_coordinate_uniform_locations(gl, coordinate_program_);
         return true;
     }
 
@@ -2607,11 +2630,11 @@ private:
         return true;
     }
 
-    bool render_water_on_gpu_thread(const Image& source,
-                                    Image& destination,
-                                    const EffectConfig& effect,
-                                    double phase,
-                                    std::string* error) {
+    bool render_coordinate_on_gpu_thread(const Image& source,
+                                         Image& destination,
+                                         const EffectConfig& effect,
+                                         double phase,
+                                         std::string* error) {
         std::size_t pixel_count = 0U;
         const bool dimensions_fit = source.width > 0 && source.height > 0
             && static_cast<std::size_t>(source.width)
@@ -2622,20 +2645,20 @@ private:
                    <= (std::numeric_limits<std::size_t>::max)() / 4U;
         if (!dimensions_fit || source.pixels.size() != pixel_count * 4U) {
             return fail(error,
-                        "OpenGL Water received inconsistent source image "
+                        "OpenGL coordinate-effect received inconsistent source image "
                         "metadata.");
         }
         if (!context_->makeCurrent(surface_)) {
             return fail(error,
                         "OpenGL could not make its render context current for "
-                        "Water.");
+                        "coordinate effects.");
         }
         QOpenGLExtraFunctions* gl = context_->extraFunctions();
         gl->initializeOpenGLFunctions();
         while (gl->glGetError() != GL_NO_ERROR) {
             // Discard initialization diagnostics before this transactional pass.
         }
-        if (!ensure_water_program(gl, error)) {
+        if (!ensure_coordinate_program(gl, error)) {
             context_->doneCurrent();
             return false;
         }
@@ -2679,39 +2702,41 @@ private:
             cleanup();
             context_->doneCurrent();
             return fail(error,
-                        "OpenGL could not create a complete float-RGBA Water "
+                        "OpenGL could not create a complete float-RGBA coordinate-effect "
                         "framebuffer.");
         }
 
         gl->glViewport(0, 0, source.width, source.height);
         gl->glDisable(GL_BLEND);
         gl->glDisable(GL_DEPTH_TEST);
-        gl->glUseProgram(water_program_);
+        gl->glUseProgram(coordinate_program_);
         gl->glActiveTexture(GL_TEXTURE0);
         gl->glBindTexture(GL_TEXTURE_2D, source_texture);
-        gl->glUniform1i(water_uniforms_.source_image, 0);
-        gl->glUniform2i(water_uniforms_.image_size,
+        gl->glUniform1i(coordinate_uniforms_.source_image, 0);
+        gl->glUniform2i(coordinate_uniforms_.image_size,
                         source.width, source.height);
-        gl->glUniform1i(water_uniforms_.edge_mode,
+        gl->glUniform1i(coordinate_uniforms_.effect_type,
+                        static_cast<int>(effect.type));
+        gl->glUniform1i(coordinate_uniforms_.edge_mode,
                         static_cast<int>(effective_effect_edge_mode(effect)));
-        gl->glUniform1f(water_uniforms_.phase, static_cast<float>(phase));
-        gl->glUniform1f(water_uniforms_.intensity,
+        gl->glUniform1f(coordinate_uniforms_.phase, static_cast<float>(phase));
+        gl->glUniform1f(coordinate_uniforms_.intensity,
                         static_cast<float>(effect.intensity));
-        gl->glUniform1f(water_uniforms_.magnitude,
+        gl->glUniform1f(coordinate_uniforms_.magnitude,
                         static_cast<float>(effect.magnitude));
-        gl->glUniform1f(water_uniforms_.frequency,
+        gl->glUniform1f(coordinate_uniforms_.frequency,
                         static_cast<float>(effect.frequency));
-        gl->glUniform1f(water_uniforms_.complexity,
+        gl->glUniform1f(coordinate_uniforms_.complexity,
                         static_cast<float>(effect.secondary));
-        gl->glUniform2f(water_uniforms_.center,
+        gl->glUniform2f(coordinate_uniforms_.center,
                         static_cast<float>(effect.center_x),
                         static_cast<float>(effect.center_y));
         constexpr double pi = 3.141592653589793238462643383279502884;
-        gl->glUniform1f(water_uniforms_.angle,
+        gl->glUniform1f(coordinate_uniforms_.angle,
                         static_cast<float>(effect.angle_degrees * pi / 180.0));
-        gl->glUniform1f(water_uniforms_.area_radius,
+        gl->glUniform1f(coordinate_uniforms_.area_radius,
             static_cast<float>(effect.area_radius));
-        gl->glBindVertexArray(water_vertex_array_);
+        gl->glBindVertexArray(coordinate_vertex_array_);
         gl->glDrawArrays(GL_TRIANGLES, 0, 3);
 
         std::vector<float> pixels;
@@ -2722,7 +2747,7 @@ private:
             context_->doneCurrent();
             return fail(
                 error,
-                "OpenGL could not allocate the bounded Water readback buffer; destination was unchanged.");
+                "OpenGL could not allocate the bounded coordinate-effect readback buffer; destination was unchanged.");
         }
         gl->glPixelStorei(GL_PACK_ALIGNMENT, 1);
         gl->glReadPixels(0, 0, source.width, source.height, GL_RGBA, GL_FLOAT,
@@ -2731,7 +2756,7 @@ private:
         cleanup();
         context_->doneCurrent();
         if (render_status != GL_NO_ERROR) {
-            return fail(error, "OpenGL Water rendering failed with error "
+            return fail(error, "OpenGL coordinate-effect rendering failed with error "
                                    + std::to_string(render_status) + ".");
         }
 
@@ -3280,9 +3305,9 @@ private:
     GLuint program_ = 0U;
     GLuint vertex_array_ = 0U;
     SurfaceUniformLocations surface_uniforms_;
-    GLuint water_program_ = 0U;
-    GLuint water_vertex_array_ = 0U;
-    WaterUniformLocations water_uniforms_;
+    GLuint coordinate_program_ = 0U;
+    GLuint coordinate_vertex_array_ = 0U;
+    CoordinateUniformLocations coordinate_uniforms_;
     GLuint base_program_ = 0U;
     GLuint base_vertex_array_ = 0U;
     GeneratedBaseUniformLocations base_uniforms_;
@@ -3409,12 +3434,12 @@ bool render_generated_base_opengl(const RenderConfig& config,
                                            cancel, error);
 }
 
-bool apply_water_effect_opengl(const Image& source, Image& destination,
-                               const EffectConfig& effect, double phase,
-                               const std::atomic_bool* cancel,
-                               std::string* error) {
-    return service().render_water(source, destination, effect, phase, cancel,
-                                  error);
+bool apply_coordinate_effect_opengl(const Image& source, Image& destination,
+                                    const EffectConfig& effect, double phase,
+                                    const std::atomic_bool* cancel,
+                                    std::string* error) {
+    return service().render_coordinate(source, destination, effect, phase, cancel,
+                                       error);
 }
 
 bool apply_surface_mapping_opengl(const Image& source, Image& destination,

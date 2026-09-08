@@ -741,6 +741,62 @@ int main(int argc, char** argv) {
         CHECK(maximum_difference(water_start, water_end) <= 1.0e-7);
     }
 
+    // A rectangular, partly transparent source exercises signed twists, zoom,
+    // center offsets and every border. OpenGL-only builds exercise this GLSL
+    // path; hosts with both backends select Metal through the public API.
+    for (const double twist : {-0.4, 0.0, 0.3}) {
+        for (const pvt::EdgeMode edge : {pvt::EdgeMode::Reflect,
+                 pvt::EdgeMode::Alpha, pvt::EdgeMode::Black, pvt::EdgeMode::White}) {
+            auto kaleidoscope_config = no_water;
+            auto kaleidoscope = pvt::default_effect(pvt::EffectType::Kaleidoscope);
+            kaleidoscope.id = pvt::allocate_id(kaleidoscope_config);
+            kaleidoscope.enabled = true;
+            kaleidoscope.cycles_per_loop = 0;
+            kaleidoscope.phase_degrees = 0.0;
+            kaleidoscope.magnitude = 0.72;
+            kaleidoscope.frequency = 7.0;
+            kaleidoscope.secondary = twist;
+            kaleidoscope.angle_degrees = -29.0;
+            kaleidoscope.center_x = 0.31;
+            kaleidoscope.center_y = 0.27;
+            kaleidoscope.area_radius = 0.64;
+            kaleidoscope.intensity = 0.83;
+            kaleidoscope.edge_mode = edge;
+            kaleidoscope_config.effects = {kaleidoscope};
+            pvt::Image reference, direct;
+            CHECK(pvt::render_frame_at_phase(kaleidoscope_config, 0.37, cpu,
+                                             reference, nullptr, &error));
+            CHECK(pvt::render_frame_at_phase(kaleidoscope_config, 0.37, gpu,
+                                             direct, nullptr, &error));
+            CHECK(maximum_straight_alpha_difference(reference, direct) <= 0.0035);
+            CHECK(maximum_straight_alpha_difference(no_water_reference, direct) > 0.001);
+        }
+    }
+
+    // Opaque input must remain exactly opaque so ordinary RGB export succeeds;
+    // four rounded bilinear weights must not manufacture near-one alpha.
+    for (const auto type : {pvt::EffectType::Water, pvt::EffectType::Kaleidoscope}) {
+        auto opaque = no_water;
+        opaque.alpha.enabled = false;
+        opaque.starting_colors.include_alpha = false;
+        opaque.output.write_alpha = false;
+        auto effect = pvt::default_effect(type);
+        effect.id = pvt::allocate_id(opaque);
+        effect.enabled = true;
+        effect.edge_mode = pvt::EdgeMode::Reflect;
+        effect.area_radius = 0.61;
+        effect.intensity = 0.73;
+        effect.angle_degrees = 27.0;
+        opaque.effects = {effect};
+        effect.id = pvt::allocate_id(opaque);
+        opaque.effects.push_back(effect);
+        pvt::Image result;
+        CHECK(pvt::render_frame_at_phase(opaque, 0.17, gpu, result, nullptr, &error));
+        for (std::size_t offset = 3U; offset < result.pixels.size(); offset += 4U) {
+            CHECK(result.pixels[offset] == 1.0F);
+        }
+    }
+
     pvt::RenderConfig unsupported_source = neutral;
     unsupported_source.starting_colors.mode =
         pvt::StartingColorMode::ChannelLoops;

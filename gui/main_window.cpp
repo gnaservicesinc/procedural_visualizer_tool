@@ -871,6 +871,7 @@ int effect_ui_category(pvt::EffectType type) {
         case pvt::EffectType::FlagWave:
         case pvt::EffectType::LensDistortion:
         case pvt::EffectType::Twirl:
+        case pvt::EffectType::Kaleidoscope:
         case pvt::EffectType::Water:
             return MovementEffects;
         case pvt::EffectType::Glow:
@@ -912,6 +913,7 @@ void populate_effect_types(QComboBox* combo, int category) {
             add(pvt::EffectType::FlagWave);
             add(pvt::EffectType::LensDistortion);
             add(pvt::EffectType::Twirl);
+            add(pvt::EffectType::Kaleidoscope);
             add(pvt::EffectType::Water);
             break;
         case LightAndEnergyEffects:
@@ -976,6 +978,7 @@ EffectPlacementPresentation effect_placement_presentation(
         case pvt::EffectType::FlagWave:
         case pvt::EffectType::LensDistortion:
         case pvt::EffectType::Twirl:
+        case pvt::EffectType::Kaleidoscope:
         case pvt::EffectType::Water:
             return {
                 QObject::tr("Movement placement"),
@@ -2153,6 +2156,15 @@ void randomize_effect_settings(pvt::EffectConfig& effect, QRandomGenerator& rand
             effect.secondary = random_chance(random, 0.5) ? -1.0 : 1.0;
             effect.center_x = random_real(random, 0.3, 0.7);
             effect.center_y = random_real(random, 0.3, 0.7);
+            break;
+        case pvt::EffectType::Kaleidoscope:
+            effect.intensity = random_real(random, 0.65, 1.0);
+            effect.magnitude = random_real(random, 0.7, 2.5);
+            effect.frequency = static_cast<double>(random_integer(random, 3, 16));
+            effect.secondary = random_real(random, -0.3, 0.3);
+            effect.center_x = random_real(random, 0.3, 0.7);
+            effect.center_y = random_real(random, 0.3, 0.7);
+            effect.angle_degrees = random_real(random, -180.0, 180.0);
             break;
         case pvt::EffectType::Water:
             effect.intensity = random_real(random, 0.35, 0.95);
@@ -12709,6 +12721,7 @@ void MainWindow::updateEffectEditorVisibility() {
     const bool is_edge_detect = type == pvt::EffectType::EdgeDetect;
     const bool is_twirl = type == pvt::EffectType::Twirl;
     const bool is_water = type == pvt::EffectType::Water;
+    const bool is_kaleidoscope = type == pvt::EffectType::Kaleidoscope;
     const bool coordinate_effect = !is_glow && !is_block_scale && !is_particles && !is_blur;
     const bool has_center = !is_block_scale;
     const auto blur_type = static_cast<pvt::BlurType>(
@@ -12762,7 +12775,7 @@ void MainWindow::updateEffectEditorVisibility() {
     effect_form_->setRowVisible(effect_center_y_, has_center);
     effect_form_->setRowVisible(effect_angle_, is_shake || is_flag
                                                    || is_starburst || is_particles
-                                                   || is_water
+                                                   || is_water || is_kaleidoscope
                                                    || (is_blur && blur_type == pvt::BlurType::Directional));
     effect_form_->setRowVisible(effect_radius_, is_glow || is_particles || is_blur);
     effect_form_->setRowVisible(effect_threshold_, is_glow || is_particles);
@@ -12962,6 +12975,24 @@ void MainWindow::updateEffectEditorVisibility() {
             tr("Maximum rotation near the center, measured in turns."));
         effect_secondary_->setToolTip(
             tr("Negative values reverse direction; zero is neutral."));
+    } else if (is_kaleidoscope) {
+        set_form_label(effect_form_, effect_intensity_, tr("Kaleidoscope mix"));
+        set_form_label(effect_form_, effect_magnitude_, tr("Source zoom"));
+        set_form_label(effect_form_, effect_frequency_, tr("Mirrored sectors"));
+        set_form_label(effect_form_, effect_secondary_, tr("Spiral twist"));
+        set_form_label(effect_form_, effect_angle_, tr("Sector rotation (degrees)"));
+        set_form_label(effect_form_, effect_center_x_, tr("Center X (0–1)"));
+        set_form_label(effect_form_, effect_center_y_, tr("Center Y (0–1)"));
+        effect_intensity_->setToolTip(
+            tr("Blends the incoming artwork with its mirrored pattern."));
+        effect_magnitude_->setToolTip(
+            tr("Values above 1 enlarge the sampled artwork; values below 1 reveal more of it."));
+        effect_frequency_->setToolTip(
+            tr("Number of repeated sectors, each containing a mirrored pair. One creates a single mirror."));
+        effect_secondary_->setToolTip(
+            tr("Bends the sectors into spirals. Signed turns per shorter image edge; zero keeps straight mirrors."));
+        effect_angle_->setToolTip(
+            tr("Rotates the mirror axes. Cycles per loop rotates the artwork inside them; zero cycles holds the starting phase."));
     } else if (is_water) {
         set_form_label(effect_form_, effect_intensity_, tr("Refraction mix"));
         set_form_label(effect_form_, effect_magnitude_,
@@ -16785,14 +16816,15 @@ void MainWindow::randomizeStackComposition() {
             config_.swings.front().enabled = true;
         }
 
-        std::array<pvt::EffectType, 14> effect_types = {
+        std::array<pvt::EffectType, 15> effect_types = {
             pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
             pvt::EffectType::Shake, pvt::EffectType::FlagWave,
             pvt::EffectType::Glow, pvt::EffectType::BlockScale,
             pvt::EffectType::ParticleField, pvt::EffectType::Blur,
             pvt::EffectType::Glitch, pvt::EffectType::Starburst,
             pvt::EffectType::LensDistortion, pvt::EffectType::EdgeDetect,
-            pvt::EffectType::Twirl, pvt::EffectType::Water};
+            pvt::EffectType::Twirl, pvt::EffectType::Water,
+            pvt::EffectType::Kaleidoscope};
         constexpr int kMaximumRandomEffects = 6;
         const int effect_count = random_integer(
             random, 1, kMaximumRandomEffects);
@@ -19765,6 +19797,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
             render.effects.push_back(std::move(effect));
             return render.effects.back().id;
         };
+        const std::uint64_t kaleidoscope_id = append_effect(
+            pvt::default_effect(pvt::EffectType::Kaleidoscope));
         const std::uint64_t edge_id = append_effect(
             pvt::default_effect(pvt::EffectType::EdgeDetect));
         const std::uint64_t twirl_id = append_effect(
@@ -19792,6 +19826,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
                     return item.path == path;
                 });
         };
+        const auto sectors = target(kaleidoscope_id, QStringLiteral("frequency"));
+        const auto source_zoom = target(kaleidoscope_id, QStringLiteral("magnitude"));
+        const auto spiral_twist = target(kaleidoscope_id, QStringLiteral("secondary"));
+        if (sectors == targets.end() || source_zoom == targets.end()
+            || spiral_twist == targets.end()
+            || sectors->kind != LiveTargetKind::Integer
+            || sectors->maximum != 256.0
+            || !sectors->apply(live_effect_probe, 7.6)
+            || !source_zoom->apply(live_effect_probe, 0.0)
+            || !spiral_twist->apply(live_effect_probe, -2.0)
+            || render.effects.front().frequency != 8.0
+            || render.effects.front().magnitude != 0.000001
+            || render.effects.front().secondary != -1.0) {
+            if (error != nullptr) *error = QStringLiteral("Kaleidoscope Live targets failed.");
+            return false;
+        }
         const auto edge_intensity = target(
             edge_id, QStringLiteral("intensity"));
         const auto edge_frequency = target(
@@ -20830,8 +20880,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
     }
     const bool effect_catalog_complete =
-        categorized_effect_entries == 14
-        && categorized_effect_types.size() == 14U
+        categorized_effect_entries == 15
+        && categorized_effect_types.size() == 15U
         && categorized_effects_start_on_texture
         && categorized_effects_start_enabled;
 
@@ -20883,7 +20933,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || effect_category_tabs_ == nullptr
         || effect_category_tabs_->count() != EffectUiCategoryCount
         || !effect_catalog_complete
-        || add_effect_type_->count() != 7
+        || add_effect_type_->count() != 8
         || static_cast<pvt::EffectType>(
                add_effect_type_->itemData(0).toInt())
                != pvt::EffectType::EndlessZoom
@@ -21254,6 +21304,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     bool blur_ranges_valid = false;
     bool block_ranges_valid = false;
     bool placement_copy_valid = false;
+    bool kaleidoscope_ranges_valid = false;
     {
         const QSignalBlocker type_blocker(effect_type_);
         const QSignalBlocker intensity_blocker(effect_intensity_);
@@ -21297,6 +21348,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
                    == QStringLiteral("effectPlacementExplanation");
 
         populate_effect_types(effect_type_, MovementEffects);
+        const int kaleidoscope_type = effect_type_->findData(
+            static_cast<int>(pvt::EffectType::Kaleidoscope));
+        effect_type_->setCurrentIndex(kaleidoscope_type);
+        updateEffectEditorVisibility();
+        kaleidoscope_ranges_valid = kaleidoscope_type >= 0
+            && !effect_angle_->isHidden()
+            && effect_magnitude_->minimum() == 0.000001
+            && effect_frequency_->minimum() == 1.0
+            && effect_frequency_->maximum() == 256.0
+            && effect_frequency_->decimals() == 0
+            && effect_secondary_->minimum() == -1.0
+            && effect_secondary_->maximum() == 1.0
+            && effect_intensity_->maximum() == 1.0;
         const int shake_type = effect_type_->findData(
             static_cast<int>(pvt::EffectType::Shake));
         effect_type_->setCurrentIndex(shake_type);
@@ -21349,7 +21413,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
                              && effect_frequency_->minimum() == 0.25;
         effect_ranges_valid = particle_ranges_valid && glow_ranges_valid
                               && blur_ranges_valid && block_ranges_valid
-                              && placement_copy_valid;
+                              && placement_copy_valid
+                              && kaleidoscope_ranges_valid;
     }
     setEffectCategory(previous_effect_category);
     if (!effect_ranges_valid) {

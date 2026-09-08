@@ -1,12 +1,36 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
-## Scene Morph (unreleased)
+## 17.7.0 Kaleidoscope effect and Scene Morph
+
+Layer Effects > Movement & Distortion adds a repeatable Kaleidoscope effect
+that folds imported images, generated textures, or prior stack output into
+mirrored radial sectors. Artists can control 1–256 whole sectors, source zoom,
+signed spiral twist, sector rotation, center, feathered local area, mix, phase,
+and positive or negative loop cycles. Texture placement wraps the folded result
+onto a surface; Surface placement folds the completed object and its silhouette.
+
+CPU, native Metal, and portable OpenGL share straight-alpha, linear-float
+sampling and exact integer-cycle loop closure. Independent stable-ID instances
+remain reorderable and expose all numeric controls to Live mappings and Numeric
+LFOs. An included Kaleidoscope Study project demonstrates a six-second loop.
+Setup/layer formats advance to 26/23; older projects retain their appearance.
+The additive effect enum does not change public structure layout, so the shared
+library remains SONAME 17.
+
+Validation covers rectangular-canvas radial symmetry, local areas, every edge
+mode, opaque RGB export, zero/negative cycles, seam continuity, repeated
+instances, LFO domains, setup and bundle round trips, CPU/Metal/OpenGL parity,
+and English/French/German GUI controls. The complete macOS Release suite passed
+37/37 tests; a separate Metal-disabled OpenGL build passed its focused core,
+OpenGL, bundle, and CLI checks.
+
+### Scene Morph
 
 Live Controls > Scenes now offers an A/B Scene Morph fader with 0.1% numeric
 entry, explicit endpoint buttons, shared/skipped target counts, and Capture

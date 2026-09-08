@@ -432,7 +432,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t22\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t23\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -623,7 +623,7 @@ void test_layer_codec_backward_compatibility() {
     std::ostringstream version_twenty_one_output;
     std::string version_line;
     CHECK(static_cast<bool>(std::getline(current_v22_input, version_line)));
-    CHECK(version_line == "PVT_LAYER\t22");
+    CHECK(version_line == "PVT_LAYER\t23");
     version_twenty_one_output << "PVT_LAYER\t21\n";
     while (std::getline(current_v22_input, version_line)) {
         const std::size_t tab = version_line.find('\t');
@@ -757,7 +757,7 @@ void test_layer_codec_backward_compatibility() {
     std::string serialized_water_layer;
     CHECK(pvt::detail::serialize_layer_config(
         water_layer, serialized_water_layer, &error, &motion_paths));
-    CHECK(serialized_water_layer.rfind("PVT_LAYER\t22\n", 0U) == 0U);
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t23\n", 0U) == 0U);
     pvt::RenderData loaded_water_layer;
     CHECK(pvt::detail::deserialize_layer_config(
         serialized_water_layer, loaded_water_layer, &error, &motion_paths));
@@ -766,6 +766,36 @@ void test_layer_codec_backward_compatibility() {
         CHECK(loaded_water_layer.effects.front().type
               == pvt::EffectType::Water);
     }
+
+    auto kaleidoscope = pvt::default_effect(pvt::EffectType::Kaleidoscope);
+    kaleidoscope.id = pvt::allocate_id(water_layer);
+    kaleidoscope.enabled = true;
+    kaleidoscope.frequency = 9.0;
+    kaleidoscope.magnitude = 1.75;
+    kaleidoscope.secondary = -0.3;
+    water_layer.effects.push_back(kaleidoscope);
+    kaleidoscope.id = pvt::allocate_id(water_layer);
+    kaleidoscope.frequency = 5.0;
+    water_layer.effects.push_back(kaleidoscope);
+    pvt::ParameterLfo kaleidoscope_lfo;
+    kaleidoscope_lfo.id = 1U;
+    kaleidoscope_lfo.target_path = "effect/" + std::to_string(kaleidoscope.id) + "/secondary";
+    water_layer.parameter_lfos.push_back(kaleidoscope_lfo);
+    CHECK(pvt::detail::serialize_layer_config(
+        water_layer, serialized_water_layer, &error, &motion_paths));
+    CHECK(pvt::detail::deserialize_layer_config(
+        serialized_water_layer, loaded_water_layer, &error, &motion_paths));
+    CHECK(loaded_water_layer.effects.size() == 3U);
+    if (loaded_water_layer.effects.size() == 3U) {
+        CHECK(loaded_water_layer.effects[1].type == pvt::EffectType::Kaleidoscope);
+        CHECK(loaded_water_layer.effects[1].frequency == 9.0);
+        CHECK(loaded_water_layer.effects[1].magnitude == 1.75);
+        CHECK(loaded_water_layer.effects[2].id == kaleidoscope.id);
+        CHECK(loaded_water_layer.effects[2].frequency == 5.0);
+        CHECK(loaded_water_layer.effects[2].secondary == -0.3);
+    }
+    CHECK(loaded_water_layer.parameter_lfos.size() == 1U);
+    CHECK(loaded_water_layer.parameter_lfos.front().target_path == kaleidoscope_lfo.target_path);
 
     // Layer v16/setup v18 predates channel routing and authored finishing
     // order. It receives the neutral identity map and historical stage order.
@@ -1433,7 +1463,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t22");
+    CHECK(line == "PVT_LAYER\t23");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {

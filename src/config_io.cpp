@@ -96,6 +96,7 @@ namespace {
 // Version 24 adds LFO rest/skip timing, Square/Sawtooth waveforms, and
 // additional clock interpolation curves. Version 25 assigns stable IDs to
 // LFOs so their numeric settings can themselves be LFO destinations.
+// Version 26 adds the stackable Kaleidoscope effect.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -107,8 +108,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 25U,
-              "config_io.cpp implements setup format version 25");
+static_assert(kSetupFormatVersion == 26U,
+              "config_io.cpp implements setup format version 26");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -927,7 +928,7 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 13U>
     {"twirl", EffectType::Twirl},
 }};
 
-constexpr std::array<std::pair<std::string_view, EffectType>, 14U> kEffectTypes{{
+constexpr std::array<std::pair<std::string_view, EffectType>, 14U> kEffectTypesV25{{
     {"endless_zoom", EffectType::EndlessZoom},
     {"ripple", EffectType::Ripple},
     {"shake", EffectType::Shake},
@@ -942,6 +943,24 @@ constexpr std::array<std::pair<std::string_view, EffectType>, 14U> kEffectTypes{
     {"edge_detect", EffectType::EdgeDetect},
     {"twirl", EffectType::Twirl},
     {"water", EffectType::Water},
+}};
+
+constexpr std::array<std::pair<std::string_view, EffectType>, 15U> kEffectTypes{{
+    {"endless_zoom", EffectType::EndlessZoom},
+    {"ripple", EffectType::Ripple},
+    {"shake", EffectType::Shake},
+    {"flag_wave", EffectType::FlagWave},
+    {"glow", EffectType::Glow},
+    {"block_scale", EffectType::BlockScale},
+    {"particle_field", EffectType::ParticleField},
+    {"blur", EffectType::Blur},
+    {"glitch", EffectType::Glitch},
+    {"starburst", EffectType::Starburst},
+    {"lens_distortion", EffectType::LensDistortion},
+    {"edge_detect", EffectType::EdgeDetect},
+    {"twirl", EffectType::Twirl},
+    {"water", EffectType::Water},
+    {"kaleidoscope", EffectType::Kaleidoscope},
 }};
 
 constexpr std::array<std::pair<std::string_view, BlurType>, 5U> kBlurTypes{{
@@ -3579,9 +3598,14 @@ bool deserialize_setup(Records& records,
             || !consume_string(records, indexed_key("effects", index, "name"), effect.name, error)) {
             return false;
         }
-        if (setup_version >= 20U) {
+        if (setup_version >= 26U) {
             if (!consume_enum(records, indexed_key("effects", index, "type"),
                               effect.type, kEffectTypes, error)) {
+                return false;
+            }
+        } else if (setup_version >= 20U) {
+            if (!consume_enum(records, indexed_key("effects", index, "type"),
+                              effect.type, kEffectTypesV25, error)) {
                 return false;
             }
         } else if (setup_version >= 14U) {

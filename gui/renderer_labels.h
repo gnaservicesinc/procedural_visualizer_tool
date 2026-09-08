@@ -109,6 +109,7 @@ inline QString renderer_label(const char* source) {
     QT_TRANSLATE_NOOP("RendererLabels", "Invert blue"),
     QT_TRANSLATE_NOOP("RendererLabels", "Invert green"),
     QT_TRANSLATE_NOOP("RendererLabels", "Invert red"),
+    QT_TRANSLATE_NOOP("RendererLabels", "Kaleidoscope"),
     QT_TRANSLATE_NOOP("RendererLabels", "Keep all swings"),
     QT_TRANSLATE_NOOP("RendererLabels", "Keep source"),
     QT_TRANSLATE_NOOP("RendererLabels", "Last good frame"),

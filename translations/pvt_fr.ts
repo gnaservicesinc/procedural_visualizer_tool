@@ -2184,7 +2184,7 @@ Surveillance de la dernière image valide</translation>
     <context>
         <name>MainWindow</name>
         <message>
-            <location filename="../gui/main_window.cpp" line="+2369" />
+            <location filename="../gui/main_window.cpp" line="+2381" />
             <source>Project Sync &amp; Audio is edited in the persistent Drivers panel above. Expand it to configure the project clock and inherited audio profile alongside the active layer override.</source>
             <translation>La synchronisation et l’audio du projet se règlent dans le panneau permanent de pilotage ci-dessus. Développez-le pour configurer l’horloge du projet et le profil audio hérité, à côté des réglages propres au calque actif.</translation>
         </message>
@@ -2197,41 +2197,41 @@ Surveillance de la dernière image valide</translation>
             <location line="+1" />
             <location line="+542" />
             <location line="+143" />
-            <location line="+17805" />
+            <location line="+17825" />
             <source>Starting Colors</source>
             <translation>Couleurs initiales</translation>
         </message>
         <message>
-            <location line="-18489" />
+            <location line="-18509" />
             <location line="+542" />
-            <location line="+17950" />
+            <location line="+17970" />
             <source>Layer Effects</source>
             <translation>Effets du calque</translation>
         </message>
         <message>
-            <location line="-18491" />
+            <location line="-18511" />
             <location line="+540" />
-            <location line="+17949" />
+            <location line="+17969" />
             <source>Modifiers</source>
             <translation>Modificateurs</translation>
         </message>
         <message>
-            <location line="-18488" />
+            <location line="-18508" />
             <location line="+540" />
-            <location line="+17949" />
+            <location line="+17969" />
             <source>Movement</source>
             <translation>Mouvement</translation>
         </message>
         <message>
-            <location line="-18488" />
+            <location line="-18508" />
             <location line="+539" />
             <location line="+1636" />
-            <location line="+16315" />
+            <location line="+16335" />
             <source>Post Effects</source>
             <translation>Effets de finition</translation>
         </message>
         <message>
-            <location line="-18489" />
+            <location line="-18509" />
             <location line="+580" />
             <location line="+3204" />
             <location line="+527" />
@@ -2251,12 +2251,12 @@ Surveillance de la dernière image valide</translation>
             <location line="+3015" />
             <location line="+67" />
             <location line="+655" />
-            <location line="+14172" />
+            <location line="+14192" />
             <source>Export</source>
             <translation>Exporter</translation>
         </message>
         <message>
-            <location line="-18487" />
+            <location line="-18507" />
             <location line="+3594" />
             <location line="+725" />
             <source>History</source>
@@ -2270,12 +2270,12 @@ Surveillance de la dernière image valide</translation>
         <message>
             <location line="+7" />
             <location line="+1880" />
-            <location line="+16624" />
+            <location line="+16644" />
             <source>Synchronization</source>
             <translation>Synchronisation</translation>
         </message>
         <message>
-            <location line="-18502" />
+            <location line="-18522" />
             <source>Project and active-layer synchronization</source>
             <translation>Synchronisation du projet et du calque actif</translation>
         </message>
@@ -2338,12 +2338,12 @@ Surveillance de la dernière image valide</translation>
         </message>
         <message>
             <location line="+5" />
-            <location line="+15152" />
+            <location line="+15172" />
             <source>Preview failed because of an unexpected error.</source>
             <translation>L’aperçu a échoué à cause d’une erreur inattendue.</translation>
         </message>
         <message>
-            <location line="-15124" />
+            <location line="-15144" />
             <source>Preview %1 × %2 · frame %3/%4</source>
             <translation>Aperçu %1 × %2 · image %3/%4</translation>
         </message>
@@ -2412,15 +2412,15 @@ Surveillance de la dernière image valide</translation>
         <message>
             <location line="+3" />
             <location line="+5" />
-            <location line="+15583" />
+            <location line="+15603" />
             <location line="+6" />
             <source>Load failed</source>
             <translation>Échec du chargement</translation>
         </message>
         <message>
-            <location line="-15593" />
+            <location line="-15613" />
             <location line="+4" />
-            <location line="+21729" />
+            <location line="+21749" />
             <location line="+6" />
             <location line="+7" />
             <location line="+28" />
@@ -2430,7 +2430,7 @@ Surveillance de la dernière image valide</translation>
             <translation>Échec de l’enregistrement</translation>
         </message>
         <message>
-            <location line="-21823" />
+            <location line="-21843" />
             <source>The active project was not changed.
 
 %1</source>
@@ -2480,12 +2480,12 @@ Surveillance de la dernière image valide</translation>
         <message>
             <location line="+5" />
             <location line="+4426" />
-            <location line="+13521" />
+            <location line="+13541" />
             <source>Project</source>
             <translation>Projet</translation>
         </message>
         <message>
-            <location line="-17943" />
+            <location line="-17963" />
             <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
             <translation>Modifier le canevas, la boucle, la synchronisation, l’audio et l’historique de l’ensemble du projet.</translation>
         </message>
@@ -2888,12 +2888,12 @@ Surveillance de la dernière image valide</translation>
         </message>
         <message>
             <location line="-4435" />
-            <location line="+17460" />
+            <location line="+17480" />
             <source>Use synchronized clock</source>
             <translation>Utiliser l’horloge synchronisée</translation>
         </message>
         <message>
-            <location line="-17445" />
+            <location line="-17465" />
             <location line="+701" />
             <location line="+216" />
             <location line="+1594" />
@@ -2927,13 +2927,13 @@ Surveillance de la dernière image valide</translation>
         <message>
             <location line="+1" />
             <location line="+2166" />
-            <location line="+7205" />
+            <location line="+7206" />
             <location line="+21" />
             <source>Spatial frequency</source>
             <translation>Fréquence spatiale</translation>
         </message>
         <message>
-            <location line="-9391" />
+            <location line="-9392" />
             <location line="+916" />
             <location line="+391" />
             <location line="+545" />
@@ -3569,7 +3569,7 @@ Surveillance de la dernière image valide</translation>
         </message>
         <message>
             <location line="+1" />
-            <location line="+8661" />
+            <location line="+8662" />
             <location line="+11" />
             <location line="+21" />
             <location line="+14" />
@@ -3577,12 +3577,13 @@ Surveillance de la dernière image valide</translation>
             <location line="+14" />
             <location line="+12" />
             <location line="+22" />
+            <location line="+12" />
             <source>Center X (0–1)</source>
             <translation>Centre X (0–1)</translation>
         </message>
         <message>
-            <location line="-8782" />
-            <location line="+8661" />
+            <location line="-8795" />
+            <location line="+8662" />
             <location line="+11" />
             <location line="+21" />
             <location line="+14" />
@@ -3590,11 +3591,12 @@ Surveillance de la dernière image valide</translation>
             <location line="+14" />
             <location line="+12" />
             <location line="+22" />
+            <location line="+12" />
             <source>Center Y (0–1)</source>
             <translation>Centre Y (0–1)</translation>
         </message>
         <message>
-            <location line="-8782" />
+            <location line="-8795" />
             <source>Local radius (0 = whole layer)</source>
             <translation>Rayon local (0 = calque entier)</translation>
         </message>
@@ -4109,54 +4111,54 @@ Surveillance de la dernière image valide</translation>
         </message>
         <message>
             <location line="+6" />
-            <location line="+9783" />
+            <location line="+9802" />
             <source>Channel</source>
             <translation>Canal</translation>
         </message>
         <message>
-            <location line="-9782" />
+            <location line="-9801" />
             <location line="+966" />
             <location line="+2195" />
             <location line="+61" />
-            <location line="+6561" />
+            <location line="+6580" />
             <source>Minimum</source>
             <translation>Minimum</translation>
         </message>
         <message>
-            <location line="-9782" />
+            <location line="-9801" />
             <location line="+966" />
             <location line="+2195" />
             <location line="+63" />
-            <location line="+6559" />
+            <location line="+6578" />
             <source>Maximum</source>
             <translation>Maximum</translation>
         </message>
         <message>
-            <location line="-9773" />
-            <location line="+9777" />
+            <location line="-9792" />
+            <location line="+9796" />
             <source>Red</source>
             <translation>Rouge</translation>
         </message>
         <message>
-            <location line="-9776" />
-            <location line="+9776" />
+            <location line="-9795" />
+            <location line="+9795" />
             <source>Green</source>
             <translation>Vert</translation>
         </message>
         <message>
-            <location line="-9775" />
-            <location line="+9775" />
+            <location line="-9794" />
+            <location line="+9794" />
             <source>Blue</source>
             <translation>Bleu</translation>
         </message>
         <message>
-            <location line="-9774" />
-            <location line="+9774" />
+            <location line="-9793" />
+            <location line="+9793" />
             <source>Alpha</source>
             <translation>Alpha</translation>
         </message>
         <message>
-            <location line="-9772" />
+            <location line="-9791" />
             <source>Used when the authored starting palette is off. Every choice in this box obeys its RGB/alpha Min/Max range. Channel resolution scales automatically with the full-resolution output and block size; ordered patterns walk an automatically sized RGB or RGBA lattice without omitting tuples. Corrected RGBA ordering changes alpha fastest so the RGB gamut remains one broad horizontal, vertical, diagonal, or spiral field. Random is the only shuffled color-static pattern. Generated values remain float32 through effects and compositing; only the chosen output format quantizes them. Preview and export use the same full-resolution coordinates.</source>
             <translation>Utilisé lorsque la palette initiale définie est désactivée. Chaque choix respecte sa plage Min/Max RVB/alpha. La résolution des canaux s’adapte automatiquement à la sortie pleine résolution et à la taille des blocs ; les motifs ordonnés parcourent une grille RVB ou RVBA dimensionnée automatiquement sans omettre de tuples. L’ordre RVBA corrigé fait varier l’alpha le plus vite pour que la gamme RVB forme un seul grand champ horizontal, vertical, diagonal ou spiralé. Aléatoire est le seul motif de couleurs statiques mélangées. Les valeurs générées restent en float32 pendant les effets et la composition ; seul le format de sortie choisi les quantifie. Aperçu et exportation utilisent les mêmes coordonnées à pleine résolution.</translation>
         </message>
@@ -5236,12 +5238,12 @@ Surveillance de la dernière image valide</translation>
         </message>
         <message>
             <location line="+7" />
-            <location line="+7348" />
+            <location line="+7349" />
             <source>Edge threshold</source>
             <translation>Seuil des contours</translation>
         </message>
         <message>
-            <location line="-7346" />
+            <location line="-7347" />
             <source>Passes</source>
             <translation>Passes</translation>
         </message>
@@ -5333,12 +5335,12 @@ Surveillance de la dernière image valide</translation>
         <message>
             <location line="+19" />
             <location line="+137" />
-            <location line="+8244" />
+            <location line="+8263" />
             <source>Project layer: %1 — %2</source>
             <translation>Calque du projet : %1 — %2</translation>
         </message>
         <message>
-            <location line="-8376" />
+            <location line="-8395" />
             <source>Load a different OBJ from disk…</source>
             <translation>Charger un autre OBJ depuis le disque…</translation>
         </message>
@@ -5350,13 +5352,13 @@ Surveillance de la dernière image valide</translation>
         <message>
             <location line="+0" />
             <location line="+139" />
-            <location line="+11060" />
+            <location line="+11080" />
             <location line="+113" />
             <source>Matching project assets</source>
             <translation>Ressources correspondantes du projet</translation>
         </message>
         <message>
-            <location line="-11297" />
+            <location line="-11317" />
             <source>Could not reuse OBJ</source>
             <translation>Impossible de réutiliser l’OBJ</translation>
         </message>
@@ -5861,12 +5863,12 @@ Surveillance de la dernière image valide</translation>
         </message>
         <message>
             <location line="+26" />
-            <location line="+17692" />
+            <location line="+17712" />
             <source>Not saved as a bundle yet</source>
             <translation>Pas encore enregistré comme archive de projet</translation>
         </message>
         <message>
-            <location line="-17689" />
+            <location line="-17709" />
             <source>%1
 Project UUID: %2
 %3 saved version(s). Versions are immutable; revert always creates another version.</source>
@@ -5917,12 +5919,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         </message>
         <message>
             <location line="+25" />
-            <location line="+14298" />
+            <location line="+14318" />
             <source>Layers &amp;&amp; Groups</source>
             <translation>Calques &amp;&amp; groupes</translation>
         </message>
         <message>
-            <location line="-14293" />
+            <location line="-14313" />
             <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
             <translation>Faites glisser la barre de titre pour déplacer ou ancrer ce panneau. Double-cliquez dessus pour basculer entre flottant et ancré.</translation>
         </message>
@@ -6091,12 +6093,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <message>
             <location line="+3" />
             <location line="+98" />
-            <location line="+16860" />
+            <location line="+16880" />
             <source>Play</source>
             <translation>Lire</translation>
         </message>
         <message>
-            <location line="-16957" />
+            <location line="-16977" />
             <source>Previous beat</source>
             <translation>Battement précédent</translation>
         </message>
@@ -6300,12 +6302,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         </message>
         <message>
             <location line="+5" />
-            <location line="+12089" />
+            <location line="+12109" />
             <source>LFOs…</source>
             <translation>LFO…</translation>
         </message>
         <message>
-            <location line="-12086" />
+            <location line="-12106" />
             <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
             <translation>Animer des valeurs numériques entre un minimum et un maximum définis avec un oscillateur basse fréquence en boucle continue.</translation>
         </message>
@@ -6356,12 +6358,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         </message>
         <message>
             <location line="+1" />
-            <location line="+11022" />
+            <location line="+11042" />
             <source>Live Controls</source>
             <translation>Commandes Live</translation>
         </message>
         <message>
-            <location line="-11008" />
+            <location line="-11028" />
             <source>Open the stage-focused Live controls in a separate window immediately. The editor remains available, and freeze, blackout, current scene, and captured input remain ephemeral.</source>
             <translation>Ouvrir immédiatement les commandes Live dédiées à la scène dans une fenêtre distincte. L’éditeur reste disponible ; le gel, le noir, la scène actuelle et les entrées capturées restent temporaires.</translation>
         </message>
@@ -6387,12 +6389,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         </message>
         <message>
             <location line="+3" />
-            <location line="+13364" />
+            <location line="+13384" />
             <source>Restore Layers &amp;&amp; Groups Panel</source>
             <translation>Restaurer le panneau Calques &amp;&amp; groupes</translation>
         </message>
         <message>
-            <location line="-13360" />
+            <location line="-13380" />
             <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
             <translation>Afficher le panneau Calques et groupes et l’ancrer à gauche.</translation>
         </message>
@@ -6403,12 +6405,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         </message>
         <message>
             <location line="+16" />
-            <location line="+17129" />
+            <location line="+17149" />
             <source>Open unpacked project bundle</source>
             <translation>Ouvrir une archive de projet décompressée</translation>
         </message>
         <message>
-            <location line="-17116" />
+            <location line="-17136" />
             <source>Randomize layer values?</source>
             <translation>Tirer au hasard les valeurs du calque ?</translation>
         </message>
@@ -6430,19 +6432,19 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <message>
             <location line="+15" />
             <location line="+20" />
-            <location line="+16834" />
+            <location line="+16854" />
             <source>Invalid output text</source>
             <translation>Texte de sortie invalide</translation>
         </message>
         <message>
-            <location line="-16849" />
+            <location line="-16869" />
             <location line="+20" />
-            <location line="+10356" />
+            <location line="+10376" />
             <source>Invalid setup</source>
             <translation>Configuration invalide</translation>
         </message>
         <message>
-            <location line="-10347" />
+            <location line="-10367" />
             <source> - frame %1</source>
             <translation> - image %1</translation>
         </message>
@@ -7603,13 +7605,13 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         </message>
         <message>
             <location line="+2" />
-            <location line="+12739" />
+            <location line="+12759" />
             <location line="+14" />
             <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
             <translation>Les valeurs d’origine de %1 réglage(s) sont conservées, y compris lors de l’enregistrement.</translation>
         </message>
         <message>
-            <location line="-12748" />
+            <location line="-12768" />
             <source>%1 invalid setting(s) could not be applied.</source>
             <translation>%1 réglage(s) non valide(s) n’ont pas pu être appliqués.</translation>
         </message>
@@ -7619,12 +7621,62 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
             <translation>%1 détail(s) supplémentaire(s) ; survolez cet avis pour lire tous les détails.</translation>
         </message>
         <message>
-            <location line="+12741" />
+            <location line="+1693" />
+            <source>Kaleidoscope mix</source>
+            <translation>Mélange du kaléidoscope</translation>
+        </message>
+        <message>
+            <location line="+1" />
+            <source>Source zoom</source>
+            <translation>Zoom de la source</translation>
+        </message>
+        <message>
+            <location line="+1" />
+            <source>Mirrored sectors</source>
+            <translation>Secteurs en miroir</translation>
+        </message>
+        <message>
+            <location line="+1" />
+            <source>Spiral twist</source>
+            <translation>Torsion en spirale</translation>
+        </message>
+        <message>
+            <location line="+1" />
+            <source>Sector rotation (degrees)</source>
+            <translation>Rotation des secteurs (degrés)</translation>
+        </message>
+        <message>
+            <location line="+4" />
+            <source>Blends the incoming artwork with its mirrored pattern.</source>
+            <translation>Mélange l’image entrante avec son motif en miroir.</translation>
+        </message>
+        <message>
+            <location line="+2" />
+            <source>Values above 1 enlarge the sampled artwork; values below 1 reveal more of it.</source>
+            <translation>Les valeurs supérieures à 1 agrandissent l’image échantillonnée ; les valeurs inférieures à 1 en montrent une plus grande partie.</translation>
+        </message>
+        <message>
+            <location line="+2" />
+            <source>Number of repeated sectors, each containing a mirrored pair. One creates a single mirror.</source>
+            <translation>Nombre de secteurs répétés, chacun contenant une paire en miroir. La valeur 1 crée un seul miroir.</translation>
+        </message>
+        <message>
+            <location line="+2" />
+            <source>Bends the sectors into spirals. Signed turns per shorter image edge; zero keeps straight mirrors.</source>
+            <translation>Courbe les secteurs en spirales. Nombre de tours signé par petit côté de l’image ; zéro conserve des miroirs droits.</translation>
+        </message>
+        <message>
+            <location line="+2" />
+            <source>Rotates the mirror axes. Cycles per loop rotates the artwork inside them; zero cycles holds the starting phase.</source>
+            <translation>Fait tourner les axes des miroirs. Les cycles par boucle font tourner l’image à l’intérieur ; zéro cycle fige la phase de départ.</translation>
+        </message>
+        <message>
+            <location line="+11052" />
             <source>The recovery notice did not explain the repaired setting.</source>
             <translation>L’avis de récupération n’expliquait pas le réglage réparé.</translation>
         </message>
         <message>
-            <location line="-12715" />
+            <location line="-12735" />
             <source>Unsaved project changes</source>
             <translation>Modifications du projet non enregistrées</translation>
         </message>
@@ -7900,7 +7952,7 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
             <translation>Exporter une vidéo QuickTime native macOS sans FFmpeg.</translation>
         </message>
         <message>
-            <location line="+347" />
+            <location line="+348" />
             <source> 3D surface mapping is currently off; this stage still runs on the flat layer after whole-layer motion.</source>
             <translation> Le placage de surface 3D est désactivé ; cette étape s’applique tout de même au calque plat après le mouvement du calque entier.</translation>
         </message>
@@ -8005,12 +8057,12 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
             <location line="+1" />
             <location line="+10" />
             <location line="+12" />
-            <location line="+108" />
+            <location line="+126" />
             <source>Peak displacement as a fraction of the shorter image edge.</source>
             <translation>Déplacement maximal en fraction du plus petit côté de l’image.</translation>
         </message>
         <message>
-            <location line="-129" />
+            <location line="-147" />
             <source>Number of spatial ripple oscillations.</source>
             <translation>Nombre d’oscillations spatiales des ondulations.</translation>
         </message>
@@ -8067,12 +8119,12 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
         </message>
         <message>
             <location line="+3" />
-            <location line="+102" />
+            <location line="+120" />
             <source>Wave angle (degrees)</source>
             <translation>Angle de l’onde (degrés)</translation>
         </message>
         <message>
-            <location line="-101" />
+            <location line="-119" />
             <source>Scales the flag-wave displacement.</source>
             <translation>Module le déplacement de l’ondulation du drapeau.</translation>
         </message>
@@ -8269,18 +8321,18 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
         </message>
         <message>
             <location line="+2" />
-            <location line="+29" />
+            <location line="+47" />
             <source>Area center X (0–1)</source>
             <translation>Centre X de la zone (0–1)</translation>
         </message>
         <message>
-            <location line="-28" />
-            <location line="+30" />
+            <location line="-46" />
+            <location line="+48" />
             <source>Area center Y (0–1)</source>
             <translation>Centre Y de la zone (0–1)</translation>
         </message>
         <message>
-            <location line="-28" />
+            <location line="-46" />
             <source>Amplifies Sobel edges in linear light; HDR edges remain available.</source>
             <translation>Amplifie les contours de Sobel en lumière linéaire ; les contours HDR restent disponibles.</translation>
         </message>
@@ -8325,7 +8377,7 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
             <translation>Les valeurs négatives inversent la direction ; zéro est neutre.</translation>
         </message>
         <message>
-            <location line="+2" />
+            <location line="+20" />
             <source>Refraction mix</source>
             <translation>Mélange de la réfraction</translation>
         </message>
@@ -9333,7 +9385,7 @@ Remplacer la palette actuelle ou ajouter ces valeurs ?</translation>
             <translation>Tirer au hasard les valeurs du calque</translation>
         </message>
         <message>
-            <location line="+104" />
+            <location line="+105" />
             <source>Random choices exceeded this canvas's safe rendering workload; a fresh default layer mix was created instead.</source>
             <translation>Les choix aléatoires dépassaient la charge de rendu sûre de ce canevas ; une nouvelle composition de calque par défaut a été créée à la place.</translation>
         </message>
@@ -11639,7 +11691,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <translation>Projets PVT (*.zip *.pvt);;Archives de projet (*.zip);;Anciennes configurations (*.pvt);;Tous les fichiers (*)</translation>
         </message>
         <message>
-            <location line="-16896" />
+            <location line="-16916" />
             <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
             <translation>Filtre les destinations disponibles. La destination actuelle reste sélectionnée jusqu’à ce que vous en choisissiez une autre.</translation>
         </message>
@@ -12031,12 +12083,12 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <message>
             <location line="-33" />
             <location line="+827" />
-            <location line="+82" />
+            <location line="+83" />
             <source>Audio response</source>
             <translation>Réponse audio</translation>
         </message>
         <message>
-            <location line="-873" />
+            <location line="-874" />
             <source>Layer clock</source>
             <translation>Horloge du calque</translation>
         </message>
@@ -12131,7 +12183,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         </message>
         <message>
             <location line="+4" />
-            <location filename="../gui/main_window.cpp" line="-7550" />
+            <location filename="../gui/main_window.cpp" line="-7562" />
             <source>Quantization</source>
             <translation>Quantification</translation>
         </message>
@@ -12810,12 +12862,12 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <location line="+20" />
             <location line="+111" />
             <location line="+31" />
-            <location line="+45" />
+            <location line="+46" />
             <source>Enabled</source>
             <translation>Activé</translation>
         </message>
         <message>
-            <location line="-139" />
+            <location line="-140" />
             <source>Strength</source>
             <translation>Intensité</translation>
         </message>
@@ -12846,12 +12898,12 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         </message>
         <message>
             <location line="+17" />
-            <location line="+81" />
+            <location line="+82" />
             <source>Use master clock</source>
             <translation>Utiliser l’horloge principale</translation>
         </message>
         <message>
-            <location line="-79" />
+            <location line="-80" />
             <source>Amplitude</source>
             <translation>Amplitude</translation>
         </message>
@@ -12863,38 +12915,38 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <message>
             <location line="+1" />
             <location line="+29" />
-            <location line="+62" />
+            <location line="+63" />
             <source>Cycles per loop</source>
             <translation>Cycles par boucle</translation>
         </message>
         <message>
-            <location line="-90" />
+            <location line="-91" />
             <location line="+29" />
-            <location line="+62" />
+            <location line="+63" />
             <source>Phase</source>
             <translation>Phase</translation>
         </message>
         <message>
-            <location line="-90" />
+            <location line="-91" />
             <source>Direction</source>
             <translation>Direction</translation>
         </message>
         <message>
             <location line="+1" />
             <location line="+29" />
-            <location line="+52" />
+            <location line="+53" />
             <source>Center X</source>
             <translation>Centre X</translation>
         </message>
         <message>
-            <location line="-80" />
+            <location line="-81" />
             <location line="+29" />
-            <location line="+52" />
+            <location line="+53" />
             <source>Center Y</source>
             <translation>Centre Y</translation>
         </message>
         <message>
-            <location line="-75" />
+            <location line="-76" />
             <source>Swing — %1</source>
             <translation>Swing — %1</translation>
         </message>
@@ -12924,7 +12976,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <translation>Effet — %1</translation>
         </message>
         <message>
-            <location line="+32" />
+            <location line="+33" />
             <source>Effect type</source>
             <translation>Type d’effet</translation>
         </message>
@@ -12954,6 +13006,11 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <translation>Amplitude</translation>
         </message>
         <message>
+            <location line="+0" />
+            <source>Source zoom</source>
+            <translation>Zoom de la source</translation>
+        </message>
+        <message>
             <location line="+1" />
             <source>Particle count</source>
             <translation>Nombre de particules</translation>
@@ -12969,6 +13026,11 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <translation>Fréquence</translation>
         </message>
         <message>
+            <location line="+0" />
+            <source>Mirrored sectors</source>
+            <translation>Secteurs en miroir</translation>
+        </message>
+        <message>
             <location line="+1" />
             <source>Cross-wave complexity</source>
             <translation>Complexité des ondes croisées</translation>
@@ -12977,6 +13039,11 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
             <location line="+0" />
             <source>Secondary</source>
             <translation>Secondaire</translation>
+        </message>
+        <message>
+            <location line="+0" />
+            <source>Spiral twist</source>
+            <translation>Torsion en spirale</translation>
         </message>
         <message>
             <location line="+3" />
@@ -13388,7 +13455,7 @@ Notes :</translation>
             <translation>Toutes les palettes prises en charge (*.gpl *.kpl *.css *.py *.php *.java *.txt *.hex *.png *.exr);;Palette GIMP (*.gpl);;Palette Krita (*.kpl);;Feuille de style CSS (*.css);;Dictionnaire Python (*.py);;Dictionnaire PHP (*.php);;Map Java (*.java);;Texte hexadécimal (*.txt *.hex);;Image de palette PNG (*.png);;Image de palette OpenEXR HALF/FLOAT (*.exr)</translation>
         </message>
         <message>
-            <location line="+93" />
+            <location line="+94" />
             <source>Movement &amp; Distortion</source>
             <translation>Mouvement et déformation</translation>
         </message>
@@ -13418,20 +13485,20 @@ Notes :</translation>
             <translation>Effets</translation>
         </message>
         <message>
-            <location line="+64" />
+            <location line="+65" />
             <source>Particle placement</source>
             <translation>Placement des particules</translation>
         </message>
         <message>
             <location line="+1" />
-            <location line="+19" />
+            <location line="+20" />
             <location line="+17" />
             <location line="+14" />
             <source>Artwork (before surface)</source>
             <translation>Visuel (avant surface)</translation>
         </message>
         <message>
-            <location line="-49" />
+            <location line="-50" />
             <source>Layer canvas (after surface)</source>
             <translation>Canevas du calque (après surface)</translation>
         </message>
@@ -13442,12 +13509,12 @@ Notes :</translation>
         </message>
         <message>
             <location line="+3" />
-            <location line="+20323" />
+            <location line="+20353" />
             <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
             <translation>Les particules sont générées après le placage de surface et le mouvement du calque entier. Elles se superposent au canevas du calque au lieu d’être découpées ou plaquées sur l’objet.</translation>
         </message>
         <message>
-            <location line="-20310" />
+            <location line="-20339" />
             <source>Movement placement</source>
             <translation>Placement du mouvement</translation>
         </message>
@@ -13686,7 +13753,7 @@ Notes :</translation>
             <translation>La limite de références de pièces jointes du projet a été atteinte.</translation>
         </message>
         <message>
-            <location line="+5809" />
+            <location line="+5818" />
             <source>Could not open link</source>
             <translation>Impossible d’ouvrir le lien</translation>
         </message>
@@ -13705,7 +13772,7 @@ Notes :</translation>
             <translation>Une ressource gérée requise par le modèle de nouveau calque est indisponible.</translation>
         </message>
         <message>
-            <location line="+3313" />
+            <location line="+3332" />
             <source>Full filtered signal</source>
             <translation>Signal filtré complet</translation>
         </message>
@@ -14241,6 +14308,11 @@ Notes :</translation>
             <location line="+1" />
             <source>Invert red</source>
             <translation>Inverser le rouge</translation>
+        </message>
+        <message>
+            <location line="+1" />
+            <source>Kaleidoscope</source>
+            <translation>Kaléidoscope</translation>
         </message>
         <message>
             <location line="+1" />

@@ -530,7 +530,8 @@ void test_backend_contract() {
         pvt::EffectType::LensDistortion,
         pvt::EffectType::EdgeDetect,
         pvt::EffectType::Twirl,
-        pvt::EffectType::Water};
+        pvt::EffectType::Water,
+        pvt::EffectType::Kaleidoscope};
     for (const pvt::EffectType type : effect_types) {
         pvt::RenderConfig single_effect = parity_config();
         single_effect.effects.clear();
@@ -1178,7 +1179,8 @@ void test_automatic_movement_boundary() {
                            pvt::EffectType::FlagWave,
                            pvt::EffectType::LensDistortion,
                            pvt::EffectType::Twirl,
-                           pvt::EffectType::Water}) {
+                           pvt::EffectType::Water,
+                           pvt::EffectType::Kaleidoscope}) {
         auto effect = pvt::default_effect(type);
         CHECK(effect.edge_mode == pvt::EdgeMode::Automatic);
         effect.id = pvt::allocate_id(config);

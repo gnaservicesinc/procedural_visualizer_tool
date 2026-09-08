@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.6.1**. The version is read from `VERSION` by every
+Current product version: **17.7.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -10,7 +10,38 @@ independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
 
-## Scene Morph (unreleased)
+## 17.7.0 Kaleidoscope effect and Scene Morph
+
+In **Layer Effects > Movement & Distortion**, add **Kaleidoscope** to fold incoming
+artwork into animated mirrored patterns. It works with imported images,
+generated textures, and earlier effects in the stack. Use **Artwork (before
+surface)** to wrap the pattern onto an object, or **Layer / object (after
+surface)** to fold the rendered object and its silhouette.
+
+- **Mirrored sectors** repeats a mirrored pair 1–256 times around the center.
+- **Source zoom** enlarges the sampled artwork above 1; values below 1 reveal
+  more of the source, using the selected blank-space handling at its edges.
+- **Spiral twist** bends the mirrors into clockwise or counterclockwise spirals;
+  zero leaves straight mirrors. **Sector rotation** turns the mirror axes.
+- **Cycles per loop** rotates the artwork inside the mirrors with seamless
+  integer cycles. Set it to zero for a still pattern, use negative cycles to
+  reverse it, and choose its starting orientation with **Phase**.
+- **Kaleidoscope mix**, the draggable center, and the feathered local area let
+  you combine the pattern with the incoming artwork.
+
+Add multiple instances for nested symmetry, or animate their independent
+controls through Numeric LFOs and Live mappings. CPU, Metal, and portable
+OpenGL render the effect with straight alpha and linear-light float color.
+French and German controls are included. New saves use setup format 26 and
+layer format 23; existing projects retain their appearance and remain readable.
+Open projects saved with this effect in a build that supports it.
+
+Try [Kaleidoscope Study](examples/Projects/Kaleidoscope%20Study.zip), a
+self-contained six-second loop with seven spiral mirrors and a custom palette.
+Set Spiral twist to zero for straight radial symmetry, or bypass the effect
+to compare it with the source pattern.
+
+### Scene Morph
 
 **Live Controls > Scenes > Scene Morph** turns two saved looks into a playable
 crossfader. Capture two scenes with **Capture New…**, choose them as A and B,
@@ -1751,8 +1782,8 @@ or divergent destination rather than silently overwriting another history. An
 exact copied/renamed bundle with the same UUID and observed state can be adopted
 by Save As; a different UUID or advanced/divergent state is rejected.
 
-Legacy deterministic line-oriented `.pvt` setup versions 1-21 remain importable;
-current explicit legacy output is setup format 22. Format 4 added effect stage,
+Legacy deterministic line-oriented `.pvt` setup versions 1–25 remain importable;
+current explicit legacy output is setup format 26. Format 4 added effect stage,
 local-area data, localized swings, starting palettes, and layer transforms;
 format 5 adds clock, music-analysis, audio-response, and embedded-source
 identity data. Format 6 adds Data-only music, active-layer clocks, compact layer
@@ -1790,7 +1821,8 @@ saved filter choices retain their prior meanings. Format 24 adds numeric-LFO
 delay/skip timing, Square/Sawtooth waveforms, and the expanded clock curves;
 project layer records use layer format 21. Format 25 assigns stable identities
 to LFOs for deterministic LFO-to-LFO modulation; project layer records use
-layer format 22.
+layer format 22. Format 26 adds the Kaleidoscope effect vocabulary and uses
+layer format 23.
 Older records receive the historical stage order, a disabled identity map,
 neutral reusable-path modifiers, their unchanged pre-Water vocabulary, and the
 legacy alpha-outermost generated-color order.

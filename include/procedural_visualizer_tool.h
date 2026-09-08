@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 25;
+constexpr std::uint32_t kSetupFormatVersion = 26;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -115,7 +115,8 @@ enum class EffectType : std::uint8_t {
     LensDistortion,
     EdgeDetect,
     Twirl,
-    Water
+    Water,
+    Kaleidoscope
 };
 
 enum class ParticleShape : std::uint8_t {
@@ -854,6 +855,11 @@ struct SwingConfig {
 //              threshold (white core), soft_knee (halo softness), and the
 //              appended particle controls below.
 //
+// Kaleidoscope: intensity (source/effect mix), magnitude (positive source zoom),
+//              frequency (1..256 mirrored sectors), secondary (signed spiral
+//              turns per short edge, -1..1), angle_degrees (sector rotation),
+//              center and area. The effect clock rotates the sampled artwork;
+//              zero cycles freezes it at phase_degrees.
 // All types use enabled, synchronized, cycles_per_loop, and phase_degrees.
 // Synchronized effects use the swung master clock; otherwise they use their
 // own linear periodic clock. Both modes close at the loop boundary.

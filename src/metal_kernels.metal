@@ -864,6 +864,7 @@ float4 sample_bilinear(const device float4* image, float x, float y,
         (1.0f - tx) * ty, tx * ty};
     float4 result = float4(0.0f);
     float rgb_weight = 0.0f;
+    bool opaque = true;
     for (uint index = 0u; index < 4u; ++index) {
         const int sx = x0 + int(index & 1u);
         const int sy = y0 + int(index >> 1u);
@@ -874,11 +875,14 @@ float4 sample_bilinear(const device float4* image, float x, float y,
             rgb_weight += weights[index];
         }
         result.a += samples[index].a * weights[index];
+        opaque = opaque && (weights[index] == 0.0f || samples[index].a == 1.0f);
     }
     if (edge_mode == 0u && rgb_weight > 0.0f) {
         result.rgb /= rgb_weight;
     }
-    result.a = clamp_unit(result.a);
+    // Summing four rounded weights can put opaque artwork just below one,
+    // incorrectly making an RGB export require an alpha channel.
+    result.a = opaque ? 1.0f : clamp_unit(result.a);
     return result;
 }
 
@@ -1818,6 +1822,25 @@ kernel void coordinate_effect(constant FrameConstants& frame [[buffer(0)]],
             center_y + sine * dx + cosine * dy,
             width, height, effect.kind.z);
         sampled = mix(source[gid.y * width + gid.x], distorted,
+                      clamp_unit(intensity * area));
+    } else if (effect.kind.x == 14u) {
+        const float dx = x - center_x;
+        const float dy = y - center_y;
+        const float distance = length(float2(dx, dy));
+        const float sector = kTau / effect.primary.w;
+        const float spiral = kTau * effect.placement.x
+                             * distance / frame.phases.w;
+        const float polar = distance > 1.0e-12f ? atan2(dy, dx) : 0.0f;
+        const float folded = abs(fract(
+            (polar - effect.placement.w + spiral) / sector + 0.5f)
+            - 0.5f) * sector;
+        const float source_angle = folded + effect.placement.w + effect.primary.x;
+        const float source_radius = distance / effect.primary.z;
+        const float4 mirrored = sample_bilinear(
+            source, center_x + source_radius * cos(source_angle),
+            center_y + source_radius * sin(source_angle),
+            width, height, effect.kind.z);
+        sampled = mix(source[gid.y * width + gid.x], mirrored,
                       clamp_unit(intensity * area));
     } else if (effect.kind.x == 13u) {
         // Integer temporal harmonics (-1, +2, -3) make the composite normal

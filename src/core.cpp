@@ -230,6 +230,7 @@ bool valid_enum(EffectType value) {
         case EffectType::EdgeDetect:
         case EffectType::Twirl:
         case EffectType::Water:
+        case EffectType::Kaleidoscope:
             return true;
     }
     return false;
@@ -1405,6 +1406,8 @@ bool effect_has_render_work(const EffectConfig& effect) {
     }
     if (effect.intensity <= 0.0) return false;
     switch (effect.type) {
+        case EffectType::Kaleidoscope:
+            return true;
         case EffectType::Glow:
             return effect.radius_pixels > 0.0;
         case EffectType::BlockScale:
@@ -2510,6 +2513,7 @@ const char* effect_type_name(EffectType value) {
         case EffectType::EdgeDetect: return "Edge detect";
         case EffectType::Twirl: return "Twirl";
         case EffectType::Water: return "Water";
+        case EffectType::Kaleidoscope: return "Kaleidoscope";
     }
     return "Unknown";
 }
@@ -2845,6 +2849,7 @@ EdgeMode effective_effect_edge_mode(const EffectConfig& effect) {
             case EffectType::LensDistortion:
             case EffectType::Twirl:
             case EffectType::Water:
+            case EffectType::Kaleidoscope:
                 return EdgeMode::Alpha;
             default:
                 break;
@@ -2949,6 +2954,12 @@ EffectConfig default_effect(EffectType type) {
             effect.magnitude = 0.35; // maximum turns
             effect.frequency = 1.8; // center falloff exponent
             effect.secondary = 1.0; // direction/depth
+            break;
+        case EffectType::Kaleidoscope:
+            effect.intensity = 1.0;
+            effect.magnitude = 1.0; // source zoom
+            effect.frequency = 6.0; // mirrored sectors
+            effect.secondary = 0.0; // spiral turns per short edge
             break;
         case EffectType::Water:
             effect.intensity = 0.75;
@@ -3835,6 +3846,17 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 "Twirl effect " + std::to_string(index + 1U)
                 + " requires a mix from 0 to 1, a radial exponent of at "
                   "least 0.25, and direction/depth from -1 to 1.");
+        }
+        if (effect.type == EffectType::Kaleidoscope
+            && (effect.intensity > 1.0 || effect.magnitude < 0.000001
+                || effect.frequency < 1.0 || effect.frequency > 256.0
+                || std::floor(effect.frequency) != effect.frequency
+                || effect.secondary < -1.0 || effect.secondary > 1.0)) {
+            return invalid_result(
+                "Kaleidoscope effect " + std::to_string(index + 1U)
+                + " requires a mix from 0 to 1, source zoom of at least "
+                  "0.000001, 1 to 256 whole mirrored sectors, and spiral "
+                  "twist from -1 to 1.");
         }
         if (effect.type == EffectType::Water
             && (effect.intensity > 1.0
@@ -5670,6 +5692,33 @@ void apply_coordinate_effect(const Image& source, Image& destination,
                         effect.edge_mode);
                     sampled = blend_straight_alpha(
                         load_color(source, x, y), distorted,
+                        clamp_value(intensity * area, 0.0, 1.0));
+                    break;
+                }
+                case EffectType::Kaleidoscope: {
+                    const double dx = x - center_x;
+                    const double dy = y - center_y;
+                    const double distance = std::hypot(dx, dy);
+                    const double sector = kTau / effect.frequency;
+                    const double spiral = kTau * effect.secondary
+                                          * distance / short_side;
+                    const double polar = distance > 1.0e-12
+                                             ? std::atan2(dy, dx) : 0.0;
+                    // A triangular angular fold joins adjacent mirrored
+                    // sectors continuously. Pixel-space radii preserve circles
+                    // on non-square canvases. Phase rotates only the source,
+                    // so every integer clock cycle closes the animation.
+                    const double folded = std::abs(
+                        wrap_unit((polar - angle + spiral) / sector + 0.5)
+                        - 0.5) * sector;
+                    const double source_angle = folded + angle + phase;
+                    const double source_radius = distance / effect.magnitude;
+                    const Color mirrored = sample_bilinear(
+                        source, center_x + source_radius * std::cos(source_angle),
+                        center_y + source_radius * std::sin(source_angle),
+                        effect.edge_mode);
+                    sampled = blend_straight_alpha(
+                        load_color(source, x, y), mirrored,
                         clamp_value(intensity * area, 0.0, 1.0));
                     break;
                 }
@@ -7900,9 +7949,10 @@ bool render_frame_at_timeline_sample_cancellable(
                 } else if (effect.type == EffectType::ParticleField) {
                     apply_particle_field(current, scratch, effect, phase, cancel);
                     current.pixels.swap(scratch.pixels);
-                } else if (effect.type == EffectType::Water
+                } else if ((effect.type == EffectType::Water
+                            || effect.type == EffectType::Kaleidoscope)
                            && detail::opengl_surface_acceleration_active()) {
-                    if (!detail::apply_water_effect_opengl(
+                    if (!detail::apply_coordinate_effect_opengl(
                             current, scratch, effect, phase, cancel, error)) {
                         return false;
                     }

@@ -4,6 +4,7 @@
 #include "../src/effect_parameter_domain.h"
 #include "../src/frame_renderer_internal.h"
 #include "../src/path_utf8.h"
+#include "../src/post_process_alpha.h"
 #include "../src/source_image.h"
 
 #include <png.h>
@@ -466,6 +467,9 @@ void test_parameter_lfos() {
         return resolved.effects.front();
     };
 
+    CHECK(materialized_effect(pvt::EffectType::Kaleidoscope, "frequency", 999.0).frequency == 256.0);
+    CHECK(materialized_effect(pvt::EffectType::Kaleidoscope, "magnitude", 0.0).magnitude == 0.000001);
+    CHECK(materialized_effect(pvt::EffectType::Kaleidoscope, "secondary", -2.0).secondary == -1.0);
     const auto edge_intensity = materialized_effect(
         pvt::EffectType::EdgeDetect, "intensity", 2.0);
     const auto edge_frequency = materialized_effect(
@@ -579,7 +583,7 @@ void test_parameter_lfos() {
     animated.parameter_lfos.front().delay_fraction = 0.125;
     animated.parameter_lfos.front().skip_cycles = 2;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t25\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t26\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -1601,7 +1605,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t25\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t26\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -3541,6 +3545,176 @@ void test_layer_clock_mixing_and_generated_shaping() {
     CHECK(mean_absolute_difference(repeated, first_seed) > 0.0001);
 }
 
+
+void test_kaleidoscope_effect(const fs::path& directory) {
+    // An asymmetric imported image reveals true spatial folding, independently
+    // of the generated-source kaleidoscope and its color-ordering rules.
+    constexpr int width = 65;
+    constexpr int height = 49;
+    std::vector<unsigned char> pixels(width * height * 4U);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t offset = static_cast<std::size_t>(y * width + x) * 4U;
+            pixels[offset] = static_cast<unsigned char>(x * 255 / (width - 1));
+            pixels[offset + 1U] = static_cast<unsigned char>(y * 255 / (height - 1));
+            pixels[offset + 2U] = static_cast<unsigned char>((x * 13 + y * 7) % 256);
+            pixels[offset + 3U] = static_cast<unsigned char>(64 + (x * 3 + y * 5) % 192);
+        }
+    }
+    const fs::path source = directory / "kaleidoscope-source.png";
+    CHECK(write_test_png(source, width, height, pixels));
+    auto config = pvt::default_config();
+    config.width = width;
+    config.height = height;
+    config.block_size = 1;
+    config.waves.clear();
+    config.swings.clear();
+    config.effects.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.output.write_alpha = true;
+    config.alpha.enabled = false;
+    config.alpha.use_source_alpha = true;
+    config.starting_image.enabled = true;
+    config.starting_image.path = source.string();
+    config.starting_image.fit = pvt::StartingImageFit::Stretch;
+    std::string error;
+    pvt::Image baseline;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, baseline, &error));
+    auto effect = pvt::default_effect(pvt::EffectType::Kaleidoscope);
+    effect.id = pvt::allocate_id(config);
+    effect.enabled = true;
+    effect.cycles_per_loop = 0;
+    effect.frequency = 4.0;
+    config.effects.push_back(effect);
+    pvt::Image mirrored;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, mirrored, &error));
+    CHECK(mean_absolute_difference(baseline, mirrored) > 0.01);
+    // Four sectors must agree under quarter turns and reflections even though
+    // the canvas is rectangular. Include the exact center/polar singularity.
+    for (int dy = -20; dy <= 20; ++dy) {
+        for (int dx = -20; dx <= 20; ++dx) {
+            for (int channel = 0; channel < 4; ++channel) {
+                const auto at = [&](int x, int y) {
+                    return mirrored.pixels[static_cast<std::size_t>(
+                        ((24 + y) * width + 32 + x) * 4 + channel)];
+                };
+                CHECK(std::fabs(at(dx, dy) - at(-dy, dx)) < 0.00001F);
+                CHECK(std::fabs(at(dx, dy) - at(dx, -dy)) < 0.00001F);
+            }
+        }
+    }
+    pvt::Image changed;
+    for (const bool bypass : {false, true}) {
+        config.effects.front().enabled = !bypass;
+        config.effects.front().intensity = bypass ? 1.0 : 0.0;
+        CHECK(pvt::render_frame_at_phase(config, 0.0, changed, &error));
+        CHECK(changed.pixels == baseline.pixels);
+    }
+    config.effects.front() = effect;
+    for (const std::string property : {"magnitude", "frequency", "secondary", "angle", "center_x"}) {
+        auto varied = config;
+        auto& e = varied.effects.front();
+        if (property == "magnitude") e.magnitude = 1.7;
+        if (property == "frequency") e.frequency = 7.0;
+        if (property == "secondary") e.secondary = -0.35;
+        if (property == "angle") e.angle_degrees = 31.0;
+        if (property == "center_x") e.center_x = 0.27;
+        CHECK(pvt::render_frame_at_phase(varied, 0.0, changed, &error));
+        CHECK(mean_absolute_difference(mirrored, changed) > 0.001);
+    }
+    config.effects.front().area_radius = 0.2;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, changed, &error));
+    CHECK(std::equal(baseline.pixels.begin(), baseline.pixels.begin() + 4,
+                     changed.pixels.begin()));
+    config.effects.front() = effect;
+    config.effects.front().cycles_per_loop = -3;
+    config.effects.front().secondary = 0.3;
+    pvt::Image first, last, before, after;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, first, &error));
+    CHECK(pvt::render_frame_at_phase(config, 1.0, last, &error));
+    CHECK(first.pixels == last.pixels);
+    CHECK(pvt::render_frame_at_phase(config, 0.31, changed, &error));
+    CHECK(mean_absolute_difference(first, changed) > 0.001);
+    CHECK(pvt::render_frame_at_phase(config, 1.0 - 0.000001, before, &error));
+    CHECK(pvt::render_frame_at_phase(config, 0.000001, after, &error));
+    CHECK(mean_absolute_difference(before, after) < 0.001);
+    config.effects.front().cycles_per_loop = 0;
+    config.effects.front().magnitude = 0.125;
+    config.effects.front().space = pvt::EffectSpace::Surface;
+    CHECK(pvt::effective_effect_edge_mode(config.effects.front()) == pvt::EdgeMode::Alpha);
+    CHECK(pvt::render_frame_at_phase(config, 0.0, changed, &error));
+    CHECK(changed.pixels[3] == 0.0F);
+    config.effects.front().intensity = 0.0;
+    CHECK(pvt::render_frame_at_phase(config, 0.0, changed, &error));
+    CHECK(changed.pixels == baseline.pixels);
+    config.effects.front() = effect;
+    // Repeated instances and their independent LFO destinations survive
+    // setup serialization without sharing parameters or identity.
+    auto second = effect;
+    second.id = pvt::allocate_id(config);
+    second.frequency = 9.0;
+    second.secondary = -0.2;
+    config.effects.push_back(second);
+    pvt::ParameterLfo lfo;
+    lfo.id = 1U;
+    lfo.target_path = "effect/" + std::to_string(second.id) + "/frequency";
+    lfo.minimum = 6.6;
+    lfo.maximum = 6.6;
+    config.parameter_lfos.push_back(lfo);
+    const auto resolved = pvt::detail::materialize_parameter_lfos(config, 0.0);
+    CHECK(resolved.effects[0].frequency == 4.0);
+    CHECK(resolved.effects[1].frequency == 7.0);
+    CHECK(config.effects[1].frequency == 9.0);
+    CHECK(pvt::render_frame_at_phase(config, 0.23, first, &error));
+    std::string serialized;
+    CHECK(pvt::detail::serialize_setup_config(config, serialized, &error));
+    CHECK(serialized.find("kaleidoscope") != std::string::npos);
+    pvt::RenderConfig loaded;
+    CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
+    CHECK(pvt::render_frame_at_phase(loaded, 0.23, last, &error));
+    CHECK(first.pixels == last.pixels);
+    CHECK(loaded.effects[1].id == second.id);
+    CHECK(loaded.effects[1].secondary == second.secondary);
+    // A zero-valued zoom LFO clamps to a positive zoom, not a bypass. Alpha
+    // admission must use the same domain, including opaque Black/White taps
+    // that can give an otherwise transparent eraser source coverage.
+    auto animated_zoom = config;
+    animated_zoom.effects = {effect};
+    animated_zoom.starting_image.enabled = false;
+    animated_zoom.alpha.use_source_alpha = false;
+    animated_zoom.starting_colors.include_alpha = false;
+    animated_zoom.output.write_alpha = false;
+    animated_zoom.effects.front().edge_mode = pvt::EdgeMode::Alpha;
+    lfo.target_path = "effect/" + std::to_string(effect.id) + "/magnitude";
+    lfo.minimum = 0.0;
+    lfo.maximum = 0.0;
+    animated_zoom.parameter_lfos = {lfo};
+    CHECK(!pvt::validate(animated_zoom).ok);
+    animated_zoom.output.write_alpha = true;
+    CHECK(pvt::render_frame_at_phase(animated_zoom, 0.0, changed, &error));
+    CHECK(changed.pixels[3] == 0.0F);
+    for (const auto edge : {pvt::EdgeMode::Black, pvt::EdgeMode::White}) {
+        animated_zoom.effects.front().edge_mode = edge;
+        CHECK(pvt::detail::effect_can_create_coverage_from_transparent_input(
+            animated_zoom, animated_zoom.effects.front()));
+        animated_zoom.effects.front().intensity = 0.0;
+        CHECK(!pvt::detail::effect_can_create_coverage_from_transparent_input(
+            animated_zoom, animated_zoom.effects.front()));
+        animated_zoom.effects.front().intensity = 1.0;
+    }
+    for (const double invalid : {0.0, 2.5, 257.0}) {
+        config.effects.front().frequency = invalid;
+        CHECK(!pvt::validate(config).ok);
+    }
+    config.effects.front() = effect;
+    config.effects.front().magnitude = 0.0;
+    CHECK(!pvt::validate(config).ok);
+    config.effects.front() = effect;
+    config.effects.front().secondary = 1.1;
+    CHECK(!pvt::validate(config).ok);
+}
+
 void test_new_procedural_effects() {
     pvt::RenderConfig base = pvt::default_config();
     make_small(base);
@@ -3559,7 +3733,7 @@ void test_new_procedural_effects() {
              pvt::EffectType::LensDistortion,
              pvt::EffectType::EdgeDetect,
              pvt::EffectType::Twirl,
-             pvt::EffectType::Water}) {
+             pvt::EffectType::Water, pvt::EffectType::Kaleidoscope}) {
         pvt::RenderConfig config = base;
         pvt::EffectConfig effect = pvt::default_effect(type);
         effect.id = UINT64_C(0x1234567800000000)
@@ -3637,7 +3811,7 @@ void test_determinism_and_seam_continuity() {
     CHECK(before.pixels == after.pixels);
 
     // Every effect type closes its loop with either synchronization mode.
-    const std::array<pvt::EffectType, 14U> effect_types{{
+    const std::array<pvt::EffectType, 15U> effect_types{{
         pvt::EffectType::EndlessZoom,
         pvt::EffectType::Ripple,
         pvt::EffectType::Shake,
@@ -3652,6 +3826,7 @@ void test_determinism_and_seam_continuity() {
         pvt::EffectType::EdgeDetect,
         pvt::EffectType::Twirl,
         pvt::EffectType::Water,
+        pvt::EffectType::Kaleidoscope,
     }};
     for (const pvt::EffectType type : effect_types) {
         for (const bool synchronized : {false, true}) {
@@ -3665,7 +3840,7 @@ void test_determinism_and_seam_continuity() {
             effect.cycles_per_loop = 3;
             effect.edge_mode = pvt::EdgeMode::Reflect;
             effect.radius_pixels = 2.0;
-            effect.magnitude = 0.01;
+            effect.magnitude = type == pvt::EffectType::Kaleidoscope ? 1.0 : 0.01;
             one_effect.effects.push_back(effect);
             CHECK(pvt::render_frame_at_phase(one_effect, 0.0, before, &error));
             CHECK(pvt::render_frame_at_phase(one_effect, 1.0, after, &error));
@@ -5815,7 +5990,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
              pvt::EffectType::LensDistortion,
              pvt::EffectType::EdgeDetect,
              pvt::EffectType::Twirl,
-             pvt::EffectType::Water}) {
+             pvt::EffectType::Water, pvt::EffectType::Kaleidoscope}) {
         auto effect = pvt::default_effect(type);
         effect.id = pvt::allocate_id(procedural_effect_setup);
         effect.enabled = true;
@@ -5827,8 +6002,8 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     pvt::RenderConfig loaded_procedural_effects;
     CHECK(pvt::detail::deserialize_setup_config(
         procedural_effect_text, loaded_procedural_effects, &error));
-    CHECK(loaded_procedural_effects.effects.size() == 6U);
-    if (loaded_procedural_effects.effects.size() == 6U) {
+    CHECK(loaded_procedural_effects.effects.size() == 7U);
+    if (loaded_procedural_effects.effects.size() == 7U) {
         CHECK(loaded_procedural_effects.effects[0].type
               == pvt::EffectType::Glitch);
         CHECK(loaded_procedural_effects.effects[1].type
@@ -5890,10 +6065,10 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t25\n", 0U) == 0U);
+              .rfind("PVT_SETUP\t26\n", 0U) == 0U);
     std::string version_twenty_four(current_version_bytes.begin(),
                                     current_version_bytes.end());
-    version_twenty_four.replace(0U, std::string("PVT_SETUP\t25").size(),
+    version_twenty_four.replace(0U, std::string("PVT_SETUP\t26").size(),
                                 "PVT_SETUP\t24");
     for (std::size_t index = 0U; index < original.parameter_lfos.size();
          ++index) {
@@ -7420,6 +7595,7 @@ int main(int argc, char** argv) {
     test_starting_images_and_reusable_paths(test_directory);
     test_determinism_and_seam_continuity();
     test_new_procedural_effects();
+    test_kaleidoscope_effect(test_directory);
     test_direction_alpha_and_surfaces(source_root);
     test_environment_map_lighting(test_directory, source_root);
     test_configurable_blur_effects();

@@ -1265,6 +1265,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                                     .arg(QString::fromStdString(effect.name)));
             const bool particles = effect.type == pvt::EffectType::ParticleField;
             const bool water = effect.type == pvt::EffectType::Water;
+            const bool kaleidoscope = effect.type == pvt::EffectType::Kaleidoscope;
             const pvt::detail::EffectParameterDomain domain =
                 pvt::detail::effect_parameter_domain(
                     effect.type, effect.magnitude);
@@ -1293,7 +1294,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                        });
             };
             add_effect(QStringLiteral("enabled"), QObject::tr("Enabled"), LiveTargetKind::Boolean, 0, 1, effect.enabled, [](pvt::EffectConfig& e, double v) { e.enabled = v >= 0.5; });
-            add_effect(QStringLiteral("type"), QObject::tr("Effect type"), LiveTargetKind::Enumeration, 0, static_cast<double>(pvt::EffectType::Water), static_cast<double>(effect.type), [](pvt::EffectConfig& e, double v) {
+            add_effect(QStringLiteral("type"), QObject::tr("Effect type"), LiveTargetKind::Enumeration, 0, static_cast<double>(pvt::EffectType::Kaleidoscope), static_cast<double>(effect.type), [](pvt::EffectConfig& e, double v) {
                 e.type = static_cast<pvt::EffectType>(std::llround(v));
                 pvt::detail::normalize_effect_parameter_domain(e);
             });
@@ -1302,9 +1303,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             add_effect(QStringLiteral("edge_mode"), QObject::tr("Edge mode"), LiveTargetKind::Enumeration, 0, 4, static_cast<double>(effect.edge_mode), [](pvt::EffectConfig& e, double v) { e.edge_mode = static_cast<pvt::EdgeMode>(std::llround(v)); });
             add_effect(QStringLiteral("audio_response"), QObject::tr("Audio response"), LiveTargetKind::Enumeration, 0, 12, static_cast<double>(effect.audio_response), [](pvt::EffectConfig& e, double v) { e.audio_response = static_cast<pvt::AudioResponseMode>(std::llround(v)); });
             add_effect(QStringLiteral("intensity"), QObject::tr("Intensity"), LiveTargetKind::Real, 0, domain.intensity_maximum, effect.intensity, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_intensity(e, v); });
-            add_effect(QStringLiteral("magnitude"), water ? QObject::tr("Peak refraction") : QObject::tr("Magnitude"), LiveTargetKind::Real, domain.magnitude_minimum, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_magnitude(e, v); });
-            add_effect(QStringLiteral("frequency"), particles ? QObject::tr("Particle count") : (water ? QObject::tr("Wave density") : QObject::tr("Frequency")), domain.frequency_is_integer ? LiveTargetKind::Integer : LiveTargetKind::Real, domain.frequency_minimum, domain.frequency_maximum, effect.frequency, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_frequency(e, v); });
-            add_effect(QStringLiteral("secondary"), water ? QObject::tr("Cross-wave complexity") : QObject::tr("Secondary"), domain.secondary_is_integer ? LiveTargetKind::Integer : LiveTargetKind::Real, domain.secondary_minimum, domain.secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_secondary(e, v); });
+            add_effect(QStringLiteral("magnitude"), kaleidoscope ? QObject::tr("Source zoom") : water ? QObject::tr("Peak refraction") : QObject::tr("Magnitude"), LiveTargetKind::Real, domain.magnitude_minimum, kMaximumRenderParameter, effect.magnitude, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_magnitude(e, v); });
+            add_effect(QStringLiteral("frequency"), kaleidoscope ? QObject::tr("Mirrored sectors") : particles ? QObject::tr("Particle count") : (water ? QObject::tr("Wave density") : QObject::tr("Frequency")), domain.frequency_is_integer ? LiveTargetKind::Integer : LiveTargetKind::Real, domain.frequency_minimum, domain.frequency_maximum, effect.frequency, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_frequency(e, v); });
+            add_effect(QStringLiteral("secondary"), kaleidoscope ? QObject::tr("Spiral twist") : water ? QObject::tr("Cross-wave complexity") : QObject::tr("Secondary"), domain.secondary_is_integer ? LiveTargetKind::Integer : LiveTargetKind::Real, domain.secondary_minimum, domain.secondary_maximum, effect.secondary, [](pvt::EffectConfig& e, double v) { pvt::detail::set_effect_secondary(e, v); });
             add_effect(QStringLiteral("center_x"), QObject::tr("Center X"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_x, [](pvt::EffectConfig& e, double v) { e.center_x = v; });
             add_effect(QStringLiteral("center_y"), QObject::tr("Center Y"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.center_y, [](pvt::EffectConfig& e, double v) { e.center_y = v; });
             add_effect(QStringLiteral("angle"), QObject::tr("Angle"), LiveTargetKind::Real, -kMaximumRenderParameter, kMaximumRenderParameter, effect.angle_degrees, [](pvt::EffectConfig& e, double v) { e.angle_degrees = v; });
