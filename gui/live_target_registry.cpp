@@ -1271,14 +1271,24 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
             const auto add_effect = [&](const QString& key, const QString& label,
                                         LiveTargetKind kind, double minimum,
                                         double maximum, double current, auto setter) {
+                const bool dynamic_domain = key == QStringLiteral("intensity")
+                    || key == QStringLiteral("magnitude")
+                    || key == QStringLiteral("frequency")
+                    || key == QStringLiteral("secondary")
+                    || key == QStringLiteral("radius")
+                    || key == QStringLiteral("threshold");
                 append(item_prefix + key, label, section, kind, minimum, maximum,
-                       current, [uuid, id, setter, minimum, maximum](
+                       current, [uuid, id, setter, minimum, maximum, dynamic_domain](
                                     pvt::ProjectConfig& value, double input) {
                            pvt::LayerConfig* layer = find_layer(value, uuid);
                            if (layer == nullptr) return false;
                            pvt::EffectConfig* item = find_effect(*layer, id);
                            if (item == nullptr) return false;
-                           setter(*item, std::clamp(input, minimum, maximum));
+                           // These setters enforce the current effect's domain.
+                           // A cached UI range may describe an earlier type or
+                           // magnitude and must not clip a valid scene value.
+                           setter(*item, dynamic_domain ? input
+                               : std::clamp(input, minimum, maximum));
                            return true;
                        });
             };

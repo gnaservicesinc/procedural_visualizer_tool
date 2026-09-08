@@ -1,10 +1,38 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## Scene Morph (unreleased)
+
+Live Controls > Scenes now offers an A/B Scene Morph fader with 0.1% numeric
+entry, explicit endpoint buttons, shared/skipped target counts, and Capture
+Blend. Continuous shared settings interpolate; modes and counts choose the
+nearest endpoint (B at 50%). Endpoint selectors resolve by UUID even when
+names collide. Selecting endpoints does not apply them. Scrubbing interrupts
+a timed take and uses the existing transient override path, allowing subsequent
+controller events to take over. Stopping Live clears the overlay.
+
+Capture creates one ordinary undoable scene, saved through the existing project
+bundle format. No renderer ABI, public layout, format, or version change is
+needed. The standalone GUI helper resolves shared targets and performs ordered
+Live application so modes precede dependent controls. Effect setters enforce
+their current domains rather than clipping through stale cached ranges.
+
+Coverage includes bidirectional scrubbing, exact endpoints, discrete switching,
+unknown/partial scenes, invalid numbers, changed effect domains, captured scene
+undo/redo, and a portable bundle round trip. `--smoke-test` optionally accepts
+`--live-scenes-screenshot <path>` to capture the populated Scenes panel.
+The 17 new interface messages have French/German translations and a focused
+review record in `translations/REVIEW-scene-morph.md`.
+
+Validation: the macOS Release build passes all 37 CTests, including the new
+morph checks, Cocoa GUI smoke in English/French/German, bundle persistence,
+CPU/Metal/OpenGL, and CLI checks. The translation checker passes with the Qt
+6.11.2 extractor and 2,865/2,865 finished messages in both released translations.
 
 ## 17.6.1 Numeric LFO destination filtering
 

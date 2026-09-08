@@ -6,6 +6,7 @@
 #include "live_frame_controller.h"
 #include "live_midi.h"
 #include "live_osc.h"
+#include "live_scene_morph.h"
 #include "live_target_registry.h"
 #include "stage_output_window.h"
 #include "studio_widgets.h"
@@ -42,6 +43,7 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
+#include <QSlider>
 #include <QSet>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -589,6 +591,15 @@ struct LiveWorkspace::Impl {
     QTableWidget* mapping_table = nullptr;
     QListWidget* scene_list = nullptr;
     QSpinBox* scene_transition_ms = nullptr;
+    QComboBox* morph_a = nullptr;
+    QComboBox* morph_b = nullptr;
+    QSlider* morph_slider = nullptr;
+    QDoubleSpinBox* morph_amount = nullptr;
+    QPushButton* morph_to_a = nullptr;
+    QPushButton* morph_to_b = nullptr;
+    QPushButton* morph_capture = nullptr;
+    QLabel* morph_status = nullptr;
+    LiveSceneMorph morph;
 
     explicit Impl(LiveWorkspace* owner,
                   ProjectSnapshotProvider projectProvider,
@@ -646,6 +657,8 @@ struct LiveWorkspace::Impl {
     void refreshRoleCombos();
     void refreshMappings();
     void refreshScenes();
+    void refreshMorph();
+    void applyMorph(int position);
     void refreshClockRouting();
     void refreshDevices();
     void refreshRuntimeRouting();
@@ -1590,7 +1603,11 @@ QWidget* LiveWorkspace::Impl::buildMappingTab() {
 }
 
 QWidget* LiveWorkspace::Impl::buildSceneTab() {
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
     auto* page = new QWidget;
+    scroll->setWidget(page);
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(10, 10, 10, 10);
     auto* intro = new QLabel(LiveWorkspace::tr(
@@ -1599,6 +1616,8 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     intro->setWordWrap(true);
     layout->addWidget(intro);
     scene_list = new QListWidget;
+    scene_list->setObjectName(QStringLiteral("liveSceneList"));
+    scene_list->setMinimumHeight(90);
     scene_list->setAlternatingRowColors(true);
     scene_list->setSelectionMode(QAbstractItemView::SingleSelection);
     layout->addWidget(scene_list, 1);
@@ -1613,7 +1632,9 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     layout->addLayout(transition_row);
     auto* capture_row = new QHBoxLayout;
     auto* capture = new QPushButton(LiveWorkspace::tr("Capture New…"));
+    capture->setObjectName(QStringLiteral("liveSceneCapture"));
     auto* update = new QPushButton(LiveWorkspace::tr("Update Snapshot"));
+    update->setObjectName(QStringLiteral("liveSceneUpdate"));
     auto* remove = new QPushButton(LiveWorkspace::tr("Remove"));
     capture_row->addWidget(capture);
     capture_row->addWidget(update);
@@ -1622,6 +1643,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     auto* take_row = new QHBoxLayout;
     auto* previous = new QPushButton(LiveWorkspace::tr("◀ Previous"));
     auto* take = new QPushButton(LiveWorkspace::tr("TAKE SCENE"));
+    take->setObjectName(QStringLiteral("liveSceneTake"));
     take->setMinimumHeight(38);
     auto* next = new QPushButton(LiveWorkspace::tr("Next ▶"));
     take_row->addWidget(previous);
@@ -1630,6 +1652,88 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     layout->addLayout(take_row);
     auto* startup = new QCheckBox(LiveWorkspace::tr("Use selected scene when Live starts"));
     layout->addWidget(startup);
+
+    auto* morph_panel = new QFrame;
+    morph_panel->setFrameShape(QFrame::StyledPanel);
+    auto* morph_layout = new QVBoxLayout(morph_panel);
+    auto* morph_title = new QLabel(LiveWorkspace::tr("Scene Morph"));
+    QFont title_font = morph_title->font();
+    title_font.setBold(true);
+    morph_title->setFont(title_font);
+    morph_layout->addWidget(morph_title);
+    auto* morph_hint = new QLabel(LiveWorkspace::tr(
+        "Play between two saved scenes. Shared continuous controls blend; modes and counts use A below 50% and B from 50%. Other settings stay as they are."));
+    morph_hint->setWordWrap(true);
+    morph_layout->addWidget(morph_hint);
+    auto* choices = new QHBoxLayout;
+    morph_a = new QComboBox;
+    morph_b = new QComboBox;
+    morph_a->setObjectName(QStringLiteral("liveSceneMorphA"));
+    morph_b->setObjectName(QStringLiteral("liveSceneMorphB"));
+    morph_a->setAccessibleName(LiveWorkspace::tr("Morph scene A"));
+    morph_b->setAccessibleName(LiveWorkspace::tr("Morph scene B"));
+    for (auto* combo : {morph_a, morph_b}) {
+        combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        combo->setMinimumContentsLength(12);
+        combo->setToolTip(LiveWorkspace::tr(
+            "Choosing a scene does not change the output until you move the fader or press A or B."));
+    }
+    choices->addWidget(new QLabel(QStringLiteral("A")));
+    choices->addWidget(morph_a, 1);
+    choices->addWidget(new QLabel(QStringLiteral("B")));
+    choices->addWidget(morph_b, 1);
+    morph_layout->addLayout(choices);
+    auto* fader = new QHBoxLayout;
+    morph_to_a = new QPushButton(QStringLiteral("A"));
+    morph_to_b = new QPushButton(QStringLiteral("B"));
+    morph_to_a->setObjectName(QStringLiteral("liveSceneMorphToA"));
+    morph_to_b->setObjectName(QStringLiteral("liveSceneMorphToB"));
+    morph_to_a->setAccessibleName(LiveWorkspace::tr("Apply morph endpoint A"));
+    morph_to_b->setAccessibleName(LiveWorkspace::tr("Apply morph endpoint B"));
+    morph_to_a->setMaximumWidth(42);
+    morph_to_b->setMaximumWidth(42);
+    morph_slider = new QSlider(Qt::Horizontal);
+    morph_slider->setObjectName(QStringLiteral("liveSceneMorphFader"));
+    morph_slider->setRange(0, 1000);
+    morph_slider->setPageStep(100);
+    morph_slider->setAccessibleName(LiveWorkspace::tr("Scene morph position"));
+    morph_amount = new QDoubleSpinBox;
+    morph_amount->setObjectName(QStringLiteral("liveSceneMorphAmount"));
+    morph_amount->setRange(0.0, 100.0);
+    morph_amount->setDecimals(1);
+    morph_amount->setSingleStep(0.1);
+    morph_amount->setSuffix(QStringLiteral("%"));
+    morph_amount->setKeyboardTracking(false);
+    morph_amount->setAccessibleName(LiveWorkspace::tr("Blend toward scene B"));
+    fader->addWidget(morph_to_a);
+    fader->addWidget(morph_slider, 1);
+    fader->addWidget(morph_to_b);
+    fader->addWidget(morph_amount);
+    morph_layout->addLayout(fader);
+    auto* morph_footer = new QHBoxLayout;
+    morph_status = new QLabel;
+    morph_status->setObjectName(QStringLiteral("liveSceneMorphStatus"));
+    morph_status->setWordWrap(true);
+    morph_capture = new QPushButton(LiveWorkspace::tr("Capture Blend…"));
+    morph_capture->setObjectName(QStringLiteral("liveSceneMorphCapture"));
+    morph_capture->setToolTip(LiveWorkspace::tr(
+        "Save the current Live settings as a new scene. Fader motion is temporary; captured scenes save with the project and support undo."));
+    morph_footer->addWidget(morph_status, 1);
+    morph_footer->addWidget(morph_capture);
+    morph_layout->addLayout(morph_footer);
+    layout->addWidget(morph_panel);
+    QObject::connect(morph_a, qOverload<int>(&QComboBox::currentIndexChanged), q,
+                     [this] { if (!rebuilding) refreshMorph(); });
+    QObject::connect(morph_b, qOverload<int>(&QComboBox::currentIndexChanged), q,
+                     [this] { if (!rebuilding) refreshMorph(); });
+    QObject::connect(morph_slider, &QSlider::valueChanged, q,
+                     [this](int value) { applyMorph(value); });
+    QObject::connect(morph_amount, qOverload<double>(&QDoubleSpinBox::valueChanged), q,
+                     [this](double value) { applyMorph(static_cast<int>(std::lround(value * 10.0))); });
+    QObject::connect(morph_to_a, &QPushButton::clicked, q, [this] { applyMorph(0); });
+    QObject::connect(morph_to_b, &QPushButton::clicked, q, [this] { applyMorph(1000); });
+    QObject::connect(morph_capture, &QPushButton::clicked, q,
+                     [this] { captureScene(false); });
 
     QObject::connect(capture, &QPushButton::clicked, q,
                      [this] { captureScene(false); });
@@ -1676,7 +1780,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
             && config.scenes[static_cast<std::size_t>(row)].uuid
                    == config.startup_scene_uuid);
     });
-    return page;
+    return scroll;
 }
 
 void LiveWorkspace::Impl::connectRuntime() {
@@ -2026,11 +2130,19 @@ void LiveWorkspace::Impl::refreshMappings() {
 }
 
 void LiveWorkspace::Impl::refreshScenes() {
+    const QString selected_a = morph_a->currentData().toString();
+    const QString selected_b = morph_b->currentData().toString();
+    QSignalBlocker block_a(morph_a);
+    QSignalBlocker block_b(morph_b);
+    morph_a->clear();
+    morph_b->clear();
     const QString selected = scene_list->currentItem()
         ? scene_list->currentItem()->data(Qt::UserRole).toString() : QString{};
     QSignalBlocker block(scene_list);
     scene_list->clear();
     for (const auto& scene : config.scenes) {
+        morph_a->addItem(qtext(scene.name), qtext(scene.uuid));
+        morph_b->addItem(qtext(scene.name), qtext(scene.uuid));
         auto* item = new QListWidgetItem(
             LiveWorkspace::tr("%1    %2 targets    %3 ms")
                 .arg(qtext(scene.name))
@@ -2056,6 +2168,63 @@ void LiveWorkspace::Impl::refreshScenes() {
         scene_transition_ms->setValue(
             config.scenes[static_cast<std::size_t>(row)].transition_milliseconds);
     }
+    morph_a->setCurrentIndex(std::max(0, morph_a->findData(selected_a)));
+    const int previous_b = morph_b->findData(selected_b);
+    morph_b->setCurrentIndex(previous_b >= 0 ? previous_b
+        : std::min(1, morph_b->count() - 1));
+    refreshMorph();
+}
+
+void LiveWorkspace::Impl::refreshMorph() {
+    const auto find_scene = [this](const QString& uuid) -> const pvt::LiveSceneConfig* {
+        for (const auto& scene : config.scenes) {
+            if (qtext(scene.uuid) == uuid) return &scene;
+        }
+        return nullptr;
+    };
+    const auto* a = find_scene(morph_a->currentData().toString());
+    const auto* b = find_scene(morph_b->currentData().toString());
+    morph = a != nullptr && b != nullptr && a->uuid != b->uuid
+        ? buildLiveSceneMorph(*a, *b, target_cache) : LiveSceneMorph{};
+    const bool ready = !morph.targets.isEmpty();
+    for (QWidget* widget : std::array<QWidget*, 5>{morph_slider, morph_amount,
+                                                  morph_to_a, morph_to_b, morph_capture}) {
+        widget->setEnabled(active && ready);
+    }
+    if (a == nullptr || b == nullptr || a->uuid == b->uuid) {
+        morph_status->setText(LiveWorkspace::tr("Capture and choose two different scenes to begin."));
+    } else if (!ready) {
+        morph_status->setText(LiveWorkspace::tr("These scenes have no shared controls available in this project."));
+    } else if (!active) {
+        morph_status->setText(LiveWorkspace::tr("Go Live to play the scene morph."));
+    } else {
+        morph_status->setText(LiveWorkspace::tr("%1 shared controls · %2 skipped. Move the fader to blend.")
+            .arg(morph.targets.size()).arg(morph.skipped_targets));
+    }
+}
+
+void LiveWorkspace::Impl::applyMorph(int position) {
+    if (rebuilding || !active || !project_editing_enabled || morph.targets.isEmpty()) return;
+    position = std::clamp(position, 0, 1000);
+    {
+        QSignalBlocker slider_block(morph_slider);
+        QSignalBlocker amount_block(morph_amount);
+        morph_slider->setValue(position);
+        morph_amount->setValue(static_cast<double>(position) / 10.0);
+    }
+    // Finish evaluating an interrupted timed take so unrelated partial-scene
+    // settings hold at their current values when the performer takes control.
+    (void)runtimeProject();
+    scene_transition = {};
+    const auto values = morph.values(static_cast<double>(position) / 1000.0);
+    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        overrides[it.key()] = {it.value(), it.value(), 0, 0};
+    }
+    morph_status->setText(LiveWorkspace::tr("Blend held · %1 shared controls · %2 skipped")
+        .arg(morph.targets.size()).arg(morph.skipped_targets));
+    scene_readout->setText(LiveWorkspace::tr("Morph: %1 ↔ %2 · %3% B")
+        .arg(morph_a->currentText(), morph_b->currentText())
+        .arg(morph_amount->value(), 0, 'f', 1));
 }
 
 void LiveWorkspace::Impl::refreshClockRouting() {
@@ -2383,6 +2552,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
     }
     if (value && presentation_active) setPresentationActive(false);
     active = value;
+    refreshMorph();
     {
         QSignalBlocker block(live_button);
         live_button->setChecked(value);
@@ -2434,6 +2604,12 @@ void LiveWorkspace::Impl::setActive(bool value) {
         renderer.stop();
         stopIo();
         scene_transition = {};
+        {
+            QSignalBlocker slider_block(morph_slider);
+            QSignalBlocker amount_block(morph_amount);
+            morph_slider->setValue(0);
+            morph_amount->setValue(0.0);
+        }
         overrides.clear();
         mapping_runtime.clear();
         tempo_taps.clear();
@@ -4108,6 +4284,7 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
         config.scenes.begin(), config.scenes.end(),
         [&uuid](const pvt::LiveSceneConfig& scene) { return scene.uuid == uuid; });
     if (found == config.scenes.end()) return;
+    refreshMorph();
     pvt::ProjectConfig current = project_provider
         ? project_provider() : pvt::default_project();
     applyOverrides(current);
@@ -4184,6 +4361,8 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
         }
         if (amount >= 1.0) scene_transition.active = false;
     }
+    QHash<QString, double> values;
+    values.reserve(overrides.size());
     for (auto it = overrides.begin(); it != overrides.end(); ++it) {
         OverrideValue& value = it.value();
         if (value.smoothing_ms > 0 && value.current != value.target) {
@@ -4198,15 +4377,9 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
         } else {
             value.current = value.target;
         }
-        const auto cached = target_index.constFind(it.key());
-        if (cached != target_index.cend()) {
-            const int index = cached.value();
-            if (index >= 0 && index < static_cast<int>(target_cache.size())) {
-                (void)target_cache[static_cast<std::size_t>(index)].apply(
-                    project, value.current);
-            }
-        }
+        values.insert(it.key(), value.current);
     }
+    applyLiveTargetValues(project, target_cache, values);
 }
 
 double LiveWorkspace::Impl::basePhase(const pvt::ProjectConfig& project) const {

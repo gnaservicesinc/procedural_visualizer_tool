@@ -571,6 +571,8 @@ if(PVT_BUILD_QT_GUI)
         gui/live_osc.h
         gui/live_target_registry.cpp
         gui/live_target_registry.h
+        gui/live_scene_morph.cpp
+        gui/live_scene_morph.h
         gui/live_workspace.cpp
         gui/live_workspace.h
         gui/stage_output_window.cpp
@@ -947,6 +949,15 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_live_scene_morph_tests
+            tests/live_scene_morph_test.cpp
+            gui/live_scene_morph.cpp
+            gui/live_target_registry.cpp)
+        target_compile_features(pvt_live_scene_morph_tests PRIVATE cxx_std_17)
+        target_link_libraries(pvt_live_scene_morph_tests PRIVATE
+            ProceduralVisualizerTool::ProceduralVisualizerTool Qt6::Core)
+        pvt_enable_warnings(pvt_live_scene_morph_tests)
+        add_test(NAME pvt_live_scene_morph COMMAND pvt_live_scene_morph_tests)
         add_test(NAME pvt_gui_smoke
             COMMAND ProceduralVisualizerToolGui --language en --smoke-test)
         if(APPLE)

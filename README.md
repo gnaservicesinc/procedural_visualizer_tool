@@ -10,6 +10,28 @@ independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
 
+## Scene Morph (unreleased)
+
+**Live Controls > Scenes > Scene Morph** turns two saved looks into a playable
+crossfader. Capture two scenes with **Capture New…**, choose them as A and B,
+then drag the fader or enter an exact percentage. Scrub in either direction,
+hold a blend, or press A/B to reach an endpoint immediately. Merely choosing
+the scenes leaves the output alone.
+
+Continuous settings captured in both scenes interpolate. Modes, switches, and
+counts use A below 50% and B from 50%; settings missing from either scene or
+unavailable in the current project are skipped, with a visible count. This
+morphs control values, so changing effect types can produce abrupt changes.
+For smooth visual transitions, capture scenes with matching modes and counts.
+
+**Capture Blend…** saves the current Live settings as a new, undoable scene
+that travels with the project. Fader motion and the A/B selection are temporary
+performance state. Moving the fader interrupts a timed scene take; subsequent
+audio/MIDI/OSC mappings can take control of individual settings again. Stopping
+Live clears the performance overlay. Authored renderer values, project formats,
+and the public ABI are unchanged. The new controls include French and German
+translations.
+
 ## 17.6.1 reliable Numeric LFO destination browsing
 
 Changing the destination group in Numeric LFOs keeps the current destination

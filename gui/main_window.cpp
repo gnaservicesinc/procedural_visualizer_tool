@@ -18895,6 +18895,130 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
+    // Exercise the perform/capture boundary through the actual widgets and
+    // authoring callback. Moving a fader must not add undo entries; explicitly
+    // capturing its result must make exactly one undoable, portable scene.
+    {
+        auto* a = live_workspace_->findChild<QComboBox*>(QStringLiteral("liveSceneMorphA"));
+        auto* b = live_workspace_->findChild<QComboBox*>(QStringLiteral("liveSceneMorphB"));
+        auto* slider = live_workspace_->findChild<QSlider*>(QStringLiteral("liveSceneMorphFader"));
+        auto* amount = live_workspace_->findChild<QDoubleSpinBox*>(QStringLiteral("liveSceneMorphAmount"));
+        auto* endpoint_b = live_workspace_->findChild<QPushButton*>(QStringLiteral("liveSceneMorphToB"));
+        auto* capture = live_workspace_->findChild<QPushButton*>(QStringLiteral("liveSceneMorphCapture"));
+        auto* take = live_workspace_->findChild<QPushButton*>(QStringLiteral("liveSceneTake"));
+        auto* scenes = live_workspace_->findChild<QListWidget*>(QStringLiteral("liveSceneList"));
+        if (!a || !b || !slider || !amount || !endpoint_b || !capture || !take || !scenes) {
+            if (error) *error = QStringLiteral("Scene Morph controls are missing.");
+            return false;
+        }
+        const int original_undo = undo_stack_->index();
+        const double authored_fps = project_.canvas.fps;
+        pvt::LiveConfig probe = project_.canvas.live;
+        pvt::LiveSceneConfig scene_a;
+        scene_a.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        scene_a.name = "Morph endpoint";
+        scene_a.values = {{"project.fps", pvt::LiveSceneValueType::Real, "24"}};
+        auto scene_b = scene_a;
+        scene_b.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        scene_b.values.front().value = "60";
+        scene_b.transition_milliseconds = 10000;
+        probe.scenes.push_back(scene_a);
+        probe.scenes.push_back(scene_b);
+        applyAuthoredLiveConfig(probe, QStringLiteral("Scene Morph smoke setup"));
+        a->setCurrentIndex(a->findData(QString::fromStdString(scene_a.uuid)));
+        b->setCurrentIndex(b->findData(QString::fromStdString(scene_b.uuid)));
+        const int prepared_undo = undo_stack_->index();
+        if (prepared_undo != original_undo + 1 || !slider->isEnabled()) {
+            if (error) *error = QStringLiteral("Scene Morph did not resolve distinct scene UUIDs.");
+            return false;
+        }
+        endpoint_b->click();
+        // An explicit take can replace the morph; scrubbing then interrupts it.
+        scenes->setCurrentRow(scenes->count() - 1);
+        take->click();
+        slider->setValue(750);
+        amount->setValue(25.0);
+        if (slider->value() != 250 || undo_stack_->index() != prepared_undo
+            || project_.canvas.fps != authored_fps) {
+            if (error) *error = QStringLiteral("Scene Morph changed authored values/history or lost fader synchronization.");
+            return false;
+        }
+        const auto answer_capture = [this](bool accept) {
+            QTimer::singleShot(0, live_workspace_, [accept] {
+                if (auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget())) {
+                    dialog->setTextValue(QStringLiteral("Captured morph"));
+                    if (accept) dialog->accept(); else dialog->reject();
+                }
+            });
+        };
+        answer_capture(false);
+        capture->click();
+        if (undo_stack_->index() != prepared_undo) {
+            if (error) *error = QStringLiteral("Canceling a blend capture changed history.");
+            return false;
+        }
+        answer_capture(true);
+        capture->click();
+        const auto& captured = project_.canvas.live.scenes.back();
+        const auto fps = std::find_if(captured.values.begin(), captured.values.end(),
+            [](const pvt::LiveSceneValue& value) { return value.target_path == "project.fps"; });
+        if (undo_stack_->index() != prepared_undo + 1
+            || captured.name != "Captured morph" || fps == captured.values.end()
+            || QString::fromStdString(fps->value).toDouble() != 33.0
+            || project_.canvas.fps != authored_fps) {
+            if (error) *error = QStringLiteral("Capture Blend did not save the held morph as one authored scene.");
+            return false;
+        }
+        const std::string captured_uuid = captured.uuid;
+        const QStringList smoke_arguments = QCoreApplication::arguments();
+        const qsizetype morph_screenshot = smoke_arguments.indexOf(
+            QStringLiteral("--live-scenes-screenshot"));
+        if (morph_screenshot >= 0 && morph_screenshot + 1 < smoke_arguments.size()) {
+            auto* scene_tabs = live_workspace_->findChild<QTabWidget*>();
+            const int previous_tab = scene_tabs->currentIndex();
+            scene_tabs->setCurrentIndex(2);
+            QApplication::processEvents();
+            const bool saved = automatic_live_window->grab().save(
+                smoke_arguments.at(morph_screenshot + 1));
+            scene_tabs->setCurrentIndex(previous_tab);
+            if (!saved) {
+                if (error) *error = QStringLiteral("Could not save the Scene Morph smoke screenshot.");
+                return false;
+            }
+        }
+        QTemporaryDir morph_directory;
+        auto portable = pvt::default_project_document();
+        portable.project = project_;
+        pvt::ProjectDocument reopened;
+        std::string persistence_error;
+        const auto morph_path = morph_directory.filePath(QStringLiteral("morph.zip")).toStdString();
+        if (!morph_directory.isValid()
+            || !pvt::save_project_document(portable, morph_path, nullptr, &persistence_error)
+            || !pvt::load_project_document(morph_path, reopened, &persistence_error)
+            || reopened.project.canvas.live.scenes.back().uuid != captured_uuid
+            || reopened.project.canvas.live.scenes.back().values.size() != captured.values.size()) {
+            if (error) *error = QStringLiteral("Captured blend did not survive a portable project round trip: ")
+                + QString::fromStdString(persistence_error);
+            return false;
+        }
+        undo_stack_->undo();
+        if (project_.canvas.live.scenes.size() != probe.scenes.size()) {
+            if (error) *error = QStringLiteral("Undo did not remove the captured blend.");
+            return false;
+        }
+        undo_stack_->redo();
+        if (project_.canvas.live.scenes.back().uuid != captured_uuid) {
+            if (error) *error = QStringLiteral("Redo did not restore the captured scene identity.");
+            return false;
+        }
+        undo_stack_->undo();
+        undo_stack_->undo();
+        if (undo_stack_->index() != original_undo || slider->isEnabled()) {
+            if (error) *error = QStringLiteral("Removing morph endpoints left the fader armed.");
+            return false;
+        }
+    }
+
     // The in-window transport can stop and restart the runtime without closing
     // the companion. Stopping must immediately release export guards and resume
     // the editor preview; restarting must suspend that competing render again.
