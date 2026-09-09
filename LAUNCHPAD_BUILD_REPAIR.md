@@ -59,6 +59,19 @@ exact CPU pixels across constrained and parallel rendering.
 Raw API snapshots and logs are saved outside the source checkout at
 `/opt/vrm/render/launchpad-investigation-20260909/`.
 
+## Completed GitHub verification
+
+The repair was committed and pushed to `main` as
+`d4443c8ad7ea0b8fff85e7702cd7b37d870fdefb`.
+[Desktop workflow 34410318143](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34410318143)
+completed successfully on Linux x64, Linux ARM64, Windows x64, Windows ARM64,
+and macOS ARM64. Both Linux jobs passed 40 tests in the existing static build
+and 39 tests in the new shared build, including required OpenGL checks. The
+allocation-interposition test is intentionally registered only for static
+builds. Linux installed-package and external-consumer checks also passed.
+[CodeQL 34410317702](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34410317702)
+completed successfully for the same repair commit.
+
 ## Remote verification still required
 
 The source fix must be imported from GitHub `main` into
@@ -70,7 +83,6 @@ build automatically. Retrying an old build before import would use old code.
 2. Verify fresh Snap amd64 and arm64 builds, including Store upload status.
 3. Verify fresh Debian binary builds for Resolute and Stonking. A successful
    source-recipe build alone does not establish binary-package success.
-4. Verify the added Linux shared-build CI checks.
 
 At investigation time the available Launchpad browser session required Ubuntu
 One sign-in for immediate import/rebuild requests. The next automatic import
