@@ -297,6 +297,28 @@ jobs:
         shell: bash
         run: ctest --test-dir build --output-on-failure --timeout 300 -E '^pvt_gui_smoke'
 
+      - name: Build and test Linux shared-library packaging configuration
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          PVT_REQUIRE_OPENGL: "1"
+        run: |
+          # Snap and Debian link the editor against a shared renderer. The
+          # standalone archive's static build cannot catch missing exports.
+          cmake -S . -B build-shared -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_TESTING=ON \
+            -DPVT_BUILD_CLI=ON \
+            -DPVT_BUILD_EXAMPLES=OFF \
+            -DPVT_BUILD_QT_GUI=ON \
+            -DPVT_DEPLOY_QT_RUNTIME=OFF \
+            -DPVT_ENABLE_METAL=OFF
+          cmake --build build-shared --parallel
+          xvfb-run --auto-servernum ctest --test-dir build-shared \
+            --output-on-failure --timeout 300
+
       - name: Install Linux package
         if: runner.os == 'Linux'
         shell: bash

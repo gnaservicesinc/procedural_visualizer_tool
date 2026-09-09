@@ -219,7 +219,14 @@ int main() {
                     && shared_memory.worker_budget(1U) == 0U,
                 "shared/composite memory was not reserved once before admission");
         std::weak_ptr<const void> shared_lifetime = shared_memory.shared.owners.begin()->second;
-        pvt::detail::prune_render_asset_caches(pvt::default_project());
+        // Settings clear each cache after a resource-limit change. Exercise
+        // those entry points directly across the shared-library boundary and
+        // ensure already-admitted renders keep their immutable assets.
+        const pvt::detail::AssetPaths none;
+        pvt::detail::prune_opengl_mesh_cache(none);
+        pvt::detail::prune_displacement_mesh_cache(none);
+        pvt::detail::prune_obj_mesh_cache(none);
+        pvt::detail::prune_source_image_cache(none, none);
         require(!shared_lifetime.expired(), "eviction revoked an admitted asset handle");
         one_memory = {};
         shared_memory = {};
