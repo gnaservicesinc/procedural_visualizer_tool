@@ -1214,14 +1214,21 @@ class SequenceWorkerJoiner {
 public:
     SequenceWorkerJoiner(std::vector<std::thread>& threads,
                          std::atomic_bool& stop,
+                         std::mutex& mutex,
                          std::condition_variable& wake)
-        : threads_(threads), stop_(stop), wake_(wake) {}
+        : threads_(threads), stop_(stop), mutex_(mutex), wake_(wake) {}
 
     SequenceWorkerJoiner(const SequenceWorkerJoiner&) = delete;
     SequenceWorkerJoiner& operator=(const SequenceWorkerJoiner&) = delete;
 
     ~SequenceWorkerJoiner() {
-        stop_.store(true, std::memory_order_relaxed);
+        // The wait predicate and its stop transition must share the mutex.
+        // An atomic store alone can notify between a worker's false predicate
+        // check and its wait, leaving join() blocked on a missed wakeup.
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_.store(true, std::memory_order_relaxed);
+        }
         wake_.notify_all();
         for (std::thread& thread : threads_) {
             if (thread.joinable()) {
@@ -1233,6 +1240,7 @@ public:
 private:
     std::vector<std::thread>& threads_;
     std::atomic_bool& stop_;
+    std::mutex& mutex_;
     std::condition_variable& wake_;
 };
 
@@ -1275,7 +1283,7 @@ bool render_prepared_sequence(int total_frames,
     std::vector<std::thread> threads;
     threads.reserve(worker_count);
     std::exception_ptr scheduler_exception;
-    SequenceWorkerJoiner joiner(threads, stop, wake);
+    SequenceWorkerJoiner joiner(threads, stop, mutex, wake);
 
     for (std::size_t worker = 0U; worker < worker_count; ++worker) {
         threads.emplace_back([&, worker] {
@@ -1337,8 +1345,8 @@ bool render_prepared_sequence(int total_frames,
                     if (scheduler_exception == nullptr) {
                         scheduler_exception = std::current_exception();
                     }
+                    stop.store(true, std::memory_order_relaxed);
                 }
-                stop.store(true, std::memory_order_relaxed);
                 wake.notify_all();
             }
         });

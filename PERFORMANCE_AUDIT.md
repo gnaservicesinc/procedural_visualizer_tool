@@ -1,15 +1,17 @@
 # Performance and correctness audit
 
-Updated: 2026-09-09. Iteration 4, based on commit `d3b2ab292d0030b55fab65a5a2a7d08a00c9a251`
-(17.9.0) and prepared for 17.10.0. Iteration 3 was committed in 17.9.0; iteration 2 was committed
-as `4eb1dd5`, and iteration 1 is also in the baseline.
+Updated: 2026-09-09. Iteration 5, based on commit
+`9c058e95e2610f8e7bfdc54ed68d2e5fe84b7334` (17.10.0). Iteration 4 was committed
+in 17.10.0, iteration 3 in 17.9.0, iteration 2 as `4eb1dd5`, and iteration 1
+is also in the baseline.
 
 This is the continuation record for the requested performance, memory,
-configuration, and latent-defect audit. Iteration 4 addresses F04 validation
-copies and repeated work. Its local qualification is recorded below, along
-with the now-verified five-platform results for iteration 3. Existing modified,
-deleted, and untracked example assets were preserved. Linux and Windows builds
-run on GitHub; 17.10.0 platform qualification follows the version commit below.
+configuration, and latent-defect audit. Iteration 5 removes F04 project-validation
+adapters and fixes a sequence-shutdown missed wakeup found during sanitizer
+qualification. Local results and the now-verified five-platform results for
+iteration 4 are recorded below. Existing modified, deleted, and untracked
+example assets were preserved. Linux and Windows builds run on GitHub; this
+iteration remains a local patch with no new version, commit, tag, or remote CI.
 
 ## Scope and fidelity contract
 
@@ -54,6 +56,8 @@ or backend comparison tolerances were changed.
 | A22 | Add `pvt_obj_surface_contracted` to normal CTest for GNU/Clang builds (`-O3 -ffp-contract=fast -fno-math-errno`), retaining the existing platform-default surface test. | Both surface suites pass locally and in the subsequently verified main Linux ARM64 run at `d3b2ab2`; all five main/tagged platform jobs pass. MSVC retains its native surface suite. |
 | A23 | Replace saved-layer-clock validation's full `RenderConfig` copy and recursive renderer validation with a clock-only check by const reference. Render data, LFO graphs, Live settings, assets, and memory estimates are no longer visited twice by that recursion. Unrelated invalid render data is no longer mislabeled as a saved-clock error. | Twenty-six clock corruptions are rejected for both enabled and disabled saved clocks through public validation, structural validation, and explicit-phase backend preparation. Direct repairs, output-FPS limits, disabled project layers, and transactional render failure pass. |
 | A24 | LFO destination discovery copied all `RenderData`, including saved music, for every destination. Probe only the addressed wave, swing, effect, or post effect using the actual destination writer; global targets retain the authored post-effect policy. LFO-to-LFO targets retain their existing stable-ID check. | Reordering/removal, legacy versus stacked post effects, custom paths, malformed IDs, direct edits, nested LFOs, and authored-state tests pass. Static-build CTest now bounds validation allocations below one music feature table for both enabled and disabled LFOs. Animated baseline pixels match exactly. |
+| A25 | Validate project canvas/output and layer data through a synchronous const borrowing view, eliminating `apply_global_config` copies for the global probe and every validated layer. Standalone validation uses the same implementation. Live remains checked once per project; per-layer particle, asset, and music-copy accounting accept the borrowed inputs. | Project allocation requests fall from 86,801,520 to 23,744 bytes in the large-analysis probe. Thirty-six invalid-edit cases preserve standalone diagnostic equivalence and transactional failure, including disabled layers/clocks, named streams, Live, paths and nested LFOs; repairs pass. Worker music allowances remain unchanged, and ten animated frame hashes match exactly. |
+| A26 | Sequence shutdown stored its atomic stop flag outside the condition-variable mutex, allowing notification between a worker's false predicate check and wait. Publish stop under that mutex before notifying, both in the join guard and worker-scheduler failure path. | The sanitizer core suite hung in callback cancellation; a process sample showed the main thread in `SequenceWorkerJoiner` joining a worker asleep at the ready-slot wait. The corrected suite passes, including 48 repeated callback-cancel, callback-exception, and atomic-cancel cases with one/four workers, ordered output and staging cleanup. |
 
 Pruning preserves paths, attached source files, saved disabled settings, music
 analysis, and undo/history. In-flight readers retain immutable shared handles
@@ -195,24 +199,113 @@ Both cases currently request 4,688 bytes. Shared-library allocation interpositio
 is platform-dependent, so the allocation-only CTest is registered for static
 builds; the shared build still exercises the semantic regressions.
 
-F04 remains open beyond A23/A24. `apply_global_config` still owns value copies
-of project and saved-layer analysis for the global probe, each validated layer,
-and each rendered layer. LFO materialization also retains its necessary authored
+At the end of iteration 4, F04 remained open beyond A23/A24.
+`apply_global_config` still owned value copies of project and saved-layer
+analysis for the global probe, each validated layer, and each rendered layer. LFO materialization also retains its necessary authored
 versus evaluated separation. Full music tables and graph dependencies are still
 checked anew on each API call; direct edits cannot safely reuse pointer- or
 source-digest-based validity. Equal file identity does not prove equal edited
 analysis, named ranges, clock policy, LFO targets, or Live state.
 
-The next F04 step is an invocation-scoped, const-borrowing validation view over
+The planned next F04 step was an invocation-scoped const validation view over
 the canvas/output and `RenderData`, avoiding project-validation adapters before
-considering a persistent render plan. Borrowed state must outlive all joined
-workers. Persistent sharing needs an owned immutable document snapshot and
+considering a persistent render plan. Iteration 5 implements that view below
+and confines its lifetime to synchronous validation. Persistent sharing needs an owned immutable document snapshot and
 explicit invalidation for direct API edits, project/Live revisions, named-stream
 processing, paths, and LFO dependency order. No cross-call validity cache or
 public by-value ABI change is introduced here. Retain the existing worker
 music-copy allowance until those actual copies are removed and measured.
 
+### Iteration 5 measurements and next design boundary
+
+The same large-analysis probe was built at `9c058e9` and after A25. Native
+Release static build, AppleClang/Qt 6.11.2 on local Apple Silicon; dimensions,
+layer/LFO counts, analyses, frame sequence, and timing protocol are unchanged
+from iteration 4. Two sequential baseline/current comparisons gave:
+
+| Operation | 17.10.0 median, ms | Iteration 5 median, ms | 17.10.0 requested bytes | Iteration 5 requested bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Four-layer project validation, first pair | 15.16 | 13.43 | 86,801,520 | 23,744 |
+| Animated four-layer CPU frame, first pair | 30.36 | 29.20 | Not measured across workers | Not measured across workers |
+| Four-layer project validation, second pair | 15.12 | 13.92 | 86,801,520 | 23,744 |
+| Animated four-layer CPU frame, second pair | 30.84 | 28.60 | Not measured across workers | Not measured across workers |
+
+Project validation requests **99.97% fewer allocation bytes**, with about
+8–11% less validation time and 4–7% less animated frame time in these two local
+pairs. These remain workload observations, not timing test gates or an RSS
+claim. Standalone validation still requests 4,688 bytes; its timings fluctuate
+around 3 ms with no intended performance change. All comparisons preserve the
+ten-frame float hash `20153f5a9b7d0325`.
+
+`pvt_validation_allocations` now also bounds an entire four-layer project below
+one 2,400,000-byte feature table across 12 combinations of enabled/disabled
+LFOs, saved clocks, and enabled/disabled/zero-opacity layer contributions.
+Neither the global nor the per-layer validation adapter copies music, paths,
+Live collections, or render data. The small structural export adapter remains
+owned because validation enables its alpha flag temporarily.
+
+The view lives only during synchronous validation. Asset leases still own
+immutable decoded handles; no configuration reference is retained in those
+leases or passed to workers. Render-time adapters and enabled-LFO materialization
+still own their copies. Regression checks explicitly preserve both music-copy
+allowances, including full-signal and named-stream samples.
+
+The next bounded F04 phase is to validate invariant project canvas/clock/path
+data once per invocation, retaining per-layer saved-clock, LFO graph, asset and
+workload validation. Project music tables and paths are currently checked again
+for each layer. This must remain invocation-local: direct API edits, named-stream
+processing and Live changes must be observed on the next call. Later removal
+of render-time analysis copies needs a const runtime context or an owned
+immutable snapshot plus separately owned evaluated layer state; reduce worker
+allowances only after the actual copies are removed and measured. A persistent
+cross-call plan still requires explicit revision and dependency invalidation.
+
 ## Validation
+
+Iteration 5 (F04 project validation and discovered sequence-shutdown defect):
+
+- Native Release/Qt/Metal: **40/40** tests passed after A26, including extended
+  allocation/validation/cancellation regressions, assets, both surface arithmetic
+  modes, persistence, export and all three GUI smoke tests.
+- C++20 shared build with Metal disabled and actual OpenGL enabled: all
+  **4 focused suites** passed (core, composition, assets, OpenGL).
+- AddressSanitizer + UndefinedBehaviorSanitizer + float-cast-overflow:
+  all **4 focused suites** passed (core, composition, assets, allocations)
+  after the shutdown fix. Leak detection is disabled on this host. The earlier
+  core run was terminated after sampling its deadlock; it is not counted as a
+  passing run. Other validation suites had already passed before A26.
+- ThreadSanitizer: **3/3 focused suites** passed (core, composition, assets),
+  including sequence cancellation/exception shutdown and invocation asset
+  leases. This is targeted instrumentation, not exhaustive scheduling coverage.
+- The 36 direct-edit cases compare project and standalone validation diagnostics,
+  estimates, repairs, and transactional failed rendering. Music accounting
+  checks retain the exact sample-byte increase for one/two render-time copies.
+  The final probe after A26 also preserves the ten-frame hash above.
+  `git diff --check` passes.
+- Rechecked iteration 4 at `9c058e9`: main run
+  [34322841352](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34322841352)
+  and tagged run
+  [34323702474](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34323702474)
+  passed Windows x64/ARM64, Linux x64/ARM64, and macOS ARM64. Tagged publication
+  also passed. This closes iteration 4 platform qualification, not iteration 5;
+  downloadable 17.10.0 artifacts were not reaudited here.
+
+Changed files: `src/core.cpp`, `src/composite.cpp`,
+`src/frame_renderer_internal.h`, `src/image_io.cpp`, `tests/test_main.cpp`,
+`tests/project_composite_test.cpp`, `tests/validation_performance_audit_probe.cpp`,
+and this tracker. Public configuration/validation layouts, persistence,
+rendering arithmetic and backend tolerances are unchanged.
+
+Fresh builds: `/tmp/pvt-audit5-native`, `/tmp/pvt-audit5-gl`,
+`/tmp/pvt-audit5-san`, `/tmp/pvt-audit5-tsan`. All use
+`-DCMAKE_BUILD_RPATH=/usr/lib` for the host runtime arrangement noted below.
+Metal headers use the same pinned commit and verified archive checksum as the
+GitHub workflow. Evidence: `/tmp/pvt-audit5-{native,gl,san}-final-tests.log`,
+`/tmp/pvt-audit5-tsan-tests.log`, `/tmp/pvt-audit5-san-core.sample.txt`,
+`/tmp/pvt-audit5-validation-before-{repeat,final}.txt`, and
+`/tmp/pvt-audit5-validation-after{,-repeat}.txt`, and
+`/tmp/pvt-audit5-validation-final.txt`. These files are disposable;
+the regression sources and this tracker are the durable continuation record.
 
 Iteration 4 (F04 validation phase):
 
@@ -364,12 +457,12 @@ entire repository under a token limit.
 | F01 | Closed in iteration 2 | Camera-plane clipping implemented on CPU and OpenGL in A13, with the additional interpolation defect fixed in A17. | Independent geometry, camera-inside, both windings, transparency, and local backend parity checks pass. Other driver qualification remains in F09. |
 | F02 | P2, partially resolved in iteration 3 | A18/A21 add shared allocation accounting, decoded assets, and invocation leases, separated from worker/composite storage. A20 includes its tile allowance. | Add cold parser/topology/decode scratch and lease/hash/control-block overhead; bound dynamic LFO-generated geometry and file replacements after admission. Coordinate outer sequence admission and independent concurrent invocation ledgers. Measure aggregate RSS and driver/context heaps under preview/export. One oversized worker is still allowed; this is not a hard process-memory cap. |
 | F03 | Closed in iteration 2 | A15 implements a 16-entry/512 MiB OBJ LRU with per-asset publication fencing. | Three alternating assets require 3 parses across 60 requests; generation, entry/byte eviction, oversized bypass, same-path replacement, and pruning regressions pass. |
-| F04 | P2, partially resolved in iteration 4 | A23 removes recursive configuration/clock copies; A24 removes whole-layer copies from each LFO destination probe. The large-analysis probe preserves exact animated output and reduces validation allocation churn. Project adapters and LFO materialization still copy music tables; repeated calls still rebuild maps/graphs. | Next, introduce an invocation-scoped const validation view over canvas/output and layer data to avoid `apply_global_config` copies during project validation. Persistent render-plan/shared-analysis reuse needs owned immutable snapshots and explicit invalidation for direct API edits, disabled settings, named-stream processing, LFO dependency order, paths, and Live/project revisions. Reuse the new animated large-analysis probe; keep admission allowances for copies that still occur. |
+| F04 | P2, partially resolved in iteration 5 | A23/A24 remove recursive clock and LFO-target copies; A25 removes project-validation value adapters with a synchronous const view. Validation allocation requests fall another 99.97% for the large-analysis project, preserving exact animated output and render-worker allowances. Per-layer rendering/LFO materialization still copy music, and repeated validation still scans tables/graphs. | Next, check invariant project canvas/clock/path data once per invocation while retaining per-layer saved-clock, LFO, asset and workload checks. Keep direct edits observable on every API call. Later render-plan/shared-analysis reuse needs const runtime state or owned immutable snapshots and explicit invalidation for named streams, paths, LFO order and Live/project revisions. Keep admission allowances until actual render-time copies are removed and measured. |
 | F05 | P2, partially resolved in iteration 3 | A21 adds invocation leases and proves last-owner release for uncached assets. Cache eviction no longer forces duplicate loads within an admitted project frame. Process caches still serve independent projects. | Add project/revision-aware cache publication so an obsolete caller cannot repopulate unused entries after a newer prune. Test concurrent projects and late loads without a subsequent frame; preserve assets needed by other active renders. Extend shared ownership across outer sequence workers before claiming process-wide accounting. |
 | F06 | P2, conservative retention | An enabled LFO currently conservatively retains potentially used surface assets regardless of its target. Multiple decode intents for one retained image path and old mesh variants may also survive until normal LRU eviction. | Track exact asset/decode-intent dependencies and displacement keys in a render plan. Handle LFOs targeting other LFOs, skipped cycles, path bindings, and Live overrides before tightening retention. |
 | F07 | P2, partially resolved in iteration 3; winding strategy constrained | A20 adds depth-proven rejection for arbitrary nearest-hit CPU meshes, alongside A16 view rejection and A02 analytic rear-shading bypass. Winding alone cannot identify hidden faces of existing two-sided/open/translucent surfaces. | Qualify occlusion across platform arithmetic and dense real scenes. Consider tighter interval bounds or safe depth-peeling rejection only with exact-output evidence. Winding-only rejection still requires a proved topology/view/material/transform condition or an explicit authored one-sided setting. |
 | F08 | P2, further memory reduction | Disabled layer definitions, cached music analysis, and undo/history remain authored state. Deleting those objects would break re-enable, persistence, and undo; A06 releases their render assets instead. | If authoring memory itself must be paged out, design lossless lazy storage with transactional reload, portable paths, recovery, and undo/version tests. This requires a document-lifecycle change, not Boolean packing. |
-| F09 | P2, partially qualified through iteration 4 | Iteration 3 main and tagged GitHub builds passed all five platforms; main Linux ARM64 explicitly passed both surface tests, resolving the earlier winding qualification. Iteration 4 native/shared OpenGL and focused sanitizers pass locally. | Require the 17.10.0 main and tagged GitHub platform matrices before closing this iteration's platform qualification. Continue forced PNG/GL allocation failure and driver/resource/throughput qualification, preserving thin-triangle coverage, transparency, transactional failure and exact hashes. Linux/Windows builds belong on GitHub. |
+| F09 | P2, partially qualified through iteration 5 | Iterations 3 and 4 main/tagged GitHub builds passed all five platforms, including the earlier ARM64 surface concern. Iteration 5 native/shared OpenGL and focused allocation/address/undefined/thread sanitizer checks pass locally; its sanitizer qualification exposed and fixed A26. | Require GitHub platform matrices for the eventual iteration 5 commit before claiming Linux/Windows qualification. Continue forced PNG/GL allocation failure and driver/resource/throughput qualification, preserving thin-triangle coverage, transparency, transactional shutdown/failure and exact hashes. Linux/Windows builds belong on GitHub. |
 
 Other configuration simplifications were evaluated but are not silently
 applied: merging floating-point effects, lowering mesh/image resolution,

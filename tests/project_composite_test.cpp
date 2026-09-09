@@ -124,6 +124,158 @@ void test_disabled_saved_clock_validation() {
     CHECK(pvt::render_project_frame(project, 0, destination, nullptr, &error));
 }
 
+// Exercise the project/standalone validation boundary with nondefault global
+// values and saved state. Keep the digest and object identity stable during
+// edits: neither can be used as a cross-call validity key.
+void test_project_validation_borrowed_settings() {
+    auto baseline = pvt::default_project();
+    make_small(baseline);
+    baseline.canvas.width = 31;
+    baseline.canvas.height = 19;
+    baseline.canvas.block_size = 3;
+    baseline.canvas.total_frames = 27;
+    baseline.canvas.fps = 36.0;
+    baseline.output.write_alpha = true;
+    baseline.canvas.clock = ready_music_clock(2.0);
+    auto& clock = baseline.canvas.clock;
+    clock.music.feature_samples.resize(2U);
+    pvt::AudioFrequencyStreamConfig range;
+    range.uuid = "borrowed-range";
+    range.low_hz = 40.0;
+    range.high_hz = 180.0;
+    clock.audio_processing.frequency_streams = {range};
+    clock.music.input_processing = clock.audio_processing;
+    pvt::MusicFrequencyStreamAnalysis stream;
+    stream.uuid = range.uuid;
+    stream.low_hz = range.low_hz;
+    stream.high_hz = range.high_hz;
+    stream.beat_times_seconds = clock.music.beat_times_seconds;
+    stream.feature_samples.resize(3U);
+    clock.music.frequency_streams = {stream};
+    clock.frequency_stream_uuid = range.uuid;
+    baseline.canvas.audio_reactive_defaults.enabled = true;
+    baseline.canvas.live.safety.watchdog_timeout_milliseconds = 150;
+    baseline.canvas.motion_paths.push_back(
+        pvt::default_ellipse_path(91U, 101U, "Borrowed path"));
+    auto& render = baseline.layers.front().render;
+    render.layer_clock.clock = clock;
+    render.layer_clock.enabled = false;
+    render.waves.front().path.enabled = true;
+    render.waves.front().path.path_id = 91U;
+    pvt::ParameterLfo lfo;
+    lfo.id = 71U;
+    lfo.target_path = "saturation";
+    render.parameter_lfos.push_back(lfo);
+    lfo.id = 72U;
+    lfo.target_path = "lfo/71/maximum";
+    render.parameter_lfos.push_back(lfo);
+    CHECK(pvt::validate(baseline).ok);
+
+    struct Edit {
+        const char* name;
+        void (*apply)(pvt::ProjectConfig&);
+        bool global;
+    };
+    const Edit edits[] = {
+        {"width", [](auto& p) { p.canvas.width = 15; }, true},
+        {"height", [](auto& p) { p.canvas.height = 15; }, true},
+        {"block size", [](auto& p) { p.canvas.block_size = 0; }, true},
+        {"frame count", [](auto& p) { p.canvas.total_frames = 1; }, true},
+        {"fps", [](auto& p) { p.canvas.fps = 0.0; }, true},
+        {"export", [](auto& p) { p.output.png_compression_level = 10; }, true},
+        {"Live", [](auto& p) {
+            p.canvas.live.safety.watchdog_timeout_milliseconds = -1;
+        }, true},
+        {"project audio", [](auto& p) {
+            p.canvas.audio_reactive_defaults.color_amount_degrees =
+                std::numeric_limits<double>::quiet_NaN();
+        }, true},
+        {"project music", [](auto& p) {
+            p.canvas.clock.music.feature_samples.back().energy = -0.1F;
+        }, true},
+        {"project named stream", [](auto& p) {
+            p.canvas.clock.music.frequency_streams.back().high_hz += 1.0;
+        }, true},
+        {"path node", [](auto& p) {
+            p.canvas.motion_paths.front().nodes.back().x =
+                std::numeric_limits<double>::infinity();
+        }, true},
+        {"removed path", [](auto& p) { p.canvas.motion_paths.clear(); }, false},
+        {"saved music", [](auto& p) {
+            p.layers.front().render.layer_clock.clock.music
+                .feature_samples.back().energy = -0.1F;
+        }, false},
+        {"saved named stream", [](auto& p) {
+            p.layers.front().render.layer_clock.clock.music.frequency_streams
+                .back().feature_samples.back().beat = -0.1F;
+        }, false},
+        {"layer audio", [](auto& p) {
+            p.layers.front().render.audio_reactive.effect_amount =
+                std::numeric_limits<double>::quiet_NaN();
+        }, false},
+        {"LFO cycle", [](auto& p) {
+            p.layers.front().render.parameter_lfos.front().target_path =
+                "lfo/72/maximum";
+        }, false},
+        {"LFO identity", [](auto& p) {
+            p.layers.front().render.parameter_lfos.back().id = 71U;
+        }, false},
+        {"layer field", [](auto& p) {
+            p.layers.front().render.saturation = -1.0;
+        }, false},
+    };
+    for (bool enabled : {false, true}) {
+        auto project = baseline;
+        project.layers.front().enabled = enabled;
+        for (const auto& edit : edits) {
+            const auto valid = pvt::validate(project);
+            CHECK(valid.ok);
+            edit.apply(project);
+            const auto invalid = pvt::validate(project);
+            const auto standalone = pvt::validate(pvt::apply_global_config(
+                project.canvas, project.output, project.layers.front().render));
+            const std::string prefix = edit.global
+                ? "Project output is invalid: " : "Layer 1 is invalid: ";
+            if (invalid.ok || standalone.ok
+                || invalid.message != prefix + standalone.message) {
+                std::cerr << "Borrowed validation mismatch for " << edit.name
+                          << ": " << invalid.message << '\n';
+                CHECK(false);
+            }
+            CHECK(invalid.estimated_peak_bytes == standalone.estimated_peak_bytes);
+            pvt::Image destination = solid(0.3F, 0.7F);
+            const auto original = destination.pixels;
+            std::string error;
+            CHECK(!pvt::render_project_frame(project, 0, destination, nullptr, &error));
+            CHECK(destination.width == 1 && destination.height == 1);
+            CHECK(destination.pixels == original);
+            project = baseline;
+            project.layers.front().enabled = enabled;
+            const auto repaired = pvt::validate(project);
+            CHECK(repaired.ok);
+            CHECK(repaired.estimated_peak_bytes == valid.estimated_peak_bytes);
+        }
+    }
+
+    // Removing validation copies must not lower admission for the two copies
+    // still made by rendering: the project adapter and enabled LFO resolution.
+    for (bool enabled_lfos : {false, true}) {
+        auto project = baseline;
+        for (auto& oscillator : project.layers.front().render.parameter_lfos) {
+            oscillator.enabled = enabled_lfos;
+        }
+        const auto before = pvt::validate(project);
+        project.canvas.clock.music.feature_samples.resize(7U); // +5 samples
+        project.layers.front().render.layer_clock.clock.music.frequency_streams
+            .back().feature_samples.resize(10U); // +7 samples
+        const auto after = pvt::validate(project);
+        CHECK(before.ok && after.ok);
+        const std::size_t copies = enabled_lfos ? 2U : 1U;
+        CHECK(after.estimated_peak_bytes == before.estimated_peak_bytes
+              + copies * 12U * sizeof(pvt::MusicFeatureSample));
+    }
+}
+
 void test_uuid_factories_and_adapters() {
     const std::string first_uuid = pvt::generate_uuid();
     const std::string second_uuid = pvt::generate_uuid();
@@ -1254,6 +1406,7 @@ void test_active_layer_clock_mappings() {
 int main() {
     test_uuid_factories_and_adapters();
     test_disabled_saved_clock_validation();
+    test_project_validation_borrowed_settings();
     test_project_audio_response_inheritance();
     test_blend_modes();
     test_straight_alpha_and_transactionality();

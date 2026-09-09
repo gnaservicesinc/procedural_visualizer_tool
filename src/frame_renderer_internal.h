@@ -82,18 +82,24 @@ inline bool music_analysis_copy_bytes(const MusicAnalysis& analysis,
     return true;
 }
 
-inline bool render_config_music_copy_bytes(const RenderConfig& config,
-                                           std::size_t& bytes) noexcept {
+inline bool render_music_copy_bytes(const ClockConfig& clock,
+                                    const LayerClockConfig& layer_clock,
+                                    std::size_t& bytes) noexcept {
     std::size_t project_clock_bytes = 0U;
     std::size_t layer_clock_bytes = 0U;
-    if (!music_analysis_copy_bytes(config.clock.music,
+    if (!music_analysis_copy_bytes(clock.music,
                                    project_clock_bytes)
         || !music_analysis_copy_bytes(
-            config.layer_clock.clock.music, layer_clock_bytes)) {
+            layer_clock.clock.music, layer_clock_bytes)) {
         return false;
     }
     bytes = project_clock_bytes;
     return checked_retained_add(layer_clock_bytes, bytes);
+}
+
+inline bool render_config_music_copy_bytes(const RenderConfig& config,
+                                           std::size_t& bytes) noexcept {
+    return render_music_copy_bytes(config.clock, config.layer_clock, bytes);
 }
 
 // Particle work is bounded in units of conservatively covered stamp pixels.
@@ -208,9 +214,10 @@ struct ParticleStampWorkloadEstimate {
 };
 
 inline bool estimate_particle_stamp_workload(
-    const RenderConfig& config, ParticleStampWorkloadEstimate& estimate) {
+    int width, int height, const RenderData& config,
+    ParticleStampWorkloadEstimate& estimate) {
     estimate = {};
-    if (!particle_stamp_budget_for_canvas(config.width, config.height,
+    if (!particle_stamp_budget_for_canvas(width, height,
                                           estimate.budget)) {
         return false;
     }
@@ -222,7 +229,7 @@ inline bool estimate_particle_stamp_workload(
             continue;
         }
         std::size_t effect_work = 0U;
-        if (!particle_effect_stamp_workload(config.width, config.height,
+        if (!particle_effect_stamp_workload(width, height,
                                             effect, effect_work)) {
             estimate.offending_effect = index;
             return false;
@@ -235,6 +242,12 @@ inline bool estimate_particle_stamp_workload(
         estimate.work += effect_work;
     }
     return true;
+}
+
+inline bool estimate_particle_stamp_workload(
+    const RenderConfig& config, ParticleStampWorkloadEstimate& estimate) {
+    return estimate_particle_stamp_workload(config.width, config.height,
+                                             config, estimate);
 }
 
 // Layer codecs do not know their eventual project canvas. This validates all
@@ -317,9 +330,15 @@ inline bool has_enabled_parameter_lfo(const RenderData& render) {
 }
 ValidationResult validate_frame_render_config(const RenderConfig& config);
 struct SharedRenderMemory;
-ValidationResult validate_project_layer_config(const RenderConfig& config,
-                                               bool contributing,
-                                               SharedRenderMemory* shared = nullptr);
+// These synchronous adapters borrow project data only for validation. The
+// canvas entry point checks Live once; layers reuse that check. Neither keeps
+// borrowed configuration references in the asset ledger or worker state.
+ValidationResult validate_project_canvas_config(const CanvasLoopConfig& canvas,
+                                                const ExportConfig& output);
+ValidationResult validate_project_layer_config(
+    const CanvasLoopConfig& canvas, const ExportConfig& output,
+    const RenderData& render, bool contributing,
+    SharedRenderMemory* shared = nullptr);
 
 // Selected-backend rendering validates and materializes parameter LFOs before
 // dispatch. These entry points preserve that work instead of repeating it in

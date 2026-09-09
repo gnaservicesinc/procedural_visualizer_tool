@@ -126,9 +126,9 @@ int main(int argc, char** argv) {
             if (!result.ok) throw std::runtime_error(result.message);
         };
         if (argc > 1 && std::string(argv[1]) == "--check-allocations") {
-            // The entire validation must allocate less than one feature
-            // table. This catches both recursive clock copies and per-LFO
-            // layer copies without depending on allocator bookkeeping sizes.
+            // Each validation must allocate less than one feature table.
+            // This catches recursive clock copies, per-LFO layer copies, and
+            // project adapters without depending on allocator bookkeeping.
             const auto limit = config.clock.music.feature_samples.size()
                 * sizeof(pvt::MusicFeatureSample);
             for (bool enabled : {false, true}) {
@@ -141,6 +141,34 @@ int main(int argc, char** argv) {
                 std::cout << "validation_requested_bytes=" << allocation_bytes << '\n';
                 if (allocation_bytes >= limit) {
                     throw std::runtime_error("Validation duplicated a large music table.");
+                }
+            }
+            project.output.write_alpha = true;
+            for (bool enabled_lfos : {false, true}) {
+                for (bool enabled_clocks : {false, true}) {
+                    // Saved analysis must remain borrowed even when its
+                    // owning layer or its rendering contribution is disabled.
+                    for (int contribution = 0; contribution < 3; ++contribution) {
+                        for (auto& layer : project.layers) {
+                            layer.enabled = contribution != 0;
+                            layer.opacity = contribution == 1 ? 0.0 : 1.0;
+                            layer.render.layer_clock.enabled = enabled_clocks;
+                            for (auto& lfo : layer.render.parameter_lfos) {
+                                lfo.enabled = enabled_lfos;
+                            }
+                        }
+                        allocation_bytes = 0U;
+                        count_allocations = true;
+                        const auto validation = pvt::validate(project);
+                        count_allocations = false;
+                        check(validation);
+                        std::cout << "project_validation_requested_bytes="
+                                  << allocation_bytes << '\n';
+                        if (allocation_bytes >= limit) {
+                            throw std::runtime_error(
+                                "Project validation duplicated a large music table.");
+                        }
+                    }
                 }
             }
             return 0;

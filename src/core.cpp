@@ -2180,7 +2180,7 @@ double wave_height(const RenderConfig& config, double x, double y,
     return height;
 }
 
-bool has_enabled_wave(const RenderConfig& config) {
+bool has_enabled_wave(const RenderData& config) {
     return std::any_of(
         config.waves.begin(), config.waves.end(),
         [](const WaveConfig& wave) { return wave.enabled; });
@@ -3554,31 +3554,66 @@ ValidationResult validate_clock_impl(const ClockConfig& clock,
     return result;
 }
 
-ValidationResult validate_impl(const RenderConfig& config, bool include_export,
+// Validation combines standalone or project settings without copying their
+// authored vectors (especially saved music analyses). This view never escapes
+// a synchronous validate_impl call; render workers still own their adapters.
+// Direct API edits are checked afresh on every invocation.
+struct RenderValidationView {
+    const RenderData& render;
+    int width;
+    int height;
+    int block_size;
+    int total_frames;
+    double fps;
+    const ClockConfig& clock;
+    const std::vector<CubicMotionPath>& motion_paths;
+    const ExportConfig& output;
+    const AudioReactiveConfig& audio_reactive_defaults;
+    const LiveConfig& live;
+
+    template<class Canvas>
+    RenderValidationView(const Canvas& canvas, const ExportConfig& export_config,
+                         const RenderData& data)
+        : render(data), width(canvas.width), height(canvas.height),
+          block_size(canvas.block_size), total_frames(canvas.total_frames),
+          fps(canvas.fps), clock(canvas.clock), motion_paths(canvas.motion_paths),
+          output(export_config),
+          audio_reactive_defaults(canvas.audio_reactive_defaults),
+          live(canvas.live) {}
+
+    RenderValidationView(const RenderConfig& config)
+        : RenderValidationView(config, config.output, config) {}
+};
+
+ValidationResult validate_impl(const RenderValidationView& view, bool include_export,
                                bool validate_particle_workload = true,
                                bool inspect_assets = true,
-                               detail::SharedRenderMemory* shared_memory = nullptr) {
-    if (config.width < 16 || config.width > kMaximumDimension
-        || config.height < 16 || config.height > kMaximumDimension) {
+                               detail::SharedRenderMemory* shared_memory = nullptr,
+                               bool validate_live = true) {
+    const RenderData& config = view.render;
+    if (view.width < 16 || view.width > kMaximumDimension
+        || view.height < 16 || view.height > kMaximumDimension) {
         return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
     }
-    if (config.block_size < 1
-        || config.block_size > std::max(config.width, config.height)) {
+    if (view.block_size < 1
+        || view.block_size > std::max(view.width, view.height)) {
         return invalid_result("Block size must be between 1 and the larger image dimension.");
     }
-    if (config.total_frames < 2 || config.total_frames > kMaximumFrames) {
+    if (view.total_frames < 2 || view.total_frames > kMaximumFrames) {
         return invalid_result("Frame count must be between 2 and INT_MAX.");
     }
-    if (!positive_render_parameter(config.fps)) {
+    if (!positive_render_parameter(view.fps)) {
         return invalid_result("FPS must be finite and positive within the renderer's numeric representation.");
     }
-    const ValidationResult live_validation = validate(config.live);
-    if (!live_validation.ok) {
-        return invalid_result("Live configuration is invalid: "
-                              + live_validation.message);
+    if (validate_live) {
+        const ValidationResult live_validation = validate(view.live);
+        if (!live_validation.ok) {
+            return invalid_result("Live configuration is invalid: "
+                                  + live_validation.message);
+        }
     }
     const ValidationResult clock_validation =
-        validate_clock_impl(config.clock, config.total_frames, config.fps);
+        validate_clock_impl(view.clock, view.total_frames, view.fps);
     if (!clock_validation.ok) return clock_validation;
     if (!valid_enum(config.layer_clock.scale)
         || !valid_enum(config.layer_clock.mix)) {
@@ -3587,17 +3622,18 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
     // Disabled layer clocks remain authored state and must still be valid.
     const ValidationResult layer_clock_validation = validate_clock_impl(
-        config.layer_clock.clock, config.total_frames, config.fps);
+        config.layer_clock.clock, view.total_frames, view.fps);
     if (!layer_clock_validation.ok) {
         return invalid_result("The saved active-layer clock is invalid: "
                               + layer_clock_validation.message);
     }
     if (!valid_audio_reactive(config.audio_reactive)
-        || !valid_audio_reactive(config.audio_reactive_defaults)) {
+        || !valid_audio_reactive(view.audio_reactive_defaults)) {
         return invalid_result("Audio-reactive routing contains an invalid source or amount.");
     }
     const AudioReactiveConfig& effective_audio =
-        effective_audio_reactive(config);
+        config.audio_reactive_override_enabled
+            ? config.audio_reactive : view.audio_reactive_defaults;
     if (config.waves.size() > kMaximumWaves) {
         return invalid_result("The configuration contains too many waves.");
     }
@@ -3686,11 +3722,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         return invalid_result(
             "Parameter LFOs cannot form a modulation cycle.");
     }
-    if (config.motion_paths.size() > kMaximumMotionPaths) {
+    if (view.motion_paths.size() > kMaximumMotionPaths) {
         return invalid_result("The reusable motion-path count exceeds the signed-int UI/API limit.");
     }
     std::unordered_set<std::uint64_t> path_identifiers;
-    for (const CubicMotionPath& path : config.motion_paths) {
+    for (const CubicMotionPath& path : view.motion_paths) {
         if (path.id == 0U || !path_identifiers.insert(path.id).second
             || !valid_name(path.name) || path.nodes.size() < 3U
             || path.nodes.size() > kMaximumMotionPathNodes) {
@@ -3734,7 +3770,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !nonnegative_render_parameter(wave.spatial_frequency)
             || !finite_render_parameter(wave.phase_degrees)
             || !finite_in_range(wave.direction, 0.0, 1.0)
-            || !valid_path_binding(wave.path, config.motion_paths)) {
+            || !valid_path_binding(wave.path, view.motion_paths)) {
             return invalid_result("Wave " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -3799,7 +3835,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !finite_in_range(effect.particle_definition, 0.0, 1.0)
             || !finite_in_range(effect.particle_twinkle, 0.0, 1.0)
             || !finite_render_parameter(effect.particle_rotation_degrees)
-            || !valid_path_binding(effect.path, config.motion_paths)) {
+            || !valid_path_binding(effect.path, view.motion_paths)) {
             return invalid_result("Effect " + std::to_string(index + 1U)
                                   + " has a value outside its allowed range.");
         }
@@ -3932,7 +3968,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             } else {
                 const double trails = static_cast<double>(
                     detail::effective_particle_trail_steps(
-                        config.width, config.height, effect));
+                        view.width, view.height, effect));
                 const double maximum_addition = 2.0 * maximum_intensity
                                                 * effect.frequency * trails;
                 if (maximum_addition > 0.0) {
@@ -3973,8 +4009,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     }
     if (validate_particle_workload) {
         detail::ParticleStampWorkloadEstimate particle_workload;
-        if (!detail::estimate_particle_stamp_workload(config,
-                                                      particle_workload)) {
+        if (!detail::estimate_particle_stamp_workload(
+                view.width, view.height, config, particle_workload)) {
             const std::size_t one_based =
                 particle_workload.offending_effect
                         == (std::numeric_limits<std::size_t>::max)()
@@ -4108,7 +4144,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         || !nonnegative_render_parameter(config.motion.custom_travel_y)
         || !finite_render_parameter(config.motion.custom_phase_degrees)
         || !valid_path_binding(config.motion.custom_path,
-                               config.motion_paths)) {
+                               view.motion_paths)) {
         return invalid_result(
             "Layer motion path, placement, cycles, rotation, or scale is out of range.");
     }
@@ -4286,7 +4322,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             "An enabled starting image requires a valid image runtime path or embedded attachment identity.");
     }
     if (include_export) {
-        if (!config.alpha.enabled && !config.output.write_alpha
+        if (!config.alpha.enabled && !view.output.write_alpha
             && detail::render_data_can_create_transparency(config)) {
             return invalid_result(
                 "Alpha output must be enabled when an active effect uses transparent "
@@ -4294,36 +4330,36 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 "layer motion can expose the canvas exterior, or the active source "
                 "or post-processing can contain or generate transparency.");
         }
-        if (config.output.bit_depth != 8 && config.output.bit_depth != 16
-            && config.output.bit_depth != 32) {
+        if (view.output.bit_depth != 8 && view.output.bit_depth != 16
+            && view.output.bit_depth != 32) {
             return invalid_result("Export bit depth must be 8, 16, or 32.");
         }
-        if (config.output.png_compression_level < 0
-            || config.output.png_compression_level > 9) {
+        if (view.output.png_compression_level < 0
+            || view.output.png_compression_level > 9) {
             return invalid_result("PNG compression level must be between 0 and 9.");
         }
-        if (!valid_enum(config.output.dither_method)
-            || !valid_path_text(config.output.output_directory, kMaximumPathBytes, false)
-            || !valid_path_text(config.output.filename_prefix, kMaximumPrefixBytes, true)
-            || config.output.first_frame_number < 0
-            || config.output.first_frame_number > (std::numeric_limits<int>::max)()
-            || config.output.filename_digits < 1
-            || static_cast<std::size_t>(config.output.filename_digits)
+        if (!valid_enum(view.output.dither_method)
+            || !valid_path_text(view.output.output_directory, kMaximumPathBytes, false)
+            || !valid_path_text(view.output.filename_prefix, kMaximumPrefixBytes, true)
+            || view.output.first_frame_number < 0
+            || view.output.first_frame_number > (std::numeric_limits<int>::max)()
+            || view.output.filename_digits < 1
+            || static_cast<std::size_t>(view.output.filename_digits)
                    > kMaximumOutputFilenameBytes) {
             return invalid_result("One or more output values are invalid.");
         }
         const std::int64_t last_frame_number =
-            static_cast<std::int64_t>(config.output.first_frame_number)
-            + static_cast<std::int64_t>(config.total_frames) - 1;
+            static_cast<std::int64_t>(view.output.first_frame_number)
+            + static_cast<std::int64_t>(view.total_frames) - 1;
         const std::size_t number_bytes = std::max(
-            static_cast<std::size_t>(config.output.filename_digits),
+            static_cast<std::size_t>(view.output.filename_digits),
             std::to_string(last_frame_number).size());
         const std::size_t extension_bytes = 4U; // .png or .exr
-        if (config.output.filename_prefix.size()
+        if (view.output.filename_prefix.size()
                 > kMaximumOutputFilenameBytes - extension_bytes
             || number_bytes
                    > kMaximumOutputFilenameBytes - extension_bytes
-                          - config.output.filename_prefix.size()) {
+                          - view.output.filename_prefix.size()) {
             return invalid_result(
                 "The export prefix, frame number, and extension exceed the portable 255-byte filename-component limit.");
         }
@@ -4332,8 +4368,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     std::size_t pixel_count = 0;
     std::size_t float_count = 0;
     std::size_t frame_bytes = 0;
-    if (!checked_multiply(static_cast<std::size_t>(config.width),
-                          static_cast<std::size_t>(config.height), pixel_count)
+    if (!checked_multiply(static_cast<std::size_t>(view.width),
+                          static_cast<std::size_t>(view.height), pixel_count)
         || !checked_multiply(pixel_count, 4U, float_count)
         || !checked_multiply(float_count, sizeof(float), frame_bytes)) {
         return invalid_result("The requested image dimensions overflow addressable memory.");
@@ -4371,8 +4407,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if ((config.displacement_enabled || config.lighting_enabled)
         && has_enabled_wave(config)) {
         const std::size_t block_size =
-            static_cast<std::size_t>(config.block_size);
-        const std::size_t width = static_cast<std::size_t>(config.width);
+            static_cast<std::size_t>(view.block_size);
+        const std::size_t width = static_cast<std::size_t>(view.width);
         const std::size_t block_columns =
             width / block_size + (width % block_size != 0U ? 1U : 0U);
         std::size_t node_columns = 0U;
@@ -4396,7 +4432,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         && detail::opengl_surface_backend_compiled();
     if (uses_raster_mesh) {
         std::size_t occlusion_bytes = 0U;
-        if (!detail::mesh_occlusion_memory_requirements(config.width,config.height,occlusion_bytes)
+        if (!detail::mesh_occlusion_memory_requirements(view.width,view.height,occlusion_bytes)
             || !checked_add(peak_bytes,occlusion_bytes,peak_bytes)) {
             return invalid_result("The mesh occlusion memory estimate overflowed.");
         }
@@ -4508,7 +4544,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         std::size_t mesh_bytes = 0U;
         std::string mesh_error;
         if (!detail::displacement_mesh_requirements(
-                config.width, config.height,
+                view.width, view.height,
                 config.surface.plane_displacement.pixels_per_node,
                 columns, rows, mesh_bytes, &mesh_error)) {
             return invalid_result(mesh_error);
@@ -4524,7 +4560,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         std::shared_ptr<const detail::ObjMesh> shared_mesh;
         if (inspect_assets && shared_memory
             && detail::load_displacement_plane_mesh(
-                config.surface.plane_displacement, config.width, config.height,
+                config.surface.plane_displacement, view.width, view.height,
                 shared_mesh, nullptr, &mesh_error)) {
             if (!shared_memory->retain(shared_mesh, shared_mesh->estimated_bytes())) {
                 return invalid_result("The shared displacement memory estimate overflowed.");
@@ -4593,8 +4629,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     // per-frame worker admission rather than multiplying invisibly.
     if (detail::has_enabled_parameter_lfo(config)) {
         std::size_t music_copy_bytes = 0U;
-        if (!detail::render_config_music_copy_bytes(config,
-                                                    music_copy_bytes)
+        if (!detail::render_music_copy_bytes(
+                view.clock, config.layer_clock, music_copy_bytes)
             || !checked_add(peak_bytes, music_copy_bytes, peak_bytes)) {
             return invalid_result(
                 "The animated music-analysis copy estimate overflowed.");
@@ -8159,10 +8195,17 @@ ValidationResult validate_frame_render_config(const RenderConfig& config) {
     return validate_impl(config, false);
 }
 
-ValidationResult validate_project_layer_config(const RenderConfig& config,
-                                               bool contributing,
-                                               SharedRenderMemory* shared) {
-    return validate_impl(config, true, true, contributing, shared);
+ValidationResult validate_project_canvas_config(const CanvasLoopConfig& canvas,
+                                                const ExportConfig& output) {
+    const RenderConfig defaults = default_config();
+    return validate_impl(RenderValidationView(canvas, output, defaults), true);
+}
+
+ValidationResult validate_project_layer_config(
+    const CanvasLoopConfig& canvas, const ExportConfig& output,
+    const RenderData& render, bool contributing, SharedRenderMemory* shared) {
+    return validate_impl(RenderValidationView(canvas, output, render),
+                         true, true, contributing, shared, false);
 }
 
 bool render_frame_at_phase_validated_resolved(

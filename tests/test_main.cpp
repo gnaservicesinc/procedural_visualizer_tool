@@ -7654,6 +7654,41 @@ void test_sequence_preflight(const fs::path& directory) {
     CHECK(!pvt::render_sequence(config, {}, &cancelled, &error));
     CHECK(!fs::exists(directory / "atomic-cancel" / "loop_0000.png"));
 
+    // Early exits must wake workers that have already filled their output
+    // slots. Sanitizer qualification caught a missed stop notification here:
+    // the caller joined while a worker slept on a ready slot indefinitely.
+    // Exercise callback cancellation, exceptions, and atomic cancellation
+    // with one and several workers; every joined run must clean its staging.
+    auto shutdown = config;
+    shutdown.total_frames = 8;
+    shutdown.output.overwrite_existing = true;
+    const auto shutdown_directory = directory / "shutdown-repeat";
+    shutdown.output.output_directory = shutdown_directory.string();
+    for (std::size_t workers : {1U, 4U}) {
+        pvt::SequenceRenderOptions shutdown_options;
+        shutdown_options.worker_count = workers;
+        shutdown_options.frame.backend = pvt::RenderBackend::Cpu;
+        for (int mode = 0; mode < 3; ++mode) {
+            for (int repeat = 0; repeat < 8; ++repeat) {
+                std::atomic_bool stop {false};
+                int calls = 0;
+                CHECK(!pvt::render_sequence(
+                    shutdown, shutdown_options,
+                    [&](int, int) {
+                        ++calls;
+                        if (mode == 1) throw std::runtime_error("shutdown test");
+                        if (mode == 2) stop.store(true, std::memory_order_relaxed);
+                        return mode == 2;
+                    }, &stop, &error));
+                CHECK(calls == 1);
+                CHECK(!error.empty());
+                CHECK(fs::exists(shutdown_directory / "loop_0000.png"));
+                CHECK(!fs::exists(shutdown_directory / "loop_0001.png"));
+                CHECK(!has_temporary_output(shutdown_directory));
+            }
+        }
+    }
+
     // A sequence must pass its cancellation token into the active frame, not
     // wait until a potentially expensive frame has completed. Use the same
     // valid maximum-wave workload as the direct in-flight cancellation test.

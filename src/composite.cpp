@@ -1765,11 +1765,9 @@ ValidationResult detail::validate_project_render_memory(
         // temporary validation adapter, then enforce the enabled stack below.
         ExportConfig structural_output = project.output;
         structural_output.write_alpha = true;
-        const RenderConfig defaults = default_config();
-        const RenderConfig global_probe = apply_global_config(
-            project.canvas, structural_output,
-            static_cast<const RenderData&>(defaults));
-        const ValidationResult global_validation = validate(global_probe);
+        const ValidationResult global_validation =
+            detail::validate_project_canvas_config(project.canvas,
+                                                    structural_output);
         if (!global_validation.ok) {
             return invalid_result("Project output is invalid: "
                                   + global_validation.message,
@@ -1874,16 +1872,13 @@ ValidationResult detail::validate_project_render_memory(
                                       + " opacity must be finite and between 0 and 1.");
             }
 
-            RenderConfig render =
-                apply_global_config(project.canvas, structural_output, layer.render);
-            // The global probe above already validated the same project-wide
-            // Live block once. It never affects offline layer pixels, so avoid
-            // multiplying its bounded routing/scene scan by the layer count.
-            render.live = {};
+            const RenderData& render = layer.render;
             const bool contributing = layer_effectively_enabled(project, layer)
                 && layer.opacity > 0.0;
             const ValidationResult layer_validation =
-                detail::validate_project_layer_config(render, contributing, &memory.shared);
+                detail::validate_project_layer_config(
+                    project.canvas, structural_output, render, contributing,
+                    &memory.shared);
             if (!layer_validation.ok) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " is invalid: " + layer_validation.message,
@@ -1892,7 +1887,8 @@ ValidationResult detail::validate_project_render_memory(
             if (contributing) {
                 detail::ParticleStampWorkloadEstimate layer_particles;
                 if (!detail::estimate_particle_stamp_workload(
-                        render, layer_particles)) {
+                        project.canvas.width, project.canvas.height, render,
+                        layer_particles)) {
                     return invalid_result(
                         "Layer " + std::to_string(index + 1U)
                         + " has an invalid particle workload estimate.");
@@ -1938,8 +1934,9 @@ ValidationResult detail::validate_project_render_memory(
                 std::size_t materialized_music_bytes = 0U;
                 std::size_t admitted_layer_peak =
                     layer_validation.estimated_peak_bytes;
-                if (!detail::render_config_music_copy_bytes(
-                        render, materialized_music_bytes)
+                if (!detail::render_music_copy_bytes(
+                        project.canvas.clock, render.layer_clock,
+                        materialized_music_bytes)
                     || !checked_add(admitted_layer_peak,
                                     materialized_music_bytes,
                                     admitted_layer_peak)) {
