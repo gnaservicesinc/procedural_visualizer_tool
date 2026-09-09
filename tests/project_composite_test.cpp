@@ -169,6 +169,21 @@ void test_project_validation_borrowed_settings() {
     lfo.id = 72U;
     lfo.target_path = "lfo/71/maximum";
     render.parameter_lfos.push_back(lfo);
+    // The invalid layer comes after two valid ones, so every layer must retain
+    // its own clock/graph/binding checks even after global validation succeeds.
+    for (std::size_t index = 1U; index < 3U; ++index) {
+        auto layer = pvt::default_layer(index);
+        layer.render = baseline.layers.front().render;
+        layer.render.waves.front().path.enabled = false;
+        baseline.layers.push_back(std::move(layer));
+    }
+    baseline.layers.front().render.waves.front().path.enabled = false;
+    baseline.layers.back().render.waves.front().path.enabled = true;
+    pvt::LayerGroup group;
+    group.uuid = pvt::generate_uuid();
+    group.name = "Saved validation state";
+    baseline.groups.push_back(group);
+    baseline.layers.back().group_uuid = group.uuid;
     CHECK(pvt::validate(baseline).ok);
 
     struct Edit {
@@ -183,6 +198,13 @@ void test_project_validation_borrowed_settings() {
         {"frame count", [](auto& p) { p.canvas.total_frames = 1; }, true},
         {"fps", [](auto& p) { p.canvas.fps = 0.0; }, true},
         {"export", [](auto& p) { p.output.png_compression_level = 10; }, true},
+        {"export depth", [](auto& p) { p.output.bit_depth = 7; }, true},
+        {"export filename", [](auto& p) {
+            p.output.filename_prefix.assign(255U, 'x');
+        }, true},
+        {"export dither", [](auto& p) {
+            p.output.dither_method = static_cast<pvt::DitherMethod>(255);
+        }, true},
         {"Live", [](auto& p) {
             p.canvas.live.safety.watchdog_timeout_milliseconds = -1;
         }, true},
@@ -196,46 +218,99 @@ void test_project_validation_borrowed_settings() {
         {"project named stream", [](auto& p) {
             p.canvas.clock.music.frequency_streams.back().high_hz += 1.0;
         }, true},
+        {"project named samples", [](auto& p) {
+            p.canvas.clock.music.frequency_streams.back().feature_samples
+                .back().spectral_flatness = -1.0F;
+        }, true},
+        {"project stream selection", [](auto& p) {
+            p.canvas.clock.frequency_stream_uuid = "removed-stream";
+        }, true},
+        {"project processing", [](auto& p) {
+            p.canvas.clock.audio_processing.high_pass_enabled = true;
+        }, true},
+        {"project meter", [](auto& p) {
+            p.canvas.clock.meter.expression = "invalid";
+        }, true},
         {"path node", [](auto& p) {
             p.canvas.motion_paths.front().nodes.back().x =
                 std::numeric_limits<double>::infinity();
         }, true},
+        {"path identity", [](auto& p) {
+            p.canvas.motion_paths.push_back(p.canvas.motion_paths.front());
+        }, true},
+        {"node identity", [](auto& p) {
+            auto& nodes = p.canvas.motion_paths.front().nodes;
+            nodes.back().id = nodes.front().id;
+        }, true},
+        {"node handle", [](auto& p) {
+            p.canvas.motion_paths.front().nodes.back().handle_mode =
+                static_cast<pvt::PathHandleMode>(255);
+        }, true},
         {"removed path", [](auto& p) { p.canvas.motion_paths.clear(); }, false},
         {"saved music", [](auto& p) {
-            p.layers.front().render.layer_clock.clock.music
+            p.layers.back().render.layer_clock.clock.music
                 .feature_samples.back().energy = -0.1F;
         }, false},
         {"saved named stream", [](auto& p) {
-            p.layers.front().render.layer_clock.clock.music.frequency_streams
+            p.layers.back().render.layer_clock.clock.music.frequency_streams
                 .back().feature_samples.back().beat = -0.1F;
         }, false},
+        {"saved enabled stream", [](auto& p) {
+            p.layers.back().render.layer_clock.enabled = true;
+            p.layers.back().render.layer_clock.clock.frequency_stream_uuid =
+                "removed-stream";
+        }, false},
+        {"saved clock policy", [](auto& p) {
+            p.layers.back().render.layer_clock.mix =
+                static_cast<pvt::LayerClockMixMode>(255);
+        }, false},
+        {"project fps for saved clock", [](auto& p) {
+            p.layers.back().render.layer_clock.clock = ready_music_clock(3000000.0);
+            // The two-second global clock fits; this saved clock does not.
+            p.canvas.fps = 1000.0;
+        }, false},
+        {"effect path", [](auto& p) {
+            auto& binding = p.layers.back().render.effects.front().path;
+            binding.enabled = true;
+            binding.path_id = 999U;
+        }, false},
+        {"motion path", [](auto& p) {
+            auto& binding = p.layers.back().render.motion.custom_path;
+            binding.enabled = true;
+            binding.path_id = 999U;
+        }, false},
         {"layer audio", [](auto& p) {
-            p.layers.front().render.audio_reactive.effect_amount =
+            p.layers.back().render.audio_reactive.effect_amount =
                 std::numeric_limits<double>::quiet_NaN();
         }, false},
         {"LFO cycle", [](auto& p) {
-            p.layers.front().render.parameter_lfos.front().target_path =
+            p.layers.back().render.parameter_lfos.front().target_path =
                 "lfo/72/maximum";
         }, false},
         {"LFO identity", [](auto& p) {
-            p.layers.front().render.parameter_lfos.back().id = 71U;
+            p.layers.back().render.parameter_lfos.back().id = 71U;
         }, false},
         {"layer field", [](auto& p) {
-            p.layers.front().render.saturation = -1.0;
+            p.layers.back().render.saturation = -1.0;
         }, false},
     };
-    for (bool enabled : {false, true}) {
+    const auto set_contribution = [](auto& project, int contribution) {
+        project.layers.back().enabled = contribution != 0;
+        project.layers.back().opacity = contribution == 1 ? 0.0 : 1.0;
+        project.groups.front().enabled = contribution != 2;
+    };
+    for (int contribution = 0; contribution < 4; ++contribution) {
         auto project = baseline;
-        project.layers.front().enabled = enabled;
+        set_contribution(project, contribution);
         for (const auto& edit : edits) {
             const auto valid = pvt::validate(project);
             CHECK(valid.ok);
             edit.apply(project);
             const auto invalid = pvt::validate(project);
             const auto standalone = pvt::validate(pvt::apply_global_config(
-                project.canvas, project.output, project.layers.front().render));
+                project.canvas, project.output, project.layers.back().render));
             const std::string prefix = edit.global
-                ? "Project output is invalid: " : "Layer 1 is invalid: ";
+                ? "Project output is invalid: " : "Layer 3 is invalid: ";
             if (invalid.ok || standalone.ok
                 || invalid.message != prefix + standalone.message) {
                 std::cerr << "Borrowed validation mismatch for " << edit.name
@@ -243,6 +318,9 @@ void test_project_validation_borrowed_settings() {
                 CHECK(false);
             }
             CHECK(invalid.estimated_peak_bytes == standalone.estimated_peak_bytes);
+            // A separate object with identical project/asset identities remains
+            // valid while this one is invalid; no cross-call verdict may leak.
+            CHECK(pvt::validate(baseline).ok);
             pvt::Image destination = solid(0.3F, 0.7F);
             const auto original = destination.pixels;
             std::string error;
@@ -250,7 +328,7 @@ void test_project_validation_borrowed_settings() {
             CHECK(destination.width == 1 && destination.height == 1);
             CHECK(destination.pixels == original);
             project = baseline;
-            project.layers.front().enabled = enabled;
+            set_contribution(project, contribution);
             const auto repaired = pvt::validate(project);
             CHECK(repaired.ok);
             CHECK(repaired.estimated_peak_bytes == valid.estimated_peak_bytes);
@@ -261,6 +339,8 @@ void test_project_validation_borrowed_settings() {
     // still made by rendering: the project adapter and enabled LFO resolution.
     for (bool enabled_lfos : {false, true}) {
         auto project = baseline;
+        project.layers.resize(1U);
+        project.groups.clear();
         for (auto& oscillator : project.layers.front().render.parameter_lfos) {
             oscillator.enabled = enabled_lfos;
         }

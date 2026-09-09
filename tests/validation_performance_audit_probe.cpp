@@ -74,6 +74,26 @@ pvt::ClockConfig music_clock() {
     return clock;
 }
 
+pvt::ProjectConfig path_project(std::size_t layer_count) {
+    auto project = pvt::default_project();
+    project.canvas.width = 64;
+    project.canvas.height = 64;
+    for (std::size_t index = 1U; index < layer_count; ++index) {
+        project.layers.push_back(pvt::default_layer(index));
+    }
+    // Unbound authored paths must still be checked, but additional layers
+    // should not rebuild the node-identity sets for this shared collection.
+    for (std::uint64_t index = 1U; index <= 64U; ++index) {
+        auto path = pvt::default_ellipse_path(index, 1U, "Audit path");
+        path.nodes.resize(64U, path.nodes.front());
+        for (std::size_t node = 0U; node < path.nodes.size(); ++node) {
+            path.nodes[node].id = node + 1U;
+        }
+        project.canvas.motion_paths.push_back(std::move(path));
+    }
+    return project;
+}
+
 template<class Operation>
 void measure(const char* name, Operation operation, bool allocations) {
     operation();
@@ -171,6 +191,23 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            std::size_t one_layer_bytes = 0U;
+            for (const std::size_t layers : {1U, 4U}) {
+                const auto paths = path_project(layers);
+                allocation_bytes = 0U;
+                count_allocations = true;
+                const auto validation = pvt::validate(paths);
+                count_allocations = false;
+                check(validation);
+                std::cout << "path_validation_layers=" << layers
+                          << " requested_bytes=" << allocation_bytes << '\n';
+                if (layers == 1U) {
+                    one_layer_bytes = allocation_bytes;
+                } else if (allocation_bytes >= 2U * one_layer_bytes) {
+                    throw std::runtime_error(
+                        "Additional layers repeated shared path-validation allocations.");
+                }
+            }
             return 0;
         }
         measure("validate_single", [&] { check(pvt::validate(config)); }, true);
@@ -200,7 +237,11 @@ int main(int argc, char** argv) {
                 hash = (hash ^ bits) * UINT64_C(1099511628211);
             }
         }
-        std::cout << "animated_hash=" << std::hex << hash << '\n';
+        std::cout << "animated_hash=" << std::hex << hash << std::dec << '\n';
+        const auto paths_one = path_project(1U);
+        const auto paths_four = path_project(4U);
+        measure("validate_paths_1", [&] { check(pvt::validate(paths_one)); }, true);
+        measure("validate_paths_4", [&] { check(pvt::validate(paths_four)); }, true);
     } catch (const std::exception& exception) {
         count_allocations = false;
         std::cerr << exception.what() << '\n';

@@ -3589,32 +3589,35 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
                                bool validate_particle_workload = true,
                                bool inspect_assets = true,
                                detail::SharedRenderMemory* shared_memory = nullptr,
-                               bool validate_live = true) {
+                               bool validate_canvas = true) {
     const RenderData& config = view.render;
-    if (view.width < 16 || view.width > kMaximumDimension
-        || view.height < 16 || view.height > kMaximumDimension) {
-        return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
-    }
-    if (view.block_size < 1
-        || view.block_size > std::max(view.width, view.height)) {
-        return invalid_result("Block size must be between 1 and the larger image dimension.");
-    }
-    if (view.total_frames < 2 || view.total_frames > kMaximumFrames) {
-        return invalid_result("Frame count must be between 2 and INT_MAX.");
-    }
-    if (!positive_render_parameter(view.fps)) {
-        return invalid_result("FPS must be finite and positive within the renderer's numeric representation.");
-    }
-    if (validate_live) {
+    // Only ProjectConfigValidator may reuse a successful canvas check. Keep
+    // each guard in its original position so standalone diagnostic order is
+    // unchanged. Saved layer clocks, bindings, graphs and estimates stay local.
+    if (validate_canvas) {
+        if (view.width < 16 || view.width > kMaximumDimension
+            || view.height < 16 || view.height > kMaximumDimension) {
+            return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
+        }
+        if (view.block_size < 1
+            || view.block_size > std::max(view.width, view.height)) {
+            return invalid_result("Block size must be between 1 and the larger image dimension.");
+        }
+        if (view.total_frames < 2 || view.total_frames > kMaximumFrames) {
+            return invalid_result("Frame count must be between 2 and INT_MAX.");
+        }
+        if (!positive_render_parameter(view.fps)) {
+            return invalid_result("FPS must be finite and positive within the renderer's numeric representation.");
+        }
         const ValidationResult live_validation = validate(view.live);
         if (!live_validation.ok) {
             return invalid_result("Live configuration is invalid: "
                                   + live_validation.message);
         }
+        const ValidationResult clock_validation =
+            validate_clock_impl(view.clock, view.total_frames, view.fps);
+        if (!clock_validation.ok) return clock_validation;
     }
-    const ValidationResult clock_validation =
-        validate_clock_impl(view.clock, view.total_frames, view.fps);
-    if (!clock_validation.ok) return clock_validation;
     if (!valid_enum(config.layer_clock.scale)
         || !valid_enum(config.layer_clock.mix)) {
         return invalid_result(
@@ -3628,7 +3631,7 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
                               + layer_clock_validation.message);
     }
     if (!valid_audio_reactive(config.audio_reactive)
-        || !valid_audio_reactive(view.audio_reactive_defaults)) {
+        || (validate_canvas && !valid_audio_reactive(view.audio_reactive_defaults))) {
         return invalid_result("Audio-reactive routing contains an invalid source or amount.");
     }
     const AudioReactiveConfig& effective_audio =
@@ -3722,29 +3725,31 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
         return invalid_result(
             "Parameter LFOs cannot form a modulation cycle.");
     }
-    if (view.motion_paths.size() > kMaximumMotionPaths) {
-        return invalid_result("The reusable motion-path count exceeds the signed-int UI/API limit.");
-    }
-    std::unordered_set<std::uint64_t> path_identifiers;
-    for (const CubicMotionPath& path : view.motion_paths) {
-        if (path.id == 0U || !path_identifiers.insert(path.id).second
-            || !valid_name(path.name) || path.nodes.size() < 3U
-            || path.nodes.size() > kMaximumMotionPathNodes) {
-            return invalid_result(
-                "Reusable motion paths need unique nonzero IDs, valid names, and at least three nodes within the signed-int UI/API limit.");
+    if (validate_canvas) {
+        if (view.motion_paths.size() > kMaximumMotionPaths) {
+            return invalid_result("The reusable motion-path count exceeds the signed-int UI/API limit.");
         }
-        std::unordered_set<std::uint64_t> node_identifiers;
-        for (const CubicPathNode& node : path.nodes) {
-            if (node.id == 0U || !node_identifiers.insert(node.id).second
-                || !valid_enum(node.handle_mode)
-                || !finite_render_parameter(node.x)
-                || !finite_render_parameter(node.y)
-                || !finite_render_parameter(node.in_x)
-                || !finite_render_parameter(node.in_y)
-                || !finite_render_parameter(node.out_x)
-                || !finite_render_parameter(node.out_y)) {
+        std::unordered_set<std::uint64_t> path_identifiers;
+        for (const CubicMotionPath& path : view.motion_paths) {
+            if (path.id == 0U || !path_identifiers.insert(path.id).second
+                || !valid_name(path.name) || path.nodes.size() < 3U
+                || path.nodes.size() > kMaximumMotionPathNodes) {
                 return invalid_result(
-                    "A reusable motion path contains an invalid node, handle, or duplicate ID.");
+                    "Reusable motion paths need unique nonzero IDs, valid names, and at least three nodes within the signed-int UI/API limit.");
+            }
+            std::unordered_set<std::uint64_t> node_identifiers;
+            for (const CubicPathNode& node : path.nodes) {
+                if (node.id == 0U || !node_identifiers.insert(node.id).second
+                    || !valid_enum(node.handle_mode)
+                    || !finite_render_parameter(node.x)
+                    || !finite_render_parameter(node.y)
+                    || !finite_render_parameter(node.in_x)
+                    || !finite_render_parameter(node.in_y)
+                    || !finite_render_parameter(node.out_x)
+                    || !finite_render_parameter(node.out_y)) {
+                    return invalid_result(
+                        "A reusable motion path contains an invalid node, handle, or duplicate ID.");
+                }
             }
         }
     }
@@ -4330,6 +4335,8 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
                 "layer motion can expose the canvas exterior, or the active source "
                 "or post-processing can contain or generate transparency.");
         }
+    }
+    if (include_export && validate_canvas) {
         if (view.output.bit_depth != 8 && view.output.bit_depth != 16
             && view.output.bit_depth != 32) {
             return invalid_result("Export bit depth must be 8, 16, or 32.");
@@ -8195,16 +8202,16 @@ ValidationResult validate_frame_render_config(const RenderConfig& config) {
     return validate_impl(config, false);
 }
 
-ValidationResult validate_project_canvas_config(const CanvasLoopConfig& canvas,
-                                                const ExportConfig& output) {
-    const RenderConfig defaults = default_config();
-    return validate_impl(RenderValidationView(canvas, output, defaults), true);
-}
+ProjectConfigValidator::ProjectConfigValidator(const CanvasLoopConfig& canvas,
+                                               const ExportConfig& output)
+    : canvas_(canvas), output_(output),
+      canvas_validation_(validate_impl(
+          RenderValidationView(canvas, output, default_config()), true)) {}
 
-ValidationResult validate_project_layer_config(
-    const CanvasLoopConfig& canvas, const ExportConfig& output,
-    const RenderData& render, bool contributing, SharedRenderMemory* shared) {
-    return validate_impl(RenderValidationView(canvas, output, render),
+ValidationResult ProjectConfigValidator::validate_layer(
+    const RenderData& render, bool contributing, SharedRenderMemory* shared) const {
+    if (!canvas_validation_.ok) return canvas_validation_;
+    return validate_impl(RenderValidationView(canvas_, output_, render),
                          true, true, contributing, shared, false);
 }
 

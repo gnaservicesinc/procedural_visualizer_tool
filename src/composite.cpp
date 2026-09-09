@@ -1765,9 +1765,9 @@ ValidationResult detail::validate_project_render_memory(
         // temporary validation adapter, then enforce the enabled stack below.
         ExportConfig structural_output = project.output;
         structural_output.write_alpha = true;
-        const ValidationResult global_validation =
-            detail::validate_project_canvas_config(project.canvas,
-                                                    structural_output);
+        const detail::ProjectConfigValidator validator(project.canvas,
+                                                       structural_output);
+        const ValidationResult& global_validation = validator.canvas_validation();
         if (!global_validation.ok) {
             return invalid_result("Project output is invalid: "
                                   + global_validation.message,
@@ -1876,9 +1876,7 @@ ValidationResult detail::validate_project_render_memory(
             const bool contributing = layer_effectively_enabled(project, layer)
                 && layer.opacity > 0.0;
             const ValidationResult layer_validation =
-                detail::validate_project_layer_config(
-                    project.canvas, structural_output, render, contributing,
-                    &memory.shared);
+                validator.validate_layer(render, contributing, &memory.shared);
             if (!layer_validation.ok) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " is invalid: " + layer_validation.message,

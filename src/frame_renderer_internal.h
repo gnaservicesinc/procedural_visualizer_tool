@@ -330,15 +330,25 @@ inline bool has_enabled_parameter_lfo(const RenderData& render) {
 }
 ValidationResult validate_frame_render_config(const RenderConfig& config);
 struct SharedRenderMemory;
-// These synchronous adapters borrow project data only for validation. The
-// canvas entry point checks Live once; layers reuse that check. Neither keeps
-// borrowed configuration references in the asset ledger or worker state.
-ValidationResult validate_project_canvas_config(const CanvasLoopConfig& canvas,
-                                                const ExportConfig& output);
-ValidationResult validate_project_layer_config(
-    const CanvasLoopConfig& canvas, const ExportConfig& output,
-    const RenderData& render, bool contributing,
-    SharedRenderMemory* shared = nullptr);
+// One synchronous project-validation invocation. The borrowed canvas/output
+// must remain unchanged until this object is destroyed. Its successful global
+// check applies only to layers checked through this same object; no references
+// or validation results are retained in the asset ledger or worker state.
+class ProjectConfigValidator {
+public:
+    ProjectConfigValidator(const CanvasLoopConfig& canvas,
+                           const ExportConfig& output);
+    ProjectConfigValidator(const ProjectConfigValidator&) = delete;
+    ProjectConfigValidator& operator=(const ProjectConfigValidator&) = delete;
+    const ValidationResult& canvas_validation() const { return canvas_validation_; }
+    ValidationResult validate_layer(const RenderData& render, bool contributing,
+                                    SharedRenderMemory* shared = nullptr) const;
+
+private:
+    const CanvasLoopConfig& canvas_;
+    const ExportConfig& output_;
+    const ValidationResult canvas_validation_;
+};
 
 // Selected-backend rendering validates and materializes parameter LFOs before
 // dispatch. These entry points preserve that work instead of repeating it in
