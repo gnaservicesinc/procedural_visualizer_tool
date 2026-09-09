@@ -1,4 +1,6 @@
 #include "procedural_visualizer_tool.h"
+#include "../src/displacement_surface.h"
+#include "../src/render_asset_cache.h"
 
 #include <QGuiApplication>
 
@@ -571,6 +573,23 @@ int main(int argc, char** argv) {
                             &error));
     CHECK(maximum_difference(displaced_reference, displaced_hybrid) <= 0.0035);
     CHECK(maximum_difference(displaced_reference, displaced_strict) <= 0.0035);
+
+    if (!capabilities.metal_available) {
+        // Exercise actual GL upload eviction and VAO/buffer recreation. The
+        // mesh must lose its GPU and CPU cache owners after a visibility edit.
+        std::shared_ptr<const pvt::detail::ObjMesh> cached_mesh;
+        CHECK(pvt::detail::load_displacement_plane_mesh(
+            displaced.surface.plane_displacement, displaced.width,
+            displaced.height, cached_mesh, nullptr, &error));
+        std::weak_ptr<const pvt::detail::ObjMesh> lifetime = cached_mesh;
+        cached_mesh.reset();
+        CHECK(!lifetime.expired());
+        pvt::detail::prune_render_asset_caches(pvt::default_project());
+        CHECK(lifetime.expired());
+        pvt::Image restored;
+        CHECK(pvt::render_frame(displaced, 5, gpu, restored, nullptr, &error));
+        CHECK(restored.pixels == displaced_strict.pixels);
+    }
 
     pvt::RenderConfig translucent_displaced = displaced;
     translucent_displaced.starting_colors.include_alpha = true;

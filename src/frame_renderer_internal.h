@@ -311,12 +311,18 @@ PVT_API RenderConfig materialize_parameter_lfos(const RenderConfig& config,
                                                 double normalized_phase);
 PVT_API RenderConfig materialize_parameter_lfos_at_frame(
     const RenderConfig& config, int frame_index);
+inline bool has_enabled_parameter_lfo(const RenderData& render) {
+    return std::any_of(render.parameter_lfos.begin(), render.parameter_lfos.end(),
+        [](const ParameterLfo& lfo) { return lfo.enabled; });
+}
 ValidationResult validate_frame_render_config(const RenderConfig& config);
+ValidationResult validate_project_layer_config(const RenderConfig& config,
+                                               bool contributing);
 
 // Selected-backend rendering validates and materializes parameter LFOs before
 // dispatch. These entry points preserve that work instead of repeating it in
 // the legacy public CPU/prepare APIs. Callers must pass a valid configuration
-// whose parameter_lfos collection is empty.
+// whose enabled parameter LFOs have already been resolved.
 bool render_frame_at_phase_validated_resolved(
     const RenderConfig& config, double normalized_phase,
     Image& destination, const std::atomic_bool* cancel,

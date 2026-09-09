@@ -167,6 +167,10 @@ add_library(ProceduralVisualizerTool
     src/obj_surface.h
     src/path_utf8.h
     src/post_process_alpha.h
+    src/render_asset_cache.cpp
+    src/render_asset_cache.h
+    src/packed_mask.h
+    src/scope_exit.h
     src/source_image.cpp
     src/source_image.h
     src/windows_file_install.h
@@ -785,12 +789,24 @@ if(BUILD_TESTING)
 
     add_executable(pvt_project_composite_tests
         tests/project_composite_test.cpp)
+    add_executable(pvt_performance_audit_probe EXCLUDE_FROM_ALL
+        tests/performance_audit_probe.cpp)
+    target_compile_features(pvt_performance_audit_probe PRIVATE cxx_std_17)
+    target_link_libraries(pvt_performance_audit_probe PRIVATE
+        ProceduralVisualizerTool)
+    pvt_enable_warnings(pvt_performance_audit_probe)
     target_compile_features(pvt_project_composite_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_project_composite_tests PROPERTIES CXX_EXTENSIONS NO)
     target_link_libraries(pvt_project_composite_tests PRIVATE
         ProceduralVisualizerTool::ProceduralVisualizerTool)
     pvt_enable_warnings(pvt_project_composite_tests)
     add_test(NAME pvt_project_composite COMMAND pvt_project_composite_tests)
+
+    add_executable(pvt_asset_cache_tests tests/asset_cache_test.cpp)
+    target_compile_features(pvt_asset_cache_tests PRIVATE cxx_std_17)
+    target_link_libraries(pvt_asset_cache_tests PRIVATE ProceduralVisualizerTool)
+    pvt_enable_warnings(pvt_asset_cache_tests)
+    add_test(NAME pvt_asset_cache COMMAND pvt_asset_cache_tests)
 
     add_executable(pvt_metal_backend_tests tests/metal_backend_test.cpp)
     target_compile_features(pvt_metal_backend_tests PRIVATE cxx_std_17)
@@ -838,6 +854,8 @@ if(BUILD_TESTING)
         src/obj_mesh.cpp
         src/obj_mesh.h)
     target_compile_features(pvt_obj_mesh_tests PRIVATE cxx_std_17)
+    target_include_directories(pvt_obj_mesh_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_definitions(pvt_obj_mesh_tests PRIVATE
         PVT_OBJ_MESH_TEST_HOOKS=1)
     set_target_properties(pvt_obj_mesh_tests PROPERTIES CXX_EXTENSIONS NO)

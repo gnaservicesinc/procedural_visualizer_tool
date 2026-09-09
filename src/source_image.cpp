@@ -1,6 +1,8 @@
 #include "source_image.h"
 
 #include "path_utf8.h"
+#include "render_asset_cache.h"
+#include "scope_exit.h"
 
 #include <png.h>
 #include <zlib.h>
@@ -79,6 +81,7 @@ struct PendingSource {
     bool succeeded = false;
     bool retryable = false;
     bool source_changed = false;
+    bool cacheable = true;
     std::shared_ptr<const DecodedSource> image;
     std::string error;
     std::condition_variable wake;
@@ -159,10 +162,18 @@ bool decode_png_color(const std::string& path,
     if (file == nullptr) return fail(error, "Could not open the PNG source.");
 
     png_image png{};
+    bool released = false;
+    const auto release = [&] {
+        if (released) return;
+        released = true;
+        png_image_free(&png);
+        std::fclose(file);
+    };
+    const ScopeExit cleanup(release);
     png.version = PNG_IMAGE_VERSION;
     if (png_image_begin_read_from_stdio(&png, file) == 0) {
         const std::string message = png.message;
-        std::fclose(file);
+        release();
         return fail(error, "Could not read PNG source metadata: " + message);
     }
     const std::uint64_t decoded_pixels =
@@ -177,8 +188,7 @@ bool decode_png_color(const std::string& path,
                      / (4U * sizeof(png_uint_16))) {
         const auto width = png.width;
         const auto height = png.height;
-        png_image_free(&png);
-        std::fclose(file);
+        release();
         return fail(error, image_size_error(
             "PNG image", width, height, 4U * sizeof(float)));
     }
@@ -188,12 +198,10 @@ bool decode_png_color(const std::string& path,
     std::vector<png_uint_16> linear(components);
     if (png_image_finish_read(&png, nullptr, linear.data(), 0, nullptr) == 0) {
         const std::string message = png.message;
-        png_image_free(&png);
-        std::fclose(file);
+        release();
         return fail(error, "Could not decode PNG source: " + message);
     }
-    png_image_free(&png);
-    std::fclose(file);
+    release();
     if (cancelled(cancel)) return fail(error, "PNG source decoding was cancelled.");
 
     auto result = std::make_shared<Image>();
@@ -1177,7 +1185,9 @@ bool load_cached(const std::string& path, DecodeIntent intent,
                     // same logical source publishes in that interval, its
                     // monotonic sequence wins and this older caller receives
                     // its valid immutable decode without replacing the cache.
-                    if (newer != source_cache.end()) {
+                    if (!pending->cacheable) {
+                        selected = std::move(decoded);
+                    } else if (newer != source_cache.end()) {
                         if (newer->file_size == file_size
                             && newer->modified == modified) {
                             selected = newer->image;
@@ -1292,6 +1302,28 @@ float sample_channel(const Image& image, double x, double y,
 }
 
 } // namespace
+
+void prune_source_image_cache(const AssetPaths& images,
+                              const AssetPaths& heights) {
+    const auto retained = [&](const auto& source) {
+        const auto& paths = source.intent == DecodeIntent::Height ? heights : images;
+        return paths.count(source.path) != 0U;
+    };
+    const std::lock_guard<std::mutex> lock(source_cache_mutex);
+    for (auto entry = source_cache.begin(); entry != source_cache.end();) {
+        if (!retained(*entry)) {
+            source_cache_bytes -= entry->decoded_bytes;
+            entry = source_cache.erase(entry);
+        } else {
+            ++entry;
+        }
+    }
+    // A decode started before a visibility edit must not repopulate the
+    // cache after eviction. Existing waiters still receive the decoded image.
+    for (const auto& pending : pending_sources) {
+        if (!retained(*pending)) pending->cacheable = false;
+    }
+}
 
 bool validate_starting_image_source(const std::string& path,
                                     std::string* error) {

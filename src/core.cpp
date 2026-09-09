@@ -4,6 +4,7 @@
 #include "effect_parameter_domain.h"
 #include "environment_map.h"
 #include "frame_renderer_internal.h"
+#include "packed_mask.h"
 #include "obj_surface.h"
 #include "post_process_alpha.h"
 #include "source_image.h"
@@ -3341,7 +3342,8 @@ bool valid_music_series(const std::vector<double>& beats,
 
 ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                bool validate_layer_clock = true,
-                               bool validate_particle_workload = true) {
+                               bool validate_particle_workload = true,
+                               bool inspect_assets = true) {
     if (config.width < 16 || config.width > kMaximumDimension
         || config.height < 16 || config.height > kMaximumDimension) {
         return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
@@ -3550,7 +3552,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         layer_clock_probe.layer_clock = {};
         const ValidationResult layer_clock_validation =
             validate_impl(layer_clock_probe, false, false,
-                          validate_particle_workload);
+                          validate_particle_workload, inspect_assets);
         if (!layer_clock_validation.ok) {
             return invalid_result(
                 "The saved active-layer clock is invalid: "
@@ -4369,6 +4371,10 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         // Validate against the transparent, multi-layer path. Opaque images
         // automatically use a smaller nearest-fragment buffer at render time.
         peak_bytes += obj_working_bytes;
+        if (!checked_add(peak_bytes, detail::PackedMask::storage_bytes(pixel_count),
+                         peak_bytes)) {
+            return invalid_result("The mesh coverage memory estimate overflowed.");
+        }
     }
     const bool has_mesh_construction = uses_raster_mesh
         && construction.mode != MeshConstructionMode::None;
@@ -4427,7 +4433,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             }
             return checked_add(peak_bytes, topology_bytes, peak_bytes);
         };
-    if (has_mesh_construction
+    if (inspect_assets && has_mesh_construction
         && config.surface.mapping == SurfaceMapping::CustomObj
         && !config.surface.obj_path.empty()) {
         // Successful imported-mesh renders necessarily parse this asset. Load
@@ -4488,7 +4494,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     // Materializing enabled parameter LFOs uses a render-only value copy.
     // Cached music analysis can dominate that copy, so it must participate in
     // per-frame worker admission rather than multiplying invisibly.
-    if (!config.parameter_lfos.empty()) {
+    if (detail::has_enabled_parameter_lfo(config)) {
         std::size_t music_copy_bytes = 0U;
         if (!detail::render_config_music_copy_bytes(config,
                                                     music_copy_bytes)
@@ -6956,7 +6962,7 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                         return shade_hit(sampled, hit.normal);
                     };
                     mapped = sample_hit(intersections.front);
-                    if (surface.composite_backfaces
+                    if (surface.composite_backfaces && mapped.a < 1.0
                         && intersections.has_back) {
                         mapped = composite_straight_alpha_over(
                             mapped, sample_hit(intersections.back));
@@ -6987,7 +6993,7 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                             hit.normal);
                     };
                     mapped = sample_hit(intersections.front);
-                    if (surface.composite_backfaces
+                    if (surface.composite_backfaces && mapped.a < 1.0
                         && intersections.has_back) {
                         mapped = composite_straight_alpha_over(
                             mapped, sample_hit(intersections.back));
@@ -7008,7 +7014,7 @@ bool apply_surface_mapping(const Image& source, Image& destination,
                             hit.normal);
                     };
                     mapped = sample_hit(intersections.front);
-                    if (surface.composite_backfaces
+                    if (surface.composite_backfaces && mapped.a < 1.0
                         && intersections.has_back) {
                         mapped = composite_straight_alpha_over(
                             mapped, sample_hit(intersections.back));
@@ -7852,9 +7858,11 @@ bool render_frame_at_timeline_sample_cancellable(
         const bool resolve_paths = has_enabled_path_binding(config);
         std::optional<RenderConfig> resolved_storage;
         const RenderConfig* render_config = &config;
-        if (!parameter_lfos_already_resolved || resolve_paths) {
+        const bool resolve_lfos = !parameter_lfos_already_resolved
+            && detail::has_enabled_parameter_lfo(config);
+        if (resolve_lfos || resolve_paths) {
             resolved_storage.emplace(config);
-            if (!parameter_lfos_already_resolved) {
+            if (resolve_lfos) {
                 materialize_parameter_lfos_in_place(
                     *resolved_storage, timeline.normalized_phase);
                 // LFO targets are clamped to their field's structural range,
@@ -8054,6 +8062,11 @@ ValidationResult validate_frame_render_config(const RenderConfig& config) {
     return validate_impl(config, false);
 }
 
+ValidationResult validate_project_layer_config(const RenderConfig& config,
+                                               bool contributing) {
+    return validate_impl(config, true, true, true, contributing);
+}
+
 bool render_frame_at_phase_validated_resolved(
     const RenderConfig& config, double normalized_phase,
     Image& destination, const std::atomic_bool* cancel,
@@ -8113,9 +8126,11 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
     const bool resolve_paths = has_enabled_path_binding(config);
     std::optional<RenderConfig> resolved_storage;
     const RenderConfig* render_config = &config;
-    if (!parameter_lfos_already_resolved || resolve_paths) {
+    const bool resolve_lfos = !parameter_lfos_already_resolved
+        && has_enabled_parameter_lfo(config);
+    if (resolve_lfos || resolve_paths) {
         resolved_storage.emplace(config);
-        if (!parameter_lfos_already_resolved) {
+        if (resolve_lfos) {
             materialize_parameter_lfos_in_place(
                 *resolved_storage, timeline.normalized_phase);
         }

@@ -1,6 +1,7 @@
 #include "procedural_visualizer_tool.h"
 
 #include "frame_renderer_internal.h"
+#include "render_asset_cache.h"
 #include "post_process_alpha.h"
 
 #include <algorithm>
@@ -1886,14 +1887,16 @@ ValidationResult validate(const ProjectConfig& project) {
             // Live block once. It never affects offline layer pixels, so avoid
             // multiplying its bounded routing/scene scan by the layer count.
             render.live = {};
-            const ValidationResult layer_validation = validate(render);
+            const bool contributing = layer_effectively_enabled(project, layer)
+                && layer.opacity > 0.0;
+            const ValidationResult layer_validation =
+                detail::validate_project_layer_config(render, contributing);
             if (!layer_validation.ok) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " is invalid: " + layer_validation.message,
                                       layer_validation.estimated_peak_bytes);
             }
-            if (layer_effectively_enabled(project, layer)
-                && layer.opacity > 0.0) {
+            if (contributing) {
                 detail::ParticleStampWorkloadEstimate layer_particles;
                 if (!detail::estimate_particle_stamp_workload(
                         render, layer_particles)) {
@@ -2063,6 +2066,7 @@ bool render_project_frame_at_phase(const ProjectConfig& project,
                                    std::string* error) {
     clear_error(error);
     try {
+        detail::prune_render_asset_caches(project);
         const ValidationResult validation = validate(project);
         if (!validation.ok) {
             return fail(error, validation.message);
@@ -2091,6 +2095,7 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
                           std::string* error) {
     clear_error(error);
     try {
+        detail::prune_render_asset_caches(project);
         const ValidationResult validation = validate(project);
         if (!validation.ok) {
             return fail(error, validation.message);
@@ -2135,6 +2140,7 @@ bool render_project_frame_at_phase(
     std::string* error) {
     clear_error(error);
     try {
+        detail::prune_render_asset_caches(project);
         const ValidationResult validation = validate(project);
         if (!validation.ok) return fail(error, validation.message);
         if (!std::isfinite(normalized_phase)) {
@@ -2166,6 +2172,7 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
                           std::string* error) {
     clear_error(error);
     try {
+        detail::prune_render_asset_caches(project);
         const ValidationResult validation = validate(project);
         if (!validation.ok) return fail(error, validation.message);
         std::string frame_count_error;

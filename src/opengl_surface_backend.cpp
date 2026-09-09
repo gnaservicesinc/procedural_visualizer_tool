@@ -1,4 +1,7 @@
 #include "frame_renderer_internal.h"
+#include "packed_mask.h"
+#include "scope_exit.h"
+#include "render_asset_cache.h"
 
 #include "displacement_surface.h"
 #include "environment_map.h"
@@ -793,7 +796,7 @@ void main() {
             visible = false;
         } else {
             mapped = sampleCylinderHit(front, worldDirection);
-            if (compositeBackfaces != 0 && hasBack) {
+            if (compositeBackfaces != 0 && mapped.a < 1.0 && hasBack) {
                 mapped = compositeStraightOver(
                     mapped, sampleCylinderHit(back, worldDirection));
             }
@@ -803,7 +806,7 @@ void main() {
             visible = false;
         } else {
             mapped = sampleSphereHit(front, worldDirection);
-            if (compositeBackfaces != 0 && hasBack) {
+            if (compositeBackfaces != 0 && mapped.a < 1.0 && hasBack) {
                 mapped = compositeStraightOver(
                     mapped, sampleSphereHit(back, worldDirection));
             }
@@ -813,7 +816,7 @@ void main() {
             visible = false;
         } else {
             mapped = sampleCubeHit(front, worldDirection);
-            if (compositeBackfaces != 0 && hasBack) {
+            if (compositeBackfaces != 0 && mapped.a < 1.0 && hasBack) {
                 mapped = compositeStraightOver(
                     mapped, sampleCubeHit(back, worldDirection));
             }
@@ -1533,6 +1536,42 @@ GeneratedBaseUniformLocations load_generated_base_uniform_locations(
 
 class OpenGLSurfaceService final {
 public:
+    void prune_mesh_cache(const AssetPaths& heights) {
+        // A non-threaded GL driver may have a render caller waiting for the
+        // GUI thread while holding mutex_. An editor prune must never block
+        // that thread; completion/next-frame pruning retries when it is idle.
+        const std::unique_lock<std::mutex> guard(mutex_, std::try_to_lock);
+        if (!guard.owns_lock() || !ready_
+            || (!cached_mesh_ && mesh_vertex_buffer_ == 0U
+                && mesh_index_buffer_ == 0U)
+            || heights.count(cached_mesh_path_) != 0U) return;
+        const auto work = [&] {
+            if (heights.count(cached_mesh_path_) != 0U) return;
+            if (!context_->makeCurrent(surface_)) return;
+            auto* gl = context_->extraFunctions();
+            // The VAO also owns buffer references. Delete it so the driver can
+            // reclaim both uploads immediately, even with no subsequent draw.
+            if (mesh_vertex_array_ != 0U) {
+                gl->glDeleteVertexArrays(1, &mesh_vertex_array_);
+                mesh_vertex_array_ = 0U;
+            }
+            if (mesh_vertex_buffer_ != 0U) {
+                gl->glDeleteBuffers(1, &mesh_vertex_buffer_);
+                mesh_vertex_buffer_ = 0U;
+            }
+            if (mesh_index_buffer_ != 0U) {
+                gl->glDeleteBuffers(1, &mesh_index_buffer_);
+                mesh_index_buffer_ = 0U;
+            }
+            cached_mesh_.reset();
+            cached_mesh_path_.clear();
+            mesh_index_count_ = 0;
+            context_->doneCurrent();
+        };
+        if (QThread::currentThread() == render_thread_) work();
+        else (void)QMetaObject::invokeMethod(worker_, work, Qt::BlockingQueuedConnection);
+    }
+
     bool available(std::string* device_name, std::string* status) {
         std::lock_guard<std::mutex> guard(mutex_);
         ensure_initialized_locked();
@@ -2326,12 +2365,16 @@ private:
             || !ensure_mesh_buffers(gl, mesh, error)) {
             return false;
         }
+        cached_mesh_path_ = surface.plane_displacement.path;
 
         GLuint source_texture = 0U;
         GLuint color_texture = 0U;
         std::array<GLuint, 2U> depth_textures{};
         GLuint framebuffer = 0U;
+        bool cleaned = false;
         const auto cleanup = [&] {
+            if (cleaned) return;
+            cleaned = true;
             gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
             if (framebuffer != 0U) gl->glDeleteFramebuffers(1, &framebuffer);
             gl->glDeleteTextures(static_cast<GLsizei>(depth_textures.size()),
@@ -2339,6 +2382,7 @@ private:
             if (color_texture != 0U) gl->glDeleteTextures(1, &color_texture);
             if (source_texture != 0U) gl->glDeleteTextures(1, &source_texture);
         };
+        const ScopeExit cleanup_guard(cleanup);
 
         gl->glGenTextures(1, &source_texture);
         gl->glBindTexture(GL_TEXTURE_2D, source_texture);
@@ -2487,8 +2531,8 @@ private:
         std::vector<float> mapped(pixel_count * 4U, 0.0F);
         std::vector<float> layer(pixel_count * 4U, 0.0F);
         std::vector<float> depth(pixel_count, 1.0F);
-        std::vector<unsigned char> coverage(pixel_count, 0U);
-        constexpr float opaque_threshold = 1.0F - 1.0e-7F;
+        PackedMask coverage(pixel_count);
+        constexpr float opaque_threshold = 1.0F;
         bool source_opaque = true;
         for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
             const float alpha = source.pixels[pixel * 4U + 3U];
@@ -2578,7 +2622,7 @@ private:
                         mapped[output_offset + 3U] =
                             static_cast<float>(output_alpha);
                     }
-                    coverage[pixel] = 1U;
+                    coverage.set(pixel);
                     if (peel_backfaces
                         && mapped[output_offset + 3U] < opaque_threshold) {
                         ++transparent_count;
@@ -2613,7 +2657,7 @@ private:
         const double curvature = std::clamp(surface.curvature, 0.0, 1.0);
         for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
             const std::size_t offset = pixel * 4U;
-            if (coverage[pixel] == 0U
+            if (!coverage.test(pixel)
                 && surface.outside != SurfaceOutside::Transparent) {
                 std::copy_n(source.pixels.data() + offset, 4U,
                             destination.pixels.data() + offset);
@@ -2666,7 +2710,10 @@ private:
         GLuint source_texture = 0U;
         GLuint destination_texture = 0U;
         GLuint framebuffer = 0U;
+        bool cleaned = false;
         const auto cleanup = [&] {
+            if (cleaned) return;
+            cleaned = true;
             gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
             if (framebuffer != 0U) gl->glDeleteFramebuffers(1, &framebuffer);
             if (destination_texture != 0U) {
@@ -2674,6 +2721,7 @@ private:
             }
             if (source_texture != 0U) gl->glDeleteTextures(1, &source_texture);
         };
+        const ScopeExit cleanup_guard(cleanup);
 
         gl->glGenTextures(1, &source_texture);
         gl->glBindTexture(GL_TEXTURE_2D, source_texture);
@@ -2853,7 +2901,10 @@ private:
         GLuint block_texture = 0U;
         GLuint destination_texture = 0U;
         GLuint framebuffer = 0U;
+        bool cleaned = false;
         const auto cleanup = [&] {
+            if (cleaned) return;
+            cleaned = true;
             gl->glBindFramebuffer(GL_FRAMEBUFFER, 0U);
             if (framebuffer != 0U) gl->glDeleteFramebuffers(1, &framebuffer);
             if (destination_texture != 0U) {
@@ -2863,6 +2914,7 @@ private:
             if (swing_texture != 0U) gl->glDeleteTextures(1, &swing_texture);
             if (wave_texture != 0U) gl->glDeleteTextures(1, &wave_texture);
         };
+        const ScopeExit cleanup_guard(cleanup);
         const auto upload_controls = [gl](GLuint& texture, GLsizei width,
                                           const float* values) {
             gl->glGenTextures(1, &texture);
@@ -3317,6 +3369,7 @@ private:
     GLuint mesh_index_buffer_ = 0U;
     GLsizei mesh_index_count_ = 0;
     std::shared_ptr<const ObjMesh> cached_mesh_;
+    std::string cached_mesh_path_;
 };
 
 OpenGLSurfaceService* g_service_instance = nullptr;
@@ -3375,6 +3428,10 @@ bool surface_has_supported_work(const SurfaceConfig& surface) {
 }
 
 } // namespace
+
+void prune_opengl_mesh_cache(const AssetPaths& heights) {
+    service().prune_mesh_cache(heights);
+}
 
 bool opengl_surface_backend_compiled() {
     return true;

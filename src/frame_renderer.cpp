@@ -172,7 +172,7 @@ bool render_frame_at_phase(const RenderConfig& config,
         }
         std::optional<RenderConfig> resolved_storage;
         const RenderConfig* resolved = &config;
-        if (!config.parameter_lfos.empty()) {
+        if (detail::has_enabled_parameter_lfo(config)) {
             resolved_storage.emplace(detail::materialize_parameter_lfos(
                 config, normalized_phase));
             resolved = &*resolved_storage;
@@ -215,7 +215,7 @@ bool render_frame(const RenderConfig& config, int frame_index,
         if (!validation.ok) return fail(error, validation.message);
         std::optional<RenderConfig> resolved_storage;
         const RenderConfig* resolved = &config;
-        if (!config.parameter_lfos.empty()) {
+        if (detail::has_enabled_parameter_lfo(config)) {
             resolved_storage.emplace(
                 detail::materialize_parameter_lfos_at_frame(
                     config, frame_index));

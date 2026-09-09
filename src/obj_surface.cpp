@@ -1,4 +1,5 @@
 #include "obj_surface.h"
+#include "packed_mask.h"
 
 #include "environment_map.h"
 #include "obj_mesh.h"
@@ -24,7 +25,7 @@ namespace {
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr double kTau = 2.0 * kPi;
 constexpr double kMinimumCameraDepth = 1.0e-6;
-constexpr double kOpaqueThreshold = 1.0 - 1.0e-7;
+constexpr double kOpaqueThreshold = 1.0;
 constexpr double kDepthRelativeEpsilon = 1.0e-6;
 
 struct ObjSurfaceCancelled final {};
@@ -402,6 +403,16 @@ double edge(ScreenPoint first, ScreenPoint second, ScreenPoint point) {
            - (second.y - first.y) * (point.x - first.x);
 }
 
+double canonical_edge(ScreenPoint first, ScreenPoint second, ScreenPoint point) {
+    // At extreme projected scales, evaluating the same shared edge from
+    // opposite endpoints can round both sides outward, leaving a crack.
+    // Use one arithmetic orientation and negate it for the adjacent face.
+    if (first.x > second.x || (first.x == second.x && first.y > second.y)) {
+        return -edge(second, first, point);
+    }
+    return edge(first, second, point);
+}
+
 bool top_left(ScreenPoint first, ScreenPoint second) {
     return second.y > first.y
            || (second.y == first.y && second.x < first.x);
@@ -552,12 +563,21 @@ void rasterize_mesh(const ObjMesh& mesh,
         const double maximum_y = std::max({vertices[0].projected->screen.y,
                                            vertices[1].projected->screen.y,
                                            vertices[2].projected->screen.y});
-        const int first_x = std::max(0, static_cast<int>(std::ceil(minimum_x - 0.5)));
-        const int last_x = std::min(width - 1,
-                                    static_cast<int>(std::floor(maximum_x - 0.5)));
-        const int first_y = std::max(0, static_cast<int>(std::ceil(minimum_y - 0.5)));
-        const int last_y = std::min(height - 1,
-                                    static_cast<int>(std::floor(maximum_y - 0.5)));
+        // Clip in floating point before conversion. Valid finite projections
+        // can be far outside int range near the camera or at extreme scales.
+        if (maximum_x < 0.5 || maximum_y < 0.5
+            || minimum_x > static_cast<double>(width) - 0.5
+            || minimum_y > static_cast<double>(height) - 0.5) {
+            continue;
+        }
+        const int first_x = static_cast<int>(std::ceil(
+            std::max(0.0, minimum_x - 0.5)));
+        const int last_x = static_cast<int>(std::floor(
+            std::min(static_cast<double>(width - 1), maximum_x - 0.5)));
+        const int first_y = static_cast<int>(std::ceil(
+            std::max(0.0, minimum_y - 0.5)));
+        const int last_y = static_cast<int>(std::floor(
+            std::min(static_cast<double>(height - 1), maximum_y - 0.5)));
         if (first_x > last_x || first_y > last_y) {
             continue;
         }
@@ -568,17 +588,33 @@ void rasterize_mesh(const ObjMesh& mesh,
                                      vertices[0].projected->screen);
         const bool owns_2 = top_left(vertices[0].projected->screen,
                                      vertices[1].projected->screen);
+        const double integer_limit = std::numeric_limits<int>::max();
+        const auto extreme_vertex = [&](ScreenPoint point) {
+            return std::fabs(point.x) > integer_limit
+                || std::fabs(point.y) > integer_limit;
+        };
+        const bool extreme_0 = extreme_vertex(vertices[0].projected->screen);
+        const bool extreme_1 = extreme_vertex(vertices[1].projected->screen);
+        const bool extreme_2 = extreme_vertex(vertices[2].projected->screen);
+        const auto sample_edge = [&](ScreenPoint first, ScreenPoint second,
+                                     ScreenPoint point, bool extreme) {
+            return extreme ? canonical_edge(first, second, point)
+                           : edge(first, second, point);
+        };
         for (int y = first_y; y <= last_y; ++y) {
             throw_if_cancelled(cancel);
             for (int x = first_x; x <= last_x; ++x) {
                 const ScreenPoint sample{static_cast<double>(x) + 0.5,
                                          static_cast<double>(y) + 0.5};
-                const double edge_0 = edge(vertices[1].projected->screen,
-                                           vertices[2].projected->screen, sample);
-                const double edge_1 = edge(vertices[2].projected->screen,
-                                           vertices[0].projected->screen, sample);
-                const double edge_2 = edge(vertices[0].projected->screen,
-                                           vertices[1].projected->screen, sample);
+                const double edge_0 = sample_edge(vertices[1].projected->screen,
+                                           vertices[2].projected->screen, sample,
+                                           extreme_1 || extreme_2);
+                const double edge_1 = sample_edge(vertices[2].projected->screen,
+                                           vertices[0].projected->screen, sample,
+                                           extreme_2 || extreme_0);
+                const double edge_2 = sample_edge(vertices[0].projected->screen,
+                                           vertices[1].projected->screen, sample,
+                                           extreme_0 || extreme_1);
                 if (!edge_inside(edge_0, owns_0) || !edge_inside(edge_1, owns_1)
                     || !edge_inside(edge_2, owns_2)) {
                     continue;
@@ -1096,14 +1132,14 @@ std::vector<ObjVec3> transform_normals(const ObjMesh& mesh,
 }
 
 void blend_with_planar(const Image& source, Image& mapped,
-                       const std::vector<unsigned char>& coverage,
+                       const PackedMask& coverage,
                        std::size_t pixel_count, const SurfaceConfig& surface,
                        double curvature,
                        const std::atomic_bool* cancel) {
     for (std::size_t pixel = 0U; pixel < pixel_count; ++pixel) {
         if ((pixel & 4095U) == 0U) throw_if_cancelled(cancel);
         const Color planar = load_color(source, pixel);
-        if (coverage[pixel] == 0U
+        if (!coverage.test(pixel)
             && surface.outside != SurfaceOutside::Transparent) {
             store_color(mapped, pixel, planar);
         } else {
@@ -1116,7 +1152,7 @@ void blend_with_planar(const Image& source, Image& mapped,
 struct OpaqueFragments {
     std::vector<float>& depth;
     Image& mapped;
-    std::vector<unsigned char>& coverage;
+    PackedMask& coverage;
 
     bool accepts(std::size_t pixel, double candidate_depth) const {
         return candidate_depth < depth[pixel];
@@ -1125,7 +1161,7 @@ struct OpaqueFragments {
     void store(std::size_t pixel, double candidate_depth, Color color) {
         depth[pixel] = static_cast<float>(candidate_depth);
         store_color(mapped, pixel, color);
-        coverage[pixel] = 1U;
+        coverage.set(pixel);
     }
 };
 
@@ -1133,7 +1169,7 @@ struct LayerFragments {
     const std::vector<float>& previous_depth;
     std::vector<float>& next_depth;
     Image& layer;
-    std::vector<unsigned char>& coverage;
+    PackedMask& coverage;
 
     bool accepts(std::size_t pixel, double candidate_depth) const {
         const double previous = previous_depth[pixel];
@@ -1149,7 +1185,7 @@ struct LayerFragments {
     void store(std::size_t pixel, double candidate_depth, Color color) {
         next_depth[pixel] = static_cast<float>(candidate_depth);
         store_color(layer, pixel, color);
-        coverage[pixel] = 1U;
+        coverage.set(pixel);
     }
 };
 
@@ -1252,7 +1288,7 @@ bool apply_mesh_surface_mapping(const Image& source,
         mapped.width = source.width;
         mapped.height = source.height;
         mapped.pixels.assign(pixel_count * 4U, 0.0F);
-        std::vector<unsigned char> coverage(pixel_count, 0U);
+        PackedMask coverage(pixel_count);
         const double mapped_lighting = clamp_value(
             surface.lighting, 0.0,
             maximum_render_parameter_magnitude()) * curvature;

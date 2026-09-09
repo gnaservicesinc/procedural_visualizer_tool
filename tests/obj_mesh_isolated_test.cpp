@@ -1,4 +1,5 @@
 #include "../src/obj_mesh.h"
+#include "../src/render_asset_cache.h"
 
 #include <algorithm>
 #include <atomic>
@@ -236,6 +237,24 @@ int main(int argc, char** argv) {
         return fail(12, "cache clear generation fence failed: "
                             + pre_clear_error + post_clear_error + error);
     }
+
+    // A visibility edit during a parse drops cache ownership without revoking
+    // the immutable result promised to the in-flight caller.
+    clear_obj_mesh_cache();
+    arm_obj_mesh_cache_publication_pause_for_testing();
+    std::shared_ptr<const ObjMesh> pruned;
+    bool pruned_ok = false;
+    std::thread pruning_thread([&] {
+        pruned_ok = load_obj_mesh_cached(temporary.string(), pruned, &error);
+    });
+    wait_obj_mesh_cache_publication_paused_for_testing();
+    prune_obj_mesh_cache({});
+    resume_obj_mesh_cache_publication_for_testing();
+    pruning_thread.join();
+    if (!pruned_ok || !pruned) return fail(15, "pruning broke an active load");
+    std::weak_ptr<const ObjMesh> pruned_lifetime = pruned;
+    pruned.reset();
+    if (!pruned_lifetime.expired()) return fail(16, "pruned load repopulated cache");
 
     // Final filesystem verification must not hold the global cache mutex. An
     // older, already-verified parse is paused immediately before publication;

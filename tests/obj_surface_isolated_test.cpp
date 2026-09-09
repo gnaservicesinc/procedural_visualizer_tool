@@ -1,4 +1,5 @@
 #include "../src/obj_surface.h"
+#include "../src/packed_mask.h"
 
 #include <algorithm>
 #include <atomic>
@@ -110,6 +111,18 @@ bool apply_neutral_obj_surface(const pvt::Image& source,
 } // namespace
 
 int main(int argc, char** argv) {
+    for (std::size_t size : {0U, 1U, 63U, 64U, 65U, 127U, 129U}) {
+        pvt::detail::PackedMask mask(size);
+        for (std::size_t bit = 0; bit < size; ++bit) {
+            if (mask.test(bit)) return fail(30, "coverage was not zero initialized");
+            if (bit % 3U == 0U) mask.set(bit);
+        }
+        for (std::size_t bit = 0; bit < size; ++bit) {
+            if (mask.test(bit) != (bit % 3U == 0U)) {
+                return fail(31, "packed coverage changed a neighboring bit");
+            }
+        }
+    }
     const fs::path source_root = argc > 1 ? fs::path(argv[1]) : fs::current_path();
     const std::string cube =
         (source_root / "tests" / "assets" / "obj" / "closed_cube.obj").string();
@@ -404,6 +417,53 @@ int main(int argc, char** argv) {
         || error.find("cancelled") == std::string::npos
         || unchanged.pixels != nearest.pixels) {
         return fail(14, "OBJ cancellation was not transactional");
+    }
+
+    // A representably translucent front must retain even a very faint exit
+    // contribution. The old near-opaque cutoff kept alpha below one here.
+    pvt::Image nearly_opaque = uniform_image(
+        65, 63, 0.8F, 0.3F, 0.1F, std::nextafter(1.0F, 0.0F));
+    pvt::Image faint_rear;
+    if (!apply_classic_obj_surface(nearly_opaque, faint_rear, cube,
+                                   0, 0.0, 1.0, 0.0, 0.0, &error)) {
+        return fail(32, "near-opaque render failed: " + error);
+    }
+    bool accumulated_to_one = false;
+    for (std::size_t offset = 3U; offset < faint_rear.pixels.size(); offset += 4U) {
+        accumulated_to_one |= faint_rear.pixels[offset] == 1.0F;
+    }
+    if (!accumulated_to_one) return fail(33, "faint rear coverage was discarded");
+
+    pvt::detail::ObjMesh quad;
+    if (!pvt::detail::parse_obj_mesh(
+            "v -1 -1 0\nv 1 -1 0\nv 1 1 0\nv -1 1 0\nf 1 2 3 4\n",
+            quad, &error)) return fail(34, error);
+    pvt::SurfaceConfig extreme;
+    extreme.enabled = true;
+    extreme.mapping = pvt::SurfaceMapping::CustomObj;
+    extreme.scale_x = 1.0e12;
+    extreme.scale_y = 1.0e12;
+    pvt::Image enormous;
+    if (!pvt::detail::apply_mesh_surface_mapping(
+            opaque, enormous, quad, extreme, 0.0, &error)
+        || enormous.pixels != opaque.pixels) {
+        return fail(35, "extreme triangle clipping lost coverage: " + error);
+    }
+    for (auto& triangle : quad.triangles) {
+        std::swap(triangle.corners[1], triangle.corners[2]);
+    }
+    pvt::Image reverse_winding;
+    if (!pvt::detail::apply_mesh_surface_mapping(
+            opaque, reverse_winding, quad, extreme, 0.0, &error)
+        || reverse_winding.pixels != enormous.pixels) {
+        return fail(36, "two-sided surface changed with winding: " + error);
+    }
+    extreme.position_x_percent = 1.0e16;
+    if (!pvt::detail::apply_mesh_surface_mapping(
+            opaque, enormous, quad, extreme, 0.0, &error)
+        || std::any_of(enormous.pixels.begin(), enormous.pixels.end(),
+                       [](float component) { return component != 0.0F; })) {
+        return fail(37, "offscreen triangle was not rejected: " + error);
     }
 
     std::cout << "OBJ surface isolated tests passed\n";

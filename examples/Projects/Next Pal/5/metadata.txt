@@ -1,0 +1,23 @@
+PVT_VERSION	5
+version.number	5
+version.uuid	da93bc68-b4e2-47d9-8faf-872e58b8e856
+version.parent_digest	fe13d27768075412b136e1cffbb064bc36eb1b8f6a303456f264e4cce36443cc
+version.reason	save
+version.saved_utc	2026-09-08T13%3A10%3A44Z
+version.saved_with_version	17.7.0
+version.reverted_from_digest	
+project.name	Next%20Pal
+render_output.sha256	be24f75a6b0d3e40d824c2058a4013c2c44f8198385d8deff8b0ac92353b9093
+music_analysis.sha256	
+groups.count	0
+layers.count	1
+layers.0.file_id	0
+layers.0.uuid	2add1349-e28a-4a9c-a8ff-3a82c9b7d4a1
+layers.0.name	Layer%201
+layers.0.enabled	1
+layers.0.blend_mode	none
+layers.0.alpha_mode	over
+layers.0.group_uuid	
+layers.0.opacity	1
+layers.0.sha256	72ce2d430eb19a69c5c2e6c09066c590d748614dcab75d1b0d9bcd369214bcd6
+attachments.count	0

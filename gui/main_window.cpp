@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "../src/render_asset_cache.h"
 #include "live_audio_capture.h"
 #include "localization.h"
 #include "renderer_labels.h"
@@ -2625,6 +2626,7 @@ MainWindow::MainWindow(QWidget* parent)
             result.generation = preview_task_generation_;
             result.document_revision = preview_task_document_revision_;
         }
+        pvt::detail::prune_render_asset_caches(project_);
         if (result.document_revision == document_revision_
             && (result.generation == preview_generation_ || playback_timer_->isActive())) {
             if (result.error.isEmpty()) {
@@ -17626,6 +17628,7 @@ void MainWindow::clearLayerMusicSource() {
 }
 
 void MainWindow::schedulePreview() {
+    pvt::detail::prune_render_asset_caches(project_);
     ++preview_generation_;
     if (export_active_
         && performance_settings_.pause_editor_preview_during_export) {

@@ -3,6 +3,7 @@
 #include "obj_surface.h"
 #include "path_utf8.h"
 #include "source_image.h"
+#include "render_asset_cache.h"
 
 #include <algorithm>
 #include <chrono>
@@ -27,7 +28,10 @@ constexpr std::size_t kMaximumCachedMeshes = 16U;
 struct DisplacementCancelled final {};
 
 struct CachedMesh {
-    std::shared_ptr<const HeightImage> height_image;
+    std::string path;
+    // Geometry contains the sampled heights already. Keep only an identity
+    // token so mesh variants cannot pin evicted decoded height maps.
+    std::weak_ptr<const HeightImage> height_image;
     int render_width = 0;
     int render_height = 0;
     int pixels_per_node = 0;
@@ -44,6 +48,7 @@ struct CachedMesh {
 // every worker independently allocates and fills the same potentially large
 // subdivision grid before one of them wins the cache race.
 struct PendingMesh {
+    std::string path;
     std::shared_ptr<const HeightImage> height_image;
     int render_width = 0;
     int render_height = 0;
@@ -55,6 +60,7 @@ struct PendingMesh {
     bool complete = false;
     bool succeeded = false;
     bool retryable = false;
+    bool cacheable = true;
     std::shared_ptr<const ObjMesh> mesh;
     std::string error;
     std::condition_variable wake;
@@ -161,7 +167,7 @@ bool cache_key_matches(const CachedMesh& cached,
                        const PlaneDisplacementConfig& config,
                        int render_width,
                        int render_height) {
-    return cached.height_image == height_image
+    return cached.height_image.lock() == height_image
            && cached.render_width == render_width
            && cached.render_height == render_height
            && cached.pixels_per_node == config.pixels_per_node
@@ -410,6 +416,7 @@ bool load_displacement_plane_mesh(
                 });
             if (building == pending_meshes.end()) {
                 pending = std::make_shared<PendingMesh>();
+                pending->path = displacement.path;
                 pending->height_image = height_image;
                 pending->render_width = render_width;
                 pending->render_height = render_height;
@@ -463,10 +470,11 @@ bool load_displacement_plane_mesh(
             {
                 const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
                 if (generated_ok
+                    && pending->cacheable
                     && pending->cache_generation
                            == mesh_cache_generation) {
                     mesh_cache.push_back(
-                        {height_image, render_width, render_height,
+                        {displacement.path, height_image, render_width, render_height,
                          displacement.pixels_per_node,
                          displacement.minimum, displacement.maximum,
                          displacement.midpoint, generated,
@@ -545,6 +553,21 @@ void clear_displacement_mesh_cache() noexcept {
     mesh_cache_clock = 0U;
     ++mesh_cache_generation;
     if (mesh_cache_generation == 0U) ++mesh_cache_generation;
+}
+
+void prune_displacement_mesh_cache(const AssetPaths& heights) {
+    const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
+    for (auto entry = mesh_cache.begin(); entry != mesh_cache.end();) {
+        if (heights.count(entry->path) == 0U) {
+            mesh_cache_bytes -= entry->bytes;
+            entry = mesh_cache.erase(entry);
+        } else {
+            ++entry;
+        }
+    }
+    for (const auto& pending : pending_meshes) {
+        if (heights.count(pending->path) == 0U) pending->cacheable = false;
+    }
 }
 
 } // namespace pvt::detail

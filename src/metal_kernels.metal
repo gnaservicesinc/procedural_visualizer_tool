@@ -1514,7 +1514,8 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
                 return shade_hit(sampled, hit.normal);
             };
             mapped = sample_hit(intersections.front);
-            if (surface.flags.x != 0u && intersections.has_back) {
+            if (surface.flags.x != 0u && mapped.a < 1.0f
+                && intersections.has_back) {
                 mapped = composite_straight_over(
                     mapped, sample_hit(intersections.back));
             }
@@ -1569,7 +1570,7 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
                 };
                 mapped = sample_hit(front_distance,
                                     stable_discriminant == 0.0f);
-                if (surface.flags.x != 0u && first >= 0.0f
+                if (surface.flags.x != 0u && mapped.a < 1.0f && first >= 0.0f
                     && second - first > 1.0e-10f) {
                     mapped = composite_straight_over(
                         mapped, sample_hit(second, false));
@@ -1588,7 +1589,8 @@ kernel void surface_mapping(constant FrameConstants& frame [[buffer(0)]],
                     width, height, 3u), hit.normal);
             };
             mapped = sample_hit(intersections.front);
-            if (surface.flags.x != 0u && intersections.has_back) {
+            if (surface.flags.x != 0u && mapped.a < 1.0f
+                && intersections.has_back) {
                 mapped = composite_straight_over(
                     mapped, sample_hit(intersections.back));
             }

@@ -1,4 +1,5 @@
 #include "obj_mesh.h"
+#include "render_asset_cache.h"
 #include "path_utf8.h"
 
 #include <algorithm>
@@ -765,6 +766,7 @@ struct PendingObjMesh {
     bool complete = false;
     bool succeeded = false;
     bool source_changed = false;
+    bool cacheable = true;
     std::shared_ptr<const ObjMesh> mesh;
     std::string error;
     std::exception_ptr exception;
@@ -981,12 +983,12 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
                     // entry while this parse ran. Publication still owns only
                     // one cache entry; handed-out meshes retain independent
                     // shared ownership exactly as before.
-                    if (loaded_ok
+                    if (loaded_ok && pending->cacheable
                         && pending->cache_generation == cache.generation
                         && cache.mesh && same_stamp(cache.stamp, after)
                         && same_limits(cache.limits, limits)) {
                         selected = cache.mesh;
-                    } else if (loaded_ok
+                    } else if (loaded_ok && pending->cacheable
                                && pending->cache_generation
                                       == cache.generation
                                && pending->publication_sequence
@@ -1061,6 +1063,21 @@ void clear_obj_mesh_cache() noexcept {
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
     obj_mesh_cache_parse_count.store(0U, std::memory_order_relaxed);
 #endif
+}
+
+void prune_obj_mesh_cache(const AssetPaths& objects) {
+    ObjMeshCache& cache = obj_mesh_cache();
+    const std::lock_guard<std::mutex> lock(cache.mutex);
+    if (objects.count(cache.stamp.normalized_path) == 0U) {
+        cache.mesh.reset();
+        cache.stamp = {};
+        cache.limits = {};
+    }
+    for (const auto& pending : cache.pending) {
+        if (objects.count(pending->stamp.normalized_path) == 0U) {
+            pending->cacheable = false;
+        }
+    }
 }
 
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)

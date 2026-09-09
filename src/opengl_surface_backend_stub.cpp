@@ -1,6 +1,9 @@
 #include "frame_renderer_internal.h"
+#include "render_asset_cache.h"
 
 namespace pvt::detail {
+
+void prune_opengl_mesh_cache(const AssetPaths&) {}
 
 bool opengl_surface_backend_compiled() {
     return false;
