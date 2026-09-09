@@ -22,10 +22,6 @@
 namespace pvt::detail {
 namespace {
 
-constexpr std::size_t kMaximumCachedMeshBytes =
-    std::size_t{512} * 1024U * 1024U;
-constexpr std::size_t kMaximumCachedMeshes = 16U;
-
 struct DisplacementCancelled final {};
 
 struct CachedMesh {
@@ -73,6 +69,21 @@ std::vector<std::shared_ptr<PendingMesh>> pending_meshes;
 std::size_t mesh_cache_bytes = 0U;
 std::uint64_t mesh_cache_clock = 0U;
 std::uint64_t mesh_cache_generation = 0U;
+
+void trim_mesh_cache_locked(std::size_t byte_limit,
+                            std::size_t entry_limit) {
+    while (!mesh_cache.empty()
+           && (mesh_cache.size() > entry_limit
+               || mesh_cache_bytes > byte_limit)) {
+        const auto oldest = std::min_element(
+            mesh_cache.begin(), mesh_cache.end(),
+            [](const CachedMesh& left, const CachedMesh& right) {
+                return left.last_used < right.last_used;
+            });
+        mesh_cache_bytes -= oldest->bytes;
+        mesh_cache.erase(oldest);
+    }
+}
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) *error = std::move(message);
@@ -409,6 +420,11 @@ bool load_displacement_plane_mesh(
         bool build_owner = false;
         {
             std::unique_lock<std::mutex> lock(mesh_cache_mutex);
+            const RuntimeResourceLimits resource_limits =
+                resolved_resource_limits();
+            trim_mesh_cache_locked(
+                resource_limits.displacement_mesh_cache_bytes,
+                resource_limits.displacement_mesh_cache_entries);
             const auto found = std::find_if(
                 mesh_cache.begin(), mesh_cache.end(),
                 [&](const CachedMesh& candidate) {
@@ -498,8 +514,14 @@ bool load_displacement_plane_mesh(
                          displacement.midpoint, generated,
                          generated_bytes, ++mesh_cache_clock});
                     mesh_cache_bytes += generated_bytes;
-                    while ((mesh_cache.size() > kMaximumCachedMeshes
-                            || mesh_cache_bytes > kMaximumCachedMeshBytes)
+                    const RuntimeResourceLimits resource_limits =
+                        resolved_resource_limits();
+                    const std::size_t cache_byte_limit =
+                        resource_limits.displacement_mesh_cache_bytes;
+                    const std::size_t cache_entry_limit =
+                        resource_limits.displacement_mesh_cache_entries;
+                    while ((mesh_cache.size() > cache_entry_limit
+                            || mesh_cache_bytes > cache_byte_limit)
                            && mesh_cache.size() > 1U) {
                         const auto oldest = std::min_element(
                             mesh_cache.begin(), mesh_cache.end(),

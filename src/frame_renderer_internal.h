@@ -10,9 +10,35 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace pvt::detail {
+
+// Metal submission includes CPU-side state preparation, command encoding and
+// result readback. Keeping only two frames in flight leaves both CPU and GPU
+// bubbles on larger hosts. Half the host's logical CPU capacity keeps enough
+// command producers active without letting result readback contend with every
+// outer export/encoding lane. This limit creates no threads; device working-set
+// admission remains an independent hard bound in the Metal backend. Retain two
+// as the compatibility floor for small or non-reporting hosts.
+inline std::size_t automatic_gpu_frames_in_flight() noexcept {
+    const std::size_t hardware_workers = std::max<std::size_t>(
+        1U, std::thread::hardware_concurrency());
+    const std::size_t producer_workers = hardware_workers / 2U
+                                         + hardware_workers % 2U;
+    return std::min(kMaximumGpuFramesInFlight,
+                    std::max<std::size_t>(2U, producer_workers));
+}
+
+// A single project frame also pays one worker-thread/readback cost per layer
+// before its serial authored-order composite. Local throughput plateaus before
+// the outer frame pipeline does, so avoid applying the broader export queue
+// depth as an inner nested pool.
+inline std::size_t automatic_gpu_layer_workers() noexcept {
+    return std::min<std::size_t>(4U,
+                                automatic_gpu_frames_in_flight());
+}
 
 inline bool checked_retained_add(std::size_t amount,
                                  std::size_t& total) noexcept {

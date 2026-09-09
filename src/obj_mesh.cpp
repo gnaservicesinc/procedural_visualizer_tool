@@ -25,6 +25,13 @@
 
 namespace pvt {
 namespace detail {
+
+ObjLoadLimits::ObjLoadLimits() noexcept {
+    const RuntimeResourceLimits limits = resolved_resource_limits();
+    maximum_file_bytes = limits.maximum_obj_file_bytes;
+    maximum_mesh_bytes = limits.maximum_obj_mesh_bytes;
+}
+
 namespace {
 
 constexpr std::size_t kMaximumPathBytes =
@@ -520,7 +527,10 @@ bool finalize_mesh(ObjMesh& mesh,
         return false;
     }
     if (mesh.estimated_bytes() > limits.maximum_mesh_bytes) {
-        return fail(error, "OBJ expanded mesh exceeds the configured memory limit.");
+        return fail(error,
+                    "OBJ expanded mesh exceeds the configured memory limit. "
+                    "Raise the OBJ mesh limit in Application Settings > "
+                    "Performance to import this asset.");
     }
     return true;
 }
@@ -620,7 +630,10 @@ bool parse_obj_mesh(std::string_view contents,
                     const ObjLoadLimits& limits) {
     clear_error(error);
     if (contents.size() > limits.maximum_file_bytes) {
-        return fail(error, "OBJ exceeds the configured file-size limit.");
+        return fail(error,
+                    "OBJ exceeds the configured file-size limit. Raise the "
+                    "OBJ file limit in Application Settings > Performance to "
+                    "import this asset.");
     }
     try {
         ObjMesh candidate;
@@ -712,7 +725,10 @@ bool load_obj_mesh(const std::string& utf8_path,
         }
         const std::uintmax_t native_size = std::filesystem::file_size(path, status_error);
         if (status_error || native_size > limits.maximum_file_bytes) {
-            return fail(error, "OBJ exceeds the configured file-size limit.");
+            return fail(error,
+                        "OBJ exceeds the configured file-size limit. Raise the "
+                        "OBJ file limit in Application Settings > Performance "
+                        "to import this asset.");
         }
         std::ifstream input(path, std::ios::binary);
         if (!input) {
@@ -773,13 +789,25 @@ struct PendingObjMesh {
     std::condition_variable wake;
 };
 
-constexpr std::size_t kMaximumObjCacheBytes = std::size_t{512} * 1024U * 1024U;
-constexpr std::size_t kMaximumObjCacheEntries = 16U;
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
-std::size_t obj_mesh_cache_byte_limit = kMaximumObjCacheBytes;
-#else
-constexpr std::size_t obj_mesh_cache_byte_limit = kMaximumObjCacheBytes;
+std::size_t obj_mesh_cache_byte_limit = std::size_t{512} * 1024U * 1024U;
 #endif
+
+std::size_t maximum_obj_cache_bytes() noexcept {
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+    return obj_mesh_cache_byte_limit;
+#else
+    return resolved_resource_limits().obj_mesh_cache_bytes;
+#endif
+}
+
+std::size_t maximum_obj_cache_entries() noexcept {
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+    return 16U;
+#else
+    return resolved_resource_limits().obj_mesh_cache_entries;
+#endif
+}
 
 struct CachedObjMesh {
     ObjFileStamp stamp;
@@ -863,7 +891,10 @@ bool inspect_obj_file(const std::string& utf8_path,
     }
     const std::uintmax_t size = std::filesystem::file_size(absolute, path_error);
     if (path_error || size > limits.maximum_file_bytes) {
-        return fail(error, "OBJ exceeds the configured file-size limit.");
+        return fail(error,
+                    "OBJ exceeds the configured file-size limit. Raise the "
+                    "OBJ file limit in Application Settings > Performance to "
+                    "import this asset.");
     }
     const std::filesystem::file_time_type write_time =
         std::filesystem::last_write_time(absolute, path_error);
@@ -895,6 +926,22 @@ static bool load_obj_mesh_cached_impl(const std::string& utf8_path,
             bool load_owner = false;
             {
                 std::unique_lock<std::mutex> lock(cache.mutex);
+                const std::size_t cache_byte_limit =
+                    maximum_obj_cache_bytes();
+                const std::size_t cache_entry_limit =
+                    maximum_obj_cache_entries();
+                while (!cache.entries.empty()
+                       && (cache.entries.size() > cache_entry_limit
+                           || cache.bytes > cache_byte_limit)) {
+                    const auto oldest = std::min_element(
+                        cache.entries.begin(), cache.entries.end(),
+                        [](const CachedObjMesh& first,
+                           const CachedObjMesh& second) {
+                            return first.last_used < second.last_used;
+                        });
+                    cache.bytes -= oldest->bytes;
+                    cache.entries.erase(oldest);
+                }
                 const auto found = std::find_if(cache.entries.begin(), cache.entries.end(),
                     [&](const CachedObjMesh& entry) {
                         return same_stamp(entry.stamp, before) && same_limits(entry.limits, limits);
@@ -1012,10 +1059,14 @@ static bool load_obj_mesh_cached_impl(const std::string& utf8_path,
                         const std::size_t bytes = selected->estimated_bytes();
                         // Evict before publication and use subtraction for the
                         // admission check, so cache accounting cannot overflow.
-                        if (bytes <= obj_mesh_cache_byte_limit) {
+                        const std::size_t cache_byte_limit =
+                            maximum_obj_cache_bytes();
+                        const std::size_t cache_entry_limit =
+                            maximum_obj_cache_entries();
+                        if (bytes <= cache_byte_limit) {
                             while (!cache.entries.empty()
-                                   && (cache.entries.size() >= kMaximumObjCacheEntries
-                                       || bytes > obj_mesh_cache_byte_limit - cache.bytes)) {
+                                   && (cache.entries.size() >= cache_entry_limit
+                                       || bytes > cache_byte_limit - cache.bytes)) {
                                 const auto oldest = std::min_element(cache.entries.begin(), cache.entries.end(),
                                     [](const CachedObjMesh& first, const CachedObjMesh& second) {
                                         return first.last_used < second.last_used;

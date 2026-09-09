@@ -65,6 +65,17 @@ QString memory_size_text(std::size_t bytes) {
     return QObject::tr("%1 MiB").arg(mebibytes, 0, 'f', 0);
 }
 
+int mebibyte_editor_value(std::size_t bytes, int maximum) {
+    if (bytes == 0U) return 0;
+    const std::size_t mebibytes = bytes / kMebibyte
+        + (bytes % kMebibyte != 0U ? 1U : 0U);
+    return spin_box_value(mebibytes, maximum);
+}
+
+std::size_t bytes_from_mebibytes(int value) {
+    return static_cast<std::size_t>((std::max)(0, value)) * kMebibyte;
+}
+
 QLabel* explanatory_label(const QString& text, QWidget* parent,
                           const QString& details = {}) {
     auto* label = new QLabel(text, parent);
@@ -429,7 +440,8 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     gpu_frames_in_flight_->setToolTip(
         capabilities.metal_available
             ? tr("Maximum admitted Metal frames and their GPU-visible working "
-                 "sets. Auto uses the renderer's conservative device-safe limit.")
+                 "sets. Auto adapts to host concurrency and the device-memory "
+                 "admission budget.")
             : (capabilities.opengl_surface_available
                    ? tr("This control applies to Metal. The available Qt OpenGL "
                         "backend uses one serialized context, so its effective "
@@ -440,7 +452,7 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     threading_form->addRow(tr("Metal frames in flight"),
                            gpu_frames_in_flight_);
 
-    const std::size_t physical_memory = total_physical_memory_bytes();
+    const std::size_t physical_memory = pvt::physical_memory_bytes();
     render_memory_budget_mode_ = new QComboBox(threading_group);
     render_memory_budget_mode_->setObjectName(
         QStringLiteral("renderMemoryBudgetModePreference"));
@@ -706,6 +718,187 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     rendering_columns->addLayout(rendering_summary, 2);
     rendering_columns->addWidget(threading_group, 3, Qt::AlignTop);
     rendering_layout->addLayout(rendering_columns);
+
+    auto* resources_group = new QGroupBox(
+        tr("Asset and Project Resource Limits"), rendering_page);
+    configure_section(resources_group);
+    auto* resources_form = new QFormLayout(resources_group);
+    configure_form(resources_form);
+    resources_form->addRow(explanatory_label(
+        tr("Automatic limits scale with installed RAM. Explicit values are "
+           "machine-local overrides and are never written into a project."),
+        resources_group,
+        tr("Per-asset limits protect against hostile or accidental oversized "
+           "inputs. Cache limits control reusable retained data; active render "
+           "leases may temporarily remain above a newly lowered cache target.")));
+
+    const int maximum_memory_mib = spin_box_maximum(
+        (std::numeric_limits<std::size_t>::max)() / kMebibyte);
+    const int maximum_entries = spin_box_maximum(pvt::kMaximumUiItems);
+    const auto add_mib_control = [resources_group, resources_form,
+                                  maximum_memory_mib](
+                                     QSpinBox*& field,
+                                     const char* object_name,
+                                     const QString& label,
+                                     std::size_t bytes,
+                                     const QString& tooltip,
+                                     int maximum_override = -1) {
+        field = new QSpinBox(resources_group);
+        field->setObjectName(QString::fromLatin1(object_name));
+        const int maximum = maximum_override >= 0
+            ? maximum_override : maximum_memory_mib;
+        field->setRange(0, maximum);
+        field->setSpecialValueText(tr("Auto"));
+        field->setSuffix(tr(" MiB"));
+        field->setAccelerated(true);
+        field->setValue(mebibyte_editor_value(bytes, maximum));
+        field->setToolTip(tooltip);
+        resources_form->addRow(label, field);
+    };
+    const auto add_entry_control = [resources_group, resources_form,
+                                    maximum_entries](
+                                       QSpinBox*& field,
+                                       const char* object_name,
+                                       const QString& label,
+                                       std::size_t entries,
+                                       const QString& tooltip) {
+        field = new QSpinBox(resources_group);
+        field->setObjectName(QString::fromLatin1(object_name));
+        field->setRange(0, maximum_entries);
+        field->setSpecialValueText(tr("Auto"));
+        field->setAccelerated(true);
+        field->setValue(spin_box_value(entries, maximum_entries));
+        field->setToolTip(tooltip);
+        resources_form->addRow(label, field);
+    };
+    const auto& authored_limits = performanceSettings.resource_limits;
+    add_mib_control(
+        maximum_decoded_image_mib_, "maximumDecodedImageMiBPreference",
+        tr("Maximum decoded image"), authored_limits.maximum_decoded_image_bytes,
+        tr("Per-image limit after PNG or OpenEXR decoding. Raise this for very "
+           "large starting images, environment maps, or height maps."));
+    add_mib_control(
+        maximum_obj_file_mib_, "maximumObjFileMiBPreference",
+        tr("Maximum OBJ file"), authored_limits.maximum_obj_file_bytes,
+        tr("Maximum source bytes read by the OBJ parser. Parsing remains "
+           "transactional and checked even when this override is raised."));
+    add_mib_control(
+        maximum_obj_mesh_mib_, "maximumObjMeshMiBPreference",
+        tr("Maximum expanded OBJ mesh"), authored_limits.maximum_obj_mesh_bytes,
+        tr("Per-OBJ retained geometry after parsing and triangulation."));
+    add_mib_control(
+        maximum_project_bundle_mib_, "maximumProjectBundleMiBPreference",
+        tr("Maximum expanded project bundle"),
+        authored_limits.maximum_project_bundle_expanded_bytes,
+        tr("Total uncompressed bytes accepted while loading or saving a ZIP or "
+           "unpacked bundle. Individual entries retain independent format "
+           "and API representation bounds."));
+    add_mib_control(
+        source_image_cache_mib_, "sourceImageCacheMiBPreference",
+        tr("Decoded image cache"), authored_limits.source_image_cache_bytes,
+        tr("Reusable decoded starting images, environment maps, and height "
+           "images retained between frames."));
+    add_entry_control(
+        source_image_cache_entries_, "sourceImageCacheEntriesPreference",
+        tr("Decoded image cache entries"),
+        authored_limits.source_image_cache_entries,
+        tr("Maximum number of decoded image variants retained between frames."));
+    add_mib_control(
+        obj_mesh_cache_mib_, "objMeshCacheMiBPreference",
+        tr("OBJ mesh cache"), authored_limits.obj_mesh_cache_bytes,
+        tr("Reusable parsed OBJ geometry retained between frames and projects."));
+    add_entry_control(
+        obj_mesh_cache_entries_, "objMeshCacheEntriesPreference",
+        tr("OBJ mesh cache entries"), authored_limits.obj_mesh_cache_entries,
+        tr("Maximum number of parsed OBJ variants retained between frames."));
+    add_mib_control(
+        displacement_mesh_cache_mib_, "displacementMeshCacheMiBPreference",
+        tr("Height-mesh cache"),
+        authored_limits.displacement_mesh_cache_bytes,
+        tr("Reusable subdivision meshes generated from height maps."));
+    add_entry_control(
+        displacement_mesh_cache_entries_,
+        "displacementMeshCacheEntriesPreference",
+        tr("Height-mesh cache entries"),
+        authored_limits.displacement_mesh_cache_entries,
+        tr("Maximum number of generated height-mesh variants retained."));
+
+    resource_limits_status_ = explanatory_label(QString{}, resources_group);
+    resource_limits_status_->setObjectName(
+        QStringLiteral("resourceLimitsStatus"));
+    resources_form->addRow(resource_limits_status_);
+    const auto resource_overrides = [this] {
+        pvt::RuntimeResourceLimits limits;
+        limits.maximum_decoded_image_bytes = bytes_from_mebibytes(
+            maximum_decoded_image_mib_->value());
+        limits.maximum_obj_file_bytes = bytes_from_mebibytes(
+            maximum_obj_file_mib_->value());
+        limits.maximum_obj_mesh_bytes = bytes_from_mebibytes(
+            maximum_obj_mesh_mib_->value());
+        limits.maximum_project_bundle_expanded_bytes = bytes_from_mebibytes(
+            maximum_project_bundle_mib_->value());
+        limits.source_image_cache_bytes = bytes_from_mebibytes(
+            source_image_cache_mib_->value());
+        limits.source_image_cache_entries = static_cast<std::size_t>(
+            source_image_cache_entries_->value());
+        limits.obj_mesh_cache_bytes = bytes_from_mebibytes(
+            obj_mesh_cache_mib_->value());
+        limits.obj_mesh_cache_entries = static_cast<std::size_t>(
+            obj_mesh_cache_entries_->value());
+        limits.displacement_mesh_cache_bytes = bytes_from_mebibytes(
+            displacement_mesh_cache_mib_->value());
+        limits.displacement_mesh_cache_entries = static_cast<std::size_t>(
+            displacement_mesh_cache_entries_->value());
+        return limits;
+    };
+    const auto update_resource_status = [this, resource_overrides] {
+        const pvt::RuntimeResourceLimits resolved =
+            pvt::resolve_resource_limits(resource_overrides());
+        resource_limits_status_->setText(tr(
+            "Effective limits: decoded image %1; OBJ file %2; expanded OBJ %3; "
+            "project bundle %4. Retained caches: images %5 / %6 entries; OBJ "
+            "%7 / %8 entries; height meshes %9 / %10 entries.")
+            .arg(memory_size_text(resolved.maximum_decoded_image_bytes))
+            .arg(memory_size_text(resolved.maximum_obj_file_bytes))
+            .arg(memory_size_text(resolved.maximum_obj_mesh_bytes))
+            .arg(memory_size_text(
+                resolved.maximum_project_bundle_expanded_bytes))
+            .arg(memory_size_text(resolved.source_image_cache_bytes))
+            .arg(static_cast<qulonglong>(resolved.source_image_cache_entries))
+            .arg(memory_size_text(resolved.obj_mesh_cache_bytes))
+            .arg(static_cast<qulonglong>(resolved.obj_mesh_cache_entries))
+            .arg(memory_size_text(resolved.displacement_mesh_cache_bytes))
+            .arg(static_cast<qulonglong>(
+                resolved.displacement_mesh_cache_entries)));
+    };
+    update_resource_status();
+    for (QSpinBox* control : {
+             maximum_decoded_image_mib_, maximum_obj_file_mib_,
+             maximum_obj_mesh_mib_, maximum_project_bundle_mib_,
+             source_image_cache_mib_, source_image_cache_entries_,
+             obj_mesh_cache_mib_, obj_mesh_cache_entries_,
+             displacement_mesh_cache_mib_,
+             displacement_mesh_cache_entries_}) {
+        connect(control, qOverload<int>(&QSpinBox::valueChanged), this,
+                [update_resource_status](int) { update_resource_status(); });
+    }
+    auto* reset_resources = new QPushButton(
+        tr("Reset Resource Limits to Auto"), resources_group);
+    reset_resources->setObjectName(
+        QStringLiteral("resetResourceLimitPreferences"));
+    connect(reset_resources, &QPushButton::clicked, this, [this] {
+        for (QSpinBox* control : {
+                 maximum_decoded_image_mib_, maximum_obj_file_mib_,
+                 maximum_obj_mesh_mib_, maximum_project_bundle_mib_,
+                 source_image_cache_mib_, source_image_cache_entries_,
+                 obj_mesh_cache_mib_, obj_mesh_cache_entries_,
+                 displacement_mesh_cache_mib_,
+                 displacement_mesh_cache_entries_}) {
+            control->setValue(0);
+        }
+    });
+    resources_form->addRow(reset_resources);
+    rendering_layout->addWidget(resources_group);
     rendering_layout->addStretch(1);
     auto* rendering_scroll = scrollable_settings_page(
         rendering_page, tabs,
@@ -800,6 +993,26 @@ PerformanceSettings ApplicationSettingsDialog::performanceSettings() const {
             render_memory_budget_mode_->currentData().toInt());
     settings.render_memory_budget_value =
         render_memory_budget_value_->value();
+    settings.resource_limits.maximum_decoded_image_bytes =
+        bytes_from_mebibytes(maximum_decoded_image_mib_->value());
+    settings.resource_limits.maximum_obj_file_bytes =
+        bytes_from_mebibytes(maximum_obj_file_mib_->value());
+    settings.resource_limits.maximum_obj_mesh_bytes =
+        bytes_from_mebibytes(maximum_obj_mesh_mib_->value());
+    settings.resource_limits.maximum_project_bundle_expanded_bytes =
+        bytes_from_mebibytes(maximum_project_bundle_mib_->value());
+    settings.resource_limits.source_image_cache_bytes =
+        bytes_from_mebibytes(source_image_cache_mib_->value());
+    settings.resource_limits.source_image_cache_entries =
+        static_cast<std::size_t>(source_image_cache_entries_->value());
+    settings.resource_limits.obj_mesh_cache_bytes =
+        bytes_from_mebibytes(obj_mesh_cache_mib_->value());
+    settings.resource_limits.obj_mesh_cache_entries =
+        static_cast<std::size_t>(obj_mesh_cache_entries_->value());
+    settings.resource_limits.displacement_mesh_cache_bytes =
+        bytes_from_mebibytes(displacement_mesh_cache_mib_->value());
+    settings.resource_limits.displacement_mesh_cache_entries =
+        static_cast<std::size_t>(displacement_mesh_cache_entries_->value());
     settings.pause_editor_preview_during_export =
         pause_editor_preview_during_export_->isChecked();
     return settings;

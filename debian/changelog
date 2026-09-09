@@ -1,3 +1,11 @@
+procedural-visualizer-tool (17.11.0) stonking; urgency=medium
+
+  * Reduce Save/Open and sequence-render overhead.
+  * Scale automatic Metal and resource limits to host capacity.
+  * Expose image, OBJ, bundle, and cache limits in settings and the CLI.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Wed, 09 Sep 2026 15:31:34 -0400
+
 procedural-visualizer-tool (17.10.0) stonking; urgency=medium
 
   * Reduce validation copies for large music-driven projects and Numeric LFOs.

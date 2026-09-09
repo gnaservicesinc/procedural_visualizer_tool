@@ -58,7 +58,7 @@ struct Options {
     std::string music_source_path;
     // Native movies preserve presentation order at the AVFoundation boundary,
     // but independent frames are rendered and converted ahead of it. Zero
-    // selects host concurrency and the shared 2 GiB sequence memory budget.
+    // selects host concurrency and the host-adaptive foreground-render budget.
     std::size_t worker_count = 0;
     std::size_t memory_budget_bytes = 0;
     // A zero frame_count exports from first_frame through the end. Each

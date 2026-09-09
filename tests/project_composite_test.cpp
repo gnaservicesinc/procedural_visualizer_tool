@@ -1,4 +1,5 @@
 #include "procedural_visualizer_tool.h"
+#include "../src/render_memory.h"
 
 #include <algorithm>
 #include <atomic>
@@ -6,7 +7,9 @@
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <thread>
@@ -27,6 +30,12 @@ int failures = 0;
             ++failures;                                                          \
         }                                                                        \
     } while (false)
+
+std::vector<unsigned char> read_bytes(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+}
 
 bool close_enough(double first, double second, double tolerance = 1.0e-6) {
     return std::fabs(first - second) <= tolerance;
@@ -1230,6 +1239,24 @@ void test_project_cancellation_during_layer_render() {
 void test_project_layer_worker_policy() {
     CHECK(pvt::kMaximumSequenceWorkers == 256U);
     CHECK(pvt::kMaximumGpuFramesInFlight == 256U);
+    // Shared immutable leases are reserved once for an outer export, not once
+    // per independently rendered frame. With this synthetic 1,000-byte budget
+    // the old budget/(shared + frame) calculation admitted only two workers;
+    // category-aware accounting correctly admits six.
+    CHECK(pvt::detail::memory_limited_outer_workers(
+              1000U, 400U, 100U, 12U) == 6U);
+    CHECK(pvt::detail::memory_limited_outer_workers(
+              1000U, 400U, 200U, 12U) == 3U);
+    CHECK(pvt::detail::memory_limited_outer_workers(
+              300U, 400U, 100U, 12U) == 1U);
+    CHECK(pvt::detail::memory_limited_outer_workers(
+              1000U, 400U, 0U, 12U) == 12U);
+    CHECK(pvt::detail::outer_worker_frame_memory_budget(
+              1000U, 400U, 3U, 0U) == 600U);
+    CHECK(pvt::detail::outer_worker_frame_memory_budget(
+              1001U, 400U, 3U, 0U) == 601U);
+    CHECK(pvt::detail::outer_worker_frame_memory_budget(
+              300U, 400U, 3U, 0U) == 400U);
 
     pvt::ProjectConfig project = pvt::default_project();
     make_small(project);
@@ -1348,6 +1375,30 @@ void test_project_sequence() {
     CHECK(progress_calls == 2);
     CHECK(fs::exists(directory / "layered_0000.png"));
     CHECK(fs::exists(directory / "layered_0001.png"));
+
+    // The invocation-scoped validation/asset snapshot must preserve exact
+    // sequence bytes across outer worker counts while reusing one immutable
+    // lease ledger for every frame.
+    project.canvas.total_frames = 6;
+    pvt::SequenceRenderOptions sequence_options;
+    sequence_options.frame.backend = pvt::RenderBackend::Cpu;
+    sequence_options.worker_count = 1U;
+    const fs::path one_worker_directory = directory / "workers-one";
+    project.output.output_directory = one_worker_directory.string();
+    CHECK(pvt::render_project_sequence(
+        project, sequence_options, {}, nullptr, &error));
+    sequence_options.worker_count = 4U;
+    const fs::path four_worker_directory = directory / "workers-four";
+    project.output.output_directory = four_worker_directory.string();
+    CHECK(pvt::render_project_sequence(
+        project, sequence_options, {}, nullptr, &error));
+    for (int frame = 0; frame < project.canvas.total_frames; ++frame) {
+        std::string number = std::to_string(frame);
+        number.insert(0U, 4U - number.size(), '0');
+        const fs::path filename = "layered_" + number + ".png";
+        CHECK(read_bytes(one_worker_directory / filename)
+              == read_bytes(four_worker_directory / filename));
+    }
 
     project.output.output_directory = (directory / "cancelled").string();
     std::atomic_bool cancelled {true};

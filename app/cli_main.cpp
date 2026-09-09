@@ -38,6 +38,7 @@ constexpr std::size_t kMaximumNameBytes =
     static_cast<std::size_t>((std::numeric_limits<int>::max)());
 constexpr std::size_t kMaximumPathBytes = kMaximumNameBytes;
 constexpr std::size_t kMaximumPrefixBytes = kMaximumNameBytes;
+constexpr std::size_t kMebibyte = std::size_t{1024U} * 1024U;
 // User-facing milliseconds are converted to persisted int64 microseconds.
 // This conversion-safe bound is derived from that representation.
 constexpr double kMaximumClockMilliseconds =
@@ -2546,6 +2547,35 @@ std::string lower_ascii(std::string value) {
     return value;
 }
 
+bool parse_mebibyte_limit(const std::string& text,
+                          std::size_t maximum_bytes,
+                          std::size_t& bytes) {
+    if (lower_ascii(text) == "auto") {
+        bytes = 0U;
+        return true;
+    }
+    std::uint64_t mebibytes = 0U;
+    if (!parse_uint64(text, mebibytes)
+        || mebibytes > maximum_bytes / kMebibyte) {
+        return false;
+    }
+    bytes = static_cast<std::size_t>(mebibytes) * kMebibyte;
+    return true;
+}
+
+bool parse_entry_limit(const std::string& text, std::size_t& entries) {
+    if (lower_ascii(text) == "auto") {
+        entries = 0U;
+        return true;
+    }
+    std::uint64_t parsed = 0U;
+    if (!parse_uint64(text, parsed) || parsed > pvt::kMaximumUiItems) {
+        return false;
+    }
+    entries = static_cast<std::size_t>(parsed);
+    return true;
+}
+
 void report_recovered_fields(const ProjectDocument& document) {
     const pvt::ProjectRecoveryInfo recovery =
         pvt::project_recovery_info(document.project);
@@ -3365,7 +3395,12 @@ void print_help(const char* program) {
         << "  --backend cpu|cpu+gpu|gpu          Rendering policy (default cpu+gpu)\n"
         << "  --renderer-info                    Show runtime devices and backend status; use alone\n"
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
-        << "  (0 uses the bounded default of 2)\n"
+        << "  (0 uses host-adaptive, device-memory-bounded admission)\n"
+        << "  --max-decoded-image-mib N|auto --max-obj-file-mib N|auto\n"
+        << "  --max-obj-mesh-mib N|auto --max-project-bundle-mib N|auto\n"
+        << "  --image-cache-mib N|auto --image-cache-entries N|auto\n"
+        << "  --obj-cache-mib N|auto --obj-cache-entries N|auto\n"
+        << "  --height-mesh-cache-mib N|auto --height-mesh-cache-entries N|auto\n"
         << "  --obj FILE  (enable two-sided custom OBJ wrapping)\n"
         << "  --height-map PNG|EXR  (enable a subdivided displacement Plane)\n"
         << "  --height-min N --height-max N --height-midpoint 0..1\n"
@@ -3381,7 +3416,8 @@ void print_help(const char* program) {
         << "  --save-default                      Save to <portable project name>.zip\n"
         << "  --save-legacy FILE                  Explicit one-layer .pvt export\n"
         << "  --list-versions --version --help\n\n"
-        << "Options are processed from left to right. Put --load before overrides.\n"
+        << "Options are processed from left to right. Put --load before project/render overrides.\n"
+        << "Put resource-limit options before --load when they must affect bundle loading.\n"
         << "Normal saves never overwrite an imported legacy .pvt. The explicit\n"
         << "--save-legacy escape hatch is rejected for multi-layer projects.\n"
         << "PNG compression defaults to 5 (0 is off, 9 is maximum).\n"
@@ -3407,6 +3443,16 @@ bool option_takes_value(const std::string& option) {
            || option == "--beat-offset-ms"
            || option == "--png-compression" || option == "--workers"
            || option == "--backend" || option == "--gpu-in-flight"
+           || option == "--max-decoded-image-mib"
+           || option == "--max-obj-file-mib"
+           || option == "--max-obj-mesh-mib"
+           || option == "--max-project-bundle-mib"
+           || option == "--image-cache-mib"
+           || option == "--image-cache-entries"
+           || option == "--obj-cache-mib"
+           || option == "--obj-cache-entries"
+           || option == "--height-mesh-cache-mib"
+           || option == "--height-mesh-cache-entries"
            || option == "--obj" || option == "--height-map"
            || option == "--height-min" || option == "--height-max"
            || option == "--height-midpoint"
@@ -3642,6 +3688,8 @@ int quick_self_test() {
 int main(int argc, char** argv) {
     CliState state;
     pvt::SequenceRenderOptions render_options;
+    pvt::RuntimeResourceLimits runtime_limits =
+        pvt::resource_limit_overrides();
     render_options.frame.backend = pvt::RenderBackend::CpuAndGpu;
     bool render_now = false;
     bool loaded_document = false;
@@ -3845,8 +3893,64 @@ int main(int argc, char** argv) {
         const std::string value = raw_value;
         long long integer = 0;
         double real = 0.0;
+        std::size_t resource_value = 0U;
 
-        if (option == "--load") {
+        if (option == "--max-decoded-image-mib"
+            && parse_mebibyte_limit(
+                value, (std::numeric_limits<std::size_t>::max)(),
+                resource_value)) {
+            runtime_limits.maximum_decoded_image_bytes = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--max-obj-file-mib"
+                   && parse_mebibyte_limit(
+                       value, (std::numeric_limits<std::size_t>::max)(),
+                       resource_value)) {
+            runtime_limits.maximum_obj_file_bytes = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--max-obj-mesh-mib"
+                   && parse_mebibyte_limit(
+                       value, (std::numeric_limits<std::size_t>::max)(),
+                       resource_value)) {
+            runtime_limits.maximum_obj_mesh_bytes = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--max-project-bundle-mib"
+                   && parse_mebibyte_limit(
+                       value, (std::numeric_limits<std::size_t>::max)(),
+                       resource_value)) {
+            runtime_limits.maximum_project_bundle_expanded_bytes =
+                resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--image-cache-mib"
+                   && parse_mebibyte_limit(
+                       value, (std::numeric_limits<std::size_t>::max)(),
+                       resource_value)) {
+            runtime_limits.source_image_cache_bytes = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--image-cache-entries"
+                   && parse_entry_limit(value, resource_value)) {
+            runtime_limits.source_image_cache_entries = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--obj-cache-mib"
+                   && parse_mebibyte_limit(
+                       value, (std::numeric_limits<std::size_t>::max)(),
+                       resource_value)) {
+            runtime_limits.obj_mesh_cache_bytes = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--obj-cache-entries"
+                   && parse_entry_limit(value, resource_value)) {
+            runtime_limits.obj_mesh_cache_entries = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--height-mesh-cache-mib"
+                   && parse_mebibyte_limit(
+                       value, (std::numeric_limits<std::size_t>::max)(),
+                       resource_value)) {
+            runtime_limits.displacement_mesh_cache_bytes = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--height-mesh-cache-entries"
+                   && parse_entry_limit(value, resource_value)) {
+            runtime_limits.displacement_mesh_cache_entries = resource_value;
+            pvt::set_resource_limit_overrides(runtime_limits);
+        } else if (option == "--load") {
             ProjectDocument loaded;
             std::string error;
             if (!pvt::load_project_document(value, loaded, &error)) {

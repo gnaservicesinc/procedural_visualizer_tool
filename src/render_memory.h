@@ -3,6 +3,7 @@
 
 #include "procedural_visualizer_tool.h"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <string>
@@ -95,9 +96,44 @@ struct ProjectRenderMemory {
     }
 };
 
+inline std::size_t memory_limited_outer_workers(
+    std::size_t aggregate_budget, std::size_t shared_bytes,
+    std::size_t per_worker_bytes, std::size_t requested_workers) noexcept {
+    if (per_worker_bytes == 0U) return requested_workers;
+    const std::size_t available = shared_bytes >= aggregate_budget
+        ? 0U : aggregate_budget - shared_bytes;
+    return std::max<std::size_t>(1U, available / per_worker_bytes);
+}
+
+// Convert an aggregate invocation budget into the per-frame value consumed by
+// the existing project-layer scheduler. That scheduler subtracts shared bytes
+// from its input, so add the invocation's one shared reservation to each
+// derived value without dividing or reserving it again.
+inline std::size_t outer_worker_frame_memory_budget(
+    std::size_t aggregate_budget, std::size_t shared_bytes,
+    std::size_t worker_count, std::size_t worker_index) noexcept {
+    worker_count = std::max<std::size_t>(1U, worker_count);
+    worker_index = std::min(worker_index, worker_count - 1U);
+    const std::size_t available = shared_bytes >= aggregate_budget
+        ? 0U : aggregate_budget - shared_bytes;
+    const std::size_t share = available / worker_count
+        + (worker_index < available % worker_count ? 1U : 0U);
+    return std::max<std::size_t>(1U, shared_bytes + share);
+}
+
 // Internal diagnostic/dispatch API; the public ValidationResult ABI is intact.
 PVT_API ValidationResult validate_project_render_memory(const ProjectConfig& project,
                                                         ProjectRenderMemory& memory);
+
+// Render one already-bounded frame while borrowing the immutable asset leases
+// from an outer synchronous invocation. Sequence/movie coordinators use this
+// after one full validation so every frame observes the same admitted asset
+// snapshot without rescanning the project or multiplying shared ownership.
+PVT_API bool render_project_frame_validated(
+    const ProjectConfig& project, int frame_index, int frame_count,
+    const FrameRenderOptions& options, const ProjectRenderMemory& memory,
+    Image& destination, const std::atomic_bool* cancel,
+    std::string* error);
 
 } // namespace pvt::detail
 #endif

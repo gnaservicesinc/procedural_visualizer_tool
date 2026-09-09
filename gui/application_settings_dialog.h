@@ -54,6 +54,17 @@ private:
     QComboBox* render_memory_budget_mode_ = nullptr;
     QDoubleSpinBox* render_memory_budget_value_ = nullptr;
     QLabel* render_memory_budget_status_ = nullptr;
+    QSpinBox* maximum_decoded_image_mib_ = nullptr;
+    QSpinBox* maximum_obj_file_mib_ = nullptr;
+    QSpinBox* maximum_obj_mesh_mib_ = nullptr;
+    QSpinBox* maximum_project_bundle_mib_ = nullptr;
+    QSpinBox* source_image_cache_mib_ = nullptr;
+    QSpinBox* source_image_cache_entries_ = nullptr;
+    QSpinBox* obj_mesh_cache_mib_ = nullptr;
+    QSpinBox* obj_mesh_cache_entries_ = nullptr;
+    QSpinBox* displacement_mesh_cache_mib_ = nullptr;
+    QSpinBox* displacement_mesh_cache_entries_ = nullptr;
+    QLabel* resource_limits_status_ = nullptr;
     QCheckBox* pause_editor_preview_during_export_ = nullptr;
     QSpinBox* recent_project_limit_ = nullptr;
     QLabel* defaults_status_ = nullptr;

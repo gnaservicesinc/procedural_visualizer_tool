@@ -11,11 +11,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -28,6 +30,26 @@
 #  include <sys/file.h>
 #  include <unistd.h>
 #endif
+
+namespace {
+thread_local bool count_allocations = false;
+thread_local std::size_t allocation_bytes = 0U;
+}
+
+void* operator new(std::size_t size) {
+    if (void* result = std::malloc(size == 0U ? 1U : size)) {
+        if (count_allocations) allocation_bytes += size;
+        return result;
+    }
+    throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete[](void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete[](void* pointer, std::size_t) noexcept {
+    std::free(pointer);
+}
 
 namespace {
 
@@ -2355,6 +2377,155 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(copied_document.project.name == "Copied Display Name");
 }
 
+void test_save_avoids_deep_document_copy(const fs::path& directory) {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Bounded Save Snapshot";
+    const fs::path bundle = directory / portable_root(document.project.name);
+    pvt::BundleSaveReport report;
+    std::string error;
+    CHECK(pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error));
+
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    // History messages are runtime-only UI summaries: they are deliberately
+    // not serialized or included in the semantic fingerprint. A whole-document
+    // transaction snapshot would nevertheless duplicate this storage before
+    // doing any useful save work. Keep the save rollback proportional to the
+    // small fields it can actually mutate.
+    constexpr std::size_t sentinel_bytes = 8U * 1024U * 1024U;
+    CHECK(!loaded.versions.empty());
+    if (loaded.versions.empty()) return;
+    loaded.versions.front().integrity_message.assign(sentinel_bytes, 'x');
+    allocation_bytes = 0U;
+    count_allocations = true;
+    const bool saved = pvt::save_project_document(
+        loaded, as_utf8(bundle), &report, &error);
+    count_allocations = false;
+    if (!saved) {
+        std::cerr << "bounded save snapshot failed: " << error << '\n';
+    }
+    CHECK(saved);
+    CHECK(report.validated_only && !report.created_version);
+    if (allocation_bytes >= sentinel_bytes) {
+        std::cerr << "unchanged save requested " << allocation_bytes
+                  << " C++ allocation bytes\n";
+    }
+    CHECK(allocation_bytes < sentinel_bytes);
+    CHECK(loaded.versions.front().integrity_message.empty());
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+}
+
+void test_music_analysis_validation_projection_is_bounded() {
+    pvt::MusicAnalysis source;
+    source.analyzer_version = "projection-regression";
+    source.source_sha256.assign(64U, 'a');
+    source.source_basename = "large-analysis.wav";
+    source.source_format = "wav";
+    source.source_frame_count = 480000U;
+    source.source_sample_rate = 48000U;
+    source.source_channel_count = 2U;
+    source.duration_seconds = 10.0;
+    source.detected_bpm = 120.0;
+    source.tempo_confidence = 0.75;
+    source.beat_times_seconds.resize(100000U, 0.5);
+    source.tempo_points.resize(100000U);
+    source.feature_samples.resize(200000U);
+    source.frequency_streams.emplace_back();
+    auto& stream = source.frequency_streams.back();
+    stream.uuid = "stream-1";
+    stream.beat_times_seconds.resize(100000U, 0.25);
+    stream.tempo_points.resize(100000U);
+    stream.feature_samples.resize(200000U);
+    source.compatibility.records.push_back({"future.key", "future.value", false});
+
+    allocation_bytes = 0U;
+    count_allocations = true;
+    pvt::MusicAnalysis projected =
+        pvt::detail::music_analysis_validation_projection(source);
+    count_allocations = false;
+
+    CHECK(allocation_bytes < 1024U * 1024U);
+    CHECK(projected.source_sha256 == source.source_sha256);
+    CHECK(projected.source_frame_count == source.source_frame_count);
+    CHECK(projected.beat_times_seconds.size() == 1U);
+    CHECK(projected.beat_times_seconds.front()
+          == source.beat_times_seconds.front());
+    CHECK(projected.feature_samples.empty());
+    CHECK(projected.tempo_points.empty());
+    CHECK(projected.frequency_streams.size() == 1U);
+    CHECK(projected.frequency_streams.front().beat_times_seconds.size() == 1U);
+    CHECK(projected.frequency_streams.front().feature_samples.empty());
+    CHECK(projected.frequency_streams.front().tempo_points.empty());
+    CHECK(projected.compatibility.records.empty());
+}
+
+void test_save_attachment_sync_failure_rollback(const fs::path& directory) {
+    const fs::path image_source = directory / "rollback-source.png";
+    CHECK(write_bytes(
+        image_source,
+        std::string("\x89PNG\r\n\x1a\n", 8U) + "rollback-image"));
+
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Save Rollback";
+    pvt::ProjectAttachment attached;
+    std::string error;
+    CHECK(pvt::attach_project_file(
+        document,
+        pvt::starting_image_attachment_id(
+            document.project.layers.front().uuid),
+        as_utf8(image_source), &attached, &error));
+    auto& starting_image =
+        document.project.layers.front().render.starting_image;
+    starting_image.path = attached.local_path;
+    starting_image.sha256 = attached.sha256;
+    starting_image.basename = attached.basename;
+    const fs::path bundle = directory / portable_root(document.project.name);
+    pvt::BundleSaveReport report;
+    CHECK(pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error));
+
+    pvt::ProjectDocument stale;
+    pvt::ProjectDocument newer;
+    CHECK(pvt::load_project_document(as_utf8(bundle), stale, &error));
+    CHECK(pvt::load_project_document(as_utf8(bundle), newer, &error));
+    newer.project.layers.front().name = "Newer writer";
+    CHECK(pvt::save_project_document(
+        newer, as_utf8(bundle), &report, &error));
+
+    stale.project.layers.front().name = "Preserved stale edit";
+    auto& stale_image = stale.project.layers.front().render.starting_image;
+    stale_image.path.clear();
+    const std::vector<pvt::ProjectAttachment> original_attachments =
+        stale.attachments;
+    const std::string original_last_saved = stale.last_saved_utc;
+    const bool original_dirty = stale.dirty;
+    pvt::BundleSaveReport untouched;
+    untouched.path = "sentinel";
+    CHECK(!pvt::save_project_document(
+        stale, as_utf8(bundle), &untouched, &error));
+    CHECK(stale.project.layers.front().name == "Preserved stale edit");
+    CHECK(stale_image.path.empty());
+    CHECK(stale.last_saved_utc == original_last_saved);
+    CHECK(stale.dirty == original_dirty);
+    CHECK(stale.attachments.size() == original_attachments.size());
+    for (std::size_t index = 0U;
+         index < stale.attachments.size()
+         && index < original_attachments.size(); ++index) {
+        CHECK(stale.attachments[index].reference_id
+              == original_attachments[index].reference_id);
+        CHECK(stale.attachments[index].sha256
+              == original_attachments[index].sha256);
+        CHECK(stale.attachments[index].basename
+              == original_attachments[index].basename);
+        CHECK(stale.attachments[index].local_path
+              == original_attachments[index].local_path);
+        CHECK(stale.attachments[index].bundle_path
+              == original_attachments[index].bundle_path);
+    }
+    CHECK(untouched.path == "sentinel");
+}
+
 void test_independent_current_state_copy(const fs::path& directory) {
     pvt::ProjectDocument source = pvt::default_project_document();
     source.project.name = "Original History";
@@ -3882,6 +4053,9 @@ int main() {
     test_sha_and_archive_guards(temporary.path());
     test_archive_compare_and_swap(temporary.path());
     test_directory_versions_and_names(temporary.path());
+    test_music_analysis_validation_projection_is_bounded();
+    test_save_avoids_deep_document_copy(temporary.path());
+    test_save_attachment_sync_failure_rollback(temporary.path());
     test_independent_current_state_copy(temporary.path());
     test_zip_unicode_and_legacy(temporary.path());
     test_external_change_lifecycle(temporary.path());

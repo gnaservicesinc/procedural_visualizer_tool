@@ -91,6 +91,74 @@ constexpr std::size_t kMaximumAudioFrequencyStreams = 64;
 constexpr std::size_t kDefaultSequenceMemoryBudgetBytes =
     std::size_t{2} << 30U;
 
+// Machine/runtime resource policy. Zero selects a host-adaptive value for that
+// field. These limits are deliberately process-local rather than project data:
+// moving a project to a different computer must not carry the old computer's
+// RAM assumptions with it. Explicit values let applications and advanced users
+// raise or lower hostile-input and retained-cache bounds without recompiling.
+//
+// Cache budgets bound retained reusable allocations, not an asset actively
+// leased by a render. The decoded-image and OBJ limits are per asset. The
+// project-bundle limit is the aggregate expanded bytes materialized while
+// loading or saving. Individual archive entries retain independent format/API
+// representation bounds even when the aggregate override is larger.
+struct RuntimeResourceLimits {
+    std::size_t maximum_decoded_image_bytes = 0U;
+    std::size_t maximum_obj_file_bytes = 0U;
+    std::size_t maximum_obj_mesh_bytes = 0U;
+    std::size_t maximum_project_bundle_expanded_bytes = 0U;
+    std::size_t source_image_cache_bytes = 0U;
+    std::size_t source_image_cache_entries = 0U;
+    std::size_t obj_mesh_cache_bytes = 0U;
+    std::size_t obj_mesh_cache_entries = 0U;
+    std::size_t displacement_mesh_cache_bytes = 0U;
+    std::size_t displacement_mesh_cache_entries = 0U;
+};
+
+inline bool operator==(const RuntimeResourceLimits& left,
+                       const RuntimeResourceLimits& right) noexcept {
+    return left.maximum_decoded_image_bytes
+               == right.maximum_decoded_image_bytes
+           && left.maximum_obj_file_bytes == right.maximum_obj_file_bytes
+           && left.maximum_obj_mesh_bytes == right.maximum_obj_mesh_bytes
+           && left.maximum_project_bundle_expanded_bytes
+                  == right.maximum_project_bundle_expanded_bytes
+           && left.source_image_cache_bytes == right.source_image_cache_bytes
+           && left.source_image_cache_entries
+                  == right.source_image_cache_entries
+           && left.obj_mesh_cache_bytes == right.obj_mesh_cache_bytes
+           && left.obj_mesh_cache_entries == right.obj_mesh_cache_entries
+           && left.displacement_mesh_cache_bytes
+                  == right.displacement_mesh_cache_bytes
+           && left.displacement_mesh_cache_entries
+                  == right.displacement_mesh_cache_entries;
+}
+
+inline bool operator!=(const RuntimeResourceLimits& left,
+                       const RuntimeResourceLimits& right) noexcept {
+    return !(left == right);
+}
+
+// Zero means the host did not expose a trustworthy physical-memory size.
+PVT_API std::size_t physical_memory_bytes() noexcept;
+// Foreground render admission uses half of detected physical RAM. Unknown
+// hosts retain the historical 2 GiB compatibility fallback.
+PVT_API std::size_t automatic_render_memory_budget_bytes() noexcept;
+// Returns fully resolved, nonzero defaults derived from installed RAM. On a
+// host where RAM detection is unavailable, conservative compatibility values
+// are returned.
+PVT_API RuntimeResourceLimits automatic_resource_limits() noexcept;
+// Overrides preserve zero as Automatic. Updating them is thread-safe and
+// affects subsequent loads/cache publications; callers should normally change
+// policy while no load or render is active.
+PVT_API RuntimeResourceLimits resource_limit_overrides() noexcept;
+PVT_API void set_resource_limit_overrides(
+    const RuntimeResourceLimits& limits) noexcept;
+PVT_API RuntimeResourceLimits resolve_resource_limits(
+    const RuntimeResourceLimits& overrides) noexcept;
+// Combines current overrides with host defaults.
+PVT_API RuntimeResourceLimits resolved_resource_limits() noexcept;
+
 enum class EdgeMode : std::uint8_t {
     Alpha = 0,
     Black,
@@ -1601,7 +1669,8 @@ struct FrameRenderOptions {
     RenderBackend backend = RenderBackend::Cpu;
     // Metal work is admitted before its frame buffers are allocated. This
     // bound therefore limits both queued command buffers and GPU-visible frame
-    // working sets. Zero selects the conservative default of two.
+    // working sets. Zero selects a host-adaptive throughput default; Metal's
+    // device working-set admission remains an independent memory bound.
     std::size_t maximum_gpu_frames_in_flight = 0;
     // Maximum independent CPU layer renders inside one composite project
     // frame. Zero adapts to the host's reported hardware concurrency. The
@@ -1611,8 +1680,8 @@ struct FrameRenderOptions {
     // Aggregate host-memory admission budget across CPU and GPU-owned project
     // layer working sets plus completed layer images awaiting ordered
     // compositing. GPU device allocations also have their own device-specific
-    // admission bound. Zero selects the conservative
-    // kDefaultSequenceMemoryBudgetBytes default. One layer is always admitted
+    // admission bound. Zero selects the host-adaptive foreground-render
+    // default. One layer is always admitted
     // so a valid large frame remains renderable instead of deadlocking.
     std::size_t cpu_memory_budget_bytes = 0;
 };
@@ -1634,7 +1703,8 @@ using ProgressCallback = std::function<bool(int completed_frames, int total_fram
 // reported hardware concurrency; a positive value is an upper bound rather
 // than a promise to oversubscribe memory. The renderer also limits workers by
 // the frame count, kMaximumSequenceWorkers, and the validated per-frame peak
-// estimate. `memory_budget_bytes == 0` selects the conservative 2 GiB default.
+// estimate. `memory_budget_bytes == 0` selects half of detected physical RAM,
+// with the historical 2 GiB fallback when detection is unavailable.
 // A valid render always receives at least one worker even when its single-frame
 // estimate exceeds the aggregate budget.
 //

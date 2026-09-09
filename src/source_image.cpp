@@ -62,6 +62,7 @@ struct CachedSource {
     DecodeIntent intent = DecodeIntent::Color;
     std::uintmax_t file_size = 0U;
     fs::file_time_type modified{};
+    std::size_t decoded_limit = 0U;
     std::shared_ptr<const DecodedSource> image;
     std::size_t decoded_bytes = 0U;
     std::uint64_t last_used = 0U;
@@ -77,6 +78,7 @@ struct PendingSource {
     DecodeIntent intent = DecodeIntent::Color;
     std::uintmax_t file_size = 0U;
     fs::file_time_type modified{};
+    std::size_t decoded_limit = 0U;
     std::uint64_t publication_sequence = 0U;
     bool complete = false;
     bool succeeded = false;
@@ -94,18 +96,31 @@ std::vector<std::shared_ptr<PendingSource>> pending_sources;
 std::size_t source_cache_bytes = 0U;
 std::uint64_t source_cache_clock = 0U;
 std::uint64_t source_cache_next_publication_sequence = 0U;
-constexpr std::size_t kMaximumDecodedSourceBytes =
-    std::size_t{512} * 1024U * 1024U;
-constexpr std::size_t kMaximumCachedSourceImages = 64U;
+
+void trim_source_cache_locked(std::size_t byte_limit,
+                              std::size_t entry_limit) {
+    while (!source_cache.empty()
+           && (source_cache.size() > entry_limit
+               || source_cache_bytes > byte_limit)) {
+        const auto oldest = std::min_element(
+            source_cache.begin(), source_cache.end(),
+            [](const CachedSource& left, const CachedSource& right) {
+                return left.last_used < right.last_used;
+            });
+        source_cache_bytes -= oldest->decoded_bytes;
+        source_cache.erase(oldest);
+    }
+}
 
 bool decoded_rgba_size(std::uint64_t width, std::uint64_t height,
+                       std::size_t maximum_decoded_bytes,
                        std::size_t& components) {
     if (width == 0U || height == 0U
         || width > (std::numeric_limits<std::size_t>::max)() / height) {
         return false;
     }
     const std::size_t pixels = static_cast<std::size_t>(width * height);
-    if (pixels > kMaximumDecodedSourceBytes / (4U * sizeof(float))) {
+    if (pixels > maximum_decoded_bytes / (4U * sizeof(float))) {
         return false;
     }
     components = pixels * 4U;
@@ -113,7 +128,8 @@ bool decoded_rgba_size(std::uint64_t width, std::uint64_t height,
 }
 
 std::string image_size_error(const char* kind, std::uint64_t width,
-                             std::uint64_t height, std::size_t bytes_per_pixel) {
+                             std::uint64_t height, std::size_t bytes_per_pixel,
+                             std::size_t maximum_decoded_bytes) {
     const std::uint64_t pixels_per_mib = 1024U * 1024U / bytes_per_pixel;
     const std::uint64_t pixels = width * height;
     const std::uint64_t mib = pixels / pixels_per_mib
@@ -121,8 +137,9 @@ std::string image_size_error(const char* kind, std::uint64_t width,
     return std::string(kind) + " is " + std::to_string(width) + " x "
         + std::to_string(height) + " pixels and needs " + std::to_string(mib)
         + " MiB of decoded image memory; the limit is "
-        + std::to_string(kMaximumDecodedSourceBytes / (1024U * 1024U))
-        + " MiB. Choose a smaller image or resize a copy before importing it.";
+        + std::to_string(maximum_decoded_bytes / (1024U * 1024U))
+        + " MiB. Raise the decoded-image limit in Application Settings > "
+          "Performance, or resize a copy before importing it.";
 }
 
 bool inspect_source(const std::string& path, std::uintmax_t& file_size,
@@ -156,6 +173,7 @@ std::FILE* open_source(const fs::path& path) {
 
 bool decode_png_color(const std::string& path,
                       std::shared_ptr<Image>& decoded,
+                      std::size_t maximum_decoded_bytes,
                       const std::atomic_bool* cancel, std::string* error) {
     if (cancelled(cancel)) return fail(error, "PNG source decoding was cancelled.");
     const fs::path native = path_from_utf8(path);
@@ -183,7 +201,8 @@ bool decode_png_color(const std::string& path,
     if (png.width == 0U || png.height == 0U
         || png.width > static_cast<png_uint_32>(std::numeric_limits<int>::max())
         || png.height > static_cast<png_uint_32>(std::numeric_limits<int>::max())
-        || !decoded_rgba_size(png.width, png.height, components)
+        || !decoded_rgba_size(png.width, png.height,
+                              maximum_decoded_bytes, components)
         || decoded_pixels
                > (std::numeric_limits<std::size_t>::max)()
                      / (4U * sizeof(png_uint_16))) {
@@ -191,7 +210,8 @@ bool decode_png_color(const std::string& path,
         const auto height = png.height;
         release();
         return fail(error, image_size_error(
-            "PNG image", width, height, 4U * sizeof(float)));
+            "PNG image", width, height, 4U * sizeof(float),
+            maximum_decoded_bytes));
     }
     png.format = PNG_FORMAT_LINEAR_RGB_ALPHA;
     const int decoded_width = static_cast<int>(png.width);
@@ -236,6 +256,7 @@ void png_read_error(png_structp png, png_const_charp message) {
 
 bool decode_png_data(const std::string& path,
                      std::shared_ptr<Image>& decoded,
+                     std::size_t maximum_decoded_bytes,
                      const std::atomic_bool* cancel, std::string* error,
                      HeightImage* height_image) {
     if (cancelled(cancel)) return fail(error, "PNG data decoding was cancelled.");
@@ -282,14 +303,16 @@ bool decode_png_data(const std::string& path,
         || height > static_cast<png_uint_32>((std::numeric_limits<int>::max)())
         || pixel_count > (std::numeric_limits<std::size_t>::max)() / 8U
         || (height_image != nullptr
-                ? pixel_count > kMaximumDecodedSourceBytes / sizeof(double)
-                : !decoded_rgba_size(width, height, components))) {
+                ? pixel_count > maximum_decoded_bytes / sizeof(double)
+                : !decoded_rgba_size(width, height,
+                                     maximum_decoded_bytes, components))) {
         png_destroy_read_struct(&png, &info, nullptr);
         std::fclose(file);
         return fail(error, image_size_error(
             height_image != nullptr ? "PNG height map" : "PNG data image",
             width, height, height_image != nullptr
-                               ? sizeof(double) : 4U * sizeof(float)));
+                               ? sizeof(double) : 4U * sizeof(float),
+            maximum_decoded_bytes));
     }
     if (source_depth != 1 && source_depth != 2 && source_depth != 4
         && source_depth != 8 && source_depth != 16) {
@@ -767,6 +790,7 @@ bool read_exr_file(const std::string& path, std::uintmax_t file_size,
 
 bool decode_exr(const std::string& path, std::uintmax_t file_size,
                 std::shared_ptr<Image>& decoded,
+                std::size_t maximum_decoded_bytes,
                 const std::atomic_bool* cancel, std::string* error) {
     if (cancelled(cancel)) return fail(error, "OpenEXR decoding was cancelled.");
     std::vector<unsigned char> bytes;
@@ -790,9 +814,10 @@ bool decode_exr(const std::string& path, std::uintmax_t file_size,
     std::size_t components = 0U;
     if (!checked_size_multiply(width, height, pixel_count)
         || !checked_size_multiply(pixel_count, 4U, components)
-        || components > kMaximumDecodedSourceBytes / sizeof(float)) {
+        || components > maximum_decoded_bytes / sizeof(float)) {
         return fail(error, image_size_error(
-            "OpenEXR image", width, height, 4U * sizeof(float)));
+            "OpenEXR image", width, height, 4U * sizeof(float),
+            maximum_decoded_bytes));
     }
 
     std::array<int, 4U> selected{{-1, -1, -1, -1}};
@@ -886,7 +911,7 @@ bool decode_exr(const std::string& path, std::uintmax_t file_size,
             (std::min)(lines_per_block, height - first_row);
         std::size_t decoded_bytes = 0U;
         if (!checked_size_multiply(bytes_per_row, row_count, decoded_bytes)
-            || decoded_bytes > kMaximumDecodedSourceBytes) {
+            || decoded_bytes > maximum_decoded_bytes) {
             return fail(
                 error,
                 "OpenEXR scanline block exceeds the decoded-image byte limit.");
@@ -980,6 +1005,7 @@ bool decode_exr(const std::string& path, std::uintmax_t file_size,
 bool decode_source(const std::string& path, std::uintmax_t file_size,
                    DecodeIntent intent,
                    std::shared_ptr<DecodedSource>& source,
+                   std::size_t maximum_decoded_bytes,
                    const std::atomic_bool* cancel, std::string* error) {
     auto result = std::make_shared<DecodedSource>();
     auto& decoded = result->rgba;
@@ -995,8 +1021,10 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
     if (bytes_read == signature.size()
         && png_sig_cmp(signature.data(), 0U, signature.size()) == 0) {
         if (intent == DecodeIntent::Color) {
-            if (!decode_png_color(path, decoded, cancel, error)) return false;
-        } else if (!decode_png_data(path, decoded, cancel, error,
+            if (!decode_png_color(path, decoded, maximum_decoded_bytes,
+                                  cancel, error)) return false;
+        } else if (!decode_png_data(path, decoded, maximum_decoded_bytes,
+                                    cancel, error,
                                     result->height.get())) {
             return false;
         }
@@ -1009,7 +1037,8 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
             return fail(error,
                         "Image source is neither a valid PNG nor a scanline OpenEXR file.");
         }
-        if (!decode_exr(path, file_size, decoded, cancel, error)) return false;
+        if (!decode_exr(path, file_size, decoded, maximum_decoded_bytes,
+                        cancel, error)) return false;
         if (result->height) {
             auto& height = *result->height;
             height.width = decoded->width;
@@ -1055,7 +1084,14 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
 
 bool load_cached_impl(const std::string& path, DecodeIntent intent,
                  std::shared_ptr<const DecodedSource>& image,
+                 const RuntimeResourceLimits& resource_limits,
                  const std::atomic_bool* cancel, std::string* error) {
+    const std::size_t maximum_decoded_bytes =
+        resource_limits.maximum_decoded_image_bytes;
+    const std::size_t cache_byte_limit =
+        resource_limits.source_image_cache_bytes;
+    const std::size_t cache_entry_limit =
+        resource_limits.source_image_cache_entries;
     int shared_load_retries = 0;
     constexpr int kMaximumSharedLoadRetries = 2;
     for (;;) {
@@ -1067,6 +1103,7 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
         bool decode_owner = false;
         {
             std::unique_lock<std::mutex> lock(source_cache_mutex);
+            trim_source_cache_locked(cache_byte_limit, cache_entry_limit);
             const auto found = std::find_if(
                 source_cache.begin(), source_cache.end(),
                 [&](const CachedSource& candidate) {
@@ -1074,6 +1111,7 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
                            && candidate.intent == intent
                            && candidate.file_size == file_size
                            && candidate.modified == modified
+                           && candidate.decoded_limit == maximum_decoded_bytes
                            && candidate.image;
                 });
             if (found != source_cache.end()) {
@@ -1088,7 +1126,9 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
                     return candidate->path == path
                            && candidate->intent == intent
                            && candidate->file_size == file_size
-                           && candidate->modified == modified;
+                           && candidate->modified == modified
+                           && candidate->decoded_limit
+                                  == maximum_decoded_bytes;
                 });
             if (loading == pending_sources.end()) {
                 pending = std::make_shared<PendingSource>();
@@ -1096,6 +1136,7 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
                 pending->intent = intent;
                 pending->file_size = file_size;
                 pending->modified = modified;
+                pending->decoded_limit = maximum_decoded_bytes;
                 pending->publication_sequence =
                     ++source_cache_next_publication_sequence;
                 if (pending->publication_sequence == 0U) {
@@ -1141,13 +1182,14 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
             std::shared_ptr<DecodedSource> decoded;
             std::string decode_error;
             bool decoded_ok = decode_source(
-                path, file_size, intent, decoded, cancel, &decode_error);
+                path, file_size, intent, decoded, maximum_decoded_bytes,
+                cancel, &decode_error);
             const bool owner_cancelled = !decoded_ok && cancelled(cancel);
             bool source_changed = false;
             std::size_t decoded_bytes = 0U;
             if (decoded_ok) {
                 decoded_bytes = decoded->bytes();
-                if (decoded_bytes > kMaximumDecodedSourceBytes) {
+                if (decoded_bytes > maximum_decoded_bytes) {
                     decoded_ok = false;
                     decode_error =
                         "Decoded image exceeds the decoded-image byte limit.";
@@ -1178,6 +1220,8 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
                         [&](const CachedSource& candidate) {
                             return candidate.path == path
                                    && candidate.intent == intent
+                                   && candidate.decoded_limit
+                                          == maximum_decoded_bytes
                                    && candidate.publication_sequence
                                           > pending->publication_sequence;
                         });
@@ -1209,14 +1253,13 @@ bool load_cached_impl(const std::string& path, DecodeIntent intent,
                         }
                         selected = std::move(decoded);
                         source_cache.push_back(
-                            {path, intent, file_size, modified, selected,
+                            {path, intent, file_size, modified,
+                             maximum_decoded_bytes, selected,
                              decoded_bytes, ++source_cache_clock,
                              pending->publication_sequence});
                         source_cache_bytes += decoded_bytes;
-                        while ((source_cache.size()
-                                    > kMaximumCachedSourceImages
-                                || source_cache_bytes
-                                       > kMaximumDecodedSourceBytes)
+                        while ((source_cache.size() > cache_entry_limit
+                                || source_cache_bytes > cache_byte_limit)
                                && source_cache.size() > 1U) {
                             const auto oldest = std::min_element(
                                 source_cache.begin(), source_cache.end(),
@@ -1276,7 +1319,11 @@ bool load_cached(const std::string& path, DecodeIntent intent,
                  std::shared_ptr<const DecodedSource>& image,
                  const std::atomic_bool* cancel, std::string* error) {
     if (cancelled(cancel)) return fail(error, "Image source loading was cancelled.");
-    if (!render_memory_reader) return load_cached_impl(path, intent, image, cancel, error);
+    const RuntimeResourceLimits resource_limits = resolved_resource_limits();
+    if (!render_memory_reader) {
+        return load_cached_impl(path, intent, image, resource_limits,
+                                cancel, error);
+    }
     std::uintmax_t size = 0U;
     fs::file_time_type modified{};
     if (!inspect_source(path, size, modified, error)) return false;
@@ -1284,9 +1331,12 @@ bool load_cached(const std::string& path, DecodeIntent intent,
     append_render_asset_key(key, intent);
     append_render_asset_key(key, size);
     append_render_asset_key(key, modified.time_since_epoch().count());
+    append_render_asset_key(
+        key, resource_limits.maximum_decoded_image_bytes);
     auto selected = find_render_asset<DecodedSource>(key);
     if (!selected) {
-        if (!load_cached_impl(path, intent, selected, cancel, error)) return false;
+        if (!load_cached_impl(path, intent, selected, resource_limits,
+                              cancel, error)) return false;
         std::uintmax_t after_size = 0U;
         fs::file_time_type after_modified{};
         if (inspect_source(path, after_size, after_modified, nullptr)

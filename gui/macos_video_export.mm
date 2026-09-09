@@ -1,4 +1,6 @@
 #include "video_export.h"
+#include "../src/render_asset_cache.h"
+#include "../src/render_memory.h"
 
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
@@ -491,7 +493,7 @@ bool checked_add(std::size_t left, std::size_t right,
 }
 
 bool select_video_worker_count(const pvt::ProjectConfig& project,
-                               const pvt::ValidationResult& validation,
+                               const pvt::detail::ProjectRenderMemory& memory,
                                const Options& options, int total_frames,
                                std::size_t* worker_count,
                                std::string* error) {
@@ -509,9 +511,14 @@ bool select_video_worker_count(const pvt::ProjectConfig& project,
         return fail(error, "Video frame memory estimate overflowed.");
     }
 
-    std::size_t render_peak = validation.estimated_peak_bytes;
-    if (options.frame.backend == pvt::RenderBackend::CpuAndGpu
-        && !checked_multiply(render_peak, 2U, &render_peak)) {
+    const std::size_t worker_copies =
+        options.frame.backend == pvt::RenderBackend::CpuAndGpu ? 2U : 1U;
+    std::size_t render_workers = 0U;
+    std::size_t render_peak = 0U;
+    if (!checked_multiply(memory.worker_bytes, worker_copies,
+                          &render_workers)
+        || !checked_add(render_workers, memory.composite_bytes,
+                        &render_peak)) {
         render_peak = std::numeric_limits<std::size_t>::max();
     }
     std::size_t queued_frame_bytes = 0U;
@@ -531,11 +538,11 @@ bool select_video_worker_count(const pvt::ProjectConfig& project,
     const std::size_t requested = options.worker_count == 0U
                                       ? hardware : options.worker_count;
     const std::size_t budget = options.memory_budget_bytes == 0U
-                                   ? pvt::kDefaultSequenceMemoryBudgetBytes
+                                   ? pvt::automatic_render_memory_budget_bytes()
                                    : options.memory_budget_bytes;
-    const std::size_t memory_limited = worker_peak == 0U
-        ? requested
-        : std::max<std::size_t>(1U, budget / worker_peak);
+    const std::size_t memory_limited =
+        pvt::detail::memory_limited_outer_workers(
+            budget, memory.shared.bytes, worker_peak, requested);
     *worker_count = std::max<std::size_t>(
         1U, std::min({requested, memory_limited,
                       static_cast<std::size_t>(total_frames),
@@ -764,7 +771,11 @@ bool export_project(const pvt::ProjectConfig& project,
                     Report* report, std::string* error) {
     if (error != nullptr) error->clear();
     @autoreleasepool {
-        const pvt::ValidationResult validation = pvt::validate(project);
+        pvt::detail::prune_render_asset_caches(project);
+        pvt::detail::ProjectRenderMemory render_memory;
+        const pvt::ValidationResult validation =
+            pvt::detail::validate_project_render_memory(project,
+                                                        render_memory);
         if (!validation.ok) return fail(error, validation.message);
         std::string frame_count_error;
         const int full_frame_count = pvt::effective_frame_count(
@@ -781,7 +792,7 @@ bool export_project(const pvt::ProjectConfig& project,
         const int total_frames = options.frame_count > 0
             ? options.frame_count : full_frame_count - options.first_frame;
         std::size_t render_worker_count = 0U;
-        if (!select_video_worker_count(project, validation, options,
+        if (!select_video_worker_count(project, render_memory, options,
                                        total_frames, &render_worker_count,
                                        error)) {
             return false;
@@ -797,12 +808,8 @@ bool export_project(const pvt::ProjectConfig& project,
             total_cpu_budget % render_worker_count;
         const std::size_t aggregate_memory_budget =
             options.memory_budget_bytes == 0U
-                ? pvt::kDefaultSequenceMemoryBudgetBytes
+                ? pvt::automatic_render_memory_budget_bytes()
                 : options.memory_budget_bytes;
-        const std::size_t memory_bytes_per_frame =
-            aggregate_memory_budget / render_worker_count;
-        const std::size_t memory_byte_remainder =
-            aggregate_memory_budget % render_worker_count;
         if (options.codec != Codec::PngLossless
             && ((project.canvas.width & 1) != 0
                 || (project.canvas.height & 1) != 0)) {
@@ -1039,11 +1046,10 @@ bool export_project(const pvt::ProjectConfig& project,
                                     if (frame_options.cpu_memory_budget_bytes
                                         == 0U) {
                                         frame_options.cpu_memory_budget_bytes =
-                                            std::max<std::size_t>(
-                                                1U, memory_bytes_per_frame
-                                                        + (worker
-                                                               < memory_byte_remainder
-                                                               ? 1U : 0U));
+                                            pvt::detail::outer_worker_frame_memory_budget(
+                                                aggregate_memory_budget,
+                                                render_memory.shared.bytes,
+                                                render_worker_count, worker);
                                     }
                                     pvt::Image image;
                                     for (;;) {
@@ -1066,10 +1072,12 @@ bool export_project(const pvt::ProjectConfig& project,
                                         VideoFrameResult result;
                                         result.frame_index = frame;
                                         try {
-                                            if (pvt::render_project_frame(
+                                            if (pvt::detail::render_project_frame_validated(
                                                     project,
                                                     options.first_frame + frame,
+                                                    full_frame_count,
                                                     frame_options,
+                                                    render_memory,
                                                     image, &stop, &result.error)) {
                                                 result.ok = options.codec
                                                         == Codec::PngLossless

@@ -21,6 +21,7 @@
 #include "../src/palette_io.h"
 #include "../src/post_process_alpha.h"
 #include "../src/project_bundle.h"
+#include "../src/scope_exit.h"
 #include "../src/source_image.h"
 
 #include <QAbstractButton>
@@ -368,6 +369,29 @@ std::size_t read_size_preference(const QSettings& settings,
     return static_cast<std::size_t>(unsigned_value);
 }
 
+void write_resource_limit_preferences(
+    QSettings& settings, const pvt::RuntimeResourceLimits& limits) {
+    const auto write = [&settings](const char* key, std::size_t value) {
+        settings.setValue(QString::fromLatin1(key),
+                          QVariant::fromValue<qulonglong>(value));
+    };
+    write("performance/maximumDecodedImageBytes",
+          limits.maximum_decoded_image_bytes);
+    write("performance/maximumObjFileBytes", limits.maximum_obj_file_bytes);
+    write("performance/maximumObjMeshBytes", limits.maximum_obj_mesh_bytes);
+    write("performance/maximumProjectBundleExpandedBytes",
+          limits.maximum_project_bundle_expanded_bytes);
+    write("performance/sourceImageCacheBytes", limits.source_image_cache_bytes);
+    write("performance/sourceImageCacheEntries",
+          limits.source_image_cache_entries);
+    write("performance/objMeshCacheBytes", limits.obj_mesh_cache_bytes);
+    write("performance/objMeshCacheEntries", limits.obj_mesh_cache_entries);
+    write("performance/displacementMeshCacheBytes",
+          limits.displacement_mesh_cache_bytes);
+    write("performance/displacementMeshCacheEntries",
+          limits.displacement_mesh_cache_entries);
+}
+
 PerformanceSettings read_performance_settings(const QSettings& settings) {
     PerformanceSettings performance;
     const QString backend_key =
@@ -445,6 +469,38 @@ PerformanceSettings read_performance_settings(const QSettings& settings) {
                 static_cast<double>(legacy_mib);
         }
     }
+    auto& resources = performance.resource_limits;
+    resources.maximum_decoded_image_bytes = read_size_preference(
+        settings, QStringLiteral("performance/maximumDecodedImageBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.maximum_obj_file_bytes = read_size_preference(
+        settings, QStringLiteral("performance/maximumObjFileBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.maximum_obj_mesh_bytes = read_size_preference(
+        settings, QStringLiteral("performance/maximumObjMeshBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.maximum_project_bundle_expanded_bytes = read_size_preference(
+        settings,
+        QStringLiteral("performance/maximumProjectBundleExpandedBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.source_image_cache_bytes = read_size_preference(
+        settings, QStringLiteral("performance/sourceImageCacheBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.source_image_cache_entries = read_size_preference(
+        settings, QStringLiteral("performance/sourceImageCacheEntries"),
+        pvt::kMaximumUiItems);
+    resources.obj_mesh_cache_bytes = read_size_preference(
+        settings, QStringLiteral("performance/objMeshCacheBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.obj_mesh_cache_entries = read_size_preference(
+        settings, QStringLiteral("performance/objMeshCacheEntries"),
+        pvt::kMaximumUiItems);
+    resources.displacement_mesh_cache_bytes = read_size_preference(
+        settings, QStringLiteral("performance/displacementMeshCacheBytes"),
+        (std::numeric_limits<std::size_t>::max)());
+    resources.displacement_mesh_cache_entries = read_size_preference(
+        settings, QStringLiteral("performance/displacementMeshCacheEntries"),
+        pvt::kMaximumUiItems);
     performance.pause_editor_preview_during_export = settings.value(
         QStringLiteral("performance/pauseEditorPreviewDuringExport"), true)
                                                         .toBool();
@@ -11459,6 +11515,8 @@ void MainWindow::restoreUserSettings() {
         settings.value(QStringLiteral("preferences/recentProjectLimit"), 10).toInt(),
         0, (std::numeric_limits<int>::max)());
     performance_settings_ = read_performance_settings(settings);
+    pvt::set_resource_limit_overrides(
+        performance_settings_.resource_limits);
     const bool automated_smoke = QCoreApplication::arguments().contains(
         QStringLiteral("--smoke-test"));
     render_backend_ = resolved_render_backend(
@@ -11534,6 +11592,8 @@ void MainWindow::saveUserSettings() {
     settings.setValue(
         QStringLiteral("performance/pauseEditorPreviewDuringExport"),
         performance_settings_.pause_editor_preview_during_export);
+    write_resource_limit_preferences(settings,
+                                     performance_settings_.resource_limits);
     settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
                       recent_project_limit_);
     if (audio_volume_ != nullptr) {
@@ -11565,6 +11625,9 @@ void MainWindow::showApplicationSettings() {
     const bool undo_limit_changed = requested_undo_limit != current_undo_limit;
     const bool performance_changed =
         requested_performance != current_performance;
+    const bool resource_limits_changed =
+        requested_performance.resource_limits
+            != current_performance.resource_limits;
     const bool interactive_performance_changed =
         requested_performance.backend != current_performance.backend
         || requested_performance.preview_live_cpu_workers
@@ -11574,7 +11637,8 @@ void MainWindow::showApplicationSettings() {
         || requested_performance.render_memory_budget_mode
                != current_performance.render_memory_budget_mode
         || requested_performance.render_memory_budget_value
-               != current_performance.render_memory_budget_value;
+               != current_performance.render_memory_budget_value
+        || resource_limits_changed;
     const bool recent_limit_changed = requested_recent_limit != current_recent_limit;
     if (!undo_limit_changed && !performance_changed && !recent_limit_changed && !language_changed
         && defaults_action
@@ -11600,6 +11664,15 @@ void MainWindow::showApplicationSettings() {
     if (performance_changed) {
         performance_settings_ = requested_performance;
         render_backend_ = requested_backend;
+        pvt::set_resource_limit_overrides(
+            performance_settings_.resource_limits);
+        if (resource_limits_changed) {
+            const pvt::detail::AssetPaths none;
+            pvt::detail::prune_opengl_mesh_cache(none);
+            pvt::detail::prune_displacement_mesh_cache(none);
+            pvt::detail::prune_obj_mesh_cache(none);
+            pvt::detail::prune_source_image_cache(none, none);
+        }
     }
     if (interactive_performance_changed) {
         if (preview_cancel_ != nullptr) {
@@ -11654,6 +11727,8 @@ void MainWindow::showApplicationSettings() {
     settings.setValue(
         QStringLiteral("performance/pauseEditorPreviewDuringExport"),
         requested_performance.pause_editor_preview_during_export);
+    write_resource_limit_preferences(settings,
+                                     requested_performance.resource_limits);
     settings.setValue(QStringLiteral("preferences/recentProjectLimit"),
                       requested_recent_limit);
     settings.sync();
@@ -19420,8 +19495,17 @@ bool MainWindow::runSmokeChecks(QString* error) {
             migrated.render_memory_budget_mode
                    == RenderMemoryBudgetMode::Mebibytes
             && migrated.render_memory_budget_value == 7.0;
+        pvt::RuntimeResourceLimits persisted_resources;
+        persisted_resources.maximum_decoded_image_bytes = 123U * kMebibyte;
+        persisted_resources.obj_mesh_cache_entries = 37U;
+        write_resource_limit_preferences(migration_settings,
+                                         persisted_resources);
+        migrated = read_performance_settings(migration_settings);
+        const bool resource_limits_round_trip =
+            migrated.resource_limits == persisted_resources;
         memory_migration_valid = legacy_loaded && new_keys_win
-                                 && invalid_new_falls_back;
+                                 && invalid_new_falls_back
+                                 && resource_limits_round_trip;
     }
     if (undo_stack_ == nullptr || undo_stack_->undoLimit() != expected_undo_limit
         || performance_settings_ != expected_performance
@@ -19457,6 +19541,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         dialog_performance.render_memory_budget_mode =
             RenderMemoryBudgetMode::Gibibytes;
         dialog_performance.render_memory_budget_value = 32.0;
+        dialog_performance.resource_limits.maximum_decoded_image_bytes =
+            256U * kMebibyte;
+        dialog_performance.resource_limits.obj_mesh_cache_entries = 37U;
         dialog_performance.pause_editor_preview_during_export = false;
         ApplicationSettingsDialog settings_dialog(
             expected_undo_limit, dialog_performance,
@@ -19487,6 +19574,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QStringLiteral("renderMemoryBudgetValuePreference"));
         const auto* memory_status = settings_dialog.findChild<QLabel*>(
             QStringLiteral("renderMemoryBudgetStatus"));
+        const auto* maximum_decoded_image =
+            settings_dialog.findChild<QSpinBox*>(
+                QStringLiteral("maximumDecodedImageMiBPreference"));
+        const auto* obj_cache_entries = settings_dialog.findChild<QSpinBox*>(
+            QStringLiteral("objMeshCacheEntriesPreference"));
+        const auto* resource_status = settings_dialog.findChild<QLabel*>(
+            QStringLiteral("resourceLimitsStatus"));
+        auto* reset_resources = settings_dialog.findChild<QPushButton*>(
+            QStringLiteral("resetResourceLimitPreferences"));
         const auto* pause_preview = settings_dialog.findChild<QCheckBox*>(
             QStringLiteral("pauseEditorPreviewDuringExportPreference"));
         auto* reset_performance = settings_dialog.findChild<QPushButton*>(
@@ -19554,6 +19650,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
             }
         }
         if (reset_performance != nullptr) reset_performance->click();
+        if (reset_resources != nullptr) reset_resources->click();
         const bool reset_performance_valid =
             settings_dialog.performanceSettings() == PerformanceSettings{};
         settings_dialog.hide();
@@ -19577,6 +19674,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
             || memory_mode->currentData().toInt()
                    != static_cast<int>(RenderMemoryBudgetMode::Automatic)
             || memory_status == nullptr || memory_status->text().isEmpty()
+            || maximum_decoded_image == nullptr
+            || maximum_decoded_image->specialValueText() != tr("Auto")
+            || obj_cache_entries == nullptr
+            || obj_cache_entries->specialValueText() != tr("Auto")
+            || resource_status == nullptr || resource_status->text().isEmpty()
+            || reset_resources == nullptr
             || pause_preview == nullptr || !pause_preview->isChecked()
             || reset_performance == nullptr
             || precision_status == nullptr
@@ -24727,6 +24830,23 @@ void MainWindow::startProjectSave(const QString& path) {
             document_ = std::make_unique<pvt::ProjectDocument>(
                 pvt::default_project_document());
         }
+        // The document holds the last committed project while project_ holds
+        // the current authored snapshot. Copying the whole document and then
+        // replacing its project used to deep-copy the stale project only to
+        // discard it immediately. Park that one field while copying the
+        // history/attachment metadata, and restore it before returning to the
+        // event loop. ProjectConfig's move assignment is required to keep the
+        // restoration safe even when allocation of the staged copy fails.
+        static_assert(
+            std::is_nothrow_move_assignable_v<pvt::ProjectConfig>);
+        pvt::ProjectConfig committed_project =
+            std::move(document_->project);
+        const auto restore_committed_project =
+            [this, &committed_project]() noexcept {
+            document_->project = std::move(committed_project);
+        };
+        const pvt::detail::ScopeExit restore_project(
+            restore_committed_project);
         staged = std::make_shared<pvt::ProjectDocument>(*document_);
         staged->project = project_;
         staged->dirty = baseline_dirty_

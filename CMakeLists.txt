@@ -167,6 +167,8 @@ add_library(ProceduralVisualizerTool
     src/obj_surface.h
     src/raster_occlusion.h
     src/render_memory.h
+    src/resource_limits.cpp
+    src/resource_limits_internal.h
     src/path_utf8.h
     src/post_process_alpha.h
     src/render_asset_cache.cpp
@@ -865,6 +867,7 @@ if(BUILD_TESTING)
 
     add_executable(pvt_obj_mesh_tests
         tests/obj_mesh_isolated_test.cpp
+        src/resource_limits.cpp
         src/obj_mesh.cpp
         src/obj_mesh.h)
     target_compile_features(pvt_obj_mesh_tests PRIVATE cxx_std_17)
@@ -885,6 +888,7 @@ if(BUILD_TESTING)
         tests/obj_surface_isolated_test.cpp
         src/environment_map.cpp
         src/environment_map.h
+        src/resource_limits.cpp
         src/obj_mesh.cpp
         src/obj_mesh.h
         src/obj_surface.cpp
@@ -918,7 +922,8 @@ if(BUILD_TESTING)
 
     add_executable(pvt_obj_performance_audit_probe EXCLUDE_FROM_ALL
         tests/obj_performance_audit_probe.cpp src/environment_map.cpp
-        src/obj_mesh.cpp src/obj_surface.cpp src/source_image.cpp)
+        src/resource_limits.cpp src/obj_mesh.cpp src/obj_surface.cpp
+        src/source_image.cpp)
     target_compile_features(pvt_obj_performance_audit_probe PRIVATE cxx_std_17)
     target_compile_definitions(pvt_obj_performance_audit_probe PRIVATE PVT_OBJ_MESH_TEST_HOOKS=1)
     target_include_directories(pvt_obj_performance_audit_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

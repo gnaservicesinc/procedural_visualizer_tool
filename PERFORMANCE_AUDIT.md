@@ -1,32 +1,37 @@
 # Performance and correctness audit
 
-Updated: 2026-09-09. Iteration 6, based on commit
-`9ff5d1601fba45f65c7d62ae88267e77f34b4663` (iteration 5). Iteration 4 was
+Updated: 2026-09-09. Iteration 7, based on commit
+`a27d3f72e50c9522d34567aff08329260a85ff1e` (iteration 6). Iteration 4 was
 committed in 17.10.0, iteration 3 in 17.9.0, iteration 2 as `4eb1dd5`, and
-iteration 1 is also in the baseline.
+iteration 1 is also in the baseline. Iteration 7 is prepared for release as
+17.11.0.
 
 This is the continuation record for the requested performance, memory,
-configuration, and latent-defect audit. Iteration 6 checks invariant project
-canvas, clock/music, path and export data once per synchronous validation call,
-while preserving per-layer checks and direct-edit visibility. The working tree
-was clean at the start. This iteration is a local patch with no new version,
-commit, tag, or remote CI. Linux and Windows qualification belongs on GitHub;
-prior platform evidence below describes its recorded commits only.
+configuration, and latent-defect audit. Iteration 7 prioritizes paths used by
+every project: Save/Open copies, project image/movie sequences, automatic Metal
+queue depth, render-memory admission, and machine-local resource controls. The
+working tree was clean at the start. Local qualification is complete; release
+commit, tag, and remote CI status are intentionally recorded outside this source
+snapshot as those gates complete. Linux and Windows qualification belongs on
+GitHub; prior platform evidence below describes its recorded commits only.
 
 ## Scope and fidelity contract
 
 Reviewed the CPU frame pipeline, layer composition/admission, LFO
-materialization, OBJ projection/rasterization, decoded-source and mesh caches,
-Metal/OpenGL surface shading, OpenGL resource ownership, and editor preview
-lifecycle. Existing tests additionally exercise persistence, codecs, audio,
-Live behavior, localization, and export. This is a broad first pass, not a claim
-that every path in those subsystems is exhaustively audited.
+materialization, project Save/Open and split music reconstruction, outer image
+and native-movie export coordinators, OBJ projection/rasterization,
+decoded-source and mesh caches, Metal/OpenGL surface shading, OpenGL resource
+ownership, and editor preview lifecycle. Existing tests additionally exercise
+codecs, audio, Live behavior, localization, and export. This is a broad audit,
+not a claim that every path in those subsystems is exhaustively optimized.
 
 Optimizations retain authored configuration, effect order, straight RGB under
 transparency, HDR values, animation timing, and two-sided surface behavior.
-Defect fixes deliberately restore previously missing coverage. No public
-configuration structs, persistence formats, precision, sampling resolution,
-or backend comparison tolerances were changed.
+Defect fixes deliberately restore previously missing coverage. Iteration 7 adds
+a separate public, process-local `RuntimeResourceLimits` policy; it does not
+change `ProjectConfig`, persistence formats, precision, sampling resolution, or
+backend comparison tolerances. Machine capacity is deliberately not persisted
+inside portable projects.
 
 ## Implemented
 
@@ -59,6 +64,11 @@ or backend comparison tolerances were changed.
 | A25 | Validate project canvas/output and layer data through a synchronous const borrowing view, eliminating `apply_global_config` copies for the global probe and every validated layer. Standalone validation uses the same implementation. Live remains checked once per project; per-layer particle, asset, and music-copy accounting accept the borrowed inputs. | Project allocation requests fall from 86,801,520 to 23,744 bytes in the large-analysis probe. Thirty-six invalid-edit cases preserve standalone diagnostic equivalence and transactional failure, including disabled layers/clocks, named streams, Live, paths and nested LFOs; repairs pass. Worker music allowances remain unchanged, and ten animated frame hashes match exactly. |
 | A26 | Sequence shutdown stored its atomic stop flag outside the condition-variable mutex, allowing notification between a worker's false predicate check and wait. Publish stop under that mutex before notifying, both in the join guard and worker-scheduler failure path. | The sanitizer core suite hung in callback cancellation; a process sample showed the main thread in `SequenceWorkerJoiner` joining a worker asleep at the ready-slot wait. The corrected suite passes, including 48 repeated callback-cancel, callback-exception, and atomic-cancel cases with one/four workers, ordered output and staging cleanup. |
 | A27 | Scope successful canvas validation to one synchronous project invocation, tied to the exact borrowed canvas/output inputs. Layers reuse invariant dimension/FPS, Live, global clock/music, audio-default, path-definition and export checks; saved clocks, LFO graphs, path bindings, alpha policy, assets and workload/admission checks remain per layer. | 132 direct-edit cases preserve standalone diagnostics, disabled-state validation, estimates and transactional failure. Two sequential pairs reduce music-heavy project validation time about 44% and animated CPU frame time about 21%, with the same ten-frame float hash. A path-allocation scaling guard passes after the change and fails against the iteration 5 baseline. |
+| A28 | Save copied an entire `ProjectDocument` as its transaction snapshot, and GUI staging copied the stale committed project before immediately replacing it. Snapshot only the attachment/source identities and metadata that Save can mutate; stage the GUI document while its stale project field is parked. The in-memory commit remains fallible-work-first and rollback-safe. | A 64 MiB runtime-only history sentinel reduces unchanged-Save requested allocations from 67,955,434 to 839,930 bytes. GUI staging of a one-million-sample committed analysis falls from 41,950,896 to 7,864 bytes. Forced stale-save failure restores attachments, source identities, timestamps and report state. |
+| A29 | Split project loading decoded a full music analysis, copied every full-signal and named-stream sample table, then cleared only part of that copy before temporary validation serialization. Build a metadata-complete validation projection directly, including source/input-processing/range identity and at most one beat per stream, then install the independently decoded exact analysis. | A 182,071,382-byte analysis loads with exact serialized round-trip bytes. Median time falls from 4.761 s to 1.902 s and requested allocations from 6.342 GB to 2.551 GB. A regression with two 200,000-sample tables bounds the projection below 1 MiB. |
+| A30 | Project image sequences and native movies revalidated/reacquired the same project assets for every frame and multiplied shared bytes into every outer worker's admission estimate. Validate and lease once per synchronous export, reserve shared bytes once, and divide only worker/composite/queued-output storage across outer workers. | Twenty-four large-analysis CPU frames fall from 190.77 to 151.41 ms with identical PNG-byte hash `b4fa4cabe2f93651`. One/four-worker project sequences produce byte-identical PNG files; budget-category arithmetic and cancellation remain covered. |
+| A31 | Metal's automatic global admission and inner project-layer pool were both fixed at two, leaving larger hosts underfilled. The global default is now half reported logical CPU capacity (rounded up, bounded 2..256); the separately measured nested layer pool caps at four to avoid oversubscription. Explicit settings still win. | On this 12-logical-CPU M2 Max, the 48-frame outer probe rises from 398.2 FPS at the old two-slot setting to 850.9 FPS on Auto; every slot count has full-float hash `abc9f2334d0fa66e`. The eight-layer Auto path reaches 41.60 FPS versus 38.41 at two with hash `7ef6b46af6f401c4`. CPU-use sampling is recorded below. |
+| A32 | Decoded-image, OBJ file/expanded-mesh, aggregate bundle, and three retained-cache limits were hard-coded implementation guesses. Add one thread-safe runtime policy, derive automatic bytes from detected physical RAM, and expose all ten byte/entry overrides through the public API, CLI and Application Settings. Values remain machine-local; changing them prunes retained caches. | Deterministic policy tests cover 1 GiB, 64 GiB and unknown-RAM hosts plus coherent concurrent settings snapshots. This 64 GiB host selects a 32 GiB foreground render budget, 8–16 GiB per-asset/bundle limits, and 16 GiB total retained-cache budgets. Explicit image/OBJ rejection tests and all 2,930 German/French catalog messages pass. |
 
 Pruning preserves paths, attached source files, saved disabled settings, music
 analysis, and undo/history. In-flight readers retain immutable shared handles
@@ -313,7 +323,106 @@ allowances until the corresponding copies are removed and measured. A persistent
 cross-call render plan would additionally require explicit revision/dependency
 invalidation; this iteration introduces none.
 
+### Iteration 7 measurements and next design boundary
+
+The priority order for this phase was persistence first, then all-project
+sequence work and hardware admission, then configurable resource bounds. The
+local Release host is an Apple M2 Max with 12 logical CPUs and 64 GiB of unified
+memory. Timings are workload observations rather than test gates; allocation and
+exact-byte/hash checks are durable regressions.
+
+| Persistence workload | Iteration 6 | Iteration 7 | Change/equality gate |
+| --- | ---: | ---: | --- |
+| Unchanged Save with a 64 MiB runtime-only history message | 67,955,434 requested bytes | 839,930 requested bytes | 98.8% fewer; validated-only Save succeeds |
+| 182,071,382-byte split music analysis load | 4,761.250 ms median | 1,901.968 ms median | 60.1% less time; exact reserialization |
+| Same analysis load allocations | 6,341,697,126 requested bytes | 2,550,533,414 requested bytes | 59.8% fewer; exact reserialization |
+| GUI background-save staging with 1,048,576 feature samples | 41,950,896 requested bytes | 7,864 requested bytes | 99.98% fewer |
+| 24-frame, four-worker large-analysis image sequence | 190.770 ms | 151.408 ms | 20.6% less time; PNG hash `b4fa4cabe2f93651` |
+
+The unchanged Save still reads, hashes and may rewrite the complete bundle; Open
+still eagerly materializes a `BundleFileSet` and independently decodes the full
+analysis text. Those are now the highest-value persistence boundaries. Removing
+them requires streaming ZIP/directory comparison and lazy or directly composed
+split records while preserving hostile-input limits, compare-and-swap saves,
+recovery history and exact compatibility records.
+
+The Metal sweep renders 48 independent 1280x720 frames from 12 producer threads.
+Hashing occurs after timing and covers every float bit in every frame:
+
+| Global Metal slots | FPS | Average CPU cores | Full-float hash |
+| ---: | ---: | ---: | --- |
+| 1 | 251.1 | 0.74 | `abc9f2334d0fa66e` |
+| 2 (old automatic default) | 398.2 | 1.04 | `abc9f2334d0fa66e` |
+| 4 | 657.6 | 1.88 | `abc9f2334d0fa66e` |
+| 6 | 797.6 | 2.20 | `abc9f2334d0fa66e` |
+| 8 | 862.2 | 2.42 | `abc9f2334d0fa66e` |
+| 12 | 846.9 | 2.35 | `abc9f2334d0fa66e` |
+| Auto (six on this host; repeated after the sweep) | 850.9 | 2.43 | `abc9f2334d0fa66e` |
+
+Auto is 2.14 times the old two-slot throughput in this run and is within 1.4%
+of the sweep maximum without adopting the maximum queue's memory pressure. The
+separate sequential eight-layer sweep peaks around four inner workers: 38.41
+FPS at two, 41.21 at four, and 41.60 on Auto, with invariant hash
+`7ef6b46af6f401c4`. CPU utilization is intentionally not 12 cores for this
+GPU-bound workload; command encoding/readback uses about 2.4 CPU cores while
+Metal executes the bulk of the work. GPU busy percentage still needs platform
+profiler/driver qualification. The broad remaining utilization opportunity is
+safe CPU tiling for a single CPU-rendered layer; OpenGL remains serialized by
+its Qt context.
+
+On this host the automatic resource policy resolves to 32 GiB of active render
+admission, 16 GiB decoded-image, 8 GiB OBJ-file, 16 GiB expanded-OBJ, and 16 GiB
+aggregate expanded-bundle limits. Retained caches divide another 16 GiB as
+8 GiB/128 images, 4 GiB/64 OBJ meshes and 4 GiB/64 height meshes. These are
+ceilings rather than eager reservations. A quarter of RAM remains outside the
+render/cache policies for authored state, codecs, the driver and OS. Unknown-RAM
+hosts retain conservative compatibility fallbacks. Format, signed-index and
+security invariants are not mislabeled as resource preferences and remain hard.
+
 ## Validation
+
+Iteration 7 (persistence, export admission, hardware defaults and resource
+policy):
+
+- Native Release/Qt/Metal: **40/40** tests pass, including persistence, native
+  video export, exact one/four-worker PNG sequences, cache/resource policy,
+  both surface arithmetic modes, complete localization checks and all three GUI
+  smoke tests.
+- C++20 shared build with Metal disabled and actual OpenGL enabled: **6/6**
+  focused suites pass (core, composition, assets, OpenGL, persistence and OBJ).
+  The new prevalidated-frame and resource-policy functions are present in the
+  shared library's exported symbol table.
+- AddressSanitizer + UndefinedBehaviorSanitizer + float-cast-overflow: **6/6**
+  focused suites pass (core, composition, assets, persistence, OBJ loader and
+  OBJ surface). Leak detection remains disabled on this host.
+- ThreadSanitizer: **5/5** focused suites pass (core, composition, assets,
+  persistence and OBJ), including coherent concurrent resource-policy snapshots
+  and shared invocation leases across sequence workers.
+- The first native run of the new concurrent-policy regression caught a torn
+  snapshot in the initial cross-atomic generation scheme. Resource-policy reads
+  and replacements now share one small settings lock; loader snapshots occur at
+  asset boundaries rather than frame hot loops. Native, address/undefined and
+  thread sanitizer core reruns pass with the final implementation.
+- German and French catalogs are **2,930/2,930** complete; the English source
+  template is intentionally unfinished and current. The CLI help lists all ten
+  `N|auto` resource options and documents that load-affecting limits precede
+  `--load`.
+- The persistence probe compares the exact iteration 6 baseline with this patch;
+  its split-analysis round trip is byte exact. Metal queue/layer sweeps retain
+  complete float hashes across all limits. `git diff --check` passes. No GitHub
+  platform run or release is claimed for iteration 7.
+
+Changed files: `CMakeLists.txt`, `include/procedural_visualizer_tool.h`,
+`app/cli_main.cpp`, `app/renderer_diagnostics.h`,
+`gui/{application_settings_dialog,main_window,
+macos_video_export,performance_settings,video_export}.*`,
+`src/{bundle_archive,composite,config_codec,displacement_surface,
+frame_renderer_internal,image_io,metal_backend,obj_mesh,project_bundle,
+render_memory,resource_limits,source_image}.*`, the related bundle/core/cache/
+composition/performance probes, the three Qt catalogs, and this tracker. Reused
+`/tmp/pvt-audit5-{native,gl,san,tsan}` and the exact iteration 6 persistence/
+sequence reference archives. These builds and probes are disposable; source
+regressions and this tracker are the durable record.
 
 Iteration 6 (F04 invariant project validation):
 
@@ -535,6 +644,11 @@ ctest --test-dir build-audit --output-on-failure -j 4
 cmake --build build-audit --target pvt_performance_audit_probe
 build-audit/pvt_performance_audit_probe
 build-audit/pvt_performance_audit_probe gpu
+build-audit/pvt_performance_audit_probe gpu-concurrency
+build-audit/pvt_performance_audit_probe gpu-project-concurrency
+cmake --build build-audit --target pvt_validation_audit_probe
+build-audit/pvt_validation_audit_probe --sequence
+build-audit/pvt_validation_audit_probe --check-allocations
 ```
 
 Supply the locally installed Qt and metal-cpp paths as appropriate. For the
@@ -556,14 +670,17 @@ entire repository under a token limit.
 | ID | Priority/status | Finding or strategy | Next implementation and acceptance gate |
 | --- | --- | --- | --- |
 | F01 | Closed in iteration 2 | Camera-plane clipping implemented on CPU and OpenGL in A13, with the additional interpolation defect fixed in A17. | Independent geometry, camera-inside, both windings, transparency, and local backend parity checks pass. Other driver qualification remains in F09. |
-| F02 | P2, partially resolved in iteration 3 | A18/A21 add shared allocation accounting, decoded assets, and invocation leases, separated from worker/composite storage. A20 includes its tile allowance. | Add cold parser/topology/decode scratch and lease/hash/control-block overhead; bound dynamic LFO-generated geometry and file replacements after admission. Coordinate outer sequence admission and independent concurrent invocation ledgers. Measure aggregate RSS and driver/context heaps under preview/export. One oversized worker is still allowed; this is not a hard process-memory cap. |
-| F03 | Closed in iteration 2 | A15 implements a 16-entry/512 MiB OBJ LRU with per-asset publication fencing. | Three alternating assets require 3 parses across 60 requests; generation, entry/byte eviction, oversized bypass, same-path replacement, and pruning regressions pass. |
+| F02 | P2, partially resolved through iteration 7 | A18/A21 add shared allocation accounting, decoded assets and invocation leases separated from worker/composite storage. A30 carries one lease ledger across project image/native-movie sequences and reserves shared bytes once when admitting outer workers. A20 includes its tile allowance. | Add cold parser/topology/decode scratch and lease/hash/control-block overhead; bound dynamic LFO-generated geometry and file replacements after admission. Coordinate independent concurrent invocation ledgers. Measure aggregate RSS and driver/context heaps under preview/export. One oversized worker is still allowed; this is not a hard process-memory cap. |
+| F03 | Closed in iteration 2; policy updated in iteration 7 | A15 implements an entry/byte-bounded OBJ LRU with per-asset publication fencing; A32 replaces its fixed 16-entry/512 MiB defaults with machine-adaptive, user-overridable policy. | Three alternating assets require 3 parses across 60 requests; generation, entry/byte eviction, oversized bypass, same-path replacement, pruning and explicit-limit regressions pass. |
 | F04 | P2, partially resolved in iteration 6 | A23/A24 remove recursive clock and LFO-target copies; A25 removes project-validation value adapters; A27 checks shared canvas/clock/music/path/export invariants once per invocation. Direct edits and exact animated output remain observable, and render-worker allowances are preserved. | Next, separate immutable runtime canvas/music inputs from owned evaluated layer state to remove project-frame adapters, then enabled-LFO analysis copies. Preserve saved clocks, named streams, paths, LFO order and Live overrides. Reduce admission allowances only after actual copies are removed and measured. Persistent cross-call plans require explicit revision/dependency invalidation. |
-| F05 | P2, partially resolved in iteration 3 | A21 adds invocation leases and proves last-owner release for uncached assets. Cache eviction no longer forces duplicate loads within an admitted project frame. Process caches still serve independent projects. | Add project/revision-aware cache publication so an obsolete caller cannot repopulate unused entries after a newer prune. Test concurrent projects and late loads without a subsequent frame; preserve assets needed by other active renders. Extend shared ownership across outer sequence workers before claiming process-wide accounting. |
+| F05 | P2, partially resolved through iteration 7 | A21 adds invocation leases and proves last-owner release for uncached assets. A30 extends that ownership across all outer workers in one synchronous image/movie export. Cache eviction no longer forces duplicate loads within an admitted frame or sequence; process caches still serve independent projects. | Add project/revision-aware cache publication so an obsolete caller cannot repopulate unused entries after a newer prune. Test concurrent projects and late loads without a subsequent frame; preserve assets needed by other active renders. Process-wide accounting across independent invocations remains separate. |
 | F06 | P2, conservative retention | An enabled LFO currently conservatively retains potentially used surface assets regardless of its target. Multiple decode intents for one retained image path and old mesh variants may also survive until normal LRU eviction. | Track exact asset/decode-intent dependencies and displacement keys in a render plan. Handle LFOs targeting other LFOs, skipped cycles, path bindings, and Live overrides before tightening retention. |
 | F07 | P2, partially resolved in iteration 3; winding strategy constrained | A20 adds depth-proven rejection for arbitrary nearest-hit CPU meshes, alongside A16 view rejection and A02 analytic rear-shading bypass. Winding alone cannot identify hidden faces of existing two-sided/open/translucent surfaces. | Qualify occlusion across platform arithmetic and dense real scenes. Consider tighter interval bounds or safe depth-peeling rejection only with exact-output evidence. Winding-only rejection still requires a proved topology/view/material/transform condition or an explicit authored one-sided setting. |
 | F08 | P2, further memory reduction | Disabled layer definitions, cached music analysis, and undo/history remain authored state. Deleting those objects would break re-enable, persistence, and undo; A06 releases their render assets instead. | If authoring memory itself must be paged out, design lossless lazy storage with transactional reload, portable paths, recovery, and undo/version tests. This requires a document-lifecycle change, not Boolean packing. |
-| F09 | P2, locally qualified through iteration 6 | Iterations 3 and 4 main/tagged GitHub builds passed all five platforms, including the earlier ARM64 surface concern. Iteration 5 local qualification exposed and fixed A26; iteration 6 native/shared OpenGL and focused allocation/address/undefined sanitizer suites qualify A27. | Require GitHub platform matrices for changes after iteration 4 before claiming Linux/Windows qualification; iteration 5 remote status was not rechecked here and iteration 6 remains local. Continue forced PNG/GL allocation failure and driver/resource/throughput qualification, preserving thin-triangle coverage, transparency, transactional shutdown/failure and exact hashes. Linux/Windows builds belong on GitHub. |
+| F09 | P2, locally qualified through iteration 7 | Iterations 3 and 4 main/tagged GitHub builds passed all five platforms, including the earlier ARM64 surface concern. Iterations 5–7 have native, shared OpenGL, address/undefined and targeted thread sanitizer evidence; iteration 7 also checks the public shared-library symbols. | Require GitHub platform matrices for changes after iteration 4 before claiming Linux/Windows qualification; iterations 5–7 remain local here. Continue forced PNG/GL allocation failure and driver/resource/throughput qualification, preserving thin-triangle coverage, transparency, transactional shutdown/failure and exact hashes. Linux/Windows builds belong on GitHub. |
+| F10 | P1, persistence follow-up after iteration 7 | A28 removes unrelated whole-document copies from library and GUI Save; A29 removes duplicate full analysis tables during split reconstruction. Save still eagerly reads/hashes the prior complete bundle and ZIP output rebuilds it; Open still materializes every expanded entry and separately parses large split text. | Design streaming directory/ZIP state comparison and direct split-record composition without weakening aggregate/entry limits, compression-ratio checks, atomic compare-and-swap, version recovery, forward-compatible records or exact saved bytes. Benchmark representative multi-version bundles with and without embedded media. |
+| F11 | P1, hardware utilization follow-up after iteration 7 | A31 removes the two-slot Metal bottleneck and measures separate outer/global and inner-layer queue curves. A30 gives image/movie exports enough independent frame work to use that queue. A single CPU layer remains mostly serial; Qt OpenGL uses one serialized context. | Add exact-output CPU row/tile parallelism at a renderer stage with independent writes and deterministic reductions. Measure wall time, average cores, RSS and GPU busy across small/large canvases; avoid nested oversubscription with outer frames/layers. Qualify adaptive Metal defaults and OpenGL behavior on every supported platform/driver. |
+| F12 | Closed in iteration 7 | A32 exposes every resource-scalable image/OBJ/bundle/cache boundary through API, CLI and Application Settings, with detected-RAM defaults and zero as Auto. These values are machine-local and portable project bytes are unchanged. | Per-asset, aggregate and cache limits have deterministic policy/override/error tests. Representation, signed-index and security invariants remain hard because raising them is not merely a resource decision. Revisit only when a new resource-derived boundary is introduced. |
 
 Other configuration simplifications were evaluated but are not silently
 applied: merging floating-point effects, lowering mesh/image resolution,

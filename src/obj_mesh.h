@@ -70,10 +70,13 @@ bool rebuild_obj_mesh_components(ObjMesh& mesh, std::string* error = nullptr);
 
 struct ObjLoadLimits {
     // ObjCorner uses UINT32_MAX as its missing-index sentinel, so an OBJ may
-    // contain every representable non-sentinel index. Other storage is bounded
-    // only by size_t/vector allocation. Tests may still provide smaller limits
-    // to exercise transactional rejection paths.
-    std::size_t maximum_file_bytes = (std::numeric_limits<std::size_t>::max)();
+    // contain every representable non-sentinel index. File and expanded-mesh
+    // storage use the machine-local runtime resource policy; other fields are
+    // bounded by their representation. Tests may provide smaller limits to
+    // exercise transactional rejection paths.
+    ObjLoadLimits() noexcept;
+
+    std::size_t maximum_file_bytes = 0U;
     std::size_t maximum_line_bytes = (std::numeric_limits<std::size_t>::max)();
     std::size_t maximum_positions = ObjCorner::missing;
     std::size_t maximum_texcoords = ObjCorner::missing;
@@ -81,7 +84,7 @@ struct ObjLoadLimits {
     std::size_t maximum_triangles = (std::numeric_limits<std::size_t>::max)();
     std::size_t maximum_polygon_corners =
         (std::numeric_limits<std::uint32_t>::max)();
-    std::size_t maximum_mesh_bytes = (std::numeric_limits<std::size_t>::max)();
+    std::size_t maximum_mesh_bytes = 0U;
 };
 
 // Parses v, vt, vn and f records. Faces may use v, v/vt, v//vn or v/vt/vn
@@ -103,7 +106,8 @@ bool load_obj_mesh(const std::string& utf8_path,
                    std::string* error,
                    const ObjLoadLimits& limits = ObjLoadLimits{});
 
-// Keeps up to 16 immutable meshes within a 512 MiB cache across frames. The cache key includes the
+// Keeps up to 16 immutable meshes within the configured host-adaptive cache
+// budget across frames. The cache key includes the
 // absolute normalized path, file size, last-write time, and load limits. A
 // file that changes during parsing is retried once and then rejected. Cold
 // concurrent requests for the same key share one in-flight parse. Larger

@@ -1,5 +1,7 @@
 #include "procedural_visualizer_tool.h"
 #include "path_utf8.h"
+#include "render_asset_cache.h"
+#include "render_memory.h"
 
 #include <png.h>
 
@@ -1103,7 +1105,8 @@ bool report_progress(const ProgressCallback& progress,
 
 bool select_sequence_worker_count(const SequenceRenderOptions& options,
                                   int total_frames,
-                                  std::size_t estimated_peak_bytes,
+                                  std::size_t shared_peak_bytes,
+                                  std::size_t per_frame_peak_bytes,
                                   std::size_t* worker_count,
                                   std::string* error) {
     if (options.worker_count > kMaximumSequenceWorkers) {
@@ -1116,12 +1119,14 @@ bool select_sequence_worker_count(const SequenceRenderOptions& options,
                                       ? hardware_workers
                                       : options.worker_count;
     const std::size_t budget = options.memory_budget_bytes == 0U
-                                   ? kDefaultSequenceMemoryBudgetBytes
+                                   ? automatic_render_memory_budget_bytes()
                                    : options.memory_budget_bytes;
-    const std::size_t memory_limited = estimated_peak_bytes == 0U
-                                           ? requested
-                                           : std::max<std::size_t>(
-                                                 1U, budget / estimated_peak_bytes);
+    // Immutable decoded assets and retained caches are shared by every frame
+    // in one project-export invocation. Reserve them once, then admit each
+    // independent frame from the remainder. A single valid frame stays
+    // renderable when either category exceeds the caller's advisory budget.
+    const std::size_t memory_limited = detail::memory_limited_outer_workers(
+        budget, shared_peak_bytes, per_frame_peak_bytes, requested);
     *worker_count = std::max<std::size_t>(
         1U, std::min({requested, memory_limited,
                       static_cast<std::size_t>(total_frames),
@@ -1131,7 +1136,7 @@ bool select_sequence_worker_count(const SequenceRenderOptions& options,
 
 FrameRenderOptions sequence_frame_options(
     const SequenceRenderOptions& options, std::size_t outer_worker_count,
-    std::size_t outer_worker_index) {
+    std::size_t outer_worker_index, std::size_t shared_peak_bytes) {
     FrameRenderOptions frame = options.frame;
     outer_worker_count = std::max<std::size_t>(1U, outer_worker_count);
     outer_worker_index = std::min(outer_worker_index,
@@ -1157,18 +1162,15 @@ FrameRenderOptions sequence_frame_options(
     if (frame.cpu_memory_budget_bytes == 0U) {
         const std::size_t aggregate_budget =
             options.memory_budget_bytes == 0U
-                ? kDefaultSequenceMemoryBudgetBytes
+                ? automatic_render_memory_budget_bytes()
                 : options.memory_budget_bytes;
-        // Match automatic nested CPU work to the sequence's aggregate memory
-        // preference. The per-frame scheduler still admits one valid layer if
-        // this integer share is smaller than its conservative estimate.
-        const std::size_t bytes_per_frame =
-            aggregate_budget / outer_worker_count;
-        const std::size_t remainder =
-            aggregate_budget % outer_worker_count;
-        frame.cpu_memory_budget_bytes = std::max<std::size_t>(
-            1U, bytes_per_frame
-                    + (outer_worker_index < remainder ? 1U : 0U));
+        // Shared immutable leases consume the aggregate budget once. Include
+        // that same reservation in the value seen by each inner scheduler so
+        // it can subtract the shared category without multiplying it.
+        frame.cpu_memory_budget_bytes =
+            detail::outer_worker_frame_memory_budget(
+                aggregate_budget, shared_peak_bytes,
+                outer_worker_count, outer_worker_index);
     }
     return frame;
 }
@@ -1188,6 +1190,20 @@ std::size_t backend_adjusted_peak_bytes(
         return std::numeric_limits<std::size_t>::max();
     }
     return adjusted;
+}
+
+std::size_t project_frame_peak_bytes(
+    const detail::ProjectRenderMemory& memory,
+    const SequenceRenderOptions& options) {
+    const std::size_t worker_copies =
+        options.frame.backend == RenderBackend::CpuAndGpu ? 2U : 1U;
+    std::size_t workers = 0U;
+    if (!checked_multiply(memory.worker_bytes, worker_copies, &workers)
+        || memory.composite_bytes
+               > std::numeric_limits<std::size_t>::max() - workers) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return workers + memory.composite_bytes;
 }
 
 enum class FrameFailureStage {
@@ -1262,7 +1278,8 @@ std::string worker_exception_message(const std::exception_ptr& exception) {
 template <typename RenderFrame>
 bool render_prepared_sequence(int total_frames,
                               const RenderConfig& output_config,
-                              std::size_t estimated_peak_bytes,
+                              std::size_t shared_peak_bytes,
+                              std::size_t per_frame_peak_bytes,
                               const SequenceRenderOptions& options,
                               const ProgressCallback& progress,
                               const std::atomic_bool* cancel,
@@ -1271,8 +1288,9 @@ bool render_prepared_sequence(int total_frames,
                               RenderFrame render_frame,
                               std::string* error) {
     std::size_t worker_count = 0U;
-    if (!select_sequence_worker_count(options, total_frames,
-                                      estimated_peak_bytes, &worker_count, error)) {
+    if (!select_sequence_worker_count(
+            options, total_frames, shared_peak_bytes,
+            per_frame_peak_bytes, &worker_count, error)) {
         return false;
     }
     std::atomic_bool stop {false};
@@ -1289,7 +1307,8 @@ bool render_prepared_sequence(int total_frames,
         threads.emplace_back([&, worker] {
             try {
                 const FrameRenderOptions frame_options =
-                    sequence_frame_options(options, worker_count, worker);
+                    sequence_frame_options(options, worker_count, worker,
+                                           shared_peak_bytes);
                 Image image;
                 for (;;) {
                     {
@@ -1480,7 +1499,7 @@ bool render_sequence_impl(const RenderConfig& config,
     }
 
     return render_prepared_sequence(
-        total_frames, output_config,
+        total_frames, output_config, 0U,
         backend_adjusted_peak_bytes(validation.estimated_peak_bytes, options),
         options, progress, cancel, "Rendering", "frame",
         [&config](int frame_index,
@@ -1498,7 +1517,10 @@ bool render_project_sequence_impl(const ProjectConfig& project,
                                   const ProgressCallback& progress,
                                   const std::atomic_bool* cancel,
                                   std::string* error) {
-    const ValidationResult validation = validate(project);
+    detail::prune_render_asset_caches(project);
+    detail::ProjectRenderMemory render_memory;
+    const ValidationResult validation =
+        detail::validate_project_render_memory(project, render_memory);
     if (!validation.ok) {
         return fail(error, validation.message.empty()
                                ? "The project configuration is invalid."
@@ -1566,16 +1588,17 @@ bool render_project_sequence_impl(const ProjectConfig& project,
     }
 
     return render_prepared_sequence(
-        total_frames, output_config,
-        backend_adjusted_peak_bytes(validation.estimated_peak_bytes, options),
+        total_frames, output_config, render_memory.shared.bytes,
+        project_frame_peak_bytes(render_memory, options),
         options, progress, cancel,
         "Project rendering", "project frame",
-        [&project](int frame_index,
-                   const FrameRenderOptions& frame_options, Image& image,
-                   const std::atomic_bool* worker_cancel,
-                   std::string* frame_error) {
-            return render_project_frame(project, frame_index, frame_options,
-                                        image, worker_cancel, frame_error);
+        [&project, &render_memory, total_frames](
+            int frame_index, const FrameRenderOptions& frame_options,
+            Image& image, const std::atomic_bool* worker_cancel,
+            std::string* frame_error) {
+            return detail::render_project_frame_validated(
+                project, frame_index, total_frames, frame_options,
+                render_memory, image, worker_cancel, frame_error);
         },
         error);
 }

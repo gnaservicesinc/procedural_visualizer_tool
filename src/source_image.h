@@ -31,7 +31,8 @@ PVT_API bool load_data_image_source(const std::string& path,
 
 // Height maps retain the same double-precision luminance used by the mesh
 // sampler, without retaining four float channels per pixel. In particular an
-// 8192 x 8192 PNG fits the bounded 512 MiB decoded-source cache.
+// An 8192 x 8192 PNG needs 512 MiB and fits when the machine-local decoded
+// image limit allows it. The retained cache has an independent adaptive budget.
 struct HeightImage {
     int width = 0;
     int height = 0;

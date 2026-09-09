@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.10.0**. The version is read from `VERSION` by every
+Current product version: **17.11.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,29 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.11.0 faster project persistence and adaptive performance defaults
+
+Version 17.11.0 reduces avoidable work in the paths shared by ordinary projects.
+Save no longer copies unrelated runtime history or the stale committed project,
+and split music-analysis loading avoids duplicate full analysis tables during
+validation. Image sequences and native movie exports validate and lease immutable
+assets once for the whole sequence instead of once per frame.
+
+Automatic Metal admission now scales with detected CPU capacity instead of using
+a fixed two-frame queue, with a separately bounded layer queue. On the audited
+Apple M2 Max workload this raised automatic Metal throughput to 2.14 times the old
+default while preserving every float bit. A 24-frame image sequence improved by
+20.6%, large split-analysis loading by 60.1%, and unchanged Save allocation
+requests by 98.8%; these are workload-specific measurements.
+
+Application Settings, the CLI, and the public API expose machine-local limits for
+decoded images, OBJ files and expanded meshes, aggregate expanded project data,
+and retained image/OBJ/height-mesh caches. Zero means Automatic, with defaults
+derived from detected physical memory and conservative fallbacks when detection
+is unavailable. These ceilings are not eager reservations and are not persisted
+inside portable projects. Project/setup/layer formats, rendered precision, and
+SONAME 17 remain unchanged.
 
 ## 17.10.0 lighter validation for music-driven projects
 

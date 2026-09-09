@@ -1287,7 +1287,7 @@ bool render_project_with_backend_validated(
                             kMaximumSequenceWorkers}));
     const std::size_t cpu_memory_budget =
         options.cpu_memory_budget_bytes == 0U
-            ? kDefaultSequenceMemoryBudgetBytes
+            ? automatic_render_memory_budget_bytes()
             : options.cpu_memory_budget_bytes;
 
     const FrameRenderOptions& selected_cpu_options = metal_available
@@ -1326,7 +1326,8 @@ bool render_project_with_backend_validated(
     const std::size_t gpu_worker_count = std::max<std::size_t>(
         1U, std::min({gpu_tasks.size(), kMaximumSequenceWorkers,
             options.maximum_gpu_frames_in_flight == 0U
-                ? 2U : options.maximum_gpu_frames_in_flight}));
+                ? detail::automatic_gpu_layer_workers()
+                : options.maximum_gpu_frames_in_flight}));
     LayerRenderPool gpu_pool(
         std::move(gpu_tasks), dispatch.size(), gpu_worker_count, layer_memory,
         cancel,
@@ -2027,6 +2028,24 @@ ValidationResult validate(const ProjectConfig& project) {
     return detail::validate_project_render_memory(project, memory);
 }
 
+bool detail::render_project_frame_validated(
+    const ProjectConfig& project, int frame_index, int frame_count,
+    const FrameRenderOptions& options, const ProjectRenderMemory& memory,
+    Image& destination, const std::atomic_bool* cancel,
+    std::string* error) {
+    if (frame_count < 1 || frame_index < 0 || frame_index >= frame_count) {
+        return fail(error,
+                    "The prevalidated project frame is outside its timeline.");
+    }
+    if (cancelled(cancel)) {
+        return fail(error, "Project rendering was cancelled.");
+    }
+    return render_project_with_backend_validated(
+        project,
+        static_cast<double>(frame_index) / static_cast<double>(frame_count),
+        &frame_index, options, memory, destination, cancel, error);
+}
+
 bool composite_over(const Image& source, Image& destination,
                     BlendMode mode, double opacity, std::string* error) {
     clear_error(error);
@@ -2199,11 +2218,8 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
         if (cancelled(cancel)) {
             return fail(error, "Project rendering was cancelled.");
         }
-        return render_project_with_backend_validated(
-            project,
-            static_cast<double>(wrapped_frame)
-                / static_cast<double>(frame_count),
-            &wrapped_frame, options, memory,
+        return detail::render_project_frame_validated(
+            project, wrapped_frame, frame_count, options, memory,
             destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");

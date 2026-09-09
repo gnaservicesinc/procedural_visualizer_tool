@@ -5,7 +5,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <new>
 #include <stdexcept>
 #include <vector>
@@ -14,6 +17,7 @@
 // allocation-only regression. Count requested C++ allocation bytes on this
 // thread, not RSS, driver heaps, or allocations in layer workers.
 namespace {
+namespace fs = std::filesystem;
 thread_local bool count_allocations = false;
 thread_local std::size_t allocation_bytes = 0U;
 }
@@ -145,6 +149,53 @@ int main(int argc, char** argv) {
         const auto check = [](const pvt::ValidationResult& result) {
             if (!result.ok) throw std::runtime_error(result.message);
         };
+        if (argc > 1 && std::string(argv[1]) == "--sequence") {
+            // Keep the large saved analyses valid and reachable to validation,
+            // but use the authored frame count so this remains a short export
+            // throughput probe rather than a 10-minute music render.
+            project.canvas.clock.mode = pvt::ClockMode::Default;
+            project.canvas.total_frames = 24;
+            project.output.write_alpha = true;
+            project.output.png_compression_level = 0;
+            project.output.overwrite_existing = true;
+            project.output.filename_prefix = "audit_";
+            const fs::path directory = fs::temp_directory_path()
+                                       / "pvt-validation-sequence-audit";
+            std::error_code ignored;
+            fs::remove_all(directory, ignored);
+            project.output.output_directory = directory.string();
+            for (auto& layer : project.layers) {
+                layer.render.layer_clock.enabled = false;
+            }
+            pvt::SequenceRenderOptions sequence_options;
+            sequence_options.worker_count = 4U;
+            sequence_options.frame.backend = pvt::RenderBackend::Cpu;
+            const auto start = std::chrono::steady_clock::now();
+            std::string error;
+            if (!pvt::render_project_sequence(
+                    project, sequence_options, {}, nullptr, &error)) {
+                throw std::runtime_error(error);
+            }
+            const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            std::uint64_t hash = UINT64_C(14695981039346656037);
+            for (int frame = 0; frame < project.canvas.total_frames; ++frame) {
+                std::string number = std::to_string(frame);
+                number.insert(0U, 4U - number.size(), '0');
+                std::ifstream input(
+                    directory / ("audit_" + number + ".png"),
+                    std::ios::binary);
+                for (std::istreambuf_iterator<char> byte(input), end;
+                     byte != end; ++byte) {
+                    hash = (hash ^ static_cast<unsigned char>(*byte))
+                           * UINT64_C(1099511628211);
+                }
+            }
+            std::cout << "project_sequence_24 elapsed_ms=" << elapsed_ms
+                      << " hash=" << std::hex << hash << std::dec << '\n';
+            fs::remove_all(directory, ignored);
+            return 0;
+        }
         if (argc > 1 && std::string(argv[1]) == "--check-allocations") {
             // Each validation must allocate less than one feature table.
             // This catches recursive clock copies, per-LFO layer copies, and

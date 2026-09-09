@@ -73,6 +73,13 @@ bool deserialize_music_analysis_config(const std::string& serialized,
                                        MusicAnalysis& analysis,
                                        std::string* error = nullptr);
 
+// Builds the small, metadata-complete analysis used only while validating a
+// split layer/render-output envelope. The independently decoded full analysis
+// is installed after that envelope passes; duplicating its large sample tables
+// here adds no validation coverage.
+MusicAnalysis music_analysis_validation_projection(
+    const MusicAnalysis& analysis);
+
 bool serialize_split_render_output_config(const CanvasLoopConfig& canvas,
                                           const ExportConfig& output,
                                           std::string& serialized,

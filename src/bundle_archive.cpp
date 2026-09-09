@@ -1,4 +1,5 @@
 #include "bundle_archive.h"
+#include "procedural_visualizer_tool.h"
 
 #include "mz.h"
 #include "mz_os.h"
@@ -50,7 +51,6 @@ namespace fs = std::filesystem;
 
 constexpr std::size_t kMaximumBundleEntries =
     static_cast<std::size_t>((std::numeric_limits<int>::max)());
-constexpr std::size_t kMaximumBundleBytes = kMaximumBundleEntries;
 // Metadata and rich music-cache entries share the signed-int archive/API bound.
 constexpr std::size_t kMaximumMetadataFileBytes = kMaximumBundleEntries;
 constexpr std::size_t kMaximumAssetFileBytes = kMaximumBundleEntries;
@@ -467,6 +467,8 @@ std::size_t entry_size_limit(std::string_view path) {
 }
 
 bool validate_file_set(const BundleFileSet& files, std::string* error) {
+    const std::size_t bundle_byte_limit =
+        resolved_resource_limits().maximum_project_bundle_expanded_bytes;
     if (files.root_name.empty() || files.root_name.find('/') != std::string::npos
         || !safe_archive_path(files.root_name)) {
         return fail(error, "Bundle root name is invalid.");
@@ -490,8 +492,12 @@ bool validate_file_set(const BundleFileSet& files, std::string* error) {
                             ? "Bundle asset exceeds the signed-int entry limit."
                             : "Bundle non-asset entry exceeds the signed-int file limit.");
         }
-        if (total_bytes > kMaximumBundleBytes - entry.second.size()) {
-            return fail(error, "Bundle exceeds the signed-int expanded-size limit.");
+        if (entry.second.size() > bundle_byte_limit
+            || total_bytes > bundle_byte_limit - entry.second.size()) {
+            return fail(
+                error,
+                "Bundle exceeds the configured expanded-size limit. Raise the "
+                "project bundle limit in Application Settings > Performance.");
         }
         total_bytes += entry.second.size();
     }
@@ -968,6 +974,8 @@ struct ZipWriterGuard {
 bool read_zip(const std::string& path,
               BundleFileSet& destination,
               std::string* error) {
+    const std::size_t bundle_byte_limit =
+        resolved_resource_limits().maximum_project_bundle_expanded_bytes;
     ZipReaderGuard reader;
     if (reader.handle == nullptr) {
         return fail(error, "Could not allocate ZIP reader.");
@@ -1078,8 +1086,13 @@ bool read_zip(const std::string& path,
                 return fail(error, "Project ZIP entry exceeds the compression-ratio limit.");
             }
             const std::size_t size = static_cast<std::size_t>(info->uncompressed_size);
-            if (total_bytes > kMaximumBundleBytes - size) {
-                return fail(error, "Project ZIP exceeds the signed-int expanded-size limit.");
+            if (size > bundle_byte_limit
+                || total_bytes > bundle_byte_limit - size) {
+                return fail(
+                    error,
+                    "Project ZIP exceeds the configured expanded-size limit. "
+                    "Raise the project bundle limit in Application Settings > "
+                    "Performance.");
             }
             std::string bytes(size, '\0');
             if (mz_zip_reader_entry_open(reader.handle) != MZ_OK) {
@@ -1328,6 +1341,8 @@ bool read_bundle_file_set(const std::string& path,
         error->clear();
     }
     try {
+        const std::size_t bundle_byte_limit =
+            resolved_resource_limits().maximum_project_bundle_expanded_bytes;
         if (path.empty() || path.find('\0') != std::string::npos
             || path.size() > kMaximumArchivePathBytes || !valid_utf8(path)) {
             return fail(error, "Bundle path is invalid or overlong.");
@@ -1389,12 +1404,21 @@ bool read_bundle_file_set(const std::string& path,
                 return fail(error, "Unpacked bundle contains an unsafe or colliding path.");
             }
             std::string bytes;
-            if (!read_regular_file(entry_path, entry_size_limit(relative),
+            const std::size_t remaining = total_bytes >= bundle_byte_limit
+                ? 0U : bundle_byte_limit - total_bytes;
+            if (!read_regular_file(entry_path,
+                                   (std::min)(entry_size_limit(relative),
+                                              remaining),
                                    bytes, error)) {
                 return false;
             }
-            if (total_bytes > kMaximumBundleBytes - bytes.size()) {
-                return fail(error, "Unpacked bundle exceeds the signed-int size limit.");
+            if (bytes.size() > bundle_byte_limit
+                || total_bytes > bundle_byte_limit - bytes.size()) {
+                return fail(
+                    error,
+                    "Unpacked bundle exceeds the configured expanded-size "
+                    "limit. Raise the project bundle limit in Application "
+                    "Settings > Performance.");
             }
             total_bytes += bytes.size();
             candidate.files.emplace(relative, std::move(bytes));

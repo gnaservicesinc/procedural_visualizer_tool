@@ -1437,13 +1437,8 @@ bool deserialize_split_layer_and_music(
             analysis_bytes, analysis, error)) {
         return false;
     }
-    MusicAnalysis validation_analysis = analysis;
-    validation_analysis.compatibility = {};
-    validation_analysis.feature_samples.clear();
-    validation_analysis.tempo_points.clear();
-    if (validation_analysis.beat_times_seconds.size() > 1U) {
-        validation_analysis.beat_times_seconds.resize(1U);
-    }
+    MusicAnalysis validation_analysis =
+        detail::music_analysis_validation_projection(analysis);
     std::string validation_analysis_bytes;
     if (!detail::serialize_music_analysis_config(
             validation_analysis, validation_analysis_bytes, error)) {
@@ -5105,6 +5100,117 @@ bool sync_project_attachment_references(ProjectDocument& document,
     return true;
 }
 
+// Saving may normalize attachment references before it knows whether the
+// complete transaction can commit. Snapshot only the fields that operation can
+// mutate. Copying ProjectDocument here used to duplicate every authored path,
+// Live table, and potentially enormous project/layer music-analysis table on
+// every Save, even when the project was unchanged. The compact rollback keeps
+// the same transactional failure behavior without scaling with unrelated
+// project data.
+class ProjectSaveRollback {
+public:
+    explicit ProjectSaveRollback(ProjectDocument& document)
+        : document_(document),
+          attachments_(document.attachments),
+          attachment_cache_(document.attachment_cache),
+          first_created_utc_(document.first_created_utc),
+          last_opened_utc_(document.last_opened_utc),
+          last_saved_utc_(document.last_saved_utc),
+          created_with_version_(document.created_with_version),
+          last_changed_with_version_(document.last_changed_with_version),
+          dirty_(document.dirty) {
+        layer_sources_.reserve(document.project.layers.size());
+        for (const LayerConfig& layer : document.project.layers) {
+            const SurfaceConfig& surface = layer.render.surface;
+            const StartingImageConfig& starting_image =
+                layer.render.starting_image;
+            layer_sources_.push_back({
+                {surface.obj_path, surface.obj_sha256,
+                 surface.obj_basename},
+                {surface.plane_displacement.path,
+                 surface.plane_displacement.sha256,
+                 surface.plane_displacement.basename},
+                {surface.environment_map.path,
+                 surface.environment_map.sha256,
+                 surface.environment_map.basename},
+                {starting_image.path, starting_image.sha256,
+                 starting_image.basename}});
+        }
+    }
+
+    ProjectSaveRollback(const ProjectSaveRollback&) = delete;
+    ProjectSaveRollback& operator=(const ProjectSaveRollback&) = delete;
+
+    ~ProjectSaveRollback() noexcept {
+        if (!active_) return;
+        for (std::size_t index = 0U; index < layer_sources_.size(); ++index) {
+            LayerConfig& layer = document_.project.layers[index];
+            restore(layer.render.surface.obj_path,
+                    layer.render.surface.obj_sha256,
+                    layer.render.surface.obj_basename,
+                    layer_sources_[index].obj);
+            restore(layer.render.surface.plane_displacement.path,
+                    layer.render.surface.plane_displacement.sha256,
+                    layer.render.surface.plane_displacement.basename,
+                    layer_sources_[index].displacement);
+            restore(layer.render.surface.environment_map.path,
+                    layer.render.surface.environment_map.sha256,
+                    layer.render.surface.environment_map.basename,
+                    layer_sources_[index].environment);
+            restore(layer.render.starting_image.path,
+                    layer.render.starting_image.sha256,
+                    layer.render.starting_image.basename,
+                    layer_sources_[index].starting_image);
+        }
+        document_.attachments = std::move(attachments_);
+        document_.attachment_cache = std::move(attachment_cache_);
+        document_.first_created_utc = std::move(first_created_utc_);
+        document_.last_opened_utc = std::move(last_opened_utc_);
+        document_.last_saved_utc = std::move(last_saved_utc_);
+        document_.created_with_version = std::move(created_with_version_);
+        document_.last_changed_with_version =
+            std::move(last_changed_with_version_);
+        document_.dirty = dirty_;
+    }
+
+    void commit() noexcept { active_ = false; }
+
+private:
+    struct SourceIdentity {
+        std::string path;
+        std::string sha256;
+        std::string basename;
+    };
+
+    struct LayerSources {
+        SourceIdentity obj;
+        SourceIdentity displacement;
+        SourceIdentity environment;
+        SourceIdentity starting_image;
+    };
+
+    static void restore(std::string& path,
+                        std::string& sha256,
+                        std::string& basename,
+                        SourceIdentity& saved) noexcept {
+        path = std::move(saved.path);
+        sha256 = std::move(saved.sha256);
+        basename = std::move(saved.basename);
+    }
+
+    ProjectDocument& document_;
+    std::vector<LayerSources> layer_sources_;
+    std::vector<ProjectAttachment> attachments_;
+    std::shared_ptr<ProjectAttachmentCache> attachment_cache_;
+    std::string first_created_utc_;
+    std::string last_opened_utc_;
+    std::string last_saved_utc_;
+    std::string created_with_version_;
+    std::string last_changed_with_version_;
+    bool dirty_ = false;
+    bool active_ = true;
+};
+
 bool stage_attachment_assets(const ProjectDocument& document,
                              detail::BundleFileSet& files,
                              std::string* error) {
@@ -5222,21 +5328,21 @@ bool save_with_reason(ProjectDocument& document,
                       const std::string& reverted_from,
                       BundleSaveReport* report,
                       std::string* error) {
-    ProjectDocument working = document;
-    if (path.empty() || !valid_semantic_project_name(working.project.name)) {
+    if (path.empty() || !valid_semantic_project_name(document.project.name)) {
         return fail(error, "Project name or save path is not portable.");
     }
-    if (!sync_project_attachment_references(working, error)) return false;
-    const ValidationResult validation = validate(working.project);
+    ProjectSaveRollback rollback(document);
+    if (!sync_project_attachment_references(document, error)) return false;
+    const ValidationResult validation = validate(document.project);
     if (!validation.ok) {
         return fail(error, "Cannot save invalid project: " + validation.message);
     }
-    const bool same_source = equivalent_path(working.source_path, path);
+    const bool same_source = equivalent_path(document.source_path, path);
     const bool destination_exists = target_exists(path);
     if (!detail::path_is_zip_bundle(path) && !destination_exists) {
         const std::string directory_name = detail::path_to_utf8(
             detail::path_from_utf8(path).filename());
-        if (directory_name != portable_root_name(working.project.name)) {
+        if (directory_name != portable_root_name(document.project.name)) {
             return fail(error, "Unpacked bundle directory name must match project name.");
         }
     }
@@ -5246,14 +5352,14 @@ bool save_with_reason(ProjectDocument& document,
     bool root_external = false;
     bool have_root = false;
     std::vector<BundleVersionInfo> versions;
-    if (!working.source_path.empty() && !working.legacy_import) {
-        if (!read_document_source(working.source_path, files, root,
+    if (!document.source_path.empty() && !document.legacy_import) {
+        if (!read_document_source(document.source_path, files, root,
                                   root_external, error)
             || !collect_version_infos(files, root, versions, error)) return false;
         std::string actual_state;
         if (!detail::bundle_file_set_digest(files, actual_state, error)) return false;
-        if (working.loaded_bundle_state_digest.empty()
-            || actual_state != working.loaded_bundle_state_digest) {
+        if (document.loaded_bundle_state_digest.empty()
+            || actual_state != document.loaded_bundle_state_digest) {
             return fail(error,
                         "Project changed on disk since it was loaded; refusing stale save.");
         }
@@ -5273,8 +5379,8 @@ bool save_with_reason(ProjectDocument& document,
         }
         std::string target_state;
         if (!detail::bundle_file_set_digest(target_files, target_state, error)) return false;
-        if (working.loaded_bundle_state_digest.empty()
-            || target_state != working.loaded_bundle_state_digest) {
+        if (document.loaded_bundle_state_digest.empty()
+            || target_state != document.loaded_bundle_state_digest) {
             return fail(error, "Save As destination has advanced or diverged on disk.");
         }
         files = std::move(target_files);
@@ -5284,41 +5390,41 @@ bool save_with_reason(ProjectDocument& document,
         have_root = true;
     }
 
-    if (!stage_attachment_assets(working, files, error)) return false;
+    if (!stage_attachment_assets(document, files, error)) return false;
     std::string current_fast_fingerprint;
     if (!fast_project_fingerprint(
-            working.project, working.attachments,
+            document.project, document.attachments,
             current_fast_fingerprint, error)) {
         return false;
     }
     std::string semantic_digest;
     const bool fast_unchanged =
-        !working.loaded_fast_project_fingerprint.empty()
+        !document.loaded_fast_project_fingerprint.empty()
         && current_fast_fingerprint
-               == working.loaded_fast_project_fingerprint
-        && !working.externally_modified && !root_external
-        && !working.loaded_snapshot_digest.empty();
+               == document.loaded_fast_project_fingerprint
+        && !document.externally_modified && !root_external
+        && !document.loaded_snapshot_digest.empty();
     if (fast_unchanged) {
-        semantic_digest = working.loaded_snapshot_digest;
+        semantic_digest = document.loaded_snapshot_digest;
     } else if (!project_content_digest(
-                   working.project, working.attachments,
+                   document.project, document.attachments,
                    semantic_digest, error)) {
         return false;
     }
-    const bool needs_version = versions.empty() || working.externally_modified
-                               || root_external || working.legacy_import
+    const bool needs_version = versions.empty() || document.externally_modified
+                               || root_external || document.legacy_import
                                || !reason_override.empty()
-                               || semantic_digest != working.loaded_snapshot_digest;
+                               || semantic_digest != document.loaded_snapshot_digest;
     const std::string now = utc_now();
-    if (working.last_opened_utc.empty()) working.last_opened_utc = now;
-    working.last_saved_utc = now;
-    working.last_changed_with_version = PVT_PROGRAM_VERSION;
-    if (working.first_created_utc.empty()) working.first_created_utc = now;
-    if (working.created_with_version.empty()) {
-        working.created_with_version = PVT_PROGRAM_VERSION;
+    if (document.last_opened_utc.empty()) document.last_opened_utc = now;
+    document.last_saved_utc = now;
+    document.last_changed_with_version = PVT_PROGRAM_VERSION;
+    if (document.first_created_utc.empty()) document.first_created_utc = now;
+    if (document.created_with_version.empty()) {
+        document.created_with_version = PVT_PROGRAM_VERSION;
     }
 
-    std::uint64_t current_version = working.current_version;
+    std::uint64_t current_version = document.current_version;
     bool promoted_external = false;
     if (needs_version) {
         if (have_root) {
@@ -5333,7 +5439,7 @@ bool save_with_reason(ProjectDocument& document,
             }
             for (BundleVersionInfo& version : versions) {
                 const bool selected_valid_orphan =
-                    version.valid && version.number == working.current_version;
+                    version.valid && version.number == document.current_version;
                 if (!version.valid
                     || (!version.indexed && !selected_valid_orphan)) {
                     // Preserve every noncanonical numeric directory exactly as
@@ -5360,8 +5466,8 @@ bool save_with_reason(ProjectDocument& document,
             return fail(error, "Bundle version number space is exhausted.");
         }
         auto parent = std::find_if(
-            versions.begin(), versions.end(), [&working](const BundleVersionInfo& value) {
-                return value.number == working.current_version && value.valid;
+            versions.begin(), versions.end(), [&document](const BundleVersionInfo& value) {
+                return value.number == document.current_version && value.valid;
             });
         if (!versions.empty() && parent == versions.end()) {
             return fail(error, "Current project version is missing from bundle history.");
@@ -5375,12 +5481,12 @@ bool save_with_reason(ProjectDocument& document,
                                               ? std::string{} : parent->metadata_digest;
         std::string reason = reason_override;
         if (reason.empty()) {
-            reason = (working.externally_modified || root_external)
+            reason = (document.externally_modified || root_external)
                          ? "external_change"
-                     : working.legacy_import ? "legacy_import" : "save";
+                     : document.legacy_import ? "legacy_import" : "save";
         }
         BundleVersionInfo new_version;
-        if (!build_version(working.project, working.attachments,
+        if (!build_version(document.project, document.attachments,
                            number, parent_digest, reason,
                            reverted_from, files, new_version,
                            semantic_digest, error)) return false;
@@ -5390,7 +5496,7 @@ bool save_with_reason(ProjectDocument& document,
                       return a.number < b.number;
                   });
         current_version = number;
-        promoted_external = working.externally_modified || root_external;
+        promoted_external = document.externally_modified || root_external;
     } else {
         if (!have_root
             || !validate_loaded_bundle_state(
@@ -5405,7 +5511,7 @@ bool save_with_reason(ProjectDocument& document,
         || !compact_embedded_layer_music_analysis(
             files, root, versions, compacted_layer_analysis, error)
         || !compact_duplicate_attachment_assets(
-            files, working.attachments,
+            files, document.attachments,
             compacted_duplicate_assets, error)) {
         return false;
     }
@@ -5414,13 +5520,13 @@ bool save_with_reason(ProjectDocument& document,
                                    || compacted_duplicate_assets;
 
     if (!destination_exists) {
-        files.root_name = portable_root_name(working.project.name);
+        files.root_name = portable_root_name(document.project.name);
     }
-    if (!write_root_files(working, versions, current_version,
+    if (!write_root_files(document, versions, current_version,
                           have_root ? &root : nullptr, files, error)) return false;
     if (!detail::write_bundle_file_set_if_unchanged(
             path, files, destination_exists,
-            destination_exists ? working.loaded_bundle_state_digest
+            destination_exists ? document.loaded_bundle_state_digest
                                : std::string{},
             error)) return false;
 
@@ -5435,8 +5541,10 @@ bool save_with_reason(ProjectDocument& document,
             version.integrity_message.clear();
         }
     }
-    for (ProjectAttachment& attachment : working.attachments) {
-        attachment.bundle_path.clear();
+    std::vector<std::string> committed_attachment_paths;
+    committed_attachment_paths.reserve(document.attachments.size());
+    for (const ProjectAttachment& attachment : document.attachments) {
+        std::string committed_path;
         const std::string identity_directory =
             legacy_attachment_asset_path(attachment.sha256) + "/";
         for (auto entry = files.files.lower_bound(identity_directory);
@@ -5454,40 +5562,23 @@ bool save_with_reason(ProjectDocument& document,
             if (!detail::sha256_hex(entry->second, actual, error)) return false;
             if (actual == attachment.sha256
                 && entry->second.size() == attachment.size_bytes) {
-                attachment.bundle_path = entry->first;
+                committed_path = entry->first;
                 break;
             }
         }
-        if (attachment.bundle_path.empty()) {
+        if (committed_path.empty()) {
             return fail(error,
                         "Saved attachment has no physical content object.");
         }
-        attachment.externally_modified = false;
+        committed_attachment_paths.push_back(std::move(committed_path));
     }
-    working.source_path = path;
-    working.imported_from_path.clear();
-    working.bundle_root_name = files.root_name;
-    working.loaded_snapshot_digest = semantic_digest;
-    working.loaded_fast_project_fingerprint =
-        std::move(current_fast_fingerprint);
-    working.loaded_bundle_state_digest = std::move(committed_state_digest);
-    working.current_version = current_version;
-    working.versions = versions;
-    working.source_is_zip = detail::path_is_zip_bundle(path);
-    working.legacy_import = false;
-    const auto clear_repair_notes = [](ConfigCompatibility& compatibility) {
-        compatibility.repair_notes.clear();
-    };
-    clear_repair_notes(working.project.canvas.output_compatibility);
-    clear_repair_notes(working.project.canvas.clock.music.compatibility);
-    for (LayerConfig& layer : working.project.layers) {
-        clear_repair_notes(layer.render.source_compatibility);
-        clear_repair_notes(
-            layer.render.layer_clock.clock.music.compatibility);
-    }
-    working.dirty = false;
-    working.externally_modified = false;
-    working.newer_program_version = false;
+
+    // Allocate every fallible completion value before changing caller-visible
+    // state. The assignments below are moves/clears of standard containers and
+    // scalar updates, so after this point the in-memory commit cannot fail
+    // halfway through and require a second full-document rollback copy.
+    std::string committed_source_path = path;
+    std::string committed_root_name = files.root_name;
     BundleSaveReport completed_report;
     completed_report.path = path;
     completed_report.version = current_version;
@@ -5496,7 +5587,37 @@ bool save_with_reason(ProjectDocument& document,
     completed_report.compacted_storage = compacted_storage;
     completed_report.wrote_zip = detail::path_is_zip_bundle(path);
     completed_report.promoted_external_change = promoted_external;
-    document = std::move(working);
+
+    for (std::size_t index = 0U; index < document.attachments.size(); ++index) {
+        document.attachments[index].bundle_path =
+            std::move(committed_attachment_paths[index]);
+        document.attachments[index].externally_modified = false;
+    }
+    document.source_path = std::move(committed_source_path);
+    document.imported_from_path.clear();
+    document.bundle_root_name = std::move(committed_root_name);
+    document.loaded_snapshot_digest = std::move(semantic_digest);
+    document.loaded_fast_project_fingerprint =
+        std::move(current_fast_fingerprint);
+    document.loaded_bundle_state_digest = std::move(committed_state_digest);
+    document.current_version = current_version;
+    document.versions = std::move(versions);
+    document.source_is_zip = completed_report.wrote_zip;
+    document.legacy_import = false;
+    const auto clear_repair_notes = [](ConfigCompatibility& compatibility) {
+        compatibility.repair_notes.clear();
+    };
+    clear_repair_notes(document.project.canvas.output_compatibility);
+    clear_repair_notes(document.project.canvas.clock.music.compatibility);
+    for (LayerConfig& layer : document.project.layers) {
+        clear_repair_notes(layer.render.source_compatibility);
+        clear_repair_notes(
+            layer.render.layer_clock.clock.music.compatibility);
+    }
+    document.dirty = false;
+    document.externally_modified = false;
+    document.newer_program_version = false;
+    rollback.commit();
     if (report != nullptr) *report = std::move(completed_report);
     return true;
 }

@@ -632,6 +632,47 @@ bool synthesize_setup(const std::string& partial,
 
 } // namespace
 
+MusicAnalysis music_analysis_validation_projection(
+    const MusicAnalysis& source) {
+    MusicAnalysis projected;
+    projected.schema_version = source.schema_version;
+    projected.analyzer_version = source.analyzer_version;
+    projected.source_sha256 = source.source_sha256;
+    projected.source_basename = source.source_basename;
+    projected.source_format = source.source_format;
+    projected.source_frame_count = source.source_frame_count;
+    projected.source_sample_rate = source.source_sample_rate;
+    projected.source_channel_count = source.source_channel_count;
+    projected.duration_seconds = source.duration_seconds;
+    projected.detected_bpm = source.detected_bpm;
+    projected.tempo_confidence = source.tempo_confidence;
+    if (!source.beat_times_seconds.empty()) {
+        projected.beat_times_seconds.push_back(
+            source.beat_times_seconds.front());
+    }
+    projected.frequency_streams.reserve(source.frequency_streams.size());
+    for (const MusicFrequencyStreamAnalysis& stream :
+         source.frequency_streams) {
+        MusicFrequencyStreamAnalysis projected_stream;
+        projected_stream.uuid = stream.uuid;
+        projected_stream.low_hz = stream.low_hz;
+        projected_stream.high_hz = stream.high_hz;
+        projected_stream.detected_bpm = stream.detected_bpm;
+        projected_stream.tempo_confidence = stream.tempo_confidence;
+        if (!stream.beat_times_seconds.empty()) {
+            projected_stream.beat_times_seconds.push_back(
+                stream.beat_times_seconds.front());
+        }
+        projected.frequency_streams.push_back(
+            std::move(projected_stream));
+    }
+    projected.input_processing = source.input_processing;
+    // Compatibility records were already retained by the independently
+    // decoded analysis. They must not be injected into the temporary combined
+    // document; the caller installs the exact decoded analysis afterward.
+    return projected;
+}
+
 bool append_config_compatibility(
     std::string& serialized,
     const ConfigCompatibility* first,
@@ -1157,13 +1198,8 @@ bool deserialize_split_render_output_config(
         // analysis is installed below. Give it the real source metadata and
         // one beat, but do not serialize and parse the enormous feature table
         // a second time.
-        MusicAnalysis validation_analysis = candidate_analysis;
-        validation_analysis.compatibility = {};
-        validation_analysis.feature_samples.clear();
-        validation_analysis.tempo_points.clear();
-        if (validation_analysis.beat_times_seconds.size() > 1U) {
-            validation_analysis.beat_times_seconds.resize(1U);
-        }
+        MusicAnalysis validation_analysis =
+            music_analysis_validation_projection(candidate_analysis);
         std::string validation_analysis_bytes;
         if (!serialize_music_analysis_config(
                 validation_analysis, validation_analysis_bytes, error)) {

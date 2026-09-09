@@ -372,7 +372,7 @@ public:
                  std::size_t memory_budget,
                  const std::atomic_bool* cancel) {
         const std::size_t limit = requested_limit == 0U
-                                      ? 2U
+                                      ? automatic_gpu_frames_in_flight()
                                       : requested_limit;
         std::unique_lock<std::mutex> lock(mutex_);
         while (active_ >= limit

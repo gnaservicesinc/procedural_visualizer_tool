@@ -1,6 +1,8 @@
 #ifndef PVT_PERFORMANCE_SETTINGS_H
 #define PVT_PERFORMANCE_SETTINGS_H
 
+#include "procedural_visualizer_tool.h"
+
 #include <cstddef>
 
 enum class RenderMemoryBudgetMode : int {
@@ -30,7 +32,7 @@ struct PerformanceSettings {
     // Maximum CPU layer workers inside each export frame. Zero lets the export
     // coordinator partition host capacity across the outer frames it admits.
     std::size_t export_cpu_workers = 0U;
-    // Zero selects the renderer's conservative automatic admission limit.
+    // Zero selects host-adaptive, device-memory-bounded Metal admission.
     std::size_t gpu_frames_in_flight = 0U;
     // The unit and authored value remain machine-local. Automatic resolves to
     // a host-adaptive budget, while percentage mode follows the installed RAM
@@ -38,17 +40,19 @@ struct PerformanceSettings {
     RenderMemoryBudgetMode render_memory_budget_mode =
         RenderMemoryBudgetMode::Automatic;
     double render_memory_budget_value = 0.0;
+    // Zero-valued fields select host-adaptive runtime defaults. These limits
+    // are machine-local and never enter project persistence.
+    pvt::RuntimeResourceLimits resource_limits;
     // Export normally owns the renderer exclusively. Artists may opt out when
     // an interactive editor preview is more important than maximum throughput.
     bool pause_editor_preview_during_export = true;
 };
 
-// Zero means that the host did not expose a trustworthy physical-memory size.
-std::size_t total_physical_memory_bytes() noexcept;
-
 // Resolve the preference into the byte budget passed to render coordinators.
-// Automatic reserves most memory for the OS and other creative applications;
-// an unknown host retains the renderer's historical 2 GiB fallback.
+// Automatic assigns half of physical RAM to foreground render admission. The
+// adaptive retained caches share another quarter, leaving one quarter for the
+// document, OS, driver, and transient codec allocations. An unknown host keeps
+// the renderer's historical 2 GiB fallback.
 std::size_t resolved_render_memory_budget_bytes(
     const PerformanceSettings& settings) noexcept;
 
@@ -64,6 +68,26 @@ inline bool operator==(const PerformanceSettings& left,
                   == right.render_memory_budget_mode
            && left.render_memory_budget_value
                   == right.render_memory_budget_value
+           && left.resource_limits.maximum_decoded_image_bytes
+                  == right.resource_limits.maximum_decoded_image_bytes
+           && left.resource_limits.maximum_obj_file_bytes
+                  == right.resource_limits.maximum_obj_file_bytes
+           && left.resource_limits.maximum_obj_mesh_bytes
+                  == right.resource_limits.maximum_obj_mesh_bytes
+           && left.resource_limits.maximum_project_bundle_expanded_bytes
+                  == right.resource_limits.maximum_project_bundle_expanded_bytes
+           && left.resource_limits.source_image_cache_bytes
+                  == right.resource_limits.source_image_cache_bytes
+           && left.resource_limits.source_image_cache_entries
+                  == right.resource_limits.source_image_cache_entries
+           && left.resource_limits.obj_mesh_cache_bytes
+                  == right.resource_limits.obj_mesh_cache_bytes
+           && left.resource_limits.obj_mesh_cache_entries
+                  == right.resource_limits.obj_mesh_cache_entries
+           && left.resource_limits.displacement_mesh_cache_bytes
+                  == right.resource_limits.displacement_mesh_cache_bytes
+           && left.resource_limits.displacement_mesh_cache_entries
+                  == right.resource_limits.displacement_mesh_cache_entries
            && left.pause_editor_preview_during_export
                   == right.pause_editor_preview_during_export;
 }

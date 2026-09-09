@@ -6,6 +6,36 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 17.11.0 persistence, sequence, and adaptive-resource performance
+
+The seventh performance-audit iteration prioritizes work shared by projects that
+do not use OBJ files. Save snapshots only state it can mutate and the GUI parks
+the stale committed project while staging the current one. Split music analysis
+builds a bounded validation projection rather than duplicating full feature and
+tempo tables. Sequence and native-movie rendering validate and lease immutable
+assets once per export and account shared memory once across outer workers.
+
+Automatic Metal queue depth follows detected CPU capacity instead of the former
+two-slot constant, while inner layer concurrency remains separately bounded.
+Application Settings, CLI switches, renderer diagnostics, and the public API now
+cover ten decoded-image, OBJ, expanded-project, and retained-cache limits. Zero is
+Automatic; defaults derive from physical RAM with deterministic compatibility
+fallbacks. Machine limits remain local and are not written into portable projects.
+
+On Apple M2 Max, the audit workload reduced unchanged-Save allocation requests
+from 67,955,434 to 839,930 bytes, large split-analysis load time from 4,761.250 ms
+to 1,901.968 ms, and a 24-frame image sequence from 190.770 ms to 151.408 ms.
+Automatic Metal throughput reached 850.9 FPS versus 398.2 FPS with the former
+two-slot default. Exact split reserialization, PNG bytes, and full-float hashes
+match their baselines.
+
+Accepted local evidence is 40/40 native Qt/Metal tests, 6/6 actual OpenGL focused
+suites, 6/6 Address/Undefined/float-cast sanitizer suites, and 5/5 targeted
+ThreadSanitizer suites. French and German catalogs are complete at 2,930/2,930.
+Project/setup/layer formats and SONAME 17 are unchanged. The complete design and
+remaining streaming-persistence/CPU-tiling boundaries are in
+`PERFORMANCE_AUDIT.md`.
+
 ## 17.9.0 renderer performance and correctness audit
 
 The three-iteration audit is recorded in `PERFORMANCE_AUDIT.md`. Implemented

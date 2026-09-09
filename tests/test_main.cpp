@@ -6,6 +6,7 @@
 #include "../src/obj_surface.h"
 #include "../src/path_utf8.h"
 #include "../src/post_process_alpha.h"
+#include "../src/resource_limits_internal.h"
 #include "../src/source_image.h"
 
 #include <png.h>
@@ -1250,6 +1251,17 @@ bool write_large_height_png(const fs::path& path, png_uint_32 width,
 }
 
 void test_large_height_map(const fs::path& directory) {
+    const pvt::RuntimeResourceLimits previous_limits =
+        pvt::resource_limit_overrides();
+    struct ResourceLimitRestore {
+        pvt::RuntimeResourceLimits limits;
+        ~ResourceLimitRestore() { pvt::set_resource_limit_overrides(limits); }
+    } restore{previous_limits};
+    pvt::RuntimeResourceLimits test_limits = previous_limits;
+    test_limits.maximum_decoded_image_bytes =
+        std::size_t{1024U} * 1024U * 1024U;
+    pvt::set_resource_limit_overrides(test_limits);
+
     const fs::path path = directory / "height-8k.png";
     CHECK(write_large_height_png(path, 8192U, 8192U));
     std::string error;
@@ -1266,8 +1278,12 @@ void test_large_height_map(const fs::path& directory) {
         path.string(), cached, nullptr, &error));
     CHECK(cached == height);
 
-    // General RGBA decoding still has its original memory bound. The height
-    // intent must not alias a cached RGBA decode or weaken that admission.
+    // Exercise a deterministic user override rather than depending on the
+    // host-adaptive default. The height intent must not alias a cached RGBA
+    // decode or weaken that admission.
+    test_limits.maximum_decoded_image_bytes =
+        std::size_t{512U} * 1024U * 1024U;
+    pvt::set_resource_limit_overrides(test_limits);
     std::shared_ptr<const pvt::Image> rgba;
     CHECK(!pvt::detail::load_data_image_source(
         path.string(), rgba, nullptr, &error));
@@ -2962,6 +2978,93 @@ void test_cancellable_single_layer_render() {
 }
 
 void test_defaults_and_dynamic_collections() {
+    constexpr std::size_t mib = std::size_t{1024U} * 1024U;
+    constexpr std::size_t gib = std::size_t{1024U} * mib;
+    const pvt::RuntimeResourceLimits one_gib_limits =
+        pvt::detail::automatic_resource_limits_for_physical_memory(gib);
+    CHECK(pvt::detail::automatic_render_memory_budget_for_physical_memory(gib)
+          == 512U * mib);
+    CHECK(one_gib_limits.maximum_decoded_image_bytes == 256U * mib);
+    CHECK(one_gib_limits.maximum_obj_file_bytes == 128U * mib);
+    CHECK(one_gib_limits.maximum_obj_mesh_bytes == 256U * mib);
+    CHECK(one_gib_limits.maximum_project_bundle_expanded_bytes == 256U * mib);
+    CHECK(one_gib_limits.source_image_cache_bytes
+              + one_gib_limits.obj_mesh_cache_bytes
+              + one_gib_limits.displacement_mesh_cache_bytes
+          == 256U * mib);
+    const pvt::RuntimeResourceLimits large_limits =
+        pvt::detail::automatic_resource_limits_for_physical_memory(64U * gib);
+    CHECK(large_limits.maximum_project_bundle_expanded_bytes == 16U * gib);
+    CHECK(large_limits.source_image_cache_bytes == 8U * gib);
+    CHECK(large_limits.obj_mesh_cache_bytes == 4U * gib);
+    CHECK(large_limits.displacement_mesh_cache_bytes == 4U * gib);
+    const pvt::RuntimeResourceLimits unknown_limits =
+        pvt::detail::automatic_resource_limits_for_physical_memory(0U);
+    CHECK(pvt::detail::automatic_render_memory_budget_for_physical_memory(0U)
+          == pvt::kDefaultSequenceMemoryBudgetBytes);
+    CHECK(unknown_limits.maximum_decoded_image_bytes == 512U * mib);
+    CHECK(unknown_limits.maximum_project_bundle_expanded_bytes
+          == pvt::kMaximumUiItems);
+    const std::size_t installed_memory = pvt::physical_memory_bytes();
+    if (installed_memory != 0U) {
+        CHECK(pvt::automatic_render_memory_budget_bytes()
+              == installed_memory / 2U);
+    }
+
+    // Settings may be read by loader/cache threads while the GUI replaces the
+    // complete policy. A snapshot must be one authored generation, never a
+    // mixture of fields from both.
+    const pvt::RuntimeResourceLimits saved_overrides =
+        pvt::resource_limit_overrides();
+    pvt::RuntimeResourceLimits first;
+    first.maximum_decoded_image_bytes = 1U;
+    first.maximum_obj_file_bytes = 2U;
+    first.maximum_obj_mesh_bytes = 3U;
+    first.maximum_project_bundle_expanded_bytes = 4U;
+    first.source_image_cache_bytes = 5U;
+    first.source_image_cache_entries = 6U;
+    first.obj_mesh_cache_bytes = 7U;
+    first.obj_mesh_cache_entries = 8U;
+    first.displacement_mesh_cache_bytes = 9U;
+    first.displacement_mesh_cache_entries = 10U;
+    pvt::RuntimeResourceLimits second = first;
+    second.maximum_decoded_image_bytes = 101U;
+    second.maximum_obj_file_bytes = 102U;
+    second.maximum_obj_mesh_bytes = 103U;
+    second.maximum_project_bundle_expanded_bytes = 104U;
+    second.source_image_cache_bytes = 105U;
+    second.source_image_cache_entries = 106U;
+    second.obj_mesh_cache_bytes = 107U;
+    second.obj_mesh_cache_entries = 108U;
+    second.displacement_mesh_cache_bytes = 109U;
+    second.displacement_mesh_cache_entries = 110U;
+    pvt::set_resource_limit_overrides(first);
+    std::atomic_bool policy_writer_done{false};
+    std::thread policy_writer([&] {
+        for (int iteration = 0; iteration < 2000; ++iteration) {
+            pvt::set_resource_limit_overrides(
+                (iteration & 1) == 0 ? second : first);
+        }
+        policy_writer_done.store(true, std::memory_order_release);
+    });
+    do {
+        const pvt::RuntimeResourceLimits snapshot =
+            pvt::resource_limit_overrides();
+        CHECK(snapshot == first || snapshot == second);
+    } while (!policy_writer_done.load(std::memory_order_acquire));
+    policy_writer.join();
+    pvt::set_resource_limit_overrides(saved_overrides);
+
+    const std::size_t hardware_workers = std::max<std::size_t>(
+        1U, std::thread::hardware_concurrency());
+    const std::size_t expected_gpu_frames = std::min(
+        pvt::kMaximumGpuFramesInFlight,
+        std::max<std::size_t>(2U, hardware_workers / 2U
+                                      + hardware_workers % 2U));
+    CHECK(pvt::detail::automatic_gpu_frames_in_flight()
+          == expected_gpu_frames);
+    CHECK(pvt::detail::automatic_gpu_layer_workers()
+          == std::min<std::size_t>(4U, expected_gpu_frames));
     CHECK(static_cast<std::uint8_t>(
               pvt::StartingColorMode::SquareSpiralRainbow) == 4U);
     CHECK(static_cast<std::uint8_t>(
