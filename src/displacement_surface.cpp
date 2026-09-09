@@ -4,6 +4,7 @@
 #include "path_utf8.h"
 #include "source_image.h"
 #include "render_asset_cache.h"
+#include "render_memory.h"
 
 #include <algorithm>
 #include <chrono>
@@ -388,6 +389,21 @@ bool load_displacement_plane_mesh(
         }
         return false;
     }
+    std::string lease_key;
+    if (render_memory_reader) {
+        lease_key = render_asset_key('D', displacement.path);
+        append_render_asset_key(lease_key, height_image.get());
+        append_render_asset_key(lease_key, render_width);
+        append_render_asset_key(lease_key, render_height);
+        append_render_asset_key(lease_key, displacement.pixels_per_node);
+        append_render_asset_key(lease_key, displacement.minimum);
+        append_render_asset_key(lease_key, displacement.maximum);
+        append_render_asset_key(lease_key, displacement.midpoint);
+        if (auto leased = find_render_asset<ObjMesh>(lease_key)) {
+            destination = std::move(leased);
+            return true;
+        }
+    }
     for (;;) {
         std::shared_ptr<PendingMesh> pending;
         bool build_owner = false;
@@ -402,6 +418,7 @@ bool load_displacement_plane_mesh(
                 });
             if (found != mesh_cache.end()) {
                 found->last_used = ++mesh_cache_clock;
+                remember_render_asset(lease_key, found->mesh);
                 destination = found->mesh;
                 return true;
             }
@@ -440,6 +457,7 @@ bool load_displacement_plane_mesh(
                         lock, std::chrono::milliseconds(5));
                 }
                 if (pending->succeeded) {
+                    remember_render_asset(lease_key, pending->mesh);
                     destination = pending->mesh;
                     clear_error(error);
                     return true;
@@ -508,6 +526,7 @@ bool load_displacement_plane_mesh(
             }
             pending->wake.notify_all();
             if (!generated_ok) return fail(error, std::move(build_error));
+            remember_render_asset(lease_key, generated);
             destination = std::move(generated);
             clear_error(error);
             return true;
@@ -553,6 +572,14 @@ void clear_displacement_mesh_cache() noexcept {
     mesh_cache_clock = 0U;
     ++mesh_cache_generation;
     if (mesh_cache_generation == 0U) ++mesh_cache_generation;
+}
+
+bool retain_displacement_cache_memory(SharedRenderMemory& memory) {
+    const std::lock_guard<std::mutex> lock(mesh_cache_mutex);
+    for (const auto& entry : mesh_cache) {
+        if (!memory.retain(entry.mesh, entry.mesh->estimated_bytes())) return false;
+    }
+    return true;
 }
 
 void prune_displacement_mesh_cache(const AssetPaths& heights) {

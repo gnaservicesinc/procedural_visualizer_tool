@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.8.0**. The version is read from `VERSION` by every
+Current product version: **17.9.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,35 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.9.0 renderer performance and correctness audit
+
+Version 17.9.0 reduces CPU mesh-rendering time and memory while preserving the
+complete floating-point result. Coverage masks now pack one Boolean per bit,
+using 87.5% less mask storage. Opaque analytic surfaces skip rear shading after
+an exactly opaque front sample. Arbitrary OBJ meshes use winding-independent
+viewport rejection and conservative depth occlusion: a triangle is skipped only
+when complete nearer depth coverage proves that it cannot change any pixel. In
+the audit's 10,000-hidden-face workload, median CPU time fell from 15.37 ms to
+4.16 ms. All nine animated OBJ reference hashes remained unchanged.
+
+Decoded images and immutable OBJ/displacement geometry are accounted once in a
+shared render pool rather than once per layer worker. Per-render leases keep the
+exact counted handles alive even when the bounded process cache evicts them, then
+release them with the invocation. Disabled layers, disabled groups, zero-opacity
+layers, and unused assets release render-cache ownership while retaining their
+authored settings, saved paths, and undo behavior. OBJ caching now holds up to 16
+recent meshes within 512 MiB; an alternating three-mesh audit dropped from 60
+parses in 370 ms to three parses in about 19 ms. Projected vertex storage is 27%
+smaller on the audited host.
+
+The audit also repairs missing near-plane coverage on CPU and OpenGL, exact-alpha
+classification, extreme-coordinate overflow and shared-edge cracks, OpenGL
+attribute interpolation, cache publication/lifetime races, and winding-sensitive
+clipped-triangle arithmetic. Both windings and camera-inside two-sided shells
+remain supported. A contracted-arithmetic surface suite supplements native
+compiler coverage. Project formats, public configuration layouts, rendering
+precision, sampling resolution, and SONAME 17 are unchanged.
 
 ## 17.8.0 Palette Remix
 

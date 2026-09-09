@@ -2,6 +2,7 @@
 
 #include "path_utf8.h"
 #include "render_asset_cache.h"
+#include "render_memory.h"
 #include "scope_exit.h"
 
 #include <png.h>
@@ -1052,7 +1053,7 @@ bool decode_source(const std::string& path, std::uintmax_t file_size,
     return true;
 }
 
-bool load_cached(const std::string& path, DecodeIntent intent,
+bool load_cached_impl(const std::string& path, DecodeIntent intent,
                  std::shared_ptr<const DecodedSource>& image,
                  const std::atomic_bool* cancel, std::string* error) {
     int shared_load_retries = 0;
@@ -1271,6 +1272,33 @@ bool load_cached(const std::string& path, DecodeIntent intent,
     }
 }
 
+bool load_cached(const std::string& path, DecodeIntent intent,
+                 std::shared_ptr<const DecodedSource>& image,
+                 const std::atomic_bool* cancel, std::string* error) {
+    if (cancelled(cancel)) return fail(error, "Image source loading was cancelled.");
+    if (!render_memory_reader) return load_cached_impl(path, intent, image, cancel, error);
+    std::uintmax_t size = 0U;
+    fs::file_time_type modified{};
+    if (!inspect_source(path, size, modified, error)) return false;
+    auto key = render_asset_key('I', path);
+    append_render_asset_key(key, intent);
+    append_render_asset_key(key, size);
+    append_render_asset_key(key, modified.time_since_epoch().count());
+    auto selected = find_render_asset<DecodedSource>(key);
+    if (!selected) {
+        if (!load_cached_impl(path, intent, selected, cancel, error)) return false;
+        std::uintmax_t after_size = 0U;
+        fs::file_time_type after_modified{};
+        if (inspect_source(path, after_size, after_modified, nullptr)
+            && size == after_size && modified == after_modified) {
+            remember_render_asset(key, selected);
+        }
+    }
+    image = std::move(selected);
+    if (error) error->clear();
+    return true;
+}
+
 float sample_channel(const Image& image, double x, double y,
                      std::size_t channel, bool tile,
                      bool transparent_outside) {
@@ -1323,6 +1351,22 @@ void prune_source_image_cache(const AssetPaths& images,
     for (const auto& pending : pending_sources) {
         if (!retained(*pending)) pending->cacheable = false;
     }
+}
+
+bool retain_source_cache_memory(SharedRenderMemory& memory) {
+    const std::lock_guard<std::mutex> lock(source_cache_mutex);
+    for (const auto& entry : source_cache) {
+        const auto& decoded = *entry.image;
+        if (decoded.rgba) {
+            const std::shared_ptr<const Image> owner = decoded.rgba;
+            if (!memory.retain(owner, sizeof(Image) + owner->pixels.capacity() * sizeof(float))) return false;
+        }
+        if (decoded.height) {
+            const std::shared_ptr<const HeightImage> owner = decoded.height;
+            if (!memory.retain(owner, sizeof(HeightImage) + owner->samples.capacity() * sizeof(double))) return false;
+        }
+    }
+    return true;
 }
 
 bool validate_starting_image_source(const std::string& path,

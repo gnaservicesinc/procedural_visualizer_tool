@@ -2,6 +2,7 @@
 
 #include "frame_renderer_internal.h"
 #include "render_asset_cache.h"
+#include "render_memory.h"
 #include "post_process_alpha.h"
 
 #include <algorithm>
@@ -1057,7 +1058,7 @@ bool render_project_with_backend_validated(
     double normalized_phase,
     const int* synchronized_frame,
     const FrameRenderOptions& options,
-    std::size_t validated_project_peak_bytes,
+    const detail::ProjectRenderMemory& memory,
     Image& destination,
     const std::atomic_bool* cancel,
     std::string* error) {
@@ -1121,6 +1122,7 @@ bool render_project_with_backend_validated(
                                 Image& image,
                                 std::string& layer_error,
                                 const std::atomic_bool* render_cancel) {
+        const detail::RenderMemoryScope asset_scope(memory.shared);
         const LayerTimelineSelection timeline = select_layer_timeline(
             project, project.layers[index], normalized_phase,
             synchronized_frame);
@@ -1236,21 +1238,9 @@ bool render_project_with_backend_validated(
         return fail(error,
                     "Project canvas dimensions overflow the frame byte size.");
     }
-    std::size_t project_buffers = 0U;
-    const bool project_buffers_bounded =
-        checked_multiply(frame_bytes, 2U, project_buffers);
-    // validate(ProjectConfig) computes the worst contributing layer peak plus
-    // the accumulator and compositing image. Reuse that result instead of
-    // materializing and deeply validating every RenderConfig again during
-    // dispatch. Applying globals here would otherwise copy a project's cached
-    // music-analysis vectors once per layer before actual rendering begins.
-    const std::size_t worst_layer_peak =
-        project_buffers_bounded
-                && validated_project_peak_bytes >= project_buffers
-            ? validated_project_peak_bytes - project_buffers
-            : validated_project_peak_bytes;
-    const std::size_t layer_peak_bytes = std::max(frame_bytes,
-                                                  worst_layer_peak);
+    // Validation separates shared immutable assets and the composite from
+    // per-worker storage; reserve them once instead of charging every worker.
+    const std::size_t layer_peak_bytes = std::max(frame_bytes, memory.worker_bytes);
     std::vector<LayerDispatch> dispatch;
     dispatch.reserve(contributing.size());
     std::vector<LayerPoolTask> cpu_tasks;
@@ -1319,7 +1309,7 @@ bool render_project_with_backend_validated(
         return true;
     }
 
-    LayerMemoryAdmission layer_memory(cpu_memory_budget, cancel);
+    LayerMemoryAdmission layer_memory(memory.worker_budget(cpu_memory_budget), cancel);
     LayerRenderPool cpu_pool(
         std::move(cpu_tasks), dispatch.size(), cpu_worker_count,
         layer_memory, cancel,
@@ -1748,8 +1738,11 @@ ValidationResult validate(const LiveConfig& live) {
     }
 }
 
-ValidationResult validate(const ProjectConfig& project) {
+ValidationResult detail::validate_project_render_memory(
+    const ProjectConfig& project, ProjectRenderMemory& memory) {
     try {
+        memory = {};
+        const RenderMemoryScope asset_scope(memory.shared);
         if (!valid_uuid(project.uuid)) {
             return invalid_result(
                 "Project UUID must be a canonical lower-case RFC 4122 version-4 UUID.");
@@ -1890,7 +1883,7 @@ ValidationResult validate(const ProjectConfig& project) {
             const bool contributing = layer_effectively_enabled(project, layer)
                 && layer.opacity > 0.0;
             const ValidationResult layer_validation =
-                detail::validate_project_layer_config(render, contributing);
+                detail::validate_project_layer_config(render, contributing, &memory.shared);
             if (!layer_validation.ok) {
                 return invalid_result("Layer " + std::to_string(index + 1U)
                                       + " is invalid: " + layer_validation.message,
@@ -1996,6 +1989,13 @@ ValidationResult validate(const ProjectConfig& project) {
                 "Alpha output must be enabled when the enabled layer stack can be transparent.");
         }
 
+        // Include still-retained variants and other cache owners exactly once.
+        // Read locks are acquired separately; no decoder runs under a lock.
+        if (!detail::retain_source_cache_memory(memory.shared)
+            || !detail::retain_displacement_cache_memory(memory.shared)
+            || !detail::retain_obj_cache_memory(memory.shared)) {
+            return invalid_result("The shared cache memory estimate overflowed.");
+        }
         std::size_t pixel_count = 0U;
         std::size_t component_count = 0U;
         std::size_t frame_bytes = 0U;
@@ -2006,13 +2006,16 @@ ValidationResult validate(const ProjectConfig& project) {
             || !checked_multiply(pixel_count, 4U, component_count)
             || !checked_multiply(component_count, sizeof(float), frame_bytes)
             || !checked_multiply(frame_bytes, 2U, project_buffers)
-            || !checked_add(worst_layer_peak, project_buffers, peak_bytes)) {
+            || !checked_add(worst_layer_peak, project_buffers, peak_bytes)
+            || !checked_add(peak_bytes, memory.shared.bytes, peak_bytes)) {
             return invalid_result("The project peak memory estimate overflowed.");
         }
         ValidationResult result;
         result.ok = true;
         result.message = "Project configuration is valid.";
         result.estimated_peak_bytes = peak_bytes;
+        memory.worker_bytes = worst_layer_peak;
+        memory.composite_bytes = project_buffers;
         return result;
     } catch (const std::bad_alloc&) {
         return invalid_result("Project validation ran out of memory.");
@@ -2022,6 +2025,11 @@ ValidationResult validate(const ProjectConfig& project) {
     } catch (...) {
         return invalid_result("Project validation failed with an unknown error.");
     }
+}
+
+ValidationResult validate(const ProjectConfig& project) {
+    detail::ProjectRenderMemory memory;
+    return detail::validate_project_render_memory(project, memory);
 }
 
 bool composite_over(const Image& source, Image& destination,
@@ -2067,7 +2075,10 @@ bool render_project_frame_at_phase(const ProjectConfig& project,
     clear_error(error);
     try {
         detail::prune_render_asset_caches(project);
-        const ValidationResult validation = validate(project);
+        detail::ProjectRenderMemory memory;
+        const ValidationResult validation = detail::validate_project_render_memory(project, memory);
+        const detail::RenderMemoryScope asset_scope(
+            static_cast<const detail::SharedRenderMemory&>(memory.shared));
         if (!validation.ok) {
             return fail(error, validation.message);
         }
@@ -2096,7 +2107,10 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
     clear_error(error);
     try {
         detail::prune_render_asset_caches(project);
-        const ValidationResult validation = validate(project);
+        detail::ProjectRenderMemory memory;
+        const ValidationResult validation = detail::validate_project_render_memory(project, memory);
+        const detail::RenderMemoryScope asset_scope(
+            static_cast<const detail::SharedRenderMemory&>(memory.shared));
         if (!validation.ok) {
             return fail(error, validation.message);
         }
@@ -2141,7 +2155,8 @@ bool render_project_frame_at_phase(
     clear_error(error);
     try {
         detail::prune_render_asset_caches(project);
-        const ValidationResult validation = validate(project);
+        detail::ProjectRenderMemory memory;
+        const ValidationResult validation = detail::validate_project_render_memory(project, memory);
         if (!validation.ok) return fail(error, validation.message);
         if (!std::isfinite(normalized_phase)) {
             return fail(error,
@@ -2152,7 +2167,7 @@ bool render_project_frame_at_phase(
         }
         return render_project_with_backend_validated(
             project, normalized_phase, nullptr, options,
-            validation.estimated_peak_bytes,
+            memory,
             destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");
@@ -2173,7 +2188,8 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
     clear_error(error);
     try {
         detail::prune_render_asset_caches(project);
-        const ValidationResult validation = validate(project);
+        detail::ProjectRenderMemory memory;
+        const ValidationResult validation = detail::validate_project_render_memory(project, memory);
         if (!validation.ok) return fail(error, validation.message);
         std::string frame_count_error;
         const int frame_count = effective_frame_count(project.canvas,
@@ -2192,7 +2208,7 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
             project,
             static_cast<double>(wrapped_frame)
                 / static_cast<double>(frame_count),
-            &wrapped_frame, options, validation.estimated_peak_bytes,
+            &wrapped_frame, options, memory,
             destination, cancel, error);
     } catch (const std::bad_alloc&) {
         return fail(error, "Project rendering ran out of memory.");

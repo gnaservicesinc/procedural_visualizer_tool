@@ -1,10 +1,30 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 17.9.0 renderer performance and correctness audit
+
+The three-iteration audit is recorded in `PERFORMANCE_AUDIT.md`. Implemented
+changes include bit-packed CPU/OpenGL mesh coverage, exact opaque-front analytic
+rear skipping, winding-independent OBJ viewport and depth-occlusion rejection,
+near-plane clipping, smaller projected vertices, bounded multi-entry OBJ caching,
+shared decoded/geometry accounting, render-invocation asset leases, and cache
+pruning for disabled or unused layers. Correctness fixes cover exact-alpha mesh
+admission, finite extreme projections, shared extreme edges, OpenGL interpolation,
+exception-safe resource cleanup, source/cache publication races, and deterministic
+clipped-triangle winding arithmetic.
+
+Local release evidence is 39/39 native Release tests, 4/4 actual OpenGL focused
+tests, 6/6 ASan/UBSan/float-cast-overflow suites, and 3/3 targeted ThreadSanitizer
+suites. Nine animated OBJ hashes match the 17.8.0 baseline. A 10,000-hidden-face
+CPU probe improved from 15.37 ms to 4.16 ms with exact float output; alternating
+three OBJ files improved from 60 parses/370 ms to three parses/about 19 ms.
+Linux and Windows qualification is performed by GitHub Actions. Project formats,
+public configuration layouts, precision, sampling, and SONAME 17 are unchanged.
 
 ## 17.8.0 Palette Remix
 

@@ -9,6 +9,10 @@
 namespace pvt::detail {
 
 using AssetPaths = std::unordered_set<std::string>;
+struct SharedRenderMemory;
+bool retain_source_cache_memory(SharedRenderMemory& memory);
+bool retain_displacement_cache_memory(SharedRenderMemory& memory);
+bool retain_obj_cache_memory(SharedRenderMemory& memory);
 
 // Drop cache ownership only. In-flight renders keep immutable shared handles;
 // authored paths, embedded assets, undo, and saved configurations are retained.

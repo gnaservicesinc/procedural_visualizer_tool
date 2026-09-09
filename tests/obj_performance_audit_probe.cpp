@@ -107,6 +107,44 @@ int main(int argc, char** argv) {
             std::cout << "mesh_case=" << scenario << " median_ms=" << times[times.size()/2U]
                       << " hash=" << std::hex << hash << std::dec << '\n';
         }
+        // A visible front triangle followed by many fully hidden rear faces.
+        // Keep the unculled renderer as the reference in the same binary.
+        ObjMesh hidden;
+        hidden.positions = {{-10, -10, 2.9}, {10, -10, 2.9}, {0, 10, 2.9},
+                            {-2, -2, -10},   {2, -2, -10},   {0, 2, -10}};
+        ObjTriangle front = triangle, rear = triangle;
+        for (auto& corner : rear.corners)
+            corner.position += 3U;
+        hidden.triangles.assign(10000U, rear);
+        hidden.triangles.insert(hidden.triangles.begin(), front);
+        pvt::SurfaceConfig surface;
+        surface.enabled = true;
+        surface.mapping = pvt::SurfaceMapping::CustomObj;
+        surface.projection = pvt::SurfaceProjection::Perspective;
+        surface.sizing = pvt::SurfaceSizing::ShortSide;
+        surface.normalize_obj = false;
+        surface.camera_distance = 3.0;
+        surface.focal_length = 1.0;
+        for (std::size_t i = 3; i < source.pixels.size(); i += 4U)
+            source.pixels[i] = 1.0F;
+        pvt::Image reference;
+        for (bool cull : {false, true}) {
+            std::vector<double> times;
+            for (int frame = 0; frame < 7; ++frame) {
+                pvt::Image output;
+                const auto before = Clock::now();
+                require(apply_mesh_surface_mapping(source, output, hidden, surface, 0.0, &error, nullptr,
+                                                   cull));
+                times.push_back(std::chrono::duration<double, std::milli>(Clock::now() - before).count());
+                if (reference.pixels.empty())
+                    reference = output;
+                else if (reference.pixels != output.pixels)
+                    throw std::runtime_error("occlusion probe changed output");
+            }
+            std::sort(times.begin(), times.end());
+            std::cout << "hidden_faces cull=" << cull << " median_ms=" << times[times.size() / 2U] << '\n';
+        }
+
     } catch (const std::exception& exception) {
         std::cerr << exception.what() << '\n';
         return 1;

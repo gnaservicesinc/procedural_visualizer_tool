@@ -316,8 +316,10 @@ inline bool has_enabled_parameter_lfo(const RenderData& render) {
         [](const ParameterLfo& lfo) { return lfo.enabled; });
 }
 ValidationResult validate_frame_render_config(const RenderConfig& config);
+struct SharedRenderMemory;
 ValidationResult validate_project_layer_config(const RenderConfig& config,
-                                               bool contributing);
+                                               bool contributing,
+                                               SharedRenderMemory* shared = nullptr);
 
 // Selected-backend rendering validates and materializes parameter LFOs before
 // dispatch. These entry points preserve that work instead of repeating it in

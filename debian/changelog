@@ -1,3 +1,11 @@
+procedural-visualizer-tool (17.9.0) stonking; urgency=medium
+
+  * Reduce mesh coverage memory and accelerate hidden OBJ geometry.
+  * Add shared render-memory accounting and invocation asset leases.
+  * Fix near-plane, winding, cache-lifetime, and GPU interpolation defects.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Wed, 09 Sep 2026 01:57:27 -0400
+
 procedural-visualizer-tool (17.8.0) stonking; urgency=medium
 
   * Add the Palette Remix artwork-preview workflow.

@@ -7,6 +7,9 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <random>
+#include <iomanip>
+#include <sstream>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -238,8 +241,127 @@ int main(int argc, char** argv) {
     if (!pvt::detail::apply_mesh_surface_mapping(translucent, inside_reversed, inside_mesh,
             inside_surface, 0.0, &error)
         || inside.pixels != inside_reversed.pixels || pixel(inside, 32, 32)[3] != 0.5F) {
-        return fail(39, "camera-inside two-sided shell changed with winding: " + error);
+        std::ostringstream detail;
+        detail << std::setprecision(17) << "camera-inside two-sided shell changed with winding: "
+               << error << "; center alpha=" << pixel(inside, 32, 32)[3]
+               << "; components=" << inside.pixels.size() << '/' << inside_reversed.pixels.size();
+        const std::size_t common = std::min(inside.pixels.size(), inside_reversed.pixels.size());
+        for (std::size_t i = 0U; i < common; ++i) {
+            if (inside.pixels[i] != inside_reversed.pixels[i]) {
+                detail << "; first mismatch pixel=(" << (i / 4U) % 64U << ','
+                       << (i / 4U) / 64U << "), channel=" << i % 4U
+                       << ": " << inside.pixels[i] << " versus " << inside_reversed.pixels[i];
+                break;
+            }
+        }
+        return fail(39, detail.str());
     }
+    // Every cyclic/reversed ordering of a crossing triangle must produce the
+    // same fan and attributes, including compilers that contract multiply/add.
+    pvt::detail::ObjMesh crossing;
+    crossing.positions = {{-0.9, -0.8, 0.0}, {0.8, -0.7, 0.1}, {0.1, 0.9, 1.8}};
+    crossing.texcoords = {{0.1, 0.15}, {0.85, 0.2}, {0.55, 0.9}};
+    pvt::detail::ObjTriangle crossing_triangle;
+    crossing_triangle.corners = {{{0U, 0U, pvt::detail::ObjCorner::missing},
+                                  {1U, 1U, pvt::detail::ObjCorner::missing},
+                                  {2U, 2U, pvt::detail::ObjCorner::missing}}};
+    crossing.triangles.push_back(crossing_triangle);
+    inside_surface.normalize_obj = false;
+    inside_surface.camera_distance = 1.0;
+    std::array<unsigned, 3U> order = {0U, 1U, 2U};
+    pvt::Image canonical_crossing;
+    do {
+        for (unsigned corner = 0U; corner < 3U; ++corner) {
+            crossing.triangles[0].corners[corner] = crossing_triangle.corners[order[corner]];
+        }
+        if (!pvt::detail::apply_mesh_surface_mapping(uv_gradient_image(65, 63, 0.5F), inside, crossing,
+                                                     inside_surface, 0.0, &error))
+            return fail(41, error);
+        if (canonical_crossing.pixels.empty())
+            canonical_crossing = inside;
+        else if (canonical_crossing.pixels != inside.pixels) {
+            return fail(41, "clipped fan depends on source corner order");
+        }
+    } while (std::next_permutation(order.begin(), order.end()));
+
+    // Covered rear faces can be rejected only after depth proves them hidden.
+    // Exercise both windings, projections, partial/absent coverage, clipping,
+    // nearest-only alpha and actual depth peeling against the unculled path.
+    pvt::detail::ObjMesh hidden_faces;
+    hidden_faces.positions = {{-10, -10, 2.9}, {10, -10, 2.9}, {0, 10, 2.9},
+                              {-2, -2, -10},   {2, -2, -10},   {0, 2, -10}};
+    hidden_faces.texcoords = {{0.1, 0.1}, {0.9, 0.1}, {0.5, 0.9}};
+    pvt::detail::ObjTriangle front, rear;
+    for (unsigned i = 0; i < 3U; ++i) {
+        front.corners[i] = {i, i, pvt::detail::ObjCorner::missing};
+        rear.corners[i] = {i + 3U, i, pvt::detail::ObjCorner::missing};
+    }
+    hidden_faces.triangles.assign(256U, rear);
+    hidden_faces.triangles.insert(hidden_faces.triangles.begin(), front);
+    inside_surface.camera_distance = 3.0;
+    inside_surface.focal_length = 1.0;
+    inside_surface.sizing = pvt::SurfaceSizing::ShortSide;
+    for (auto projection :
+         {pvt::SurfaceProjection::Perspective, pvt::SurfaceProjection::Orthographic}) {
+        inside_surface.projection = projection;
+        for (double front_z : {2.9, 0.0, 3.1}) {
+            for (unsigned i = 0; i < 3U; ++i)
+                hidden_faces.positions[i].z = front_z;
+            for (bool reverse : {false, true}) {
+                if (reverse)
+                    for (auto& triangle : hidden_faces.triangles)
+                        std::swap(triangle.corners[1], triangle.corners[2]);
+                for (float alpha : {1.0F, 0.5F}) {
+                    for (bool composite : {false, true}) {
+                        inside_surface.composite_backfaces = composite;
+                        pvt::Image reference, actual;
+                        const auto input = uv_gradient_image(65, 63, alpha);
+                        if (!pvt::detail::apply_mesh_surface_mapping(input, reference, hidden_faces,
+                                                                     inside_surface, 0.0, &error,
+                                                                     nullptr, false) ||
+                            !pvt::detail::apply_mesh_surface_mapping(input, actual, hidden_faces,
+                                                                     inside_surface, 0.0, &error,
+                                                                     nullptr, true) ||
+                            reference.pixels != actual.pixels)
+                            return fail(42, "occlusion rejection changed mesh pixels: " + error);
+                    }
+                }
+            }
+        }
+    }
+    inside_surface.composite_backfaces = true;
+    std::mt19937 random(4317U);
+    const auto coordinate = [&] { return (static_cast<double>(random() % 20001U) - 10000.0) / 4000.0; };
+    for (unsigned i = 0; i < 192U; ++i) {
+        pvt::detail::ObjTriangle added;
+        for (unsigned j = 0; j < 3U; ++j) {
+            added.corners[j] = {static_cast<std::uint32_t>(hidden_faces.positions.size()), j,
+                                pvt::detail::ObjCorner::missing};
+            hidden_faces.positions.push_back({coordinate(), coordinate(), coordinate()});
+        }
+        hidden_faces.triangles.push_back(added);
+    }
+    for (auto projection :
+         {pvt::SurfaceProjection::Perspective, pvt::SurfaceProjection::Orthographic}) {
+        inside_surface.projection = projection;
+        for (double z : {1.7, -0.3}) {
+            for (unsigned i = 0; i < 3U; ++i)
+                hidden_faces.positions[i].z = z;
+            for (double scale : {1.0, -1.0}) {
+                inside_surface.scale_x = scale;
+                pvt::Image reference, actual;
+                const auto input = uv_gradient_image(65, 63, 1.0F);
+                if (!pvt::detail::apply_mesh_surface_mapping(
+                        input, reference, hidden_faces, inside_surface, 0.0, &error, nullptr, false) ||
+                    !pvt::detail::apply_mesh_surface_mapping(
+                        input, actual, hidden_faces, inside_surface, 0.0, &error, nullptr, true) ||
+                    reference.pixels != actual.pixels)
+                    return fail(43, "mixed visible/occluded faces changed pixels: " + error);
+            }
+        }
+    }
+    inside_surface.scale_x = 1.0;
+
     pvt::detail::ObjMesh near_mesh;
     near_mesh.positions = {{-1,-1,0}, {1,-1,0}, {0,1,0}};
     pvt::detail::ObjTriangle near_triangle;

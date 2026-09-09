@@ -1,4 +1,5 @@
 #include "obj_mesh.h"
+#include "render_memory.h"
 #include "render_asset_cache.h"
 #include "path_utf8.h"
 
@@ -877,7 +878,7 @@ bool inspect_obj_file(const std::string& utf8_path,
 
 } // namespace
 
-bool load_obj_mesh_cached(const std::string& utf8_path,
+static bool load_obj_mesh_cached_impl(const std::string& utf8_path,
                           std::shared_ptr<const ObjMesh>& destination,
                           std::string* error,
                           const ObjLoadLimits& limits) {
@@ -1079,6 +1080,43 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
     }
 }
 
+bool load_obj_mesh_cached(const std::string& utf8_path,
+                          std::shared_ptr<const ObjMesh>& destination,
+                          std::string* error,
+                          const ObjLoadLimits& limits) {
+    if (!render_memory_reader) {
+        return load_obj_mesh_cached_impl(utf8_path, destination, error, limits);
+    }
+    clear_error(error);
+    try {
+        ObjFileStamp before;
+        if (!inspect_obj_file(utf8_path, limits, before, error)) return false;
+        auto key = render_asset_key('O', before.normalized_path);
+        append_render_asset_key(key, before.size);
+        append_render_asset_key(key, before.write_time.time_since_epoch().count());
+        append_render_asset_key(key, limits.maximum_file_bytes);
+        append_render_asset_key(key, limits.maximum_line_bytes);
+        append_render_asset_key(key, limits.maximum_positions);
+        append_render_asset_key(key, limits.maximum_texcoords);
+        append_render_asset_key(key, limits.maximum_normals);
+        append_render_asset_key(key, limits.maximum_triangles);
+        append_render_asset_key(key, limits.maximum_polygon_corners);
+        append_render_asset_key(key, limits.maximum_mesh_bytes);
+        auto selected = find_render_asset<ObjMesh>(key);
+        if (!selected) {
+            if (!load_obj_mesh_cached_impl(utf8_path, selected, error, limits)) return false;
+            ObjFileStamp after;
+            if (inspect_obj_file(utf8_path, limits, after, nullptr) && same_stamp(before, after)) {
+                remember_render_asset(key, selected);
+            }
+        }
+        destination = std::move(selected);
+        return true;
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Could not retain the render OBJ asset: ") + exception.what());
+    }
+}
+
 void clear_obj_mesh_cache() noexcept {
     ObjMeshCache& cache = obj_mesh_cache();
     std::lock_guard<std::mutex> lock(cache.mutex);
@@ -1090,6 +1128,15 @@ void clear_obj_mesh_cache() noexcept {
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
     obj_mesh_cache_parse_count.store(0U, std::memory_order_relaxed);
 #endif
+}
+
+bool retain_obj_cache_memory(SharedRenderMemory& memory) {
+    ObjMeshCache& cache = obj_mesh_cache();
+    const std::lock_guard<std::mutex> lock(cache.mutex);
+    for (const auto& entry : cache.entries) {
+        if (!memory.retain(entry.mesh, entry.bytes)) return false;
+    }
+    return true;
 }
 
 void prune_obj_mesh_cache(const AssetPaths& objects) {

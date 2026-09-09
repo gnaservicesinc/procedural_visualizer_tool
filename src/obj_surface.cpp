@@ -1,4 +1,5 @@
 #include "obj_surface.h"
+#include "raster_occlusion.h"
 #include "packed_mask.h"
 
 #include "environment_map.h"
@@ -456,7 +457,13 @@ void rasterize_triangle(std::array<RasterVertex, 3U> vertices,
     // the rasterizer and are shaded face-forward below.
     if (area < 0.0) {
         std::swap(vertices[1], vertices[2]);
-        area = -area;
+        // Negating the old determinant need not equal evaluating the new
+        // order when multiply/add contraction is enabled (notably GCC ARM64).
+        // Use the same ordered vertices for both area and sample edges.
+        area = edge(vertices[0].projected->screen,
+                    vertices[1].projected->screen,
+                    vertices[2].projected->screen);
+        if (!std::isfinite(area) || area <= 1.0e-12) return;
     }
 
     const double minimum_x = std::min({vertices[0].projected->screen.x,
@@ -504,6 +511,41 @@ void rasterize_triangle(std::array<RasterVertex, 3U> vertices,
     const bool extreme_0 = extreme_vertex(vertices[0].projected->screen);
     const bool extreme_1 = extreme_vertex(vertices[1].projected->screen);
     const bool extreme_2 = extreme_vertex(vertices[2].projected->screen);
+    if (fragment.can_cull() &&
+        static_cast<double>(last_x - first_x + 1) * (last_y - first_y + 1) >= 128.0) {
+        // Bound the exact raster expression over the entire pixel rectangle.
+        // Coverage tests may further restrict it but can never expand it.
+        RasterInterval denominator{0.0, 0.0};
+        RasterInterval linear_depth{0.0, 0.0};
+        const RasterInterval px{first_x + 0.5, last_x + 0.5}, py{first_y + 0.5, last_y + 0.5};
+        for (std::size_t i = 0U; i < 3U; ++i) {
+            const auto a = vertices[(i + 1U) % 3U].projected->screen;
+            const auto b = vertices[(i + 2U) % 3U].projected->screen;
+            auto edges =
+                (RasterInterval{b.x, b.x} - RasterInterval{a.x, a.x}) *
+                    (py - RasterInterval{a.y, a.y}) -
+                (RasterInterval{b.y, b.y} - RasterInterval{a.y, a.y}) * (px - RasterInterval{a.x, a.x});
+            // canonical_edge may use the reversed expression; include both
+            // rounded evaluations in the bound for extreme coordinates.
+            const auto reverse =
+                (RasterInterval{a.x, a.x} - RasterInterval{b.x, b.x}) *
+                    (py - RasterInterval{b.y, b.y}) -
+                (RasterInterval{a.y, a.y} - RasterInterval{b.y, b.y}) * (px - RasterInterval{b.x, b.x});
+            edges.low = std::min(edges.low, -reverse.high);
+            edges.high = std::max(edges.high, -reverse.low);
+            edges.low = std::max(0.0, edges.low);
+            const auto barycentric = edges.divide_positive(area);
+            const double inverse = vertices[i].projected->inverse_depth;
+            const double depth = vertices[i].projected->camera_depth;
+            denominator = denominator + barycentric * RasterInterval{inverse, inverse};
+            linear_depth = linear_depth + barycentric * RasterInterval{depth, depth};
+        }
+        const double minimum_depth = surface.projection == SurfaceProjection::Orthographic
+                                         ? linear_depth.low
+                                         : RasterInterval::down(1.0 / denominator.high);
+        if (fragment.occludes(first_x, last_x, first_y, last_y, minimum_depth)) return;
+    }
+
     const auto sample_edge = [&](ScreenPoint first, ScreenPoint second,
                                  ScreenPoint point, bool extreme) {
         return extreme ? canonical_edge(first, second, point)
@@ -715,6 +757,20 @@ void rasterize_mesh(const ObjMesh& mesh,
             draw(vertices);
             continue;
         }
+
+        // Clipped quads must use the same diagonal after reversing source
+        // winding. Otherwise floating-point edge/interpolation rounding can
+        // produce different coverage across compiler arithmetic modes.
+        // Sort only the three original corners; any order still describes
+        // the same triangle, and ordinary unclipped arithmetic is untouched.
+        const auto position_less = [](const RasterVertex& a, const RasterVertex& b) {
+            const ObjVec3 first = a.projected->world;
+            const ObjVec3 second = b.projected->world;
+            if (first.x != second.x) return first.x < second.x;
+            if (first.y != second.y) return first.y < second.y;
+            return first.z < second.z;
+        };
+        std::sort(vertices.begin(), vertices.end(), position_less);
 
         // Sutherland-Hodgman clipping against camera depth. A triangle becomes
         // at most a quad. Keep all storage on the stack, including interpolated
@@ -1240,6 +1296,11 @@ struct OpaqueFragments {
     std::vector<float>& depth;
     Image& mapped;
     PackedMask& coverage;
+    RasterOcclusion& occlusion;
+    bool can_cull() const { return occlusion.has_coverage(); }
+    bool occludes(int left, int right, int top, int bottom, double minimum_depth) const {
+        return occlusion.occludes(left, right, top, bottom, minimum_depth);
+    }
 
     bool accepts(std::size_t pixel, double candidate_depth) const {
         return candidate_depth < depth[pixel];
@@ -1247,12 +1308,15 @@ struct OpaqueFragments {
 
     void store(std::size_t pixel, double candidate_depth, Color color) {
         depth[pixel] = static_cast<float>(candidate_depth);
+        if (!coverage.test(pixel)) occlusion.first_hit(pixel, depth);
         store_color(mapped, pixel, color);
         coverage.set(pixel);
     }
 };
 
 struct LayerFragments {
+    bool can_cull() const { return false; }
+    bool occludes(int,int,int,int,double) const { return false; }
     const std::vector<float>& previous_depth;
     std::vector<float>& next_depth;
     Image& layer;
@@ -1308,13 +1372,25 @@ bool mesh_geometry_memory_requirements(
     return true;
 }
 
+bool mesh_occlusion_memory_requirements(int width, int height, std::size_t& bytes) noexcept {
+    if (width <= 0 || height <= 0) return false;
+    std::size_t count = 0U, candidate = 0U;
+    if (!checked_multiply(static_cast<std::size_t>(width / 8 + (width % 8 != 0)),
+                          static_cast<std::size_t>(height / 8 + (height % 8 != 0)), count) ||
+        !checked_multiply(count, RasterOcclusion::tile_bytes, candidate))
+        return false;
+    bytes = candidate;
+    return true;
+}
+
 bool apply_mesh_surface_mapping(const Image& source,
                                 Image& destination,
                                 const ObjMesh& mesh,
                                 const SurfaceConfig& surface,
                                 double loop_phase,
                                 std::string* error,
-                                const std::atomic_bool* cancel) {
+                                const std::atomic_bool* cancel,
+                                bool cull_occluded) {
     clear_error(error);
     if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
         return fail(error,
@@ -1414,7 +1490,10 @@ bool apply_mesh_surface_mapping(const Image& source,
             || !surface.composite_backfaces) {
             std::vector<float> depth(pixel_count,
                                      std::numeric_limits<float>::infinity());
-            OpaqueFragments fragments{depth, mapped, coverage};
+            // Small meshes seldom amortize interval/tile setup.
+            RasterOcclusion occlusion(source.width,source.height,
+                                       cull_occluded && mesh.triangles.size() >= 64U);
+            OpaqueFragments fragments{depth, mapped, coverage, occlusion};
             rasterize_mesh(mesh, projected, world_normals, projection_context,
                            construction_plan, angles, source,
                            source.width, source.height, surface,

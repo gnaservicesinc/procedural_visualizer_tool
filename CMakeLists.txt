@@ -165,6 +165,8 @@ add_library(ProceduralVisualizerTool
     src/obj_mesh.h
     src/obj_surface.cpp
     src/obj_surface.h
+    src/raster_occlusion.h
+    src/render_memory.h
     src/path_utf8.h
     src/post_process_alpha.h
     src/render_asset_cache.cpp
@@ -888,6 +890,19 @@ if(BUILD_TESTING)
     pvt_enable_warnings(pvt_obj_surface_tests)
     add_test(NAME pvt_obj_surface
         COMMAND pvt_obj_surface_tests ${CMAKE_CURRENT_SOURCE_DIR})
+    if(NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # Exercise contracted arithmetic in addition to normal platform flags
+        # after the Linux ARM64 corner-order regression.
+        get_target_property(_pvt_obj_surface_sources pvt_obj_surface_tests SOURCES)
+        add_executable(pvt_obj_surface_contracted_tests ${_pvt_obj_surface_sources})
+        target_compile_features(pvt_obj_surface_contracted_tests PRIVATE cxx_std_17)
+        target_compile_options(pvt_obj_surface_contracted_tests PRIVATE -O3 -ffp-contract=fast -fno-math-errno)
+        target_include_directories(pvt_obj_surface_contracted_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(pvt_obj_surface_contracted_tests PRIVATE PNG::PNG ZLIB::ZLIB Threads::Threads)
+        pvt_enable_warnings(pvt_obj_surface_contracted_tests)
+        add_test(NAME pvt_obj_surface_contracted
+            COMMAND pvt_obj_surface_contracted_tests ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
 
     add_executable(pvt_obj_performance_audit_probe EXCLUDE_FROM_ALL
         tests/obj_performance_audit_probe.cpp src/environment_map.cpp

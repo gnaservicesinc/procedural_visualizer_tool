@@ -1,5 +1,6 @@
 #include "../src/obj_mesh.h"
 #include "../src/render_asset_cache.h"
+#include "../src/render_memory.h"
 
 #include <algorithm>
 #include <atomic>
@@ -387,6 +388,61 @@ int main(int argc, char** argv) {
         || alternating != replacement) {
         return fail(21, "same-path cache publication fence failed: " + error + stale_error);
     }
+
+    // A project may use more assets than the process LRU can hold, including
+    // individually oversized assets. Admission must lease the exact handles
+    // that workers use, rather than pin one copy and parse another per frame.
+    clear_obj_mesh_cache();
+    set_obj_mesh_cache_byte_limit_for_testing(0U);
+    SharedRenderMemory leases;
+    std::vector<std::weak_ptr<const ObjMesh>> leased_lifetimes;
+    {
+        const RenderMemoryScope scope(leases);
+        for (const auto& path : many_paths) {
+            std::shared_ptr<const ObjMesh> selected;
+            if (!load_obj_mesh_cached(path.string(), selected, &error)
+                || !leases.retain(selected, selected->estimated_bytes())) return fail(22, error);
+            leased_lifetimes.push_back(selected);
+        }
+    }
+    const auto parses_before_workers = obj_mesh_cache_parse_count_for_testing();
+    std::atomic_bool lease_failed{false};
+    std::vector<std::thread> lease_workers;
+    for (int worker = 0; worker < 4; ++worker) {
+        lease_workers.emplace_back([&] {
+            const RenderMemoryScope scope(static_cast<const SharedRenderMemory&>(leases));
+            for (std::size_t index = 0U; index < many_paths.size(); ++index) {
+                std::shared_ptr<const ObjMesh> selected;
+                std::string worker_error;
+                if (!load_obj_mesh_cached(many_paths[index].string(), selected, &worker_error)
+                    || selected != leased_lifetimes[index].lock()) lease_failed.store(true);
+            }
+        });
+    }
+    for (auto& worker : lease_workers) worker.join();
+    if (lease_failed.load() || obj_mesh_cache_parse_count_for_testing() != parses_before_workers) {
+        return fail(22, "workers reparsed or duplicated leased OBJ allocations");
+    }
+    {
+        const RenderMemoryScope scope(static_cast<const SharedRenderMemory&>(leases));
+        ObjLoadLimits restricted;
+        restricted.maximum_positions = 0U;
+        std::shared_ptr<const ObjMesh> selected;
+        if (load_obj_mesh_cached(many_paths.front().string(), selected, &error, restricted)) {
+            return fail(23, "an OBJ lease bypassed different loader limits");
+        }
+        { std::ofstream output(many_paths.front(), std::ios::app); output << "\n# changed version\n"; }
+        if (!load_obj_mesh_cached(many_paths.front().string(), selected, &error)
+            || selected == leased_lifetimes.front().lock()) {
+            return fail(23, "an OBJ lease hid a replaced file: " + error);
+        }
+    }
+    leases = {};
+    if (std::any_of(leased_lifetimes.begin(), leased_lifetimes.end(),
+                    [](const auto& weak) { return !weak.expired(); })) {
+        return fail(24, "finished workers retained uncached leased OBJ assets");
+    }
+    set_obj_mesh_cache_byte_limit_for_testing(512U * 1024U * 1024U);
 
     std::error_code cleanup_error;
     for (const auto& path : many_paths) fs::remove(path, cleanup_error);

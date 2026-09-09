@@ -2,11 +2,13 @@
 #include "../src/displacement_surface.h"
 #include "../src/render_asset_cache.h"
 #include "../src/source_image.h"
+#include "../src/render_memory.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -50,6 +52,21 @@ int main() {
         pvt::Image expected;
         require(pvt::render_project_frame(project, 0, expected, nullptr, &error),
                 error.c_str());
+        {
+            pvt::detail::ProjectRenderMemory memory;
+            require(pvt::detail::validate_project_render_memory(project, memory).ok,
+                    "source/displacement ledger validation failed");
+            require(memory.shared.leases.size() == 3U && memory.shared.owners.size() == 3U,
+                    "color, height decode intent, and generated geometry were not leased separately");
+            pvt::detail::SharedRenderMemory overflow;
+            const auto first = std::make_shared<const int>(1);
+            const auto second_owner = std::make_shared<const int>(2);
+            const auto maximum = (std::numeric_limits<std::size_t>::max)();
+            require(overflow.retain(first, maximum) && overflow.retain(first, maximum)
+                        && !overflow.retain(second_owner, 1U)
+                        && overflow.bytes == maximum && overflow.owners.size() == 1U,
+                    "shared ledger overflow or duplicate retention changed accounting");
+        }
         std::shared_ptr<const pvt::Image> decoded;
         std::shared_ptr<const pvt::detail::HeightImage> height;
         std::shared_ptr<const pvt::detail::ObjMesh> mesh;
@@ -180,6 +197,33 @@ int main() {
         const auto large_estimate = pvt::validate(project);
         require(large_estimate.ok && large_estimate.estimated_peak_bytes > 20003U * 64U,
                 "project admission omitted large OBJ projection storage");
+        pvt::detail::prune_render_asset_caches(project);
+        pvt::detail::ProjectRenderMemory shared_memory;
+        const auto shared_estimate = pvt::detail::validate_project_render_memory(project, shared_memory);
+        require(shared_estimate.ok && shared_memory.shared.bytes > 0U,
+                "shared OBJ memory was not separated from worker storage");
+        require(shared_estimate.estimated_peak_bytes == shared_memory.shared.bytes
+                    + shared_memory.worker_bytes + shared_memory.composite_bytes,
+                "project memory categories do not sum to the public estimate");
+        auto one_layer = project;
+        one_layer.layers.resize(1U);
+        pvt::detail::ProjectRenderMemory one_memory;
+        require(pvt::detail::validate_project_render_memory(one_layer, one_memory).ok,
+                "single-layer memory inspection failed");
+        require(one_memory.shared.bytes == shared_memory.shared.bytes
+                    && one_memory.worker_bytes == shared_memory.worker_bytes,
+                "repeated OBJ references duplicated the immutable allocation");
+        const std::size_t two_worker_budget = shared_memory.shared.bytes
+            + shared_memory.composite_bytes + shared_memory.worker_bytes * 2U;
+        require(shared_memory.worker_budget(two_worker_budget) == shared_memory.worker_bytes * 2U
+                    && shared_memory.worker_budget(1U) == 0U,
+                "shared/composite memory was not reserved once before admission");
+        std::weak_ptr<const void> shared_lifetime = shared_memory.shared.owners.begin()->second;
+        pvt::detail::prune_render_asset_caches(pvt::default_project());
+        require(!shared_lifetime.expired(), "eviction revoked an admitted asset handle");
+        one_memory = {};
+        shared_memory = {};
+        require(shared_lifetime.expired(), "completed admission retained an evicted asset");
         options.backend = pvt::RenderBackend::Cpu;
         options.maximum_cpu_workers = 1U;
         require(pvt::render_project_frame(project, 0, options, expected, nullptr, &error), error.c_str());
@@ -188,6 +232,9 @@ int main() {
         require(pvt::render_project_frame(project, 0, options, reenabled, nullptr, &error), error.c_str());
         require(expected.pixels == reenabled.pixels,
                 "memory-constrained OBJ layer rendering changed output");
+        options.cpu_memory_budget_bytes = two_worker_budget;
+        require(pvt::render_project_frame(project, 0, options, reenabled, nullptr, &error), error.c_str());
+        require(expected.pixels == reenabled.pixels, "shared-budget parallel rendering changed output");
         for (auto& layer : project.layers) layer.enabled = false;
         require(pvt::render_project_frame(project, 0, options, disabled, nullptr, &error), error.c_str());
         // Inactive authored references remain valid if their files disappear.

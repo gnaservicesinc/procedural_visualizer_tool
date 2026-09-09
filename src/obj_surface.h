@@ -34,6 +34,8 @@ struct MeshGeometryMemory {
 PVT_API bool mesh_geometry_memory_requirements(
     std::size_t positions, std::size_t normals, std::size_t triangles,
     bool opengl_upload, MeshGeometryMemory& result) noexcept;
+PVT_API bool mesh_occlusion_memory_requirements(int width, int height,
+                                               std::size_t& bytes) noexcept;
 
 // loop_phase is expressed in radians, matching core.cpp's internal convention.
 // The operation is transactional: destination is unchanged on failure.
@@ -54,7 +56,8 @@ bool apply_mesh_surface_mapping(const Image& source,
                                 const SurfaceConfig& surface,
                                 double loop_phase,
                                 std::string* error,
-                                const std::atomic_bool* cancel = nullptr);
+                                const std::atomic_bool* cancel = nullptr,
+                                bool cull_occluded = true);
 
 } // namespace detail
 } // namespace pvt

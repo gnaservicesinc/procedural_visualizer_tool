@@ -8,6 +8,7 @@
 #include "obj_surface.h"
 #include "post_process_alpha.h"
 #include "source_image.h"
+#include "render_memory.h"
 
 #include <algorithm>
 #include <array>
@@ -3343,7 +3344,8 @@ bool valid_music_series(const std::vector<double>& beats,
 ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                bool validate_layer_clock = true,
                                bool validate_particle_workload = true,
-                               bool inspect_assets = true) {
+                               bool inspect_assets = true,
+                               detail::SharedRenderMemory* shared_memory = nullptr) {
     if (config.width < 16 || config.width > kMaximumDimension
         || config.height < 16 || config.height > kMaximumDimension) {
         return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
@@ -3552,7 +3554,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         layer_clock_probe.layer_clock = {};
         const ValidationResult layer_clock_validation =
             validate_impl(layer_clock_probe, false, false,
-                          validate_particle_workload, inspect_assets);
+                          validate_particle_workload, inspect_assets, shared_memory);
         if (!layer_clock_validation.ok) {
             return invalid_result(
                 "The saved active-layer clock is invalid: "
@@ -4363,6 +4365,11 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         && config.surface.mapping == SurfaceMapping::Plane
         && detail::opengl_surface_backend_compiled();
     if (uses_raster_mesh) {
+        std::size_t occlusion_bytes = 0U;
+        if (!detail::mesh_occlusion_memory_requirements(config.width,config.height,occlusion_bytes)
+            || !checked_add(peak_bytes,occlusion_bytes,peak_bytes)) {
+            return invalid_result("The mesh occlusion memory estimate overflowed.");
+        }
         std::size_t obj_working_bytes = 0;
         if (!checked_multiply(pixel_count,
                               uses_opengl_mesh ? detail::kOpenGlMeshBytesPerPixel
@@ -4440,9 +4447,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     if (inspect_assets && uses_raster_mesh
         && config.surface.mapping == SurfaceMapping::CustomObj
         && !config.surface.obj_path.empty()) {
-        // Count every imported mesh, not only construction-enabled ones. The
-        // immutable mesh is shared by callers; conservatively include it in
-        // each admission estimate until admission exposes a shared-byte pool.
+        // Count immutable geometry once per project; projection remains a
+        // per-worker allocation. Standalone validation includes both.
         std::shared_ptr<const detail::ObjMesh> mesh;
         std::string ignored_mesh_error;
         if (detail::load_obj_mesh_cached(config.surface.obj_path, mesh,
@@ -4452,7 +4458,9 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                     mesh->positions.size(), mesh->normals.size(),
                     mesh->triangles.size(), false, geometry)
                 || !checked_add(peak_bytes, geometry.total, peak_bytes)
-                || !checked_add(peak_bytes, mesh->estimated_bytes(), peak_bytes)
+                || !(shared_memory
+                         ? shared_memory->retain(mesh, mesh->estimated_bytes())
+                         : checked_add(peak_bytes, mesh->estimated_bytes(), peak_bytes))
                 || (has_mesh_construction && !add_construction_topology_bytes(
                     mesh->triangles.size(), mesh->connected_component_count,
                     mesh->triangle_components.size() == mesh->triangles.size()
@@ -4483,6 +4491,15 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
         // requirements() counts retained vector payload; include ObjMesh's
         // object storage separately, then the per-frame projection/upload peak.
         detail::MeshGeometryMemory geometry;
+        std::shared_ptr<const detail::ObjMesh> shared_mesh;
+        if (inspect_assets && shared_memory
+            && detail::load_displacement_plane_mesh(
+                config.surface.plane_displacement, config.width, config.height,
+                shared_mesh, nullptr, &mesh_error)) {
+            if (!shared_memory->retain(shared_mesh, shared_mesh->estimated_bytes())) {
+                return invalid_result("The shared displacement memory estimate overflowed.");
+            }
+        }
         std::size_t vertex_count = 0U;
         std::size_t cell_count = 0U;
         std::size_t triangle_count = 0U;
@@ -4491,8 +4508,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || !checked_multiply(cell_count, 2U, triangle_count)
             || !detail::mesh_geometry_memory_requirements(
                 vertex_count, vertex_count, triangle_count, uses_opengl_mesh, geometry)
-            || !checked_add(peak_bytes, mesh_bytes, peak_bytes)
-            || !checked_add(peak_bytes, sizeof(detail::ObjMesh), peak_bytes)
+            || (!shared_mesh && (!checked_add(peak_bytes, mesh_bytes, peak_bytes)
+                || !checked_add(peak_bytes, sizeof(detail::ObjMesh), peak_bytes)))
             || !checked_add(peak_bytes, geometry.total, peak_bytes)) {
             return invalid_result("The displacement geometry memory estimate overflowed.");
         }
@@ -4501,6 +4518,43 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                 triangle_count, triangle_count == 0U ? 0U : 1U,
                 triangle_count > 0U)) {
             return invalid_result("The mesh-construction peak memory estimate overflowed.");
+        }
+    }
+
+    // Decoded image storage follows allocation identity: the same path can
+    // have independent color, linear, and height interpretations. Missing
+    // assets retain their existing transactional render-time error behavior.
+    if (inspect_assets) {
+        detail::SharedRenderMemory standalone;
+        auto& ledger = shared_memory ? *shared_memory : standalone;
+        const auto retain_image = [&](const std::shared_ptr<const Image>& image) {
+            std::size_t bytes = 0U;
+            return !image || (checked_multiply(image->pixels.capacity(), sizeof(float), bytes)
+                && checked_add(bytes, sizeof(Image), bytes) && ledger.retain(image, bytes));
+        };
+        std::shared_ptr<const Image> decoded;
+        std::string ignored;
+        if (config.starting_image.enabled
+            && detail::load_starting_image_source(config.starting_image.path, decoded, nullptr, &ignored)
+            && !retain_image(decoded)) return invalid_result("The source image memory estimate overflowed.");
+        if (surface.enabled && (surface.mapping == SurfaceMapping::Plane || surface.curvature > 0.0)
+            && surface.environment_map.enabled && surface.lighting > 0.0 && surface.environment_map.mix > 0.0
+            && detail::load_environment_map_source(surface.environment_map.path,
+                surface.environment_map.encoding, decoded, nullptr, &ignored)
+            && !retain_image(decoded)) return invalid_result("The environment image memory estimate overflowed.");
+        if (surface.enabled && surface.mapping == SurfaceMapping::Plane
+            && surface.curvature > 0.0 && surface.plane_displacement.enabled) {
+            std::shared_ptr<const detail::HeightImage> height;
+            std::size_t bytes = 0U;
+            if (detail::load_height_image_source(surface.plane_displacement.path, height, nullptr, &ignored)
+                && (!checked_multiply(height->samples.capacity(), sizeof(double), bytes)
+                    || !checked_add(bytes, sizeof(detail::HeightImage), bytes)
+                    || !ledger.retain(height, bytes))) {
+                return invalid_result("The decoded height memory estimate overflowed.");
+            }
+        }
+        if (!shared_memory && !checked_add(peak_bytes, standalone.bytes, peak_bytes)) {
+            return invalid_result("The decoded asset memory estimate overflowed.");
         }
     }
 
@@ -8076,8 +8130,9 @@ ValidationResult validate_frame_render_config(const RenderConfig& config) {
 }
 
 ValidationResult validate_project_layer_config(const RenderConfig& config,
-                                               bool contributing) {
-    return validate_impl(config, true, true, true, contributing);
+                                               bool contributing,
+                                               SharedRenderMemory* shared) {
+    return validate_impl(config, true, true, true, contributing, shared);
 }
 
 bool render_frame_at_phase_validated_resolved(
