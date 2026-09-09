@@ -4359,10 +4359,14 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || (config.surface.mapping == SurfaceMapping::Plane
                 && config.surface.plane_displacement.enabled
                 && config.surface.curvature > 0.0));
+    const bool uses_opengl_mesh = uses_raster_mesh
+        && config.surface.mapping == SurfaceMapping::Plane
+        && detail::opengl_surface_backend_compiled();
     if (uses_raster_mesh) {
         std::size_t obj_working_bytes = 0;
         if (!checked_multiply(pixel_count,
-                              detail::kObjSurfaceLayeredBytesPerPixel,
+                              uses_opengl_mesh ? detail::kOpenGlMeshBytesPerPixel
+                                               : detail::kObjSurfaceLayeredBytesPerPixel,
                               obj_working_bytes)
             || obj_working_bytes > std::numeric_limits<std::size_t>::max()
                                        - peak_bytes) {
@@ -4433,25 +4437,28 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             }
             return checked_add(peak_bytes, topology_bytes, peak_bytes);
         };
-    if (inspect_assets && has_mesh_construction
+    if (inspect_assets && uses_raster_mesh
         && config.surface.mapping == SurfaceMapping::CustomObj
         && !config.surface.obj_path.empty()) {
-        // Successful imported-mesh renders necessarily parse this asset. Load
-        // it once before worker admission so its exact triangle/component
-        // counts participate in the per-frame estimate; the immutable cache is
-        // shared by the admitted workers. A missing/corrupt path is left to the
-        // existing transactional render error and never reaches plan creation.
+        // Count every imported mesh, not only construction-enabled ones. The
+        // immutable mesh is shared by callers; conservatively include it in
+        // each admission estimate until admission exposes a shared-byte pool.
         std::shared_ptr<const detail::ObjMesh> mesh;
         std::string ignored_mesh_error;
         if (detail::load_obj_mesh_cached(config.surface.obj_path, mesh,
-                                         &ignored_mesh_error)
-            && mesh
-            && !add_construction_topology_bytes(
-                mesh->triangles.size(), mesh->connected_component_count,
-                mesh->triangle_components.size() == mesh->triangles.size()
-                    && mesh->connected_component_count > 0U)) {
-            return invalid_result(
-                "The imported mesh-construction peak memory estimate overflowed.");
+                                         &ignored_mesh_error) && mesh) {
+            detail::MeshGeometryMemory geometry;
+            if (!detail::mesh_geometry_memory_requirements(
+                    mesh->positions.size(), mesh->normals.size(),
+                    mesh->triangles.size(), false, geometry)
+                || !checked_add(peak_bytes, geometry.total, peak_bytes)
+                || !checked_add(peak_bytes, mesh->estimated_bytes(), peak_bytes)
+                || (has_mesh_construction && !add_construction_topology_bytes(
+                    mesh->triangles.size(), mesh->connected_component_count,
+                    mesh->triangle_components.size() == mesh->triangles.size()
+                        && mesh->connected_component_count > 0U))) {
+                return invalid_result("The imported mesh peak memory estimate overflowed.");
+            }
         }
     }
     if (surface_has_render_work(config.surface)
@@ -4473,21 +4480,27 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             return invalid_result(
                 "The displacement-plane peak memory estimate overflowed.");
         }
-        peak_bytes += mesh_bytes;
-        if (has_mesh_construction) {
-            std::size_t cell_count = 0U;
-            std::size_t triangle_count = 0U;
-            if (!checked_multiply(columns - 1U, rows - 1U, cell_count)
-                || !checked_multiply(cell_count, 2U, triangle_count)) {
-                return invalid_result(
-                    "The mesh-construction topology estimate overflowed.");
-            }
-            if (!add_construction_topology_bytes(
-                    triangle_count, triangle_count == 0U ? 0U : 1U,
-                    triangle_count > 0U)) {
-                return invalid_result(
-                    "The mesh-construction peak memory estimate overflowed.");
-            }
+        // requirements() counts retained vector payload; include ObjMesh's
+        // object storage separately, then the per-frame projection/upload peak.
+        detail::MeshGeometryMemory geometry;
+        std::size_t vertex_count = 0U;
+        std::size_t cell_count = 0U;
+        std::size_t triangle_count = 0U;
+        if (!checked_multiply(columns, rows, vertex_count)
+            || !checked_multiply(columns - 1U, rows - 1U, cell_count)
+            || !checked_multiply(cell_count, 2U, triangle_count)
+            || !detail::mesh_geometry_memory_requirements(
+                vertex_count, vertex_count, triangle_count, uses_opengl_mesh, geometry)
+            || !checked_add(peak_bytes, mesh_bytes, peak_bytes)
+            || !checked_add(peak_bytes, sizeof(detail::ObjMesh), peak_bytes)
+            || !checked_add(peak_bytes, geometry.total, peak_bytes)) {
+            return invalid_result("The displacement geometry memory estimate overflowed.");
+        }
+        if (has_mesh_construction
+            && !add_construction_topology_bytes(
+                triangle_count, triangle_count == 0U ? 0U : 1U,
+                triangle_count > 0U)) {
+            return invalid_result("The mesh-construction peak memory estimate overflowed.");
         }
     }
 

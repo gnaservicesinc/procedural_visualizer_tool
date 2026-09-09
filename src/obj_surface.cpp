@@ -49,13 +49,14 @@ struct ScreenPoint {
 };
 
 struct ProjectedVertex {
-    ObjVec3 object{};
     ObjVec3 world{};
     ScreenPoint screen{};
     double camera_depth = 0.0;
     double inverse_depth = 0.0;
     bool valid = false;
 };
+static_assert(sizeof(ProjectedVertex) <= 64U,
+              "Projected vertices should fit in one cache line.");
 
 struct RasterVertex {
     const ProjectedVertex* projected = nullptr;
@@ -434,6 +435,153 @@ ObjVec3 transform_normal(ObjVec3 normal,
                          const SurfaceAngles& angles,
                          const FragmentTransform* fragment);
 
+void project_camera_vertex(ProjectedVertex& projected,
+                           const ProjectionContext& context,
+                           const SurfaceConfig& surface);
+
+template <typename FragmentCallback>
+void rasterize_triangle(std::array<RasterVertex, 3U> vertices,
+                        bool authored_uv, const Image& source,
+                        int width, int height, const SurfaceConfig& surface,
+                        double lighting, const PreparedEnvironmentMap* environment,
+                        const std::atomic_bool* cancel,
+                        FragmentCallback& fragment) {
+    double area = edge(vertices[0].projected->screen,
+                       vertices[1].projected->screen,
+                       vertices[2].projected->screen);
+    if (!std::isfinite(area) || std::fabs(area) <= 1.0e-12) {
+        return;
+    }
+    // This is orientation normalization, not culling: both windings reach
+    // the rasterizer and are shaded face-forward below.
+    if (area < 0.0) {
+        std::swap(vertices[1], vertices[2]);
+        area = -area;
+    }
+
+    const double minimum_x = std::min({vertices[0].projected->screen.x,
+                                       vertices[1].projected->screen.x,
+                                       vertices[2].projected->screen.x});
+    const double maximum_x = std::max({vertices[0].projected->screen.x,
+                                       vertices[1].projected->screen.x,
+                                       vertices[2].projected->screen.x});
+    const double minimum_y = std::min({vertices[0].projected->screen.y,
+                                       vertices[1].projected->screen.y,
+                                       vertices[2].projected->screen.y});
+    const double maximum_y = std::max({vertices[0].projected->screen.y,
+                                       vertices[1].projected->screen.y,
+                                       vertices[2].projected->screen.y});
+    // Clip in floating point before conversion. Valid finite projections
+    // can be far outside int range near the camera or at extreme scales.
+    if (maximum_x < 0.5 || maximum_y < 0.5
+        || minimum_x > static_cast<double>(width) - 0.5
+        || minimum_y > static_cast<double>(height) - 0.5) {
+        return;
+    }
+    const int first_x = static_cast<int>(std::ceil(
+        std::max(0.0, minimum_x - 0.5)));
+    const int last_x = static_cast<int>(std::floor(
+        std::min(static_cast<double>(width - 1), maximum_x - 0.5)));
+    const int first_y = static_cast<int>(std::ceil(
+        std::max(0.0, minimum_y - 0.5)));
+    const int last_y = static_cast<int>(std::floor(
+        std::min(static_cast<double>(height - 1), maximum_y - 0.5)));
+    if (first_x > last_x || first_y > last_y) {
+        return;
+    }
+
+    const bool owns_0 = top_left(vertices[1].projected->screen,
+                                 vertices[2].projected->screen);
+    const bool owns_1 = top_left(vertices[2].projected->screen,
+                                 vertices[0].projected->screen);
+    const bool owns_2 = top_left(vertices[0].projected->screen,
+                                 vertices[1].projected->screen);
+    const double integer_limit = std::numeric_limits<int>::max();
+    const auto extreme_vertex = [&](ScreenPoint point) {
+        return std::fabs(point.x) > integer_limit
+            || std::fabs(point.y) > integer_limit;
+    };
+    const bool extreme_0 = extreme_vertex(vertices[0].projected->screen);
+    const bool extreme_1 = extreme_vertex(vertices[1].projected->screen);
+    const bool extreme_2 = extreme_vertex(vertices[2].projected->screen);
+    const auto sample_edge = [&](ScreenPoint first, ScreenPoint second,
+                                 ScreenPoint point, bool extreme) {
+        return extreme ? canonical_edge(first, second, point)
+                       : edge(first, second, point);
+    };
+    for (int y = first_y; y <= last_y; ++y) {
+        throw_if_cancelled(cancel);
+        for (int x = first_x; x <= last_x; ++x) {
+            const ScreenPoint sample{static_cast<double>(x) + 0.5,
+                                     static_cast<double>(y) + 0.5};
+            const double edge_0 = sample_edge(vertices[1].projected->screen,
+                                       vertices[2].projected->screen, sample,
+                                       extreme_1 || extreme_2);
+            const double edge_1 = sample_edge(vertices[2].projected->screen,
+                                       vertices[0].projected->screen, sample,
+                                       extreme_2 || extreme_0);
+            const double edge_2 = sample_edge(vertices[0].projected->screen,
+                                       vertices[1].projected->screen, sample,
+                                       extreme_0 || extreme_1);
+            if (!edge_inside(edge_0, owns_0) || !edge_inside(edge_1, owns_1)
+                || !edge_inside(edge_2, owns_2)) {
+                continue;
+            }
+            const std::array<double, 3U> barycentric = {
+                edge_0 / area, edge_1 / area, edge_2 / area};
+            double denominator = 0.0;
+            for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
+                denominator += barycentric[corner]
+                               * vertices[corner].projected->inverse_depth;
+            }
+            if (!std::isfinite(denominator) || denominator <= 0.0) {
+                continue;
+            }
+            double depth = 1.0 / denominator;
+            if (surface.projection == SurfaceProjection::Orthographic) {
+                depth = 0.0;
+                for (std::size_t corner = 0U;
+                     corner < vertices.size(); ++corner) {
+                    depth += barycentric[corner]
+                             * vertices[corner].projected->camera_depth;
+                }
+            }
+            const std::size_t pixel = static_cast<std::size_t>(y)
+                                      * static_cast<std::size_t>(width)
+                                      + static_cast<std::size_t>(x);
+            if (!fragment.accepts(pixel, depth)) {
+                continue;
+            }
+
+            ObjVec2 uv{};
+            ObjVec3 normal{};
+            ObjVec3 world{};
+            for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
+                const double weight = barycentric[corner]
+                                      * vertices[corner].projected->inverse_depth
+                                      / denominator;
+                uv.x += vertices[corner].uv.x * weight;
+                uv.y += vertices[corner].uv.y * weight;
+                normal = add(normal, multiply(vertices[corner].normal, weight));
+                world = add(world,
+                            multiply(vertices[corner].projected->world, weight));
+            }
+            normal = normalize(normal);
+            const ObjVec3 toward_camera =
+                surface.projection == SurfaceProjection::Perspective
+                    ? ObjVec3{-world.x, -world.y,
+                              surface.camera_distance - world.z}
+                    : ObjVec3{0.0, 0.0, 1.0};
+            if (dot(normal, toward_camera) < 0.0) {
+                normal = multiply(normal, -1.0);
+            }
+            Color color = sample_source(source, uv, authored_uv);
+            color = shade(color, normal, surface, lighting, environment);
+            fragment.store(pixel, depth, color);
+        }
+    }
+}
+
 template <typename FragmentCallback>
 void rasterize_mesh(const ObjMesh& mesh,
                     const std::vector<ProjectedVertex>& projected,
@@ -498,7 +646,9 @@ void rasterize_mesh(const ObjMesh& mesh,
                 vertices[corner].projected =
                     &projected[source_corner.position];
             }
-            if (!vertices[corner].projected->valid) {
+            if (!std::isfinite(vertices[corner].projected->camera_depth)
+                || !std::isfinite(vertices[corner].projected->world.x)
+                || !std::isfinite(vertices[corner].projected->world.y)) {
                 valid = false;
                 break;
             }
@@ -510,6 +660,24 @@ void rasterize_mesh(const ObjMesh& mesh,
         }
         if (!valid) {
             continue;
+        }
+
+        // View rejection is independent of winding, opacity, and topology.
+        // Do it before face normals, generated UVs, and lighting preparation.
+        const bool fully_projected = std::all_of(vertices.begin(), vertices.end(),
+            [](const RasterVertex& vertex) { return vertex.projected->valid; });
+        if (std::all_of(vertices.begin(), vertices.end(), [](const RasterVertex& vertex) {
+                return vertex.projected->camera_depth < kMinimumCameraDepth;
+            })) continue;
+        if (fully_projected) {
+            const auto outside = [&](auto predicate) {
+                return std::all_of(vertices.begin(), vertices.end(),
+                    [&](const RasterVertex& vertex) { return predicate(vertex.projected->screen); });
+            };
+            if (outside([](ScreenPoint p) { return p.x < 0.5; })
+                || outside([](ScreenPoint p) { return p.y < 0.5; })
+                || outside([&](ScreenPoint p) { return p.x > width - 0.5; })
+                || outside([&](ScreenPoint p) { return p.y > height - 0.5; })) continue;
         }
 
         const ObjVec3 object_face_normal = normalize(cross(
@@ -538,138 +706,52 @@ void rasterize_mesh(const ObjMesh& mesh,
             }
         }
 
-        double area = edge(vertices[0].projected->screen,
-                           vertices[1].projected->screen,
-                           vertices[2].projected->screen);
-        if (!std::isfinite(area) || std::fabs(area) <= 1.0e-12) {
-            continue;
-        }
-        // This is orientation normalization, not culling: both windings reach
-        // the rasterizer and are shaded face-forward below.
-        if (area < 0.0) {
-            std::swap(vertices[1], vertices[2]);
-            area = -area;
-        }
-
-        const double minimum_x = std::min({vertices[0].projected->screen.x,
-                                           vertices[1].projected->screen.x,
-                                           vertices[2].projected->screen.x});
-        const double maximum_x = std::max({vertices[0].projected->screen.x,
-                                           vertices[1].projected->screen.x,
-                                           vertices[2].projected->screen.x});
-        const double minimum_y = std::min({vertices[0].projected->screen.y,
-                                           vertices[1].projected->screen.y,
-                                           vertices[2].projected->screen.y});
-        const double maximum_y = std::max({vertices[0].projected->screen.y,
-                                           vertices[1].projected->screen.y,
-                                           vertices[2].projected->screen.y});
-        // Clip in floating point before conversion. Valid finite projections
-        // can be far outside int range near the camera or at extreme scales.
-        if (maximum_x < 0.5 || maximum_y < 0.5
-            || minimum_x > static_cast<double>(width) - 0.5
-            || minimum_y > static_cast<double>(height) - 0.5) {
-            continue;
-        }
-        const int first_x = static_cast<int>(std::ceil(
-            std::max(0.0, minimum_x - 0.5)));
-        const int last_x = static_cast<int>(std::floor(
-            std::min(static_cast<double>(width - 1), maximum_x - 0.5)));
-        const int first_y = static_cast<int>(std::ceil(
-            std::max(0.0, minimum_y - 0.5)));
-        const int last_y = static_cast<int>(std::floor(
-            std::min(static_cast<double>(height - 1), maximum_y - 0.5)));
-        if (first_x > last_x || first_y > last_y) {
-            continue;
-        }
-
-        const bool owns_0 = top_left(vertices[1].projected->screen,
-                                     vertices[2].projected->screen);
-        const bool owns_1 = top_left(vertices[2].projected->screen,
-                                     vertices[0].projected->screen);
-        const bool owns_2 = top_left(vertices[0].projected->screen,
-                                     vertices[1].projected->screen);
-        const double integer_limit = std::numeric_limits<int>::max();
-        const auto extreme_vertex = [&](ScreenPoint point) {
-            return std::fabs(point.x) > integer_limit
-                || std::fabs(point.y) > integer_limit;
+        const auto draw = [&](const std::array<RasterVertex, 3U>& triangle_vertices) {
+            rasterize_triangle(triangle_vertices, authored_uv, source,
+                               width, height, surface, lighting, environment,
+                               cancel, fragment);
         };
-        const bool extreme_0 = extreme_vertex(vertices[0].projected->screen);
-        const bool extreme_1 = extreme_vertex(vertices[1].projected->screen);
-        const bool extreme_2 = extreme_vertex(vertices[2].projected->screen);
-        const auto sample_edge = [&](ScreenPoint first, ScreenPoint second,
-                                     ScreenPoint point, bool extreme) {
-            return extreme ? canonical_edge(first, second, point)
-                           : edge(first, second, point);
-        };
-        for (int y = first_y; y <= last_y; ++y) {
-            throw_if_cancelled(cancel);
-            for (int x = first_x; x <= last_x; ++x) {
-                const ScreenPoint sample{static_cast<double>(x) + 0.5,
-                                         static_cast<double>(y) + 0.5};
-                const double edge_0 = sample_edge(vertices[1].projected->screen,
-                                           vertices[2].projected->screen, sample,
-                                           extreme_1 || extreme_2);
-                const double edge_1 = sample_edge(vertices[2].projected->screen,
-                                           vertices[0].projected->screen, sample,
-                                           extreme_2 || extreme_0);
-                const double edge_2 = sample_edge(vertices[0].projected->screen,
-                                           vertices[1].projected->screen, sample,
-                                           extreme_0 || extreme_1);
-                if (!edge_inside(edge_0, owns_0) || !edge_inside(edge_1, owns_1)
-                    || !edge_inside(edge_2, owns_2)) {
-                    continue;
-                }
-                const std::array<double, 3U> barycentric = {
-                    edge_0 / area, edge_1 / area, edge_2 / area};
-                double denominator = 0.0;
-                for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
-                    denominator += barycentric[corner]
-                                   * vertices[corner].projected->inverse_depth;
-                }
-                if (!std::isfinite(denominator) || denominator <= 0.0) {
-                    continue;
-                }
-                double depth = 1.0 / denominator;
-                if (surface.projection == SurfaceProjection::Orthographic) {
-                    depth = 0.0;
-                    for (std::size_t corner = 0U;
-                         corner < vertices.size(); ++corner) {
-                        depth += barycentric[corner]
-                                 * vertices[corner].projected->camera_depth;
-                    }
-                }
-                const std::size_t pixel = static_cast<std::size_t>(y)
-                                          * static_cast<std::size_t>(width)
-                                          + static_cast<std::size_t>(x);
-                if (!fragment.accepts(pixel, depth)) {
-                    continue;
-                }
+        if (fully_projected) {
+            draw(vertices);
+            continue;
+        }
 
-                ObjVec2 uv{};
-                ObjVec3 normal{};
-                ObjVec3 world{};
-                for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
-                    const double weight = barycentric[corner]
-                                          * vertices[corner].projected->inverse_depth
-                                          / denominator;
-                    uv.x += vertices[corner].uv.x * weight;
-                    uv.y += vertices[corner].uv.y * weight;
-                    normal = add(normal, multiply(vertices[corner].normal, weight));
-                    world = add(world,
-                                multiply(vertices[corner].projected->world, weight));
-                }
-                normal = normalize(normal);
-                const ObjVec3 toward_camera =
-                    surface.projection == SurfaceProjection::Perspective
-                        ? ObjVec3{-world.x, -world.y,
-                                  surface.camera_distance - world.z}
-                        : ObjVec3{0.0, 0.0, 1.0};
-                if (dot(normal, toward_camera) < 0.0) {
-                    normal = multiply(normal, -1.0);
-                }
-                Color color = sample_source(source, uv, authored_uv);
-                color = shade(color, normal, surface, lighting, environment);
-                fragment.store(pixel, depth, color);
+        // Sutherland-Hodgman clipping against camera depth. A triangle becomes
+        // at most a quad. Keep all storage on the stack, including interpolated
+        // attributes; unclipped triangles retain their original arithmetic.
+        std::array<ProjectedVertex, 4U> clipped_positions{};
+        std::array<RasterVertex, 4U> clipped{};
+        std::size_t count = 0U;
+        for (std::size_t i = 0U; i < 3U; ++i) {
+            const RasterVertex& first = vertices[i];
+            const RasterVertex& second = vertices[(i + 1U) % 3U];
+            const bool inside_first = first.projected->camera_depth >= kMinimumCameraDepth;
+            const bool inside_second = second.projected->camera_depth >= kMinimumCameraDepth;
+            if (inside_first) clipped[count++] = first;
+            if (inside_first != inside_second) {
+                // Always interpolate from the shallower endpoint. Shared edges
+                // then produce identical intersections in either winding.
+                const RasterVertex& near = inside_first ? second : first;
+                const RasterVertex& far = inside_first ? first : second;
+                const double t = (kMinimumCameraDepth - near.projected->camera_depth)
+                    / (far.projected->camera_depth - near.projected->camera_depth);
+                auto& position = clipped_positions[count];
+                position.world = add(near.projected->world,
+                    multiply(subtract(far.projected->world, near.projected->world), t));
+                position.camera_depth = kMinimumCameraDepth;
+                position.world.z = surface.camera_distance - kMinimumCameraDepth;
+                project_camera_vertex(position, projection_context, surface);
+                auto& vertex = clipped[count++];
+                vertex.projected = &position;
+                vertex.uv = {near.uv.x + (far.uv.x - near.uv.x) * t,
+                             near.uv.y + (far.uv.y - near.uv.y) * t};
+                vertex.normal = add(near.normal, multiply(subtract(far.normal, near.normal), t));
+            }
+        }
+        for (std::size_t i = 1U; i + 1U < count; ++i) {
+            if (clipped[0].projected->valid && clipped[i].projected->valid
+                && clipped[i + 1U].projected->valid) {
+                draw({clipped[0], clipped[i], clipped[i + 1U]});
             }
         }
     }
@@ -1058,7 +1140,6 @@ ProjectedVertex project_object_position(
     const SurfaceConfig& surface,
     const SurfaceAngles& angles) {
     ProjectedVertex projected;
-    projected.object = object;
     const ObjVec3 scaled = {
         object.x * surface.scale_x,
         object.y * surface.scale_y,
@@ -1066,9 +1147,16 @@ ProjectedVertex project_object_position(
     projected.world = rotate_surface(scaled, angles, surface.rotation_order);
     projected.world.z += surface.position_z;
     projected.camera_depth = surface.camera_distance - projected.world.z;
+    project_camera_vertex(projected, context, surface);
+    return projected;
+}
+
+void project_camera_vertex(ProjectedVertex& projected,
+                           const ProjectionContext& context,
+                           const SurfaceConfig& surface) {
     if (!std::isfinite(projected.camera_depth)
-        || projected.camera_depth <= kMinimumCameraDepth) {
-        return projected;
+        || projected.camera_depth < kMinimumCameraDepth) {
+        return;
     }
     if (surface.projection == SurfaceProjection::Perspective) {
         projected.inverse_depth = 1.0 / projected.camera_depth;
@@ -1085,7 +1173,6 @@ ProjectedVertex project_object_position(
     }
     projected.valid = std::isfinite(projected.screen.x)
                       && std::isfinite(projected.screen.y);
-    return projected;
 }
 
 std::vector<ProjectedVertex> project_positions(
@@ -1190,6 +1277,36 @@ struct LayerFragments {
 };
 
 } // namespace
+
+bool mesh_geometry_memory_requirements(
+    std::size_t positions, std::size_t normals, std::size_t triangles,
+    bool opengl_upload, MeshGeometryMemory& result) noexcept {
+    MeshGeometryMemory candidate;
+    const auto add = [](std::size_t bytes, std::size_t& total) {
+        if (bytes > (std::numeric_limits<std::size_t>::max)() - total) return false;
+        total += bytes;
+        return true;
+    };
+    if (!checked_multiply(positions, sizeof(ProjectedVertex), candidate.projected_vertices)
+        || !checked_multiply(normals, sizeof(ObjVec3), candidate.transformed_normals)) {
+        return false;
+    }
+    if (opengl_upload) {
+        std::size_t vertices = 0U;
+        std::size_t indices = 0U;
+        if (!checked_multiply(positions, 8U * sizeof(float), vertices)
+            || !checked_multiply(triangles, 3U * sizeof(std::uint32_t), indices)
+            || !add(vertices, candidate.upload_staging)
+            || !add(indices, candidate.upload_staging)) return false;
+        candidate.gpu_buffers = candidate.upload_staging;
+    }
+    if (!add(candidate.projected_vertices, candidate.total)
+        || !add(candidate.transformed_normals, candidate.total)
+        || !add(candidate.upload_staging, candidate.total)
+        || !add(candidate.gpu_buffers, candidate.total)) return false;
+    result = candidate;
+    return true;
+}
 
 bool apply_mesh_surface_mapping(const Image& source,
                                 Image& destination,

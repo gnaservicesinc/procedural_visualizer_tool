@@ -103,10 +103,11 @@ bool load_obj_mesh(const std::string& utf8_path,
                    std::string* error,
                    const ObjLoadLimits& limits = ObjLoadLimits{});
 
-// Keeps one immutable mesh alive across frames. The cache key includes the
+// Keeps up to 16 immutable meshes within a 512 MiB cache across frames. The cache key includes the
 // absolute normalized path, file size, last-write time, and load limits. A
 // file that changes during parsing is retried once and then rejected. Cold
-// concurrent requests for the same key share one in-flight parse.
+// concurrent requests for the same key share one in-flight parse. Larger
+// meshes remain valid render inputs but are not retained by the cache.
 bool load_obj_mesh_cached(const std::string& utf8_path,
                           std::shared_ptr<const ObjMesh>& destination,
                           std::string* error,
@@ -116,6 +117,7 @@ void clear_obj_mesh_cache() noexcept;
 
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
 std::uint64_t obj_mesh_cache_parse_count_for_testing() noexcept;
+void set_obj_mesh_cache_byte_limit_for_testing(std::size_t bytes);
 void set_obj_mesh_cache_parse_paused_for_testing(bool paused) noexcept;
 void arm_obj_mesh_cache_publication_pause_for_testing() noexcept;
 void wait_obj_mesh_cache_publication_paused_for_testing();

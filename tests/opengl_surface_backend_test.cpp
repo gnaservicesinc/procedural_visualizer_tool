@@ -605,6 +605,47 @@ int main(int argc, char** argv) {
     CHECK(maximum_straight_alpha_difference(
               translucent_reference, translucent_strict)
           <= 0.0035);
+    if (!capabilities.metal_available) {
+        // A tilted displaced surface straddles the camera plane. Exercise
+        // geometry clipping, interpolated lighting/UVs, and depth peeling on
+        // the actual OpenGL backend with the established parity tolerance.
+        for (auto projection : {pvt::SurfaceProjection::Perspective,
+                                pvt::SurfaceProjection::Orthographic}) {
+            for (bool translucent : {false, true}) {
+                for (double position_z : {0.9, -2.0}) {
+                    auto crossing = translucent ? translucent_displaced : displaced;
+                    crossing.surface.projection = projection;
+                    crossing.surface.camera_distance = 1.0;
+                    crossing.surface.position_z = position_z;
+                    crossing.surface.focal_length = 0.7;
+                    crossing.surface.rotation_x_degrees = 65.0;
+                    crossing.surface.rotation_y_turns_per_loop = 0;
+                    crossing.surface.outside = pvt::SurfaceOutside::Transparent;
+                    pvt::Image reference, actual;
+                    const bool cpu_ok = pvt::render_frame(
+                        crossing, 5, cpu, reference, nullptr, &error);
+                    CHECK(cpu_ok);
+                    const bool gpu_ok = pvt::render_frame(
+                        crossing, 5, gpu, actual, nullptr, &error);
+                    CHECK(gpu_ok);
+                    if (!cpu_ok || !gpu_ok) {
+                        std::cerr << "Clipping fixture render failed: " << error << '\n';
+                        continue;
+                    }
+                    std::size_t maximum_index = 0U;
+                    const double difference = maximum_straight_alpha_difference(
+                        reference, actual, &maximum_index);
+                    if (difference > 0.0035) {
+                        std::cerr << "Mesh clipping/interpolation parity: " << difference
+                                  << " projection=" << static_cast<int>(projection)
+                                  << " translucent=" << translucent << " z=" << position_z
+                                  << " index=" << maximum_index << '\n';
+                    }
+                    CHECK(difference <= 0.0035);
+                }
+            }
+        }
+    }
     std::error_code remove_error;
     std::filesystem::remove(height_map, remove_error);
     CHECK(!remove_error);

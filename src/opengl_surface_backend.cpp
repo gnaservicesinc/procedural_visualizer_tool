@@ -1118,7 +1118,6 @@ out vec2 vertexMeshUv;
 out vec3 vertexWorldNormal;
 out vec3 vertexWorldPosition;
 noperspective out float vertexCameraDepthLinear;
-noperspective out float vertexInverseDepthLinear;
 out float vertexValid;
 
 vec3 rotateX(vec3 value, float angle) {
@@ -1161,8 +1160,7 @@ void main() {
 
     float cameraDepth = cameraDistance - vertexWorldPosition.z;
     vertexCameraDepthLinear = cameraDepth;
-    vertexInverseDepthLinear = cameraDepth > 1.0e-6 ? 1.0 / cameraDepth : 0.0;
-    vertexValid = cameraDepth > 1.0e-6 ? 1.0 : 0.0;
+    vertexValid = cameraDepth >= 1.0e-6 ? 1.0 : 0.0;
 
     float widthSpan = float(max(1, imageSize.x - 1));
     float heightSpan = float(max(1, imageSize.y - 1));
@@ -1194,47 +1192,102 @@ void main() {
     vec2 ndc = vec2(2.0 * screenX / float(imageSize.x) - 1.0,
                     1.0 - 2.0 * screenY / float(imageSize.y));
     gl_Position = vec4(ndc * clipW, 0.0, clipW);
+    if (projection == 1 && vertexValid < 0.5) {
+        gl_Position = vec4(
+            (2.0 * centerX / float(imageSize.x) - 1.0) * cameraDepth
+                + 2.0 * vertexWorldPosition.x * focalLength * screenScaleX / float(imageSize.x),
+            (1.0 - 2.0 * centerY / float(imageSize.y)) * cameraDepth
+                + 2.0 * vertexWorldPosition.y * focalLength * screenScaleY / float(imageSize.y),
+            0.0, cameraDepth);
+    }
 }
 )PVT_GLSL";
 
 constexpr const char* kMeshGeometryShader = R"PVT_GLSL(#version 330 core
 layout(triangles) in;
-layout(triangle_strip, max_vertices = 3) out;
+layout(triangle_strip, max_vertices = 6) out;
 
+uniform int projection;
+uniform float cameraDistance;
 in vec2 vertexMeshUv[];
 in vec3 vertexWorldNormal[];
 in vec3 vertexWorldPosition[];
 noperspective in float vertexCameraDepthLinear[];
-noperspective in float vertexInverseDepthLinear[];
 in float vertexValid[];
 
-out vec2 meshUv;
-out vec3 worldNormal;
-out vec3 worldPosition;
-noperspective out float cameraDepthLinear;
-noperspective out float inverseDepthLinear;
-out float primitiveValid;
+flat out vec2 trianglePosition[3];
+flat out vec2 triangleUv[3];
+flat out vec3 triangleNormal[3];
+flat out vec3 triangleWorld[3];
+flat out vec3 triangleDepth;
+flat out vec3 triangleW;
 
-void main() {
-    // The CPU reference rejects a triangle when any vertex crosses the camera
-    // plane instead of inventing a clipped polygon. Preserve that explicit
-    // behavior rather than letting OpenGL's homogeneous clipper create a
-    // platform-dependent sliver from an otherwise invalid mesh triangle.
-    if (vertexValid[0] < 0.5 || vertexValid[1] < 0.5
-        || vertexValid[2] < 0.5) {
-        return;
-    }
-    for (int vertex = 0; vertex < 3; ++vertex) {
-        gl_Position = gl_in[vertex].gl_Position;
-        meshUv = vertexMeshUv[vertex];
-        worldNormal = vertexWorldNormal[vertex];
-        worldPosition = vertexWorldPosition[vertex];
-        cameraDepthLinear = vertexCameraDepthLinear[vertex];
-        inverseDepthLinear = vertexInverseDepthLinear[vertex];
-        primitiveValid = vertexValid[vertex];
+struct ClipVertex {
+    vec4 position;
+    vec2 uv;
+    vec3 normal;
+    vec3 world;
+    float depth;
+};
+
+void emitTriangle(ClipVertex first, ClipVertex second, ClipVertex third) {
+    ClipVertex corners[3] = ClipVertex[3](first, second, third);
+    for (int i = 0; i < 3; ++i) {
+        // Flat outputs are undefined after EmitVertex, so restore every time.
+        for (int j = 0; j < 3; ++j) {
+            trianglePosition[j] = corners[j].position.xy;
+            triangleUv[j] = corners[j].uv;
+            triangleNormal[j] = corners[j].normal;
+            triangleWorld[j] = corners[j].world;
+            triangleDepth[j] = corners[j].depth;
+            triangleW[j] = corners[j].position.w;
+        }
+        gl_Position = corners[i].position;
         EmitVertex();
     }
     EndPrimitive();
+}
+
+void main() {
+    ClipVertex vertices[3];
+    for (int i = 0; i < 3; ++i) {
+        if (isnan(vertexCameraDepthLinear[i]) || isinf(vertexCameraDepthLinear[i])) return;
+        vertices[i] = ClipVertex(gl_in[i].gl_Position, vertexMeshUv[i],
+            vertexWorldNormal[i], vertexWorldPosition[i],
+            vertexCameraDepthLinear[i]);
+    }
+    if (vertexValid[0] > 0.5 && vertexValid[1] > 0.5 && vertexValid[2] > 0.5) {
+        emitTriangle(vertices[0], vertices[1], vertices[2]);
+        return;
+    }
+    ClipVertex clipped[4];
+    int count = 0;
+    for (int i = 0; i < 3; ++i) {
+        ClipVertex first = vertices[i];
+        ClipVertex second = vertices[(i + 1) % 3];
+        bool insideFirst = first.depth >= 1.0e-6;
+        bool insideSecond = second.depth >= 1.0e-6;
+        if (insideFirst) clipped[count++] = first;
+        if (insideFirst != insideSecond) {
+            ClipVertex near = insideFirst ? second : first;
+            ClipVertex far = insideFirst ? first : second;
+            float t = (1.0e-6 - near.depth) / (far.depth - near.depth);
+            ClipVertex corner;
+            corner.position = near.position + (far.position - near.position) * t;
+            if (projection == 1) corner.position.w = 1.0e-6;
+            corner.uv = near.uv + (far.uv - near.uv) * t;
+            corner.normal = near.normal + (far.normal - near.normal) * t;
+            corner.world = near.world + (far.world - near.world) * t;
+            corner.world.z = cameraDistance - 1.0e-6;
+            corner.depth = 1.0e-6;
+            clipped[count++] = corner;
+        }
+    }
+    // Same fan and winding as the CPU clipper. Each triangle ends separately
+    // so its new diagonal follows the ordinary shared-edge ownership rules.
+    for (int i = 1; i + 1 < count; ++i) {
+        emitTriangle(clipped[0], clipped[i], clipped[i + 1]);
+    }
 }
 )PVT_GLSL";
 
@@ -1249,12 +1302,12 @@ uniform vec3 lightDirection;
 uniform float lightAmbient;
 uniform float lightDiffuse;
 
-in vec2 meshUv;
-in vec3 worldNormal;
-in vec3 worldPosition;
-noperspective in float cameraDepthLinear;
-noperspective in float inverseDepthLinear;
-in float primitiveValid;
+flat in vec2 trianglePosition[3];
+flat in vec2 triangleUv[3];
+flat in vec3 triangleNormal[3];
+flat in vec3 triangleWorld[3];
+flat in vec3 triangleDepth;
+flat in vec3 triangleW;
 out vec4 outputColor;
 
 vec4 loadPixel(int x, int y) {
@@ -1278,11 +1331,27 @@ vec4 sampleSource(vec2 uv) {
 }
 
 void main() {
-    if (primitiveValid < 0.999) discard;
-    float cameraDepth = projection == 1
-        ? 1.0 / max(inverseDepthLinear, 1.0e-30)
-        : cameraDepthLinear;
-    if (isnan(cameraDepth) || isinf(cameraDepth) || cameraDepth <= 1.0e-6) discard;
+    // Thin triangles amplify the driver's subpixel setup rounding into
+    // visible UV/depth errors. Homogeneous determinants give perspective-
+    // correct weights at the actual pixel center without dividing vertices
+    // by a near-zero depth. This also handles orthographic w=1 unchanged.
+    vec2 point = 2.0 * gl_FragCoord.xy / vec2(imageSize) - 1.0;
+    vec2 a = trianglePosition[0] - point * triangleW.x;
+    vec2 b = trianglePosition[1] - point * triangleW.y;
+    vec2 c = trianglePosition[2] - point * triangleW.z;
+    vec3 weights = vec3(b.x*c.y - b.y*c.x,
+                        c.x*a.y - c.y*a.x,
+                        a.x*b.y - a.y*b.x);
+    float denominator = weights.x + weights.y + weights.z;
+    if (denominator == 0.0 || isnan(denominator) || isinf(denominator)) discard;
+    weights /= denominator;
+    vec2 uv = triangleUv[0] * weights.x + triangleUv[1] * weights.y + triangleUv[2] * weights.z;
+    vec3 interpolatedNormal = triangleNormal[0] * weights.x
+        + triangleNormal[1] * weights.y + triangleNormal[2] * weights.z;
+    vec3 interpolatedWorld = triangleWorld[0] * weights.x
+        + triangleWorld[1] * weights.y + triangleWorld[2] * weights.z;
+    float cameraDepth = dot(triangleDepth, weights);
+    if (isnan(cameraDepth) || isinf(cameraDepth) || cameraDepth < 1.0e-6) discard;
     if (hasPreviousDepth != 0) {
         float encodedPrevious = texelFetch(
             previousDepth, ivec2(gl_FragCoord.xy), 0).r;
@@ -1293,9 +1362,9 @@ void main() {
     }
     gl_FragDepth = cameraDepth / (cameraDepth + 1.0);
 
-    vec3 normal = normalize(worldNormal);
+    vec3 normal = normalize(interpolatedNormal);
     vec3 towardCamera = projection == 1
-        ? vec3(-worldPosition.x, -worldPosition.y,
+        ? vec3(-interpolatedWorld.x, -interpolatedWorld.y,
                cameraDepth)
         : vec3(0.0, 0.0, 1.0);
     if (dot(normal, towardCamera) < 0.0) normal = -normal;
@@ -1303,7 +1372,7 @@ void main() {
     float diffuse = max(0.0, dot(normal, light));
     float lit = lightAmbient + lightDiffuse * diffuse;
     float multiplier = max(0.0, 1.0 + lighting * (lit - 1.0));
-    outputColor = sampleSource(meshUv);
+    outputColor = sampleSource(uv);
     outputColor.rgb *= multiplier;
 }
 )PVT_GLSL";

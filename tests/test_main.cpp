@@ -3,6 +3,7 @@
 #include "../src/displacement_surface.h"
 #include "../src/effect_parameter_domain.h"
 #include "../src/frame_renderer_internal.h"
+#include "../src/obj_surface.h"
 #include "../src/path_utf8.h"
 #include "../src/post_process_alpha.h"
 #include "../src/source_image.h"
@@ -5304,6 +5305,35 @@ void test_validation_limits(const fs::path& source_root) {
     CHECK(obj_memory_result.ok);
     CHECK(obj_memory_result.estimated_peak_bytes
           > no_obj_memory_result.estimated_peak_bytes);
+    // Geometry costs must be present even without construction animation.
+    // Subtract a missing-asset estimate to isolate the actual OBJ allocations.
+    const std::string retained_obj_path = config.surface.obj_path;
+    config.surface.obj_path += ".missing";
+    const auto missing_geometry = pvt::validate(config);
+    config.surface.obj_path = retained_obj_path;
+    pvt::detail::MeshGeometryMemory geometry;
+    CHECK(pvt::detail::mesh_geometry_memory_requirements(
+        8U, 0U, 12U, false, geometry));
+    CHECK(geometry.projected_vertices == 8U * 64U);
+    CHECK(geometry.transformed_normals == 0U);
+    CHECK(obj_memory_result.estimated_peak_bytes - missing_geometry.estimated_peak_bytes
+          >= geometry.total + sizeof(pvt::detail::ObjMesh)
+               + 8U * sizeof(pvt::detail::ObjVec3)
+               + 12U * sizeof(pvt::detail::ObjTriangle));
+    pvt::detail::MeshGeometryMemory upload;
+    CHECK(pvt::detail::mesh_geometry_memory_requirements(1000U, 1000U, 2000U, true, upload));
+    CHECK(upload.upload_staging == (1000U * 8U + 2000U * 3U) * sizeof(float));
+    CHECK(upload.gpu_buffers == upload.upload_staging);
+    CHECK(upload.total == 1000U * (64U + sizeof(pvt::detail::ObjVec3))
+                           + 2U * upload.upload_staging);
+    const auto preserved_upload = upload;
+    for (unsigned component = 0U; component < 3U; ++component) {
+        const auto huge = (std::numeric_limits<std::size_t>::max)();
+        CHECK(!pvt::detail::mesh_geometry_memory_requirements(
+            component == 0U ? huge : 0U, component == 1U ? huge : 0U,
+            component == 2U ? huge : 0U, true, upload));
+        CHECK(upload.total == preserved_upload.total);
+    }
     config.surface.mesh_construction.mode =
         pvt::MeshConstructionMode::Reconstruct;
     config.surface.mesh_construction.fragmentation =

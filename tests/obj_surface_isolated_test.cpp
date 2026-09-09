@@ -110,6 +110,80 @@ bool apply_neutral_obj_surface(const pvt::Image& source,
 
 } // namespace
 
+// Independent ray/triangle oracle: validates clipping coverage and interpolated
+// UVs without reproducing the polygon-clipping implementation.
+bool check_camera_crossing(pvt::SurfaceProjection projection, bool two_behind,
+                           bool reverse_winding, float alpha, std::string& error) {
+    using pvt::detail::ObjVec3;
+    const auto subtract = [](ObjVec3 a, ObjVec3 b) {
+        return ObjVec3{a.x - b.x, a.y - b.y, a.z - b.z};
+    };
+    const auto cross = [](ObjVec3 a, ObjVec3 b) {
+        return ObjVec3{a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x};
+    };
+    const auto dot = [](ObjVec3 a, ObjVec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; };
+    pvt::detail::ObjMesh mesh;
+    mesh.positions = {{-0.9, -0.8, 0.0}, {0.8, -0.7, two_behind ? 1.7 : 0.1},
+                      {0.1, 0.9, 1.8}};
+    mesh.texcoords = {{0.1, 0.15}, {0.85, 0.2}, {0.55, 0.9}};
+    mesh.normals = {{0.0, 0.0, 1.0}};
+    pvt::detail::ObjTriangle triangle;
+    triangle.corners = {{{0U, 0U, 0U}, {1U, 1U, 0U}, {2U, 2U, 0U}}};
+    if (reverse_winding) std::swap(triangle.corners[1], triangle.corners[2]);
+    mesh.triangles.push_back(triangle);
+    pvt::SurfaceConfig surface;
+    surface.enabled = true;
+    surface.mapping = pvt::SurfaceMapping::CustomObj;
+    surface.normalize_obj = false;
+    surface.sizing = pvt::SurfaceSizing::ShortSide;
+    surface.projection = projection;
+    surface.camera_distance = 1.0;
+    surface.focal_length = 1.0;
+    pvt::Image output;
+    if (!pvt::detail::apply_mesh_surface_mapping(
+            uv_gradient_image(65, 63, alpha), output, mesh, surface, 0.0, &error)) return false;
+    const ObjVec3 e1 = subtract(mesh.positions[1], mesh.positions[0]);
+    const ObjVec3 e2 = subtract(mesh.positions[2], mesh.positions[0]);
+    std::size_t checked_hits = 0U;
+    for (int y = 0; y < output.height; ++y) {
+        for (int x = 0; x < output.width; ++x) {
+            const double sx = (x + 0.5 - 32.0) / 31.5;
+            const double sy = (31.0 - y - 0.5) / 31.5;
+            const bool perspective = projection == pvt::SurfaceProjection::Perspective;
+            const ObjVec3 origin = perspective ? ObjVec3{0.0, 0.0, 1.0} : ObjVec3{sx, sy, 1.0};
+            const ObjVec3 direction = perspective ? ObjVec3{sx, sy, -1.0} : ObjVec3{0.0, 0.0, -1.0};
+            const auto p = cross(direction, e2);
+            const double determinant = dot(e1, p);
+            if (std::abs(determinant) < 1.0e-10) continue;
+            const auto t = subtract(origin, mesh.positions[0]);
+            const auto q = cross(t, e1);
+            const double u = dot(t, p) / determinant;
+            const double v = dot(direction, q) / determinant;
+            const double distance = dot(e2, q) / determinant;
+            // Exclude exact shared-edge ties from this independent oracle.
+            if (std::abs(u) < 1.0e-8 || std::abs(v) < 1.0e-8
+                || std::abs(u + v - 1.0) < 1.0e-8
+                || std::abs(distance - 1.0e-6) < 1.0e-8) continue;
+            const bool hit = u > 0.0 && v > 0.0 && u + v < 1.0 && distance >= 1.0e-6;
+            const float* actual = pixel(output, x, y);
+            if (!hit) {
+                if (actual[3] != 0.0F) { error = "clipped triangle painted outside ray intersection"; return false; }
+                continue;
+            }
+            ++checked_hits;
+            const double expected_u = (1.0-u-v)*0.1 + u*0.85 + v*0.55;
+            const double expected_v = (1.0-u-v)*0.15 + u*0.2 + v*0.9;
+            if (std::abs(actual[0] - expected_u) > 2.0e-5
+                || std::abs(actual[1] - (1.0-expected_v)) > 2.0e-5
+                || std::abs(actual[3] - alpha) > 1.0e-6) {
+                error = "camera clipping disagrees with independent ray/UV oracle";
+                return false;
+            }
+        }
+    }
+    return checked_hits > 10U;
+}
+
 int main(int argc, char** argv) {
     for (std::size_t size : {0U, 1U, 63U, 64U, 65U, 127U, 129U}) {
         pvt::detail::PackedMask mask(size);
@@ -133,10 +207,58 @@ int main(int argc, char** argv) {
     const std::string multi_part =
         (source_root / "tests" / "assets" / "obj" / "multi_part_assembly.obj").string();
     std::string error;
+    for (auto projection : {pvt::SurfaceProjection::Perspective,
+                             pvt::SurfaceProjection::Orthographic}) {
+        for (bool two_behind : {false, true}) {
+            for (bool reverse : {false, true}) {
+                for (float alpha : {0.5F, 1.0F}) {
+                    if (!check_camera_crossing(projection, two_behind, reverse, alpha, error)) {
+                        return fail(38, "near-plane regression: " + error);
+                    }
+                }
+            }
+        }
+    }
 
     // A half-alpha closed shell must retain its exit surface. Two equal layers
     // composite to alpha 0.75; nearest-only rendering would remain 0.5.
     const pvt::Image translucent = uniform_image(64, 64, 0.8F, 0.3F, 0.1F, 0.5F);
+    pvt::detail::ObjMesh inside_mesh;
+    if (!pvt::detail::load_obj_mesh(cube, inside_mesh, &error)) return fail(39, error);
+    pvt::SurfaceConfig inside_surface;
+    inside_surface.enabled = true;
+    inside_surface.mapping = pvt::SurfaceMapping::CustomObj;
+    inside_surface.projection = pvt::SurfaceProjection::Perspective;
+    inside_surface.camera_distance = 0.5;
+    inside_surface.focal_length = 0.3;
+    pvt::Image inside, inside_reversed;
+    if (!pvt::detail::apply_mesh_surface_mapping(translucent, inside, inside_mesh,
+            inside_surface, 0.0, &error)) return fail(39, error);
+    for (auto& triangle : inside_mesh.triangles) std::swap(triangle.corners[1], triangle.corners[2]);
+    if (!pvt::detail::apply_mesh_surface_mapping(translucent, inside_reversed, inside_mesh,
+            inside_surface, 0.0, &error)
+        || inside.pixels != inside_reversed.pixels || pixel(inside, 32, 32)[3] != 0.5F) {
+        return fail(39, "camera-inside two-sided shell changed with winding: " + error);
+    }
+    pvt::detail::ObjMesh near_mesh;
+    near_mesh.positions = {{-1,-1,0}, {1,-1,0}, {0,1,0}};
+    pvt::detail::ObjTriangle near_triangle;
+    near_triangle.corners[0].position = 0U;
+    near_triangle.corners[1].position = 1U;
+    near_triangle.corners[2].position = 2U;
+    near_mesh.triangles.push_back(near_triangle);
+    inside_surface.projection = pvt::SurfaceProjection::Orthographic;
+    inside_surface.camera_distance = 1.0e-6;
+    if (!pvt::detail::apply_mesh_surface_mapping(translucent, inside, near_mesh,
+            inside_surface, 0.0, &error) || pixel(inside, 32, 32)[3] != 0.5F) {
+        return fail(40, "triangle on the near plane was discarded: " + error);
+    }
+    inside_surface.position_z = 2.0e-6;
+    if (!pvt::detail::apply_mesh_surface_mapping(translucent, inside, near_mesh,
+            inside_surface, 0.0, &error)
+        || std::any_of(inside.pixels.begin(), inside.pixels.end(), [](float value) { return value != 0.0F; })) {
+        return fail(40, "entirely behind triangle was not culled: " + error);
+    }
     pvt::Image layered;
     if (!apply_classic_obj_surface(translucent, layered, cube,
                                    0, 0.0, 1.0, 0.0, 0.0, &error)) {

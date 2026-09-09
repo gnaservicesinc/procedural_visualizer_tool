@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
 
     // Clearing is an epoch boundary. A pre-clear caller still receives the
     // mesh it requested, but a post-clear caller must neither join that parse
-    // nor let its older result repopulate the one-entry cache.
+    // nor let its older result repopulate the cache.
     clear_obj_mesh_cache();
     set_obj_mesh_cache_parse_paused_for_testing(true);
     std::shared_ptr<const ObjMesh> pre_clear;
@@ -259,7 +259,7 @@ int main(int argc, char** argv) {
     // Final filesystem verification must not hold the global cache mutex. An
     // older, already-verified parse is paused immediately before publication;
     // an unrelated newer request must complete while it is paused and remain
-    // the one strong cache entry after the older caller resumes.
+    // its cache entry after the older caller resumes.
     {
         std::ofstream output(unrelated, std::ios::binary | std::ios::trunc);
         output << "v 0 0 0\nv 2 0 0\nv 0 2 0\nf 1 2 3\n";
@@ -309,7 +309,87 @@ int main(int argc, char** argv) {
                             + newer_publication_error + error);
     }
 
+    // Alternating active assets share their immutable objects across frames.
+    std::shared_ptr<const ObjMesh> alternating;
+    for (int iteration = 0; iteration < 20; ++iteration) {
+        if (!load_obj_mesh_cached(temporary.string(), alternating, &error)
+            || alternating != older_publication
+            || !load_obj_mesh_cached(unrelated.string(), alternating, &error)
+            || alternating != newer_publication) {
+            return fail(17, "alternating OBJ assets were reparsed: " + error);
+        }
+    }
+    if (obj_mesh_cache_parse_count_for_testing() != 2U) {
+        return fail(17, "alternating cache did not retain both publications");
+    }
+
+    // Enforce the entry bound and evict least recently used ownership, while
+    // outstanding render handles remain valid. Tiny fixtures avoid a huge RAM
+    // allocation just to test eviction.
+    clear_obj_mesh_cache();
+    std::vector<fs::path> many_paths;
+    std::vector<std::weak_ptr<const ObjMesh>> lifetimes;
+    for (unsigned index = 0; index < 17U; ++index) {
+        const fs::path path = temporary.string() + "." + std::to_string(index);
+        { std::ofstream output(path); output << bom; }
+        many_paths.push_back(path);
+        if (!load_obj_mesh_cached(path.string(), alternating, &error)) {
+            return fail(18, "bounded-cache fixture failed: " + error);
+        }
+        lifetimes.push_back(alternating);
+        if (index == 15U) {
+            if (!load_obj_mesh_cached(many_paths[0].string(), alternating, &error)) {
+                return fail(18, error);
+            }
+        }
+    }
+    alternating.reset();
+    if (lifetimes[0].expired() || !lifetimes[1].expired()
+        || lifetimes[16].expired()) return fail(18, "OBJ LRU eviction order is incorrect");
+    prune_obj_mesh_cache({});
+    if (std::any_of(lifetimes.begin(), lifetimes.end(),
+                    [](const auto& weak) { return !weak.expired(); })) {
+        return fail(19, "pruning did not release every cached OBJ asset");
+    }
+
+    set_obj_mesh_cache_byte_limit_for_testing(bom_mesh.estimated_bytes() * 2U);
+    std::weak_ptr<const ObjMesh> byte_evicted;
+    for (std::size_t index = 0U; index < 3U; ++index) {
+        if (!load_obj_mesh_cached(many_paths[index].string(), alternating, &error)) return fail(20, error);
+        if (index == 0U) byte_evicted = alternating;
+    }
+    if (!byte_evicted.expired()) return fail(20, "OBJ cache exceeded its byte budget");
+    set_obj_mesh_cache_byte_limit_for_testing(0U);
+    if (!load_obj_mesh_cached(temporary.string(), alternating, &error)) return fail(20, error);
+    byte_evicted = alternating;
+    alternating.reset();
+    if (!byte_evicted.expired()) return fail(20, "oversized OBJ was retained by the cache");
+    set_obj_mesh_cache_byte_limit_for_testing(512U * 1024U * 1024U);
+
+    // A replacement at the same path fences its predecessor even when the
+    // older parse completed its filesystem check before the replacement.
+    arm_obj_mesh_cache_publication_pause_for_testing();
+    std::shared_ptr<const ObjMesh> stale, replacement;
+    std::string stale_error;
+    bool stale_ok = false;
+    std::thread stale_loader([&] {
+        stale_ok = load_obj_mesh_cached(temporary.string(), stale, &stale_error);
+    });
+    wait_obj_mesh_cache_publication_paused_for_testing();
+    { std::ofstream output(temporary, std::ios::app); output << "\n# replacement\n"; }
+    const bool replacement_ok = load_obj_mesh_cached(temporary.string(), replacement, &error);
+    resume_obj_mesh_cache_publication_for_testing();
+    stale_loader.join();
+    byte_evicted = stale;
+    stale.reset();
+    if (!stale_ok || !replacement_ok || !byte_evicted.expired()
+        || !load_obj_mesh_cached(temporary.string(), alternating, &error)
+        || alternating != replacement) {
+        return fail(21, "same-path cache publication fence failed: " + error + stale_error);
+    }
+
     std::error_code cleanup_error;
+    for (const auto& path : many_paths) fs::remove(path, cleanup_error);
     fs::remove(temporary, cleanup_error);
     fs::remove(unrelated, cleanup_error);
     std::cout << "OBJ parser/cache isolated tests passed\n";

@@ -889,6 +889,15 @@ if(BUILD_TESTING)
     add_test(NAME pvt_obj_surface
         COMMAND pvt_obj_surface_tests ${CMAKE_CURRENT_SOURCE_DIR})
 
+    add_executable(pvt_obj_performance_audit_probe EXCLUDE_FROM_ALL
+        tests/obj_performance_audit_probe.cpp src/environment_map.cpp
+        src/obj_mesh.cpp src/obj_surface.cpp src/source_image.cpp)
+    target_compile_features(pvt_obj_performance_audit_probe PRIVATE cxx_std_17)
+    target_compile_definitions(pvt_obj_performance_audit_probe PRIVATE PVT_OBJ_MESH_TEST_HOOKS=1)
+    target_include_directories(pvt_obj_performance_audit_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(pvt_obj_performance_audit_probe PRIVATE PNG::PNG ZLIB::ZLIB Threads::Threads)
+    pvt_enable_warnings(pvt_obj_performance_audit_probe)
+
     if(PVT_BUILD_CLI)
         add_test(NAME pvt_cli_self_test COMMAND pvt_render_cli --self-test)
         add_test(NAME pvt_cli_help COMMAND pvt_render_cli --help)

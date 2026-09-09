@@ -4,6 +4,7 @@
 #include "../src/source_image.h"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -150,6 +151,48 @@ int main() {
         require(inactive.pixels == plain.pixels, "disabled LFO changed backend output");
         require(config.parameter_lfos.size() == 1U,
                 "render discarded an authored disabled LFO");
+
+        // Vertex storage can dominate a small canvas even with few visible
+        // faces. Exercise this case through multiworker admission and then
+        // disable every referencing layer to verify ownership is released.
+        const std::string large_path = (temporary / "many-vertices.obj").string();
+        {
+            std::ofstream output(large_path);
+            output << "v -1 -1 0\nv 1 -1 0\nv 0 1 0\n";
+            for (int vertex = 0; vertex < 20000; ++vertex) output << "v 0 0 0\n";
+            output << "f 1 2 3\n";
+        }
+        project = pvt::default_project();
+        project.canvas.width = project.canvas.height = 32;
+        project.output.write_alpha = true;
+        for (unsigned layer_index = 0; layer_index < 4U; ++layer_index) {
+            if (layer_index > 0U) {
+                auto layer = pvt::default_layer(layer_index);
+                layer.file_id = pvt::allocate_layer_file_id(project);
+                project.layers.push_back(std::move(layer));
+            }
+            auto& layer = project.layers.back();
+            layer.opacity = 0.6;
+            layer.render.surface.enabled = true;
+            layer.render.surface.mapping = pvt::SurfaceMapping::CustomObj;
+            layer.render.surface.obj_path = large_path;
+        }
+        const auto large_estimate = pvt::validate(project);
+        require(large_estimate.ok && large_estimate.estimated_peak_bytes > 20003U * 64U,
+                "project admission omitted large OBJ projection storage");
+        options.backend = pvt::RenderBackend::Cpu;
+        options.maximum_cpu_workers = 1U;
+        require(pvt::render_project_frame(project, 0, options, expected, nullptr, &error), error.c_str());
+        options.maximum_cpu_workers = 4U;
+        options.cpu_memory_budget_bytes = 1U;
+        require(pvt::render_project_frame(project, 0, options, reenabled, nullptr, &error), error.c_str());
+        require(expected.pixels == reenabled.pixels,
+                "memory-constrained OBJ layer rendering changed output");
+        for (auto& layer : project.layers) layer.enabled = false;
+        require(pvt::render_project_frame(project, 0, options, disabled, nullptr, &error), error.c_str());
+        // Inactive authored references remain valid if their files disappear.
+        fs::remove(large_path);
+        require(pvt::validate(project).ok, "disabled OBJ validation inspected its file");
         std::cout << "Asset cache lifetime and inactive configuration tests passed\n";
         return 0;
     } catch (const std::exception& exception) {

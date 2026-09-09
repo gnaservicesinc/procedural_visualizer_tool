@@ -1,12 +1,13 @@
 # Performance and correctness audit
 
-Updated: 2026-09-08. Iteration 1, against commit
-`d1e521e2ade3a28237bc33f8eeb8cc4fcf0d7b8e` (17.8.0).
+Updated: 2026-09-08. Iteration 2, against commit `af48ae6` (17.8.0).
+Iteration 1 was against `d1e521e2ade3a28237bc33f8eeb8cc4fcf0d7b8e`
+and is now committed in the baseline.
 
 This is the continuation record for the requested performance, memory,
-configuration, and latent-defect audit. Changes are local and uncommitted;
-this pass does not publish a release. Preserve the pre-existing example-project
-edits and `tests/.DS_Store` when committing this work.
+configuration, and latent-defect audit. Iteration 2 changes are local and
+uncommitted; this pass does not publish a release. The checkout was clean at
+the start of this iteration.
 
 ## Scope and fidelity contract
 
@@ -39,6 +40,11 @@ or backend comparison tolerances were changed.
 | A10 | Three OpenGL passes relied on explicit cleanup calls that exceptions could bypass. Add idempotent scope cleanup for mesh, coordinate-effect, and generated-source GPU resources. | Real OpenGL suite passes; cleanup also runs during stack unwinding. Forced allocation failure remains a qualification item below. |
 | A11 | The mesh working-memory estimate omitted coverage storage. Account for the packed allocation, including its final partial word. | Core/admission tests and overflow-safe size computation. |
 | A12 | Cached displacement mesh variants held strong references to decoded height maps already evicted from the source cache. Geometry already contains the sampled heights; retain a weak identity reference instead. | The decoded height field expires while its generated mesh remains cached; source replacement and re-enable rendering tests pass. |
+| A13 | CPU mesh and OpenGL displacement triangles crossing the near plane were discarded wholesale. Clip them into at most two triangles, retaining UVs, normals, world coordinates, winding, and depth peeling. Intersections use a canonical endpoint order and stack storage. | Independent CPU ray/triangle oracle for one/two outside vertices, both projections and windings, opaque/translucent textures; camera-inside shell, exact near-plane and entirely behind tests; real OpenGL crossing tests. |
+| A14 | Remove unused object coordinates from every projected vertex (88 to 64 bytes on this host). Add checked projection, transformed-normal, retained OBJ geometry, and cold OpenGL staging/buffer allowances to admission. Include OpenGL readback and texture storage. | Overflow and transactional-result tests; ordinary OBJ geometry affects validation without construction enabled; four layers sharing a 20,003-vertex OBJ produce identical pixels with a one-byte worker budget. |
+| A15 | Replace the single-entry OBJ cache with an LRU bounded by 16 entries and 512 MiB of retained mesh allocations. Keep single-flight loading, generation fences, file/limit replacement, and pruning. Publication fences are per asset so unrelated concurrent loads can both remain cached. Oversized assets remain renderable without cache retention. | Alternating reuse, entry/byte eviction, oversized no-retention, active-reader lifetime, all-entry pruning, same-path replacement and out-of-order publication tests; 60 alternating requests now parse only three meshes. |
+| A16 | Reject entirely behind-camera triangles and triangles wholly outside one viewport edge before face-normal and UV preparation. This view rejection applies to arbitrary OBJ geometry without a winding assumption. | Existing extreme-coordinate tests, reversed/inside-camera coverage tests, and nine matching animated CPU mesh hashes; offscreen-heavy probe below. |
+| A17 | Thin displaced triangles exposed an existing OpenGL attribute-interpolation mismatch, including geometry entirely in front of the camera. Use homogeneous determinants at the actual pixel center to interpolate UVs, depth, world positions, and normals without near-zero perspective division. Remove unused smooth varyings. | Before correction, maximum differences reached 0.01327 in orthographic and 0.00583 in perspective fixtures. Eight crossing/noncrossing, opaque/translucent cases now pass the unchanged 0.0035 CPU/GPU tolerance. |
 
 Pruning preserves paths, attached source files, saved disabled settings, music
 analysis, and undo/history. In-flight readers retain immutable shared handles
@@ -85,7 +91,64 @@ Coverage memory falls by 87.5% at dimensions divisible by 64 pixels:
 These figures describe coverage only, not total renderer memory. Float color,
 depth, geometry, authored state, and driver allocations remain separate.
 
+### Iteration 2 measurements
+
+Probe: `tests/obj_performance_audit_probe.cpp`, optional target
+`pvt_obj_performance_audit_probe`; pass the repository root as its argument.
+The baseline probe was compiled from the committed `obj_surface.cpp` and
+`obj_mesh.cpp`; the same probe and other dependencies were used for both.
+These local Release observations were repeated sequentially after the first
+run. Timing is not a pass/fail gate.
+
+| Workload | Baseline | Iteration 2 | Evidence |
+| --- | ---: | ---: | --- |
+| Three 10,082-triangle OBJ files, 20 alternating rounds | 370.13 ms, 60 parses | 19.09 ms, 3 parses | 94.8% less elapsed time; immutable reuse rather than reparsing. |
+| 100,000 offscreen triangles, median of 12 animated frames | 3.98 ms | 1.44 ms | 63.8% less elapsed time; exact float hash `eeb68bbff0e87f45`. |
+| Projected storage for 1,000,000 positions | 83.92 MiB | 61.04 MiB | 22.89 MiB saved; 27.3% reduction in this allocation. |
+
+All nine CPU probe hashes match the committed baseline. The other eight cases
+cover both projections, opaque/translucent closed shells, partial curvature,
+and mirrored geometry over 12 animated frames each. Their hashes in case order
+are `3ffd8bdbaca8d339`, `2dd303b7c62df526`, `14aaef1e834fdb91`,
+`499b79461999a543`, `2f903b1caaa32448`, `6a2a723881e8918d`,
+`67f31582072d3a3c`, and `c7622f68ecad7c4e`.
+
+Clipping deliberately restores missing coverage; A17 deliberately corrects
+GPU interpolation. Those defect cases are validated against independent
+geometry/CPU results, not hashes of the defective output. No OpenGL throughput
+improvement is claimed from A17; its per-fragment interpolation cost needs
+qualification on other drivers alongside correctness.
+
+Geometry accounting separates per-frame projection/normals, cold upload staging,
+and GPU buffers internally. Imported immutable geometry is conservatively
+charged in each worker estimate. The current public admission total still lacks
+a distinct shared pool. OpenGL mesh allowance is 76 bytes/pixel plus packed
+coverage, excluding caller source/destination: 36 bytes for CPU mapped/layer/depth
+arrays and 40 for two RGBA32F and two depth32F textures. The estimate may include
+CPU and GPU alternatives together because validation precedes backend selection.
+These are allocation allowances, not measured process RSS or driver heap usage.
+
 ## Validation
+
+Iteration 2:
+
+- Native Release/Qt/Metal: 38/38 tests passed, including updated core, OBJ,
+  asset/admission regressions and all three localized GUI smoke tests.
+- Separate C++20 shared build, Metal disabled, actual OpenGL enabled: 4/4
+  focused suites passed (core, composition, asset lifetime, OpenGL).
+- AddressSanitizer + UndefinedBehaviorSanitizer + float-cast-overflow: 5/5
+  focused suites passed (core, composition, assets, OBJ loader/surface).
+  Leak detection remains disabled on this host.
+- Nine animated CPU OBJ hashes match the committed baseline; entry/byte bounds,
+  file replacement and publication races are deterministic tests.
+- `git diff --check` passed. Windows/Linux and other native GPU drivers remain
+  unqualified for this iteration; no release or remote CI is claimed.
+
+Current builds and logs are disposable `/tmp/pvt-audit2-native`,
+`/tmp/pvt-audit2-gl`, `/tmp/pvt-audit2-san`, `/tmp/pvt-audit2-reference`, and
+`/tmp/pvt-audit2-*.log`/`*.txt`. The source probe and this tracker are durable.
+
+Iteration 1 historical evidence:
 
 - Baseline native Release/Qt build: 38/38 tests passed.
 - Changed native Release/Qt/Metal build: 39/39 tests passed, including new
@@ -139,22 +202,22 @@ for evidence of OpenGL execution.
 
 ## Remaining work and iteration queue
 
-These items are deliberately open. Resume by ID, verify current source, and
+Closed entries retain their IDs for continuity. Resume an open item by ID, verify current source, and
 record changed files, regression evidence, measurement, and final status here.
 Choose one bounded group per iteration rather than repeatedly rescanning the
 entire repository under a token limit.
 
 | ID | Priority/status | Finding or strategy | Next implementation and acceptance gate |
 | --- | --- | --- | --- |
-| F01 | P2, confirmed limitation | `obj_surface.cpp` rejects a complete triangle when any projected vertex is behind/too close to the camera. A crossing triangle can lose its visible portion. | Implement camera-plane polygon clipping with interpolated UV/normal/world values and match the OpenGL geometry path. Cover one/two vertices behind, camera-inside views, all windings, and transparent depth peeling. Rendering semantics and backend parity make this a separate geometry change. |
-| F02 | P2, confirmed estimate gap | `project_positions` and `transform_normals` allocate per-vertex storage that is not represented explicitly in the mesh working-memory allowance; ordinary imported OBJ topology is inspected only for active construction plans. | Include projected vertices, transformed normals, and backend uploads in checked admission estimates, distinguish shared cache bytes from per-worker bytes, and test very large meshes under a small multiworker budget. |
-| F03 | P2, confirmed bottleneck | The OBJ cache has one strong entry. Alternating distinct OBJ layers/files can repeatedly parse and rebuild topology. | Benchmark an alternating two/many-OBJ project; evaluate a byte-bounded multi-entry cache while preserving single-flight loading, generation fences, file replacement, and eviction. Do not retain unbounded meshes. |
+| F01 | Closed in iteration 2 | Camera-plane clipping implemented on CPU and OpenGL in A13, with the additional interpolation defect fixed in A17. | Independent geometry, camera-inside, both windings, transparency, and local backend parity checks pass. Other driver qualification remains in F09. |
+| F02 | P2, partially resolved | A14 now includes projected vertices, normals, retained OBJ payloads, and OpenGL staging/buffers/textures. Shared geometry is still conservatively charged to each worker. | Introduce a shared admission pool covering all simultaneously retained assets and separate it from per-worker storage. Include cold parser/topology-build scratch, decode caches, allocator overhead, driver/context heaps, and session ownership. Validate aggregate RSS under concurrent preview/export; the current estimate is not a hard process-memory cap. |
+| F03 | Closed in iteration 2 | A15 implements a 16-entry/512 MiB OBJ LRU with per-asset publication fencing. | Three alternating assets require 3 parses across 60 requests; generation, entry/byte eviction, oversized bypass, same-path replacement, and pruning regressions pass. |
 | F04 | P2, optimization candidate | `validate_impl` recursively copies a complete render configuration to validate the saved layer clock. Project materialization also copies music tables; repeated validation rebuilds maps/graphs. | Extract clock-only validation and investigate an immutable render plan/shared analysis data with explicit invalidation. Preserve direct API edits, disabled-state validation, LFO dependency order, and live/project revision behavior. Benchmark animated large-analysis projects. |
 | F05 | P2, lifecycle extension | Pruning drops current cache owners and fences already-pending loads. A different or stale caller can start a new load after pruning. Independent projects also compete for process-global caches. | Introduce explicit render-session asset leases if concurrent-project isolation is needed; test old-frame late loads, concurrent export/preview, and the last active reader finishing without another frame. Do not force-delete assets needed by another active render. |
 | F06 | P2, conservative retention | An enabled LFO currently conservatively retains potentially used surface assets regardless of its target. Multiple decode intents for one retained image path and old mesh variants may also survive until normal LRU eviction. | Track exact asset/decode-intent dependencies and displacement keys in a render plan. Handle LFOs targeting other LFOs, skipped cycles, path bindings, and Live overrides before tightening retention. |
-| F07 | P2, strategy constrained by fidelity | General winding-based backface culling is unsafe for the current two-sided OBJ/displacement contract, open meshes, inside-camera views, transparency, and exploded/fragmented surfaces. Exact analytic rear-shading culling is implemented in A02. | Only add triangle culling after proving eligibility per topology/view/material/transform or introducing an explicit authored one-sided setting. Compare complete float outputs for reversed winding, mirrored transforms, concavity, silhouettes, partial curvature, and layered transparency. |
+| F07 | P2, partially resolved; winding strategy constrained | A16 adds view-based rejection for arbitrary OBJ triangles, and A02 skips hidden analytic rear shading. General winding-based backface culling remains unsafe for two-sided/open meshes, camera-inside views, transparency, and fragmented surfaces. | Only add winding-based rejection after proving eligibility per topology/view/material/transform or introducing an explicit authored one-sided setting. Compare complete float outputs for reversed winding, mirrored transforms, concavity, silhouettes, partial curvature, and layered transparency. |
 | F08 | P2, further memory reduction | Disabled layer definitions, cached music analysis, and undo/history remain authored state. Deleting those objects would break re-enable, persistence, and undo; A06 releases their render assets instead. | If authoring memory itself must be paged out, design lossless lazy storage with transactional reload, portable paths, recovery, and undo/version tests. This requires a document-lifecycle change, not Boolean packing. |
-| F09 | P2, qualification pending | Native Windows/Linux GPU paths, race instrumentation, and allocation-failure injection have not been run for this patch. Scope cleanup addresses identified exceptional paths, but fault injection is still needed to measure driver/decoder resource counts. | Run platform CI, targeted ThreadSanitizer interleavings, and forced failure after PNG/GL allocations. Check resource counts/context state and preserve destinations on error/cancel. Re-run exact hashes after any fixes. |
+| F09 | P2, qualification pending | Native Windows/Linux GPU paths, race instrumentation, and allocation-failure injection have not been run for these local changes. The new clipping and explicit GPU interpolation need driver and throughput qualification. | Run platform CI, targeted ThreadSanitizer interleavings, forced failure after PNG/GL allocations, and animated dense-mesh GPU benchmarks. Check resource counts/context state, thin-triangle coverage, transparency, and destinations on error/cancel. Re-run exact hashes after fixes. |
 
 Other configuration simplifications were evaluated but are not silently
 applied: merging floating-point effects, lowering mesh/image resolution,

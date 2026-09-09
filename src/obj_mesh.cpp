@@ -762,7 +762,6 @@ struct PendingObjMesh {
     ObjFileStamp stamp;
     ObjLoadLimits limits;
     std::uint64_t cache_generation = 0U;
-    std::uint64_t publication_sequence = 0U;
     bool complete = false;
     bool succeeded = false;
     bool source_changed = false;
@@ -773,15 +772,29 @@ struct PendingObjMesh {
     std::condition_variable wake;
 };
 
-struct ObjMeshCache {
-    std::mutex mutex;
+constexpr std::size_t kMaximumObjCacheBytes = std::size_t{512} * 1024U * 1024U;
+constexpr std::size_t kMaximumObjCacheEntries = 16U;
+#if defined(PVT_OBJ_MESH_TEST_HOOKS)
+std::size_t obj_mesh_cache_byte_limit = kMaximumObjCacheBytes;
+#else
+constexpr std::size_t obj_mesh_cache_byte_limit = kMaximumObjCacheBytes;
+#endif
+
+struct CachedObjMesh {
     ObjFileStamp stamp;
     ObjLoadLimits limits;
     std::shared_ptr<const ObjMesh> mesh;
+    std::size_t bytes = 0U;
+    std::uint64_t last_used = 0U;
+};
+
+struct ObjMeshCache {
+    std::mutex mutex;
+    std::vector<CachedObjMesh> entries;
+    std::size_t bytes = 0U;
+    std::uint64_t clock = 0U;
     std::vector<std::shared_ptr<PendingObjMesh>> pending;
     std::uint64_t generation = 0U;
-    std::uint64_t next_publication_sequence = 0U;
-    std::uint64_t published_sequence = 0U;
 };
 
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
@@ -881,9 +894,13 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
             bool load_owner = false;
             {
                 std::unique_lock<std::mutex> lock(cache.mutex);
-                if (cache.mesh && same_stamp(cache.stamp, before)
-                    && same_limits(cache.limits, limits)) {
-                    destination = cache.mesh;
+                const auto found = std::find_if(cache.entries.begin(), cache.entries.end(),
+                    [&](const CachedObjMesh& entry) {
+                        return same_stamp(entry.stamp, before) && same_limits(entry.limits, limits);
+                    });
+                if (found != cache.entries.end()) {
+                    found->last_used = ++cache.clock;
+                    destination = found->mesh;
                     return true;
                 }
 
@@ -920,24 +937,25 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
                             : pending->error);
                 }
 
-                // This is deliberately a one-entry cache. Drop a mismatched
-                // strong entry before reading its replacement so a normal
-                // cache miss never retains two maximum-sized meshes at once.
-                // Meshes already handed to concurrent callers remain alive by
-                // shared ownership and belong to those independent renders.
-                cache.mesh.reset();
-                cache.stamp = {};
-                cache.limits = {};
+                // A replaced file/limit set should not pin obsolete geometry.
+                // Other active OBJ assets remain reusable across layer frames.
+                for (auto entry = cache.entries.begin(); entry != cache.entries.end();) {
+                    if (entry->stamp.normalized_path == before.normalized_path) {
+                        cache.bytes -= entry->bytes;
+                        entry = cache.entries.erase(entry);
+                    } else ++entry;
+                }
+                // A newer version/limit set fences only this asset. Unrelated
+                // loads may finish out of order and still populate the LRU.
+                for (const auto& earlier : cache.pending) {
+                    if (earlier->stamp.normalized_path == before.normalized_path) {
+                        earlier->cacheable = false;
+                    }
+                }
                 pending = std::make_shared<PendingObjMesh>();
                 pending->stamp = before;
                 pending->limits = limits;
                 pending->cache_generation = cache.generation;
-                pending->publication_sequence =
-                    ++cache.next_publication_sequence;
-                if (pending->publication_sequence == 0U) {
-                    pending->publication_sequence =
-                        ++cache.next_publication_sequence;
-                }
                 cache.pending.push_back(pending);
                 load_owner = true;
             }
@@ -979,25 +997,35 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
 #endif
                 {
                     std::lock_guard<std::mutex> lock(cache.mutex);
-                    // A different key may have replaced the single strong
-                    // entry while this parse ran. Publication still owns only
-                    // one cache entry; handed-out meshes retain independent
-                    // shared ownership exactly as before.
+                    const auto found = std::find_if(cache.entries.begin(), cache.entries.end(),
+                        [&](const CachedObjMesh& entry) {
+                            return same_stamp(entry.stamp, after) && same_limits(entry.limits, limits);
+                        });
                     if (loaded_ok && pending->cacheable
                         && pending->cache_generation == cache.generation
-                        && cache.mesh && same_stamp(cache.stamp, after)
-                        && same_limits(cache.limits, limits)) {
-                        selected = cache.mesh;
+                        && found != cache.entries.end()) {
+                        selected = found->mesh;
+                        found->last_used = ++cache.clock;
                     } else if (loaded_ok && pending->cacheable
-                               && pending->cache_generation
-                                      == cache.generation
-                               && pending->publication_sequence
-                                      >= cache.published_sequence) {
-                        cache.stamp = std::move(after);
-                        cache.limits = limits;
-                        cache.mesh = selected;
-                        cache.published_sequence =
-                            pending->publication_sequence;
+                               && pending->cache_generation == cache.generation) {
+                        const std::size_t bytes = selected->estimated_bytes();
+                        // Evict before publication and use subtraction for the
+                        // admission check, so cache accounting cannot overflow.
+                        if (bytes <= obj_mesh_cache_byte_limit) {
+                            while (!cache.entries.empty()
+                                   && (cache.entries.size() >= kMaximumObjCacheEntries
+                                       || bytes > obj_mesh_cache_byte_limit - cache.bytes)) {
+                                const auto oldest = std::min_element(cache.entries.begin(), cache.entries.end(),
+                                    [](const CachedObjMesh& first, const CachedObjMesh& second) {
+                                        return first.last_used < second.last_used;
+                                    });
+                                cache.bytes -= oldest->bytes;
+                                cache.entries.erase(oldest);
+                            }
+                            cache.entries.push_back({std::move(after), limits, selected,
+                                                     bytes, ++cache.clock});
+                            cache.bytes += bytes;
+                        }
                     }
                     pending->mesh = selected;
                     pending->error = load_error;
@@ -1054,12 +1082,11 @@ bool load_obj_mesh_cached(const std::string& utf8_path,
 void clear_obj_mesh_cache() noexcept {
     ObjMeshCache& cache = obj_mesh_cache();
     std::lock_guard<std::mutex> lock(cache.mutex);
-    cache.mesh.reset();
-    cache.stamp = {};
-    cache.limits = {};
+    cache.entries.clear();
+    cache.bytes = 0U;
+    cache.clock = 0U;
     ++cache.generation;
     if (cache.generation == 0U) ++cache.generation;
-    cache.published_sequence = 0U;
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
     obj_mesh_cache_parse_count.store(0U, std::memory_order_relaxed);
 #endif
@@ -1068,10 +1095,11 @@ void clear_obj_mesh_cache() noexcept {
 void prune_obj_mesh_cache(const AssetPaths& objects) {
     ObjMeshCache& cache = obj_mesh_cache();
     const std::lock_guard<std::mutex> lock(cache.mutex);
-    if (objects.count(cache.stamp.normalized_path) == 0U) {
-        cache.mesh.reset();
-        cache.stamp = {};
-        cache.limits = {};
+    for (auto entry = cache.entries.begin(); entry != cache.entries.end();) {
+        if (objects.count(entry->stamp.normalized_path) == 0U) {
+            cache.bytes -= entry->bytes;
+            entry = cache.entries.erase(entry);
+        } else ++entry;
     }
     for (const auto& pending : cache.pending) {
         if (objects.count(pending->stamp.normalized_path) == 0U) {
@@ -1081,6 +1109,13 @@ void prune_obj_mesh_cache(const AssetPaths& objects) {
 }
 
 #if defined(PVT_OBJ_MESH_TEST_HOOKS)
+void set_obj_mesh_cache_byte_limit_for_testing(std::size_t bytes) {
+    clear_obj_mesh_cache();
+    ObjMeshCache& cache = obj_mesh_cache();
+    const std::lock_guard<std::mutex> lock(cache.mutex);
+    obj_mesh_cache_byte_limit = bytes;
+}
+
 std::uint64_t obj_mesh_cache_parse_count_for_testing() noexcept {
     return obj_mesh_cache_parse_count.load(std::memory_order_relaxed);
 }
