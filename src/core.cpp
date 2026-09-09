@@ -3162,7 +3162,33 @@ bool parameter_lfo_target_supported(const RenderData& render,
                     return lfo.id == target_id;
                 });
         }
-        RenderData candidate = render;
+        // Reuse the actual destination writer to recognize property names,
+        // but probe only the addressed item. Copying all RenderData here would
+        // duplicate saved music analysis once for every LFO during validation.
+        // Global destinations are unconditional except for the legacy/stacked
+        // post-process policy; their current numeric values do not affect
+        // support. Item destinations must retain the first matching stable ID.
+        RenderData candidate;
+        candidate.post_process.effects_authoritative =
+            render.post_process.effects_authoritative;
+        const auto copy_target = [&target_id](
+            const auto& source, auto& destination) {
+            const auto found = std::find_if(source.begin(), source.end(),
+                [&target_id](const auto& item) { return item.id == target_id; });
+            if (found == source.end()) return false;
+            destination.push_back(*found);
+            return true;
+        };
+        if (split_lfo_item_target(target_path, "wave/", target_id, property)) {
+            if (!copy_target(render.waves, candidate.waves)) return false;
+        } else if (split_lfo_item_target(target_path, "swing/", target_id, property)) {
+            if (!copy_target(render.swings, candidate.swings)) return false;
+        } else if (split_lfo_item_target(target_path, "effect/", target_id, property)) {
+            if (!copy_target(render.effects, candidate.effects)) return false;
+        } else if (split_lfo_item_target(target_path, "post_effect/", target_id, property)) {
+            if (!copy_target(render.post_process.effects,
+                             candidate.post_process.effects)) return false;
+        }
         return apply_lfo_target(candidate, target_path, 0.0);
     } catch (...) {
         return false;
@@ -3341,59 +3367,39 @@ bool valid_music_series(const std::vector<double>& beats,
     return true;
 }
 
-ValidationResult validate_impl(const RenderConfig& config, bool include_export,
-                               bool validate_layer_clock = true,
-                               bool validate_particle_workload = true,
-                               bool inspect_assets = true,
-                               detail::SharedRenderMemory* shared_memory = nullptr) {
-    if (config.width < 16 || config.width > kMaximumDimension
-        || config.height < 16 || config.height > kMaximumDimension) {
-        return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
-    }
-    if (config.block_size < 1
-        || config.block_size > std::max(config.width, config.height)) {
-        return invalid_result("Block size must be between 1 and the larger image dimension.");
-    }
-    if (config.total_frames < 2 || config.total_frames > kMaximumFrames) {
-        return invalid_result("Frame count must be between 2 and INT_MAX.");
-    }
-    if (!positive_render_parameter(config.fps)) {
-        return invalid_result("FPS must be finite and positive within the renderer's numeric representation.");
-    }
-    if (!valid_enum(config.clock.mode)
-        || !valid_enum(config.clock.interpolation)
-        || !valid_enum(config.clock.fit)
-        || !valid_enum(config.clock.music_tempo)
-        || !valid_enum(config.clock.music_swing_policy)) {
+// Validate each saved clock by reference. Clock validation must not copy or
+// recursively inspect unrelated render data, assets, or worker memory.
+ValidationResult validate_clock_impl(const ClockConfig& clock,
+                                     int total_frames, double fps) {
+    if (!valid_enum(clock.mode)
+        || !valid_enum(clock.interpolation)
+        || !valid_enum(clock.fit)
+        || !valid_enum(clock.music_tempo)
+        || !valid_enum(clock.music_swing_policy)) {
         return invalid_result("The synchronized clock contains an unknown mode or policy.");
     }
-    const ValidationResult live_validation = validate(config.live);
-    if (!live_validation.ok) {
-        return invalid_result("Live configuration is invalid: "
-                              + live_validation.message);
-    }
-    if (config.clock.frame_interval < 1
-        || config.clock.frame_interval > kMaximumFrames
-        || config.clock.time_interval_microseconds < 1
+    if (clock.frame_interval < 1
+        || clock.frame_interval > kMaximumFrames
+        || clock.time_interval_microseconds < 1
         // These fields are persisted as int64 microseconds. Positivity is the
         // only additional semantic requirement for an interval.
-        || !finite_render_parameter(config.clock.phase_offset_degrees)) {
+        || !finite_render_parameter(clock.phase_offset_degrees)) {
         return invalid_result("Clock intervals, offset, or phase are outside their allowed range.");
     }
     ParsedMeter parsed_meter;
     std::string meter_error;
-    if (!positive_render_parameter(config.clock.meter.bpm)
-        || config.clock.meter.tempo_note_denominator < 1
-        || config.clock.meter.tempo_note_denominator > kMaximumMeterValue
-        || !parse_meter_expression(config.clock.meter.expression,
+    if (!positive_render_parameter(clock.meter.bpm)
+        || clock.meter.tempo_note_denominator < 1
+        || clock.meter.tempo_note_denominator > kMaximumMeterValue
+        || !parse_meter_expression(clock.meter.expression,
                                    parsed_meter, meter_error)) {
         return invalid_result(meter_error.empty()
                                   ? "Meter tempo values are outside their allowed range."
                                   : "Invalid meter expression: " + meter_error);
     }
 
-    const MusicAnalysis& music = config.clock.music;
-    if (!valid_audio_processing(config.clock.audio_processing)
+    const MusicAnalysis& music = clock.music;
+    if (!valid_audio_processing(clock.audio_processing)
         || music.schema_version != 1U
         || music.analyzer_version.size() > kMaximumNameBytes
         || (!music.analyzer_version.empty()
@@ -3456,8 +3462,8 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
     cached_stream_ids.reserve(music.frequency_streams.size());
     for (const auto& stream : music.frequency_streams) {
         const auto authored = std::find_if(
-            config.clock.audio_processing.frequency_streams.begin(),
-            config.clock.audio_processing.frequency_streams.end(),
+            clock.audio_processing.frequency_streams.begin(),
+            clock.audio_processing.frequency_streams.end(),
             [&stream](const AudioFrequencyStreamConfig& item) {
                 return item.uuid == stream.uuid;
             });
@@ -3472,7 +3478,7 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
                                    stream.tempo_points,
                                    stream.feature_samples,
                                    music.duration_seconds)
-            || (authored != config.clock.audio_processing.frequency_streams.end()
+            || (authored != clock.audio_processing.frequency_streams.end()
                 && (authored->low_hz != stream.low_hz
                     || authored->high_hz != stream.high_hz))) {
             return invalid_result(
@@ -3502,23 +3508,23 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             }
         }
     }
-    if (config.clock.mode == ClockMode::Music) {
+    if (clock.mode == ClockMode::Music) {
         int resolved_count = 0;
         std::string frame_error;
-        const auto selected_stream = config.clock.frequency_stream_uuid.empty()
+        const auto selected_stream = clock.frequency_stream_uuid.empty()
             ? music.frequency_streams.end()
             : std::find_if(
                   music.frequency_streams.begin(), music.frequency_streams.end(),
-                  [&config](const MusicFrequencyStreamAnalysis& stream) {
-                      return stream.uuid == config.clock.frequency_stream_uuid;
+                  [&clock](const MusicFrequencyStreamAnalysis& stream) {
+                      return stream.uuid == clock.frequency_stream_uuid;
                   });
-        const auto selected_range = config.clock.frequency_stream_uuid.empty()
-            ? config.clock.audio_processing.frequency_streams.end()
+        const auto selected_range = clock.frequency_stream_uuid.empty()
+            ? clock.audio_processing.frequency_streams.end()
             : std::find_if(
-                  config.clock.audio_processing.frequency_streams.begin(),
-                  config.clock.audio_processing.frequency_streams.end(),
-                  [&config](const AudioFrequencyStreamConfig& stream) {
-                      return stream.uuid == config.clock.frequency_stream_uuid;
+                  clock.audio_processing.frequency_streams.begin(),
+                  clock.audio_processing.frequency_streams.end(),
+                  [&clock](const AudioFrequencyStreamConfig& stream) {
+                      return stream.uuid == clock.frequency_stream_uuid;
                   });
         if (music.analyzer_version.empty()
             || !valid_lower_hex_digest(music.source_sha256)
@@ -3528,39 +3534,63 @@ ValidationResult validate_impl(const RenderConfig& config, bool include_export,
             || music.source_sample_rate == 0U
             || music.source_channel_count == 0U
             || music.beat_times_seconds.empty()
-            || !audio_processing_equal(config.clock.audio_processing,
+            || !audio_processing_equal(clock.audio_processing,
                                        music.input_processing)
-            || (!config.clock.frequency_stream_uuid.empty()
+            || (!clock.frequency_stream_uuid.empty()
                 && (selected_stream == music.frequency_streams.end()
                     || selected_range
-                           == config.clock.audio_processing.frequency_streams.end()
+                           == clock.audio_processing.frequency_streams.end()
                     || selected_stream->beat_times_seconds.empty()))
-            || !effective_frame_count_impl(config.total_frames, config.fps,
-                                            config.clock, resolved_count,
+            || !effective_frame_count_impl(total_frames, fps,
+                                            clock, resolved_count,
                                             frame_error)) {
             return invalid_result(frame_error.empty()
                                       ? "Music clock requires complete bounded cached analysis."
                                       : frame_error);
         }
     }
-    if (validate_layer_clock) {
-        if (!valid_enum(config.layer_clock.scale)
-            || !valid_enum(config.layer_clock.mix)) {
-            return invalid_result(
-                "The active-layer clock contains an unknown scaling or mixing policy.");
-        }
-        RenderConfig layer_clock_probe = config;
-        layer_clock_probe.clock = config.layer_clock.clock;
-        layer_clock_probe.layer_clock = {};
-        const ValidationResult layer_clock_validation =
-            validate_impl(layer_clock_probe, false, false,
-                          validate_particle_workload, inspect_assets, shared_memory);
-        if (!layer_clock_validation.ok) {
-            return invalid_result(
-                "The saved active-layer clock is invalid: "
-                + layer_clock_validation.message,
-                layer_clock_validation.estimated_peak_bytes);
-        }
+    ValidationResult result;
+    result.ok = true;
+    return result;
+}
+
+ValidationResult validate_impl(const RenderConfig& config, bool include_export,
+                               bool validate_particle_workload = true,
+                               bool inspect_assets = true,
+                               detail::SharedRenderMemory* shared_memory = nullptr) {
+    if (config.width < 16 || config.width > kMaximumDimension
+        || config.height < 16 || config.height > kMaximumDimension) {
+        return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
+    }
+    if (config.block_size < 1
+        || config.block_size > std::max(config.width, config.height)) {
+        return invalid_result("Block size must be between 1 and the larger image dimension.");
+    }
+    if (config.total_frames < 2 || config.total_frames > kMaximumFrames) {
+        return invalid_result("Frame count must be between 2 and INT_MAX.");
+    }
+    if (!positive_render_parameter(config.fps)) {
+        return invalid_result("FPS must be finite and positive within the renderer's numeric representation.");
+    }
+    const ValidationResult live_validation = validate(config.live);
+    if (!live_validation.ok) {
+        return invalid_result("Live configuration is invalid: "
+                              + live_validation.message);
+    }
+    const ValidationResult clock_validation =
+        validate_clock_impl(config.clock, config.total_frames, config.fps);
+    if (!clock_validation.ok) return clock_validation;
+    if (!valid_enum(config.layer_clock.scale)
+        || !valid_enum(config.layer_clock.mix)) {
+        return invalid_result(
+            "The active-layer clock contains an unknown scaling or mixing policy.");
+    }
+    // Disabled layer clocks remain authored state and must still be valid.
+    const ValidationResult layer_clock_validation = validate_clock_impl(
+        config.layer_clock.clock, config.total_frames, config.fps);
+    if (!layer_clock_validation.ok) {
+        return invalid_result("The saved active-layer clock is invalid: "
+                              + layer_clock_validation.message);
     }
     if (!valid_audio_reactive(config.audio_reactive)
         || !valid_audio_reactive(config.audio_reactive_defaults)) {
@@ -8132,7 +8162,7 @@ ValidationResult validate_frame_render_config(const RenderConfig& config) {
 ValidationResult validate_project_layer_config(const RenderConfig& config,
                                                bool contributing,
                                                SharedRenderMemory* shared) {
-    return validate_impl(config, true, true, true, contributing, shared);
+    return validate_impl(config, true, true, contributing, shared);
 }
 
 bool render_frame_at_phase_validated_resolved(
@@ -8163,7 +8193,7 @@ bool render_frame_validated_resolved(
 }
 
 ValidationResult validate_render_config_structure(const RenderConfig& config) {
-    return validate_impl(config, true, true, false);
+    return validate_impl(config, true, false);
 }
 
 namespace {

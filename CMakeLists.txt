@@ -797,6 +797,18 @@ if(BUILD_TESTING)
     target_link_libraries(pvt_performance_audit_probe PRIVATE
         ProceduralVisualizerTool)
     pvt_enable_warnings(pvt_performance_audit_probe)
+    add_executable(pvt_validation_audit_probe
+        tests/validation_performance_audit_probe.cpp)
+    target_compile_features(pvt_validation_audit_probe PRIVATE cxx_std_17)
+    target_link_libraries(pvt_validation_audit_probe PRIVATE
+        ProceduralVisualizerTool)
+    pvt_enable_warnings(pvt_validation_audit_probe)
+    # Executable allocation replacement reliably observes the library in a
+    # static build. Shared-library interposition differs across platforms.
+    if(NOT BUILD_SHARED_LIBS)
+        add_test(NAME pvt_validation_allocations
+            COMMAND pvt_validation_audit_probe --check-allocations)
+    endif()
     target_compile_features(pvt_project_composite_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_project_composite_tests PROPERTIES CXX_EXTENSIONS NO)
     target_link_libraries(pvt_project_composite_tests PRIVATE

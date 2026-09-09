@@ -718,6 +718,149 @@ pvt::ClockConfig ready_music_clock(double duration_seconds = 1.0,
     return clock;
 }
 
+void test_validation_clock_isolation() {
+    auto music = ready_music_clock(2.0);
+    music.music.tempo_points = {{0.0, 120.0, 0.9}};
+    music.music.feature_samples.resize(64U);
+    pvt::AudioFrequencyStreamConfig range;
+    range.uuid = "bass-range";
+    range.high_hz = 200.0;
+    music.audio_processing.frequency_streams = {range};
+    music.music.input_processing = music.audio_processing;
+    pvt::MusicFrequencyStreamAnalysis stream;
+    stream.uuid = range.uuid;
+    stream.low_hz = range.low_hz;
+    stream.high_hz = range.high_hz;
+    stream.beat_times_seconds = music.music.beat_times_seconds;
+    stream.feature_samples = music.music.feature_samples;
+    music.music.frequency_streams = {stream};
+    music.frequency_stream_uuid = range.uuid;
+
+    const std::vector<std::function<void(pvt::ClockConfig&)>> corruptions = {
+        [](auto& c) { c.mode = static_cast<pvt::ClockMode>(255); },
+        [](auto& c) { c.interpolation = static_cast<pvt::ClockInterpolation>(255); },
+        [](auto& c) { c.fit = static_cast<pvt::ClockFit>(255); },
+        [](auto& c) { c.music_tempo = static_cast<pvt::MusicTempoMode>(255); },
+        [](auto& c) { c.music_swing_policy = static_cast<pvt::MusicSwingPolicy>(255); },
+        [](auto& c) { c.frame_interval = 0; },
+        [](auto& c) { c.time_interval_microseconds = 0; },
+        [](auto& c) { c.phase_offset_degrees = std::numeric_limits<double>::infinity(); },
+        [](auto& c) { c.meter.expression = "3+0/8"; },
+        [](auto& c) { c.meter.bpm = 0.0; },
+        [](auto& c) { c.meter.tempo_note_denominator = 0; },
+        [](auto& c) { c.music.schema_version = 0; },
+        [](auto& c) { c.music.beat_times_seconds.back() = 0.0; },
+        [](auto& c) { c.music.tempo_points.back().confidence = 1.1; },
+        [](auto& c) { c.music.feature_samples.back().energy = std::numeric_limits<float>::quiet_NaN(); },
+        [](auto& c) { c.music.frequency_streams.back().feature_samples.back().beat = -0.1F; },
+        [](auto& c) { c.music.frequency_streams.back().high_hz += 1.0; },
+        [](auto& c) { c.music.frequency_streams.push_back(c.music.frequency_streams.front()); },
+        [](auto& c) { c.music.source_frame_count += 100; },
+        [](auto& c) { c.music.source_sample_rate = 0; },
+        [](auto& c) { c.music.source_sha256.clear(); },
+        [](auto& c) { c.music.beat_times_seconds.clear(); },
+        [](auto& c) { c.audio_processing.equalizer_bands.front().gain_db = 1.0; },
+        [](auto& c) { c.frequency_stream_uuid = "missing-range"; },
+        [](auto& c) { c.music.frequency_streams.front().beat_times_seconds.clear(); },
+        [](auto& c) { c.mode = pvt::ClockMode::Default;
+                     c.music.feature_samples.back().treble = 2.0F; },
+    };
+    auto config = pvt::default_config();
+    make_small(config);
+    for (const auto& corrupt : corruptions) {
+        auto standalone = config;
+        standalone.clock = music;
+        corrupt(standalone.clock);
+        const auto expected = pvt::validate(standalone);
+        CHECK(!expected.ok);
+        for (bool enabled : {false, true}) {
+            config.layer_clock.enabled = enabled;
+            config.layer_clock.clock = music;
+            CHECK(pvt::validate(config).ok);
+            corrupt(config.layer_clock.clock);
+            for (const auto& actual : {
+                     pvt::validate(config),
+                     pvt::detail::validate_render_config_structure(config)}) {
+                CHECK(!actual.ok);
+                CHECK(actual.message == "The saved active-layer clock is invalid: "
+                                         + expected.message);
+            }
+            pvt::detail::PreparedFrame prepared;
+            std::string error;
+            CHECK(!pvt::detail::prepare_frame_for_backend_at_phase(
+                config, 0.0, prepared, &error));
+            CHECK(error == "The saved active-layer clock is invalid: " + expected.message);
+            // A direct edit is observed immediately; no cached validity can
+            // survive either the corruption or its repair.
+            config.layer_clock.clock = music;
+            CHECK(pvt::validate(config).ok);
+        }
+    }
+    // Local music must use the same output FPS/frame-representation checks.
+    config.fps = static_cast<double>((std::numeric_limits<int>::max)());
+    CHECK(!pvt::validate(config).ok);
+    config.fps = 24.0;
+    CHECK(pvt::validate(config).ok);
+    config.waves.front().amplitude = std::numeric_limits<double>::quiet_NaN();
+    const auto invalid_wave = pvt::validate(config);
+    CHECK(!invalid_wave.ok);
+    CHECK(invalid_wave.message.find("active-layer clock") == std::string::npos);
+    config.waves.front().amplitude = 1.0;
+    CHECK(pvt::validate(config).ok);
+}
+
+void test_lfo_destination_probe_isolation() {
+    auto config = pvt::default_config();
+    make_small(config);
+    config.layer_clock.clock = ready_music_clock();
+    const auto* const beats = config.layer_clock.clock.music.beat_times_seconds.data();
+    const auto wave_id = config.waves.back().id;
+    const auto swing_id = config.swings.front().id;
+    const auto effect_id = config.effects.back().id;
+    for (const auto& path : {
+             "wave/" + std::to_string(wave_id) + "/amplitude",
+             "swing/" + std::to_string(swing_id) + "/amount",
+             "effect/" + std::to_string(effect_id) + "/intensity"}) {
+        CHECK(pvt::parameter_lfo_target_supported(config, path));
+        CHECK(!pvt::parameter_lfo_target_supported(config, path + "_unknown"));
+        pvt::ParameterLfo lfo;
+        lfo.target_path = path;
+        lfo.minimum = 0.25;
+        lfo.maximum = 0.25;
+        config.parameter_lfos = {lfo};
+        CHECK(pvt::validate(config).ok);
+        std::reverse(config.waves.begin(), config.waves.end());
+        std::reverse(config.effects.begin(), config.effects.end());
+        CHECK(pvt::validate(config).ok);
+    }
+    // Item identity and the authored post-effect policy are live dependencies.
+    config.effects.clear();
+    CHECK(!pvt::validate(config).ok);
+    config.parameter_lfos.clear();
+    pvt::PostProcessEffectConfig post;
+    post.id = 900U;
+    config.post_process.effects = {post};
+    for (bool authoritative : {false, true, false}) {
+        config.post_process.effects_authoritative = authoritative;
+        CHECK(pvt::parameter_lfo_target_supported(config, "post_effect/900/mix")
+              == authoritative);
+        CHECK(pvt::parameter_lfo_target_supported(config, "post.invert_red_mix")
+              == !authoritative);
+    }
+    config.post_process.effects_authoritative = true;
+    config.post_process.effects.clear();
+    CHECK(!pvt::parameter_lfo_target_supported(config, "post_effect/900/mix"));
+    config.motion.custom_path.enabled = true;
+    CHECK(pvt::parameter_lfo_target_supported(config, "motion.center_x"));
+    CHECK(pvt::parameter_lfo_target_supported(config, "clock.bpm"));
+    CHECK(!pvt::parameter_lfo_target_supported(config, "wave/0/amplitude"));
+    CHECK(!pvt::parameter_lfo_target_supported(config,
+          "wave/18446744073709551616/amplitude"));
+    CHECK(config.layer_clock.clock.music.beat_times_seconds.data() == beats);
+    CHECK(config.layer_clock.clock.music.beat_times_seconds
+          == std::vector<double>({0.0, 0.5}));
+}
+
 double mean_absolute_difference(const pvt::Image& a, const pvt::Image& b) {
     CHECK(a.pixels.size() == b.pixels.size());
     if (a.pixels.size() != b.pixels.size() || a.pixels.empty()) {
@@ -7613,6 +7756,8 @@ int main(int argc, char** argv) {
 
     test_defaults_and_dynamic_collections();
     test_parameter_lfos();
+    test_lfo_destination_probe_isolation();
+    test_validation_clock_isolation();
     test_project_post_process_alpha_safety();
     test_live_control_model_and_setup_codec();
     test_synchronized_clocks_and_music();

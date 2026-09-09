@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.9.0**. The version is read from `VERSION` by every
+Current product version: **17.10.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,23 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 17.10.0 lighter validation for music-driven projects
+
+Version 17.10.0 avoids duplicating an entire render configuration when checking
+a saved layer clock and copies only the addressed item while resolving Numeric
+LFO destinations. Disabled saved clocks remain validated, direct library edits
+take effect immediately, and stable IDs retain their reorder and deletion
+behavior.
+
+In the audit workload, single-configuration validation requested 4.7 KB instead
+of 96.5 MB and four-layer validation requested 86.8 MB instead of 482.3 MB.
+Animated CPU frames improved from 44.19 ms to 31.18 ms with the exact ten-frame
+float hash unchanged. These measurements describe a large-analysis workload;
+project materialization remains tracked for a later phase. Project formats,
+public configuration layouts, rendering arithmetic, backend tolerances, and
+SONAME 17 are unchanged. See [PERFORMANCE_AUDIT.md](PERFORMANCE_AUDIT.md) for
+the workload, regression evidence, and remaining audit queue.
 
 ## 17.9.0 renderer performance and correctness audit
 

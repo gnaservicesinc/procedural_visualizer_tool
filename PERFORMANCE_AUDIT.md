@@ -1,14 +1,15 @@
 # Performance and correctness audit
 
-Updated: 2026-09-09. Iteration 3, against commit `1f2ec86e0490dde29283d95ef24bf5cc420c7b26`
-(17.8.0). Iteration 2 was committed as `4eb1dd5`; iteration 1 is also in this baseline.
+Updated: 2026-09-09. Iteration 4, based on commit `d3b2ab292d0030b55fab65a5a2a7d08a00c9a251`
+(17.9.0) and prepared for 17.10.0. Iteration 3 was committed in 17.9.0; iteration 2 was committed
+as `4eb1dd5`, and iteration 1 is also in the baseline.
 
 This is the continuation record for the requested performance, memory,
-configuration, and latent-defect audit. Iteration 3 is the source basis for the
-17.9.0 release. The evidence below records its pre-release local qualification;
-final platform and publication state belongs to the corresponding GitHub run
-and release. Three pre-existing modified example ZIP/LFS files were preserved.
-Linux and Windows builds run on GitHub.
+configuration, and latent-defect audit. Iteration 4 addresses F04 validation
+copies and repeated work. Its local qualification is recorded below, along
+with the now-verified five-platform results for iteration 3. Existing modified,
+deleted, and untracked example assets were preserved. Linux and Windows builds
+run on GitHub; 17.10.0 platform qualification follows the version commit below.
 
 ## Scope and fidelity contract
 
@@ -47,10 +48,12 @@ or backend comparison tolerances were changed.
 | A16 | Reject entirely behind-camera triangles and triangles wholly outside one viewport edge before face-normal and UV preparation. This view rejection applies to arbitrary OBJ geometry without a winding assumption. | Existing extreme-coordinate tests, reversed/inside-camera coverage tests, and nine matching animated CPU mesh hashes; offscreen-heavy probe below. |
 | A17 | Thin displaced triangles exposed an existing OpenGL attribute-interpolation mismatch, including geometry entirely in front of the camera. Use homogeneous determinants at the actual pixel center to interpolate UVs, depth, world positions, and normals without near-zero perspective division. Remove unused smooth varyings. | Before correction, maximum differences reached 0.01327 in orthographic and 0.00583 in perspective fixtures. Eight crossing/noncrossing, opaque/translucent cases now pass the unchanged 0.0035 CPU/GPU tolerance. |
 | A18 | Separate immutable OBJ/displacement/image allocations from per-worker projection, frame, and composite storage. Deduplicate by allocation identity, include cached variants, and reserve the shared/composite pool once before admitting layer workers. Standalone validation includes decoded image storage. | One versus four references to the same 20,003-vertex OBJ have equal shared and worker categories; categories sum to the public estimate, budget subtraction and overflow are checked, and constrained/parallel renders match exactly. Public `ValidationResult` layout is unchanged. |
-| A19 | Normalize clipped triangle corner order before generating its fan, and recompute the area after orientation normalization rather than negating an evaluation from a different order. These eliminate two sources of winding-dependent floating-point arithmetic relevant to the reported Linux ARM64 camera-inside failure. | Camera-inside shell and all six corner permutations of a textured clipped triangle pass locally, including an explicit contracted-arithmetic build. The prior ARM failure was not reproduced locally; confirmation on GitHub remains required. Failure output now includes the first differing pixel/channel/value and center alpha. |
+| A19 | Normalize clipped triangle corner order before generating its fan, and recompute the area after orientation normalization rather than negating an evaluation from a different order. These eliminate two sources of winding-dependent floating-point arithmetic relevant to the reported Linux ARM64 camera-inside failure. | Camera-inside shell and all six corner permutations of a textured clipped triangle pass locally, including an explicit contracted-arithmetic build. The prior ARM failure was not reproduced locally; iteration 4 subsequently verified both surface suites passing on main GitHub Linux ARM64 at `d3b2ab2`. Failure output includes the first differing pixel/channel/value and center alpha. |
 | A20 | Add conservative depth occlusion for arbitrary CPU meshes rendered with nearest-hit semantics. A triangle is rejected only if complete depth coverage over its pixel bounds is nearer than an outward-rounded lower bound on its rasterized depth. Both windings remain eligible to draw; transparency that requires depth peeling bypasses this optimization. | Exact comparisons with culling disabled cover 48 combinations of projection, winding, clipping/coverage, alpha and compositing policy, plus mixed visible/hidden random geometry and mirrored transforms. Nine animated baseline hashes still match. Hidden-face benchmark below. |
 | A21 | Validation now leases immutable assets to its render invocation; worker loaders reuse those exact handles after LRU eviction or oversized-cache bypass. Lease keys include file version, decode intent, OBJ limits, and displacement parameters. This prevents counting one retained copy while rendering reloads another. | Four concurrent workers reuse 17 uncached OBJ assets with no reparses or duplicate handles. Changed files and limits bypass old leases. Color/height/geometry are separate leases; uncached assets expire after the last invocation owner. ThreadSanitizer passes. |
-| A22 | Add `pvt_obj_surface_contracted` to normal CTest for GNU/Clang builds (`-O3 -ffp-contract=fast -fno-math-errno`), retaining the existing platform-default surface test. | Both surface suites pass locally. GitHub will run the additional test on its GCC/Clang platforms with the next submitted revision; MSVC retains its native surface suite. |
+| A22 | Add `pvt_obj_surface_contracted` to normal CTest for GNU/Clang builds (`-O3 -ffp-contract=fast -fno-math-errno`), retaining the existing platform-default surface test. | Both surface suites pass locally and in the subsequently verified main Linux ARM64 run at `d3b2ab2`; all five main/tagged platform jobs pass. MSVC retains its native surface suite. |
+| A23 | Replace saved-layer-clock validation's full `RenderConfig` copy and recursive renderer validation with a clock-only check by const reference. Render data, LFO graphs, Live settings, assets, and memory estimates are no longer visited twice by that recursion. Unrelated invalid render data is no longer mislabeled as a saved-clock error. | Twenty-six clock corruptions are rejected for both enabled and disabled saved clocks through public validation, structural validation, and explicit-phase backend preparation. Direct repairs, output-FPS limits, disabled project layers, and transactional render failure pass. |
+| A24 | LFO destination discovery copied all `RenderData`, including saved music, for every destination. Probe only the addressed wave, swing, effect, or post effect using the actual destination writer; global targets retain the authored post-effect policy. LFO-to-LFO targets retain their existing stable-ID check. | Reordering/removal, legacy versus stacked post effects, custom paths, malformed IDs, direct edits, nested LFOs, and authored-state tests pass. Static-build CTest now bounds validation allocations below one music feature table for both enabled and disabled LFOs. Animated baseline pixels match exactly. |
 
 Pruning preserves paths, attached source files, saved disabled settings, music
 analysis, and undo/history. In-flight readers retain immutable shared handles
@@ -162,7 +165,94 @@ ledgers, GPU/context heaps, and new asset versions or LFO-generated geometry
 after admission are not fully bounded. One oversized worker remains permitted.
 The estimate is **not a hard process-memory cap**; F02/F05/F06 record the limits.
 
+### Iteration 4 measurements and next design boundary
+
+Probe: `tests/validation_performance_audit_probe.cpp`, target
+`pvt_validation_audit_probe`. Release static build on the local Apple Silicon
+host, 64x64, four layers, eight enabled LFOs per layer, project and saved layer
+music clocks, and three named frequency streams per analysis. Each full-signal
+or named stream contains 60,000 feature samples across ten minutes. Each timing
+uses one warm-up and nine measured calls; the rendering calls advance the frame.
+Baseline and current binaries ran sequentially twice. The second pair gave:
+
+| Operation | Baseline median, ms | Iteration 4 median, ms | Baseline requested bytes | Iteration 4 requested bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Single-config validation | 5.97 | 2.92 | 96,469,616 | 4,688 |
+| Four-layer project validation | 23.28 | 15.25 | 482,305,320 | 86,801,520 |
+| Animated four-layer CPU frame | 44.19 | 31.18 | Not measured across workers | Not measured across workers |
+
+The first pair measured 5.12/3.04 ms, 22.94/15.00 ms, and 44.88/30.28 ms,
+respectively. The observed animated improvement is about 29–33% for this
+validation-heavy workload, not a universal rendering speedup. Both pairs give
+the same ten-frame hash, `20153f5a9b7d0325`; hashing runs outside the timings.
+Requested bytes are cumulative ordinary C++ allocations on the validating
+thread, not simultaneously retained memory, RSS, or driver allocations.
+
+Run timings with `build-audit/pvt_validation_audit_probe`. Static-build CTest
+runs its `--check-allocations` mode without timings: validation must allocate
+less than one 2,400,000-byte feature table, for both enabled and disabled LFOs.
+Both cases currently request 4,688 bytes. Shared-library allocation interposition
+is platform-dependent, so the allocation-only CTest is registered for static
+builds; the shared build still exercises the semantic regressions.
+
+F04 remains open beyond A23/A24. `apply_global_config` still owns value copies
+of project and saved-layer analysis for the global probe, each validated layer,
+and each rendered layer. LFO materialization also retains its necessary authored
+versus evaluated separation. Full music tables and graph dependencies are still
+checked anew on each API call; direct edits cannot safely reuse pointer- or
+source-digest-based validity. Equal file identity does not prove equal edited
+analysis, named ranges, clock policy, LFO targets, or Live state.
+
+The next F04 step is an invocation-scoped, const-borrowing validation view over
+the canvas/output and `RenderData`, avoiding project-validation adapters before
+considering a persistent render plan. Borrowed state must outlive all joined
+workers. Persistent sharing needs an owned immutable document snapshot and
+explicit invalidation for direct API edits, project/Live revisions, named-stream
+processing, paths, and LFO dependency order. No cross-call validity cache or
+public by-value ABI change is introduced here. Retain the existing worker
+music-copy allowance until those actual copies are removed and measured.
+
 ## Validation
+
+Iteration 4 (F04 validation phase):
+
+- Native Release/Qt/Metal: **40/40** tests passed, including the new
+  `pvt_validation_allocations` regression, core, composition, assets, GUI,
+  persistence, and both surface arithmetic modes.
+- After synchronizing 17.10.0 metadata, a fresh native rebuild again passed
+  **40/40**. The CLI reports 17.10.0 and passes `--self-test`; a separately
+  configured macOS 13 distribution build passed embedded-version, dependency,
+  and deep-signature verification for its 50 Mach-O files.
+- C++20 shared build with Metal disabled and actual OpenGL enabled: all
+  **4 focused suites** passed (core, composition, assets, OpenGL).
+- AddressSanitizer + UndefinedBehaviorSanitizer + float-cast-overflow:
+  all **4 focused suites** passed (core, composition, assets, allocation
+  regression). Leak detection remains disabled on this host. The shared and
+  sanitizer core suites were rerun after correcting a new test to validate an
+  explicit phase instead of requiring diagnostic precedence during timeline
+  evaluation; the other three suites passed before that test-only correction.
+- Two sequential baseline/current probe comparisons preserve all float bits
+  across ten animated project frames. `git diff --check` passes. Public layout,
+  persistence formats, rendering arithmetic, and backend tolerances are unchanged.
+- Rechecked iteration 3 at `d3b2ab2`: main run
+  [34317155111](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34317155111)
+  and tagged run
+  [34317910726](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34317910726)
+  passed all five platform jobs; tagged publication also passed. The main Linux
+  ARM64 log explicitly records both `pvt_obj_surface` and
+  `pvt_obj_surface_contracted` passing, with 39/39 total tests. This closes the
+  prior ARM64 qualification concern for iteration 3, not platform qualification
+  of the iteration 4 changes until their version commit passes GitHub.
+  Downloadable 17.9.0 packages were not reaudited here.
+
+Changed files: `src/core.cpp`, `tests/test_main.cpp`,
+`tests/project_composite_test.cpp`, `tests/validation_performance_audit_probe.cpp`,
+`CMakeLists.txt`, and this tracker. Reused the three `/tmp/pvt-audit2-*` builds.
+Evidence: `/tmp/pvt-audit4-native-qualified.log`,
+`/tmp/pvt-audit4-gl-tests.log` plus `/tmp/pvt-audit4-gl-core-tests.log`,
+`/tmp/pvt-audit4-san-tests.log` plus `/tmp/pvt-audit4-san-core-tests.log`,
+and `/tmp/pvt-audit4-validation-{before,after}-repeat.txt`. Logs are disposable;
+the regression sources and this record are the durable evidence.
 
 Iteration 3:
 
@@ -274,12 +364,12 @@ entire repository under a token limit.
 | F01 | Closed in iteration 2 | Camera-plane clipping implemented on CPU and OpenGL in A13, with the additional interpolation defect fixed in A17. | Independent geometry, camera-inside, both windings, transparency, and local backend parity checks pass. Other driver qualification remains in F09. |
 | F02 | P2, partially resolved in iteration 3 | A18/A21 add shared allocation accounting, decoded assets, and invocation leases, separated from worker/composite storage. A20 includes its tile allowance. | Add cold parser/topology/decode scratch and lease/hash/control-block overhead; bound dynamic LFO-generated geometry and file replacements after admission. Coordinate outer sequence admission and independent concurrent invocation ledgers. Measure aggregate RSS and driver/context heaps under preview/export. One oversized worker is still allowed; this is not a hard process-memory cap. |
 | F03 | Closed in iteration 2 | A15 implements a 16-entry/512 MiB OBJ LRU with per-asset publication fencing. | Three alternating assets require 3 parses across 60 requests; generation, entry/byte eviction, oversized bypass, same-path replacement, and pruning regressions pass. |
-| F04 | P2, optimization candidate | `validate_impl` recursively copies a complete render configuration to validate the saved layer clock. Project materialization also copies music tables; repeated validation rebuilds maps/graphs. | Extract clock-only validation and investigate an immutable render plan/shared analysis data with explicit invalidation. Preserve direct API edits, disabled-state validation, LFO dependency order, and live/project revision behavior. Benchmark animated large-analysis projects. |
+| F04 | P2, partially resolved in iteration 4 | A23 removes recursive configuration/clock copies; A24 removes whole-layer copies from each LFO destination probe. The large-analysis probe preserves exact animated output and reduces validation allocation churn. Project adapters and LFO materialization still copy music tables; repeated calls still rebuild maps/graphs. | Next, introduce an invocation-scoped const validation view over canvas/output and layer data to avoid `apply_global_config` copies during project validation. Persistent render-plan/shared-analysis reuse needs owned immutable snapshots and explicit invalidation for direct API edits, disabled settings, named-stream processing, LFO dependency order, paths, and Live/project revisions. Reuse the new animated large-analysis probe; keep admission allowances for copies that still occur. |
 | F05 | P2, partially resolved in iteration 3 | A21 adds invocation leases and proves last-owner release for uncached assets. Cache eviction no longer forces duplicate loads within an admitted project frame. Process caches still serve independent projects. | Add project/revision-aware cache publication so an obsolete caller cannot repopulate unused entries after a newer prune. Test concurrent projects and late loads without a subsequent frame; preserve assets needed by other active renders. Extend shared ownership across outer sequence workers before claiming process-wide accounting. |
 | F06 | P2, conservative retention | An enabled LFO currently conservatively retains potentially used surface assets regardless of its target. Multiple decode intents for one retained image path and old mesh variants may also survive until normal LRU eviction. | Track exact asset/decode-intent dependencies and displacement keys in a render plan. Handle LFOs targeting other LFOs, skipped cycles, path bindings, and Live overrides before tightening retention. |
 | F07 | P2, partially resolved in iteration 3; winding strategy constrained | A20 adds depth-proven rejection for arbitrary nearest-hit CPU meshes, alongside A16 view rejection and A02 analytic rear-shading bypass. Winding alone cannot identify hidden faces of existing two-sided/open/translucent surfaces. | Qualify occlusion across platform arithmetic and dense real scenes. Consider tighter interval bounds or safe depth-peeling rejection only with exact-output evidence. Winding-only rejection still requires a proved topology/view/material/transform condition or an explicit authored one-sided setting. |
 | F08 | P2, further memory reduction | Disabled layer definitions, cached music analysis, and undo/history remain authored state. Deleting those objects would break re-enable, persistence, and undo; A06 releases their render assets instead. | If authoring memory itself must be paged out, design lossless lazy storage with transactional reload, portable paths, recovery, and undo/version tests. This requires a document-lifecycle change, not Boolean packing. |
-| F09 | P2, qualification pending | Local native/shared OpenGL, ASan/UBSan and targeted TSan pass in iteration 3. Baseline GitHub Linux ARM64 failed the camera-inside winding check; A19/A22 address arithmetic sensitivity and improve diagnostics. | Run GitHub on this patch and confirm every platform, especially Linux ARM64, with both surface tests where supported. Linux/Windows builds belong on GitHub. Continue forced PNG/GL allocation failure and driver/resource/throughput qualification, preserving thin-triangle coverage, transparency, transactional failure and exact hashes. |
+| F09 | P2, partially qualified through iteration 4 | Iteration 3 main and tagged GitHub builds passed all five platforms; main Linux ARM64 explicitly passed both surface tests, resolving the earlier winding qualification. Iteration 4 native/shared OpenGL and focused sanitizers pass locally. | Require the 17.10.0 main and tagged GitHub platform matrices before closing this iteration's platform qualification. Continue forced PNG/GL allocation failure and driver/resource/throughput qualification, preserving thin-triangle coverage, transparency, transactional failure and exact hashes. Linux/Windows builds belong on GitHub. |
 
 Other configuration simplifications were evaluated but are not silently
 applied: merging floating-point effects, lowering mesh/image resolution,

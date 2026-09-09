@@ -95,6 +95,35 @@ pvt::ClockConfig ready_music_clock(double duration_seconds) {
     return clock;
 }
 
+void test_disabled_saved_clock_validation() {
+    auto project = pvt::default_project();
+    make_small(project);
+    project.layers.push_back(pvt::default_layer(1U));
+    auto& hidden = project.layers.back();
+    hidden.enabled = false;
+    hidden.opacity = 0.0;
+    hidden.render.layer_clock.enabled = false;
+    hidden.render.layer_clock.clock = ready_music_clock(2.0);
+    CHECK(pvt::validate(project).ok);
+    hidden.render.layer_clock.clock.music.beat_times_seconds.back() = -1.0;
+    const auto invalid = pvt::validate(project);
+    CHECK(!invalid.ok);
+    CHECK(invalid.message.find("Layer 2 is invalid: The saved active-layer clock")
+          != std::string::npos);
+    pvt::Image destination = solid(0.3F, 0.7F);
+    const auto original = destination.pixels;
+    std::string error;
+    CHECK(!pvt::render_project_frame(project, 0, destination, nullptr, &error));
+    CHECK(destination.width == 1 && destination.height == 1);
+    CHECK(destination.pixels == original);
+    hidden.render.layer_clock.clock = ready_music_clock(2.0);
+    CHECK(pvt::validate(project).ok);
+    hidden.enabled = true;
+    hidden.opacity = 1.0;
+    hidden.render.layer_clock.enabled = true;
+    CHECK(pvt::render_project_frame(project, 0, destination, nullptr, &error));
+}
+
 void test_uuid_factories_and_adapters() {
     const std::string first_uuid = pvt::generate_uuid();
     const std::string second_uuid = pvt::generate_uuid();
@@ -1224,6 +1253,7 @@ void test_active_layer_clock_mappings() {
 
 int main() {
     test_uuid_factories_and_adapters();
+    test_disabled_saved_clock_validation();
     test_project_audio_response_inheritance();
     test_blend_modes();
     test_straight_alpha_and_transactionality();
