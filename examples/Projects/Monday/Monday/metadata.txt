@@ -2,11 +2,11 @@ PVT_BUNDLE	1
 project.uuid	0ff988bf-6db1-418e-90b6-f1768b81e05c
 project.name	Monday
 project.first_created_utc	2026-08-17T05%3A28%3A38Z
-project.last_opened_utc	2026-08-17T05%3A28%3A38Z
-project.last_saved_utc	2026-08-17T05%3A44%3A12Z
+project.last_opened_utc	2026-09-09T20%3A02%3A02Z
+project.last_saved_utc	2026-09-09T20%3A03%3A20Z
 project.created_with_version	1.2.6
-project.last_changed_with_version	1.2.6
-versions.count	4
+project.last_changed_with_version	17.11.0
+versions.count	5
 versions.0.number	0
 versions.0.metadata_sha256	48d891642025feff24e3c8501b5497b412fff906b752729bddf30dd5cbc148c7
 versions.0.tree_sha256	671b7ce4f0d25e44da966d0df6e13a34f6bbde5ee3b698666189742ae9236a61
@@ -19,5 +19,8 @@ versions.2.tree_sha256	a2457cb5ba809e2db96c2112c226d07f520b4ad29d643e8bdb13e72e8
 versions.3.number	3
 versions.3.metadata_sha256	bd73d67614a4138f891350a1f9424cc1d326cd9bae1918dbb2f0ffc8864c4f46
 versions.3.tree_sha256	693fa33322203e95401dd06b89200a00abf12e11fe116b710ed47c7669b79659
+versions.4.number	4
+versions.4.metadata_sha256	346a0a734ecf54feb5f7c7d7f09ce1e5a1bda167f1ef481ac2b7421e044bb55a
+versions.4.tree_sha256	8082198ed5a7514908d95a61275594127dc13d592e44108a182b0f459f72d9bb
 lineage_aliases.count	0
 preserved.count	0
