@@ -5765,6 +5765,37 @@ void test_raw_config_snapshot() {
         invalid_string, numeric, strings, &error));
 }
 
+void test_subpixel_resolve_preserves_faint_color() {
+    auto config = pvt::default_config();
+    make_small(config);
+    config.width = 16;
+    config.height = 16;
+    config.block_size = 0.5;
+    config.effects.clear();
+    config.waves.clear();
+    config.swings.clear();
+    config.displacement_enabled = false;
+    config.lighting_enabled = false;
+    config.alpha.enabled = true;
+    config.alpha.minimum = 1.0e-25;
+    config.alpha.maximum = 1.0e-25;
+    config.output.write_alpha = true;
+    pvt::Image cpu, selected;
+    std::string error;
+    pvt::FrameRenderOptions options;
+    options.backend = pvt::RenderBackend::Cpu;
+    CHECK(pvt::render_frame_at_phase(config, 0.25, cpu, &error));
+    CHECK(pvt::render_frame_at_phase(config, 0.25, options, selected, nullptr, &error));
+    CHECK(cpu.pixels == selected.pixels);
+    bool has_color = false;
+    for (std::size_t offset = 0; offset + 3U < cpu.pixels.size(); offset += 4U) {
+        CHECK(cpu.pixels[offset + 3U] > 0.0F);
+        has_color = has_color || cpu.pixels[offset] > 0.0F
+                    || cpu.pixels[offset + 1U] > 0.0F || cpu.pixels[offset + 2U] > 0.0F;
+    }
+    CHECK(has_color);
+}
+
 void test_setup_round_trip_and_transaction(const fs::path& directory) {
     auto original = pvt::default_config();
     make_small(original);
@@ -8031,6 +8062,7 @@ int main(int argc, char** argv) {
     test_palettes_transforms_and_spatial_stages();
     test_validation_limits(source_root);
     test_raw_config_snapshot();
+    test_subpixel_resolve_preserves_faint_color();
     test_setup_round_trip_and_transaction(test_directory);
     test_maximum_music_analysis_setup(test_directory);
     test_image_formats_and_dither(test_directory);

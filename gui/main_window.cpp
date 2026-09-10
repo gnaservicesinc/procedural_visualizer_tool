@@ -1751,8 +1751,10 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
     // These controls are defined in output pixels. Scale them with the preview
     // so the low-resolution image preserves their full-resolution proportions.
     for (auto& layer : project.layers) {
-        layer.render.starting_colors.reference_width = source_width;
-        layer.render.starting_colors.reference_height = source_height;
+        layer.render.starting_colors.reference_width =
+            source_block_size > 0.0 ? source_width : 0;
+        layer.render.starting_colors.reference_height =
+            source_block_size > 0.0 ? source_height : 0;
         layer.render.starting_colors.reference_block_size = source_block_size;
         layer.render.displacement *= pixel_scale;
         for (auto& effect : layer.render.effects) {
@@ -1770,6 +1772,8 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
     project.canvas.height = preview_height;
     project.canvas.block_size = source_block_size == 0.0
         ? 0.0 : std::max(0.000001, source_block_size * scale);
+    project.canvas.block_size_modulation.minimum *= scale;
+    project.canvas.block_size_modulation.maximum *= scale;
 }
 
 void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
@@ -2727,6 +2731,7 @@ MainWindow::MainWindow(QWidget* parent)
             result.generation = preview_task_generation_;
             result.document_revision = preview_task_document_revision_;
         }
+        preview_task_active_ = false;
         pvt::detail::prune_render_asset_caches(project_);
         if (result.document_revision == document_revision_
             && (result.generation == preview_generation_ || playback_timer_->isActive())) {
@@ -6742,7 +6747,9 @@ void MainWindow::refreshProjectFileIoControls() {
                                             && !project_io_active_);
     }
     if (project_file_io_status_ != nullptr) {
-        QString status = binary
+        const bool binary_snapshot = binary
+            && pvt::project_recovery_info(project_).preserved_fields == 0U;
+        QString status = binary_snapshot
             ? tr("Current saves use raw numeric PVDAT plus newline-ordered string bytes; no binary file-change scan is performed.")
             : tr("Current saves use named text records.");
         if (!saved) {
@@ -19170,7 +19177,9 @@ void MainWindow::schedulePreview() {
         }
         return;
     }
-    if (preview_watcher_ && preview_watcher_->isRunning()) {
+    // isRunning() becomes false before the queued finished signal is handled.
+    // Keep the watcher reserved until that result has actually been consumed.
+    if (preview_task_active_) {
         preview_deferred_ = true;
         // Playback deliberately lets the current frame finish so a fast timer
         // cannot starve every preview. Ordinary edits cancel stale work at the
@@ -19235,7 +19244,7 @@ void MainWindow::startPreview() {
         }
         return;
     }
-    if (preview_watcher_->isRunning()) {
+    if (preview_task_active_) {
         preview_deferred_ = true;
         return;
     }
@@ -19252,6 +19261,7 @@ void MainWindow::startPreview() {
         const pvt::FrameRenderOptions render_options = frameRenderOptions();
         auto cancel = std::make_shared<std::atomic_bool>(false);
         preview_cancel_ = cancel;
+        preview_task_active_ = true;
         preview_watcher_->setFuture(QtConcurrent::run(
             [project = std::move(project), frame, generation, revision,
              test_delay_ms = preview_test_delay_ms_, render_options,
@@ -19260,9 +19270,11 @@ void MainWindow::startPreview() {
                                        test_delay_ms, render_options, cancel);
             }));
     } catch (const std::exception& exception) {
+        preview_task_active_ = false;
         status_->setText(
             tr("Preview could not start: %1").arg(QString::fromUtf8(exception.what())));
     } catch (...) {
+        preview_task_active_ = false;
         status_->setText(tr("The background preview task could not be created."));
     }
 }
@@ -21189,7 +21201,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
     resolved_auto.setValue(0);
     QFocusEvent auto_focus_in(QEvent::FocusIn);
     QCoreApplication::sendEvent(&resolved_auto, &auto_focus_in);
-    const bool auto_value_revealed = resolved_auto.value() == 8
+    const bool auto_value_revealed = resolved_auto.value() == 0
+                                     && resolved_auto.cleanText() == QStringLiteral("8")
                                      && resolved_auto.specialValueText().isEmpty();
     QFocusEvent auto_focus_out(QEvent::FocusOut);
     QCoreApplication::sendEvent(&resolved_auto, &auto_focus_out);
@@ -22921,6 +22934,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
     preview_scale_probe.canvas.width = 3840;
     preview_scale_probe.canvas.height = 2160;
     preview_scale_probe.canvas.block_size = 16;
+    preview_scale_probe.canvas.block_size_modulation.lfo_enabled = true;
+    preview_scale_probe.canvas.block_size_modulation.minimum = 16.0;
+    preview_scale_probe.canvas.block_size_modulation.maximum = 3840.0;
     preview_scale_probe.layers.front().render.displacement = 40.0;
     preview_scale_probe.layers.front().render.effects.clear();
     auto preview_particle = pvt::default_effect(pvt::EffectType::ParticleField);
@@ -22935,6 +22951,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
     if (preview_scale_probe.canvas.width != 720
         || preview_scale_probe.canvas.height != 405
         || preview_scale_probe.canvas.block_size != 3
+        || preview_scale_probe.canvas.block_size_modulation.minimum != 3.0
+        || preview_scale_probe.canvas.block_size_modulation.maximum != 720.0
         || std::abs(preview_scale_probe.layers.front().render.displacement
                     - 7.5) > 1.0e-12
         || std::abs(preview_scale_probe.layers.front().render.effects[0U]
@@ -24370,6 +24388,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
     preview_test_delay_ms_ = 25;
     playback_preview_advanced_ = false;
     play_button_->click();
+    // Deliberately hold the event loop until the worker completes, then tick
+    // again before its finished signal is delivered. Replacing that future
+    // loses a completed preview and used to starve playback on CI runners.
+    if (!preview_task_active_) startPreview();
+    preview_watcher_->waitForFinished();
+    const auto completed_generation = preview_task_generation_;
+    schedulePreview();
+    if (preview_task_generation_ != completed_generation || !preview_deferred_) {
+        if (error != nullptr) {
+            *error = QStringLiteral("Playback replaced an undelivered preview result.");
+        }
+        return false;
+    }
     QElapsedTimer playback_wait;
     playback_wait.start();
     while (!playback_preview_advanced_ && playback_wait.elapsed() < 2000) {

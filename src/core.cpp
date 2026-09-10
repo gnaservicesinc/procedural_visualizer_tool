@@ -3664,6 +3664,13 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
             validate_clock_impl(view.clock, view.total_frames, view.fps);
         if (!clock_validation.ok) return clock_validation;
     }
+    if (!validate_canvas && view.block_size > 0.0 && view.block_size < 1.0) {
+        // ProjectConfigValidator already checked these dimensions, but every
+        // layer still renders and allocates at the supersampled resolution.
+        const double scale = 1.0 / view.block_size;
+        validation_width = static_cast<int>(std::ceil(view.width * scale));
+        validation_height = static_cast<int>(std::ceil(view.height * scale));
+    }
     if (!valid_enum(config.layer_clock.scale)
         || !valid_enum(config.layer_clock.mix)) {
         return invalid_result(
@@ -8211,7 +8218,7 @@ void downsample_area(const Image& source, int width, int height,
             Color output;
             if (weight_sum > 0.0) {
                 output.a = alpha_sum / weight_sum;
-                if (alpha_sum > 1.0e-20) {
+                if (alpha_sum > 0.0) {
                     output.r = red_sum / alpha_sum;
                     output.g = green_sum / alpha_sum;
                     output.b = blue_sum / alpha_sum;

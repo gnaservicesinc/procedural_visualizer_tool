@@ -35,14 +35,25 @@ constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
 
 bool fail(std::string* error, std::string message);
 bool cancelled(const std::atomic_bool* cancel);
+bool validate_project_frame_options(const FrameRenderOptions& options,
+                                    std::string* error);
 
 bool render_project_blackout_if_requested(
     const ProjectConfig& project, Image& destination,
-    const std::atomic_bool* cancel, std::string* error, bool& handled) {
-    handled = project.canvas.block_size == 0.0;
+    const std::atomic_bool* cancel, std::string* error, bool& handled,
+    const FrameRenderOptions* options = nullptr) {
+    handled = project.canvas.block_size == 0.0
+              && !project.canvas.block_size_modulation.lfo_enabled;
     if (!handled) return true;
+    if (options != nullptr && !validate_project_frame_options(*options, error)) {
+        return false;
+    }
     if (cancelled(cancel)) {
         return fail(error, "Project blackout was cancelled.");
+    }
+    const detail::ProjectConfigValidator validator(project.canvas, project.output);
+    if (!validator.canvas_validation().ok) {
+        return fail(error, validator.canvas_validation().message);
     }
     if (project.canvas.width < 1 || project.canvas.height < 1
         || static_cast<std::size_t>(project.canvas.width)
@@ -1086,15 +1097,8 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
     return true;
 }
 
-bool render_project_with_backend_validated(
-    const ProjectConfig& project,
-    double normalized_phase,
-    const int* synchronized_frame,
-    const FrameRenderOptions& options,
-    const detail::ProjectRenderMemory& memory,
-    Image& destination,
-    const std::atomic_bool* cancel,
-    std::string* error) {
+bool validate_project_frame_options(const FrameRenderOptions& options,
+                                    std::string* error) {
     switch (options.backend) {
         case RenderBackend::Cpu:
         case RenderBackend::CpuAndGpu:
@@ -1114,6 +1118,19 @@ bool render_project_with_backend_validated(
                     "CPU layer worker count cannot exceed "
                         + std::to_string(kMaximumSequenceWorkers) + ".");
     }
+    return true;
+}
+
+bool render_project_with_backend_validated(
+    const ProjectConfig& project,
+    double normalized_phase,
+    const int* synchronized_frame,
+    const FrameRenderOptions& options,
+    const detail::ProjectRenderMemory& memory,
+    Image& destination,
+    const std::atomic_bool* cancel,
+    std::string* error) {
+    if (!validate_project_frame_options(options, error)) return false;
     std::size_t pixel_count = 0U;
     std::size_t component_count = 0U;
     if (!checked_multiply(static_cast<std::size_t>(project.canvas.width),
@@ -2066,16 +2083,16 @@ bool detail::render_project_frame_validated(
     const FrameRenderOptions& options, const ProjectRenderMemory& memory,
     Image& destination, const std::atomic_bool* cancel,
     std::string* error) {
-    bool blackout = false;
-    if (!render_project_blackout_if_requested(
-            project, destination, cancel, error, blackout)) {
-        return false;
-    }
-    if (blackout) return true;
     if (frame_count < 1 || frame_index < 0 || frame_index >= frame_count) {
         return fail(error,
                     "The prevalidated project frame is outside its timeline.");
     }
+    bool blackout = false;
+    if (!render_project_blackout_if_requested(
+            project, destination, cancel, error, blackout, &options)) {
+        return false;
+    }
+    if (blackout) return true;
     if (cancelled(cancel)) {
         return fail(error, "Project rendering was cancelled.");
     }
@@ -2127,6 +2144,9 @@ bool render_project_frame_at_phase(const ProjectConfig& project,
                                    std::string* error) {
     clear_error(error);
     try {
+        if (!std::isfinite(normalized_phase)) {
+            return fail(error, "Normalized project render phase must be finite.");
+        }
         bool blackout = false;
         if (!render_project_blackout_if_requested(
                 project, destination, cancel, error, blackout)) {
@@ -2140,9 +2160,6 @@ bool render_project_frame_at_phase(const ProjectConfig& project,
             static_cast<const detail::SharedRenderMemory&>(memory.shared));
         if (!validation.ok) {
             return fail(error, validation.message);
-        }
-        if (!std::isfinite(normalized_phase)) {
-            return fail(error, "Normalized project render phase must be finite.");
         }
         if (cancelled(cancel)) {
             return fail(error, "Project rendering was cancelled.");
@@ -2219,9 +2236,12 @@ bool render_project_frame_at_phase(
     std::string* error) {
     clear_error(error);
     try {
+        if (!std::isfinite(normalized_phase)) {
+            return fail(error, "Normalized project render phase must be finite.");
+        }
         bool blackout = false;
         if (!render_project_blackout_if_requested(
-                project, destination, cancel, error, blackout)) {
+                project, destination, cancel, error, blackout, &options)) {
             return false;
         }
         if (blackout) return true;
@@ -2229,10 +2249,6 @@ bool render_project_frame_at_phase(
         detail::ProjectRenderMemory memory;
         const ValidationResult validation = detail::validate_project_render_memory(project, memory);
         if (!validation.ok) return fail(error, validation.message);
-        if (!std::isfinite(normalized_phase)) {
-            return fail(error,
-                        "Normalized project render phase must be finite.");
-        }
         if (cancelled(cancel)) {
             return fail(error, "Project rendering was cancelled.");
         }
@@ -2260,7 +2276,7 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
     try {
         bool blackout = false;
         if (!render_project_blackout_if_requested(
-                project, destination, cancel, error, blackout)) {
+                project, destination, cancel, error, blackout, &options)) {
             return false;
         }
         if (blackout) return true;

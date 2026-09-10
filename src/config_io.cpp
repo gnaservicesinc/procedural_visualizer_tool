@@ -1502,7 +1502,9 @@ public:
     template <typename Real>
     bool add_double(std::string_view, Real value) {
         static_assert(std::is_floating_point_v<Real>);
-        return std::isfinite(value) && append_native(value);
+        return (std::isfinite(value)
+                || set_failure("Raw configuration contains a non-finite number."))
+               && append_native(value);
     }
 
     bool add_flag_bank(std::string_view, std::uint32_t flags,
@@ -1536,8 +1538,13 @@ public:
     template <typename Enum, std::size_t Count>
     bool add_enum(std::string_view,
                   Enum value,
-                  const std::array<std::pair<std::string_view, Enum>, Count>&) {
+                  const std::array<std::pair<std::string_view, Enum>, Count>& values) {
         static_assert(std::is_enum_v<Enum>);
+        if (std::none_of(values.begin(), values.end(), [value](const auto& item) {
+                return item.second == value;
+            })) {
+            return set_failure("Raw configuration contains an unknown enum value.");
+        }
         return append_native(value);
     }
 
@@ -2877,7 +2884,11 @@ public:
     bool add_collection(std::string_view, Collection& values,
                         std::size_t maximum) {
         std::uint32_t count = 0U;
-        if (!integer(count) || count > maximum) {
+        // Every item in the frozen walk consumes numeric bytes. Bound the
+        // allocation by actual input before resize; a tiny damaged snapshot
+        // must not request billions of in-memory objects.
+        if (!integer(count) || count > maximum
+            || count > contents_.size() - offset_) {
             return set_failure("Raw snapshot collection count is invalid.");
         }
         values.resize(static_cast<std::size_t>(count));
@@ -2938,11 +2949,11 @@ public:
     }
 
     bool string(std::string& value) {
+        if (!ok_) return false;
         const std::size_t end = strings_.find('\n', string_offset_);
         if (end == std::string::npos
             || end - string_offset_ > kMaximumDecodedStringBytes) {
-            return fail(
-                error_,
+            return set_failure(
                 "Raw configuration string data is truncated or overlong.");
         }
         value.assign(strings_.data() + string_offset_, end - string_offset_);
@@ -2965,6 +2976,7 @@ private:
     template <typename Value>
     bool read_native(Value& value) {
         static_assert(std::is_trivially_copyable_v<Value>);
+        if (!ok_) return false;
         if (offset_ > contents_.size()
             || sizeof(Value) > contents_.size() - offset_) {
             return set_failure(
@@ -2976,7 +2988,7 @@ private:
     }
 
     bool set_failure(const char* message) {
-        ok_ = fail(error_, message);
+        if (ok_) ok_ = fail(error_, message);
         return false;
     }
 
@@ -6190,6 +6202,13 @@ bool serialize_raw_config(const RenderConfig& config,
                           bool enforce_particle_workload) {
     clear_error(error);
     try {
+        if (!config.source_compatibility.records.empty()
+            || !config.output_compatibility.records.empty()
+            || !config.clock.music.compatibility.records.empty()
+            || !config.layer_clock.clock.music.compatibility.records.empty()) {
+            return fail(error,
+                        "Raw configuration cannot preserve unrecognized fields; use human-editable storage.");
+        }
         // The writer and reader share this one ordered struct walk. Values are
         // copied in their native representation straight into one contiguous
         // buffer; no text, field tag, or Boolean expansion is involved.

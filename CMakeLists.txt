@@ -1016,6 +1016,24 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_flexible_spin_box_tests
+            tests/flexible_spin_box_test.cpp gui/flexible_spin_box.cpp)
+        target_compile_features(pvt_flexible_spin_box_tests PRIVATE cxx_std_17)
+        target_include_directories(pvt_flexible_spin_box_tests PRIVATE gui)
+        target_link_libraries(pvt_flexible_spin_box_tests PRIVATE Qt6::Widgets)
+        pvt_enable_warnings(pvt_flexible_spin_box_tests)
+        add_test(NAME pvt_flexible_spin_box COMMAND pvt_flexible_spin_box_tests)
+        set_tests_properties(pvt_flexible_spin_box PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        add_executable(pvt_live_frame_controller_tests
+            tests/live_frame_controller_test.cpp gui/live_frame_controller.cpp)
+        set_target_properties(pvt_live_frame_controller_tests PROPERTIES AUTOMOC ON)
+        target_compile_features(pvt_live_frame_controller_tests PRIVATE cxx_std_17)
+        target_include_directories(pvt_live_frame_controller_tests PRIVATE gui)
+        target_link_libraries(pvt_live_frame_controller_tests PRIVATE
+            ProceduralVisualizerTool::ProceduralVisualizerTool Qt6::Gui Qt6::Concurrent)
+        pvt_enable_warnings(pvt_live_frame_controller_tests)
+        add_test(NAME pvt_live_frame_controller COMMAND pvt_live_frame_controller_tests)
         add_executable(pvt_palette_remix_tests tests/palette_remix_test.cpp)
         target_compile_features(pvt_palette_remix_tests PRIVATE cxx_std_17)
         set_target_properties(pvt_palette_remix_tests PROPERTIES

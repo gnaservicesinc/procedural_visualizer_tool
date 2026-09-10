@@ -85,6 +85,7 @@ private:
     std::uint64_t active_document_revision_ = 0U;
     std::uint64_t dropped_requests_ = 0U;
     bool stopping_ = false;
+    bool task_active_ = false;
 };
 
 Q_DECLARE_METATYPE(LiveFrameController::Result)

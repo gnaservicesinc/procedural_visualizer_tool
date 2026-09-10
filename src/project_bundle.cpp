@@ -4066,6 +4066,13 @@ bool build_version(ProjectConfig project,
     if (!validation.ok || !valid_semantic_project_name(project.name)) {
         return fail(error, "Cannot save invalid project: " + validation.message);
     }
+    // The frozen raw layout has no slots for forward-compatible records.
+    // Keep those snapshots in the existing lossless text format, while
+    // retaining Binary as the user's preference for future ordinary saves.
+    if (storage_encoding == ProjectStorageEncoding::Binary
+        && project_recovery_info(project).preserved_fields != 0U) {
+        storage_encoding = ProjectStorageEncoding::HumanEditable;
+    }
     VersionManifest manifest;
     manifest.info.number = number;
     manifest.info.uuid = generate_uuid();
@@ -6070,6 +6077,20 @@ bool save_with_reason(ProjectDocument& document,
                       std::string* error) {
     if (path.empty() || !valid_semantic_project_name(document.project.name)) {
         return fail(error, "Project name or save path is not portable.");
+    }
+    const auto& settings = document.file_io;
+    if ((settings.encoding != ProjectStorageEncoding::Binary
+         && settings.encoding != ProjectStorageEncoding::HumanEditable)
+        || (settings.revision_history != RevisionHistoryMode::Full
+            && settings.revision_history != RevisionHistoryMode::Partial
+            && settings.revision_history != RevisionHistoryMode::Disabled)
+        || settings.partial_keep_count > kMaximumVersions
+        || settings.zip_compression_level < 0 || settings.zip_compression_level > 9
+        || settings.pinned_versions.size() > kMaximumVersions
+        || !std::is_sorted(settings.pinned_versions.begin(), settings.pinned_versions.end())
+        || std::adjacent_find(settings.pinned_versions.begin(), settings.pinned_versions.end())
+               != settings.pinned_versions.end()) {
+        return fail(error, "Project file-I/O settings are invalid; no files were changed.");
     }
     ProjectSaveRollback rollback(document);
     if (!sync_project_attachment_references(document, error)) return false;

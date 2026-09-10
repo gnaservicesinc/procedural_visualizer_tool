@@ -6,6 +6,23 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## Post-17.11.0 build and regression audit
+
+The macOS/Windows CI failures at `d330716` were playback checks after successful
+compilation. Editor and Live controllers now retain completed futures until Qt
+delivers their result, preventing replacement by the next timer tick. The
+targeted audit also repairs decorated/negative numeric input, Automatic and
+BLACKOUT editing, truncated raw-string acceptance, raw allocation/scalar guards,
+unknown-field preservation, invalid revision policies, zero-base block LFOs,
+preview LFO scaling, supersampled layer memory estimates, and faint-alpha color
+loss during downsampling.
+
+Local verification is 43/43 native tests, 5/5 sanitizer suites, 12/12 repeated
+playback executions, and the self-contained 50-Mach-O macOS distribution with
+packaged en/de/fr smoke checks and CLI self-test. Regression tests were also
+verified to fail against the unchanged code. Windows/Linux CI and release work
+remain pending. See `POST_17_11_BUG_AUDIT.md` for findings, evidence and scope.
+
 ## 18.0.0 fractional blocks, raw project I/O, and explicit history modes
 
 Project block size is now double precision and accepts decimals, conventional

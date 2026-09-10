@@ -428,6 +428,7 @@ private:
     bool restoring_undo_ = false;
     bool baseline_dirty_ = false;
     bool preview_deferred_ = false;
+    bool preview_task_active_ = false;
     bool integer_dither_preference_ = true;
     bool export_active_ = false;
     bool export_preview_suspended_ = false;

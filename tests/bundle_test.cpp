@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -34,9 +35,13 @@
 namespace {
 thread_local bool count_allocations = false;
 thread_local std::size_t allocation_bytes = 0U;
+thread_local std::size_t largest_allocation = 0U;
+thread_local std::size_t allocation_ceiling = (std::numeric_limits<std::size_t>::max)();
 }
 
 void* operator new(std::size_t size) {
+    if (size > largest_allocation) largest_allocation = size;
+    if (size > allocation_ceiling) throw std::bad_alloc();
     if (void* result = std::malloc(size == 0U ? 1U : size)) {
         if (count_allocations) allocation_bytes += size;
         return result;
@@ -4142,6 +4147,57 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         loaded, "oversized.asset", as_utf8(oversized), nullptr, &error));
 }
 
+void test_raw_config_rejects_incomplete_input() {
+    auto config = pvt::default_config();
+    std::string numeric, strings, error;
+    CHECK(pvt::detail::serialize_raw_config(config, numeric, strings, &error));
+    auto loaded = config;
+    loaded.width = 123;
+    // Remove complete trailing records, including empty records. Missing
+    // strings are still an error even when both offsets land at end-of-file.
+    std::string truncated = strings;
+    for (int count = 0; count < 4; ++count) {
+        const auto previous = truncated.rfind('\n', truncated.size() - 2U);
+        truncated.resize(previous == std::string::npos ? 0U : previous + 1U);
+        error.clear();
+        CHECK(!pvt::detail::deserialize_raw_config(numeric, truncated, loaded, &error));
+        CHECK(!error.empty());
+        CHECK(loaded.width == 123);
+    }
+    CHECK(pvt::detail::deserialize_raw_config(numeric, strings, loaded, &error));
+    std::string round_numeric, round_strings;
+    CHECK(pvt::detail::serialize_raw_config(loaded, round_numeric, round_strings, &error));
+    CHECK(round_numeric == numeric && round_strings == strings);
+
+    auto more_waves = config;
+    auto wave = pvt::default_wave();
+    wave.id = 100000U;
+    more_waves.waves.push_back(wave);
+    std::string more_numeric, more_strings;
+    CHECK(pvt::detail::serialize_raw_config(more_waves, more_numeric, more_strings, &error));
+    const auto mismatch = std::mismatch(numeric.begin(), numeric.end(), more_numeric.begin());
+    const auto count_offset = static_cast<std::size_t>(mismatch.first - numeric.begin());
+    CHECK(count_offset + sizeof(std::uint32_t) <= numeric.size());
+    if (count_offset + sizeof(std::uint32_t) <= numeric.size()) {
+        std::string corrupt = numeric;
+        const std::uint32_t count = 1000000U;
+        std::memcpy(corrupt.data() + count_offset, &count, sizeof(count));
+        largest_allocation = 0U;
+        allocation_ceiling = 1024U * 1024U;
+        CHECK(!pvt::detail::deserialize_raw_config(corrupt, strings, loaded, &error));
+        allocation_ceiling = (std::numeric_limits<std::size_t>::max)();
+        CHECK(largest_allocation < 1024U * 1024U);
+    }
+    config.block_size_modulation.lfo_enabled = false;
+    config.block_size_modulation.minimum = std::numeric_limits<double>::quiet_NaN();
+    CHECK(!pvt::detail::serialize_raw_config(config, round_numeric, round_strings, &error));
+    CHECK(!error.empty());
+    config.block_size_modulation.minimum = 1.0;
+    config.block_size_modulation.waveform = static_cast<pvt::Waveform>(255);
+    CHECK(!pvt::detail::serialize_raw_config(config, round_numeric, round_strings, &error));
+    CHECK(!error.empty());
+}
+
 void test_partial_revision_controls(const fs::path& directory) {
     pvt::ProjectDocument document = pvt::default_project_document();
     document.project.name = "Partial Revision Controls";
@@ -4201,6 +4257,31 @@ void test_partial_revision_controls(const fs::path& directory) {
     CHECK(!pvt::save_project_document(
         reloaded, as_utf8(bundle), &report, &error));
     CHECK(error.find("cannot become full history") != std::string::npos);
+}
+
+void test_binary_save_preserves_unknown_fields(const fs::path& directory) {
+    auto document = pvt::default_project_document();
+    document.project.name = "Binary compatibility preservation";
+    document.project.canvas.output_compatibility.records.push_back(
+        {"future.output.test", "retained value", false});
+    document.project.layers.front().render.source_compatibility.records.push_back(
+        {"future.layer.test", "retained layer value", false});
+    const auto bundle = directory / pvt::detail::path_from_utf8(
+        portable_root(document.project.name));
+    std::string error;
+    CHECK(pvt::save_project_document(document, as_utf8(bundle), nullptr, &error));
+    CHECK(fs::exists(bundle / "0" / "render_output.txt"));
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    CHECK(pvt::project_recovery_info(loaded.project).preserved_fields == 2U);
+    CHECK(loaded.file_io.encoding == pvt::ProjectStorageEncoding::Binary);
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+    const auto original_metadata = read_bytes(bundle / "metadata.txt");
+    const auto original_versions = loaded.versions.size();
+    loaded.file_io.revision_history = static_cast<pvt::RevisionHistoryMode>(99);
+    CHECK(!pvt::save_project_document(loaded, as_utf8(bundle), nullptr, &error));
+    CHECK(read_bytes(bundle / "metadata.txt") == original_metadata);
+    CHECK(loaded.versions.size() == original_versions);
 }
 
 void test_human_directory_revision_deltas(const fs::path& directory) {
@@ -4263,6 +4344,8 @@ void test_human_directory_revision_deltas(const fs::path& directory) {
 
 int main() {
     TemporaryDirectory temporary;
+    test_raw_config_rejects_incomplete_input();
+    test_binary_save_preserves_unknown_fields(temporary.path());
     test_layer_codec_backward_compatibility();
     test_particle_workload_canvas_and_project_boundaries();
     test_aggregate_particle_bundle_recovery(temporary.path());

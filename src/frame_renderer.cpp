@@ -24,7 +24,8 @@ bool fail(std::string* error, std::string message) {
     return false;
 }
 
-void assign_blackout(Image& image, int width, int height) {
+void assign_blackout(Image& destination, int width, int height) {
+    Image image;
     image.width = width;
     image.height = height;
     image.pixels.assign(static_cast<std::size_t>(width)
@@ -33,6 +34,7 @@ void assign_blackout(Image& image, int width, int height) {
     for (std::size_t offset = 3U; offset < image.pixels.size(); offset += 4U) {
         image.pixels[offset] = 1.0F;
     }
+    destination = std::move(image);
 }
 
 bool downsample_area(const Image& source, int width, int height,
@@ -90,7 +92,7 @@ bool downsample_area(const Image& source, int width, int height,
             const double alpha = weight_sum > 0.0
                 ? alpha_sum / weight_sum : 0.0;
             candidate.pixels[output + 3U] = static_cast<float>(alpha);
-            if (alpha_sum > 1.0e-20) {
+            if (alpha_sum > 0.0) {
                 for (std::size_t channel = 0U; channel < 3U; ++channel) {
                     candidate.pixels[output + channel] = static_cast<float>(
                         premultiplied[channel] / alpha_sum);

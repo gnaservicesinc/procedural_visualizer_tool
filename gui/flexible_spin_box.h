@@ -22,6 +22,7 @@ protected:
     void focusOutEvent(QFocusEvent* event) override;
 
 private:
+    QString numericText(const QString& text) const;
     QString editing_special_text_;
     bool editing_special_value_ = false;
 };
@@ -36,6 +37,7 @@ public:
 protected:
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
+    void stepBy(int steps) override;
 
 private:
     int resolved_auto_value_ = 0;

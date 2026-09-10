@@ -49,6 +49,54 @@ pvt::Image solid(float value, float alpha = 1.0F) {
     return image;
 }
 
+void test_block_size_lfo_from_blackout() {
+    auto project = pvt::default_project();
+    project.canvas.width = 32;
+    project.canvas.height = 32;
+    project.canvas.block_size = 0.0;
+    project.canvas.block_size_modulation.lfo_enabled = true;
+    project.canvas.block_size_modulation.minimum = 2.0;
+    project.canvas.block_size_modulation.maximum = 2.0;
+    project.layers.resize(1U);
+    project.output.write_alpha = true;
+    std::string error;
+    pvt::Image expected, actual, selected;
+    pvt::FrameRenderOptions options;
+    options.backend = pvt::RenderBackend::Cpu;
+    const auto config = pvt::apply_global_config(
+        project.canvas, project.output, project.layers.front().render);
+    CHECK(pvt::render_frame_at_phase(config, 0.25, expected, &error));
+    CHECK(pvt::render_project_frame_at_phase(project, 0.25, actual, nullptr, &error));
+    CHECK(pvt::render_project_frame_at_phase(project, 0.25, options, selected, nullptr, &error));
+    CHECK(actual.pixels == expected.pixels);
+    CHECK(selected.pixels == expected.pixels);
+
+    project.canvas.block_size_modulation.lfo_enabled = false;
+    actual = solid(0.25F);
+    const auto sentinel = actual;
+    CHECK(!pvt::render_project_frame_at_phase(project,
+        std::numeric_limits<double>::quiet_NaN(), actual, nullptr, &error));
+    CHECK(actual.pixels == sentinel.pixels && actual.width == sentinel.width);
+    CHECK(!pvt::render_project_frame_at_phase(project,
+        std::numeric_limits<double>::infinity(), options, actual, nullptr, &error));
+    project.canvas.width = 1;
+    CHECK(!pvt::render_project_frame(project, 0, actual, nullptr, &error));
+    project.canvas.width = 32;
+    options.backend = static_cast<pvt::RenderBackend>(999);
+    CHECK(!pvt::render_project_frame(project, 0, options, actual, nullptr, &error));
+    CHECK(actual.pixels == sentinel.pixels && actual.width == sentinel.width);
+
+    project.canvas.width = 64;
+    project.canvas.height = 64;
+    project.canvas.block_size = 0.25;
+    const auto standalone_validation = pvt::validate(pvt::apply_global_config(
+        project.canvas, project.output, project.layers.front().render));
+    const auto project_validation = pvt::validate(project);
+    CHECK(standalone_validation.ok && project_validation.ok);
+    CHECK(project_validation.estimated_peak_bytes
+          >= standalone_validation.estimated_peak_bytes);
+}
+
 void expect_opaque_blend(pvt::BlendMode mode, double expected) {
     pvt::Image backdrop = solid(0.25F);
     const pvt::Image source = solid(0.75F);
@@ -1535,6 +1583,7 @@ void test_active_layer_clock_mappings() {
 } // namespace
 
 int main() {
+    test_block_size_lfo_from_blackout();
     test_uuid_factories_and_adapters();
     test_disabled_saved_clock_validation();
     test_project_validation_borrowed_settings();

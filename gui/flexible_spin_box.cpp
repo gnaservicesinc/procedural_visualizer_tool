@@ -36,6 +36,9 @@ bool FlexibleDoubleSpinBox::parseFlexibleNumber(
     for (const VulgarFraction& fraction : fractions) {
         if (!input.endsWith(fraction.symbol)) continue;
         QString whole_text = input.left(input.size() - 1).trimmed();
+        const bool negative = whole_text.startsWith(QLatin1Char('-'));
+        if (whole_text == QStringLiteral("-")
+            || whole_text == QStringLiteral("+")) whole_text.clear();
         bool whole_ok = whole_text.isEmpty();
         double whole = 0.0;
         if (!whole_text.isEmpty()) {
@@ -45,7 +48,7 @@ bool FlexibleDoubleSpinBox::parseFlexibleNumber(
         if (!whole_ok || std::floor(whole) != whole) return false;
         const double part = static_cast<double>(fraction.numerator)
                             / fraction.denominator;
-        value = std::signbit(whole) ? whole - part : whole + part;
+        value = negative ? whole - part : whole + part;
         return std::isfinite(value);
     }
 
@@ -67,7 +70,8 @@ bool FlexibleDoubleSpinBox::parseFlexibleNumber(
             || denominator == 0U) return false;
         const double part = static_cast<double>(numerator)
                             / static_cast<double>(denominator);
-        value = whole < 0 ? static_cast<double>(whole) - part
+        value = match.captured(1).startsWith(QLatin1Char('-'))
+                          ? static_cast<double>(whole) - part
                           : static_cast<double>(whole) + part;
         return std::isfinite(value);
     }
@@ -94,18 +98,30 @@ bool FlexibleDoubleSpinBox::parseFlexibleNumber(
     return ok && std::isfinite(value);
 }
 
+QString FlexibleDoubleSpinBox::numericText(const QString& text) const {
+    QString result = text.trimmed();
+    if (!prefix().isEmpty() && result.startsWith(prefix())) {
+        result.remove(0, prefix().size());
+    }
+    if (!suffix().isEmpty() && result.endsWith(suffix().trimmed())) {
+        result.chop(suffix().trimmed().size());
+    }
+    return result.trimmed();
+}
+
 QValidator::State FlexibleDoubleSpinBox::validate(
     QString& input, int& position) const {
     Q_UNUSED(position);
     double parsed = 0.0;
-    if (parseFlexibleNumber(input, locale(), parsed)) {
+    const QString number = numericText(input);
+    if (parseFlexibleNumber(number, locale(), parsed)) {
         return parsed >= minimum() && parsed <= maximum()
                    ? QValidator::Acceptable : QValidator::Intermediate;
     }
-    if (input.trimmed().isEmpty()) return QValidator::Intermediate;
+    if (number.isEmpty()) return QValidator::Intermediate;
     static const QRegularExpression partial(
         QStringLiteral(R"(^[+\-\d\s.,/⁄¼-¾⅐-⅞]*$)"));
-    if (partial.match(input).hasMatch()) {
+    if (partial.match(number).hasMatch()) {
         return QValidator::Intermediate;
     }
     return QValidator::Invalid;
@@ -126,11 +142,12 @@ void FlexibleDoubleSpinBox::focusInEvent(QFocusEvent* event) {
 
 void FlexibleDoubleSpinBox::focusOutEvent(QFocusEvent* event) {
     const bool restore_value = editing_special_value_
-        && (!lineEdit()->isModified() || lineEdit()->text().trimmed().isEmpty());
+        && ((value() == minimum() && !lineEdit()->isModified())
+            || numericText(lineEdit()->text()).isEmpty());
+    if (restore_value) setValue(minimum());
     QDoubleSpinBox::focusOutEvent(event);
     if (editing_special_value_) {
         const QSignalBlocker blocker(this);
-        if (restore_value) setValue(minimum());
         setSpecialValueText(editing_special_text_);
     }
     editing_special_value_ = false;
@@ -142,39 +159,54 @@ ResolvedAutoSpinBox::ResolvedAutoSpinBox(QWidget* parent)
 
 void ResolvedAutoSpinBox::setResolvedAutoValue(int value,
                                                const QString& label) {
-    resolved_auto_value_ = std::clamp(value, minimum() + 1, maximum());
+    const int first_explicit = minimum() < maximum() ? minimum() + 1 : minimum();
+    resolved_auto_value_ = std::clamp(value, first_explicit, maximum());
     auto_text_ = QStringLiteral("%1 (%2)")
                      .arg(resolved_auto_value_)
                      .arg(label);
-    if (this->value() == minimum()) setSpecialValueText(auto_text_);
+    setSpecialValueText(auto_text_);
 }
 
 void ResolvedAutoSpinBox::focusInEvent(QFocusEvent* event) {
+    QSpinBox::focusInEvent(event);
     editing_auto_ = value() == minimum() && !auto_text_.isEmpty();
     if (editing_auto_) {
         const QSignalBlocker blocker(this);
         setSpecialValueText(QString{});
-        setValue(resolved_auto_value_);
+        // Showing the resolved value must not turn Automatic into an explicit
+        // setting when another control reads this widget while it has focus.
+        const QSignalBlocker editor_blocker(lineEdit());
+        lineEdit()->setText(locale().toString(resolved_auto_value_));
         lineEdit()->setModified(false);
     }
-    QSpinBox::focusInEvent(event);
     if (editing_auto_) selectAll();
 }
 
 void ResolvedAutoSpinBox::focusOutEvent(QFocusEvent* event) {
     const bool return_to_auto = editing_auto_
-        && (!lineEdit()->isModified() || lineEdit()->text().trimmed().isEmpty());
+        && ((value() == minimum() && !lineEdit()->isModified())
+            || lineEdit()->text().trimmed().isEmpty());
+    if (return_to_auto) {
+        setValue(minimum());
+        setSpecialValueText(auto_text_);
+    }
     QSpinBox::focusOutEvent(event);
     if (editing_auto_) {
-        const QSignalBlocker blocker(this);
-        if (return_to_auto) setValue(minimum());
         setSpecialValueText(auto_text_);
     }
     editing_auto_ = false;
 }
 
+void ResolvedAutoSpinBox::stepBy(int steps) {
+    if (editing_auto_ && value() == minimum() && !lineEdit()->isModified()) {
+        const QSignalBlocker blocker(this);
+        setValue(resolved_auto_value_);
+    }
+    QSpinBox::stepBy(steps);
+}
+
 double FlexibleDoubleSpinBox::valueFromText(const QString& text) const {
     double parsed = value();
-    return parseFlexibleNumber(text, locale(), parsed)
+    return parseFlexibleNumber(numericText(text), locale(), parsed)
                ? parsed : QDoubleSpinBox::valueFromText(text);
 }

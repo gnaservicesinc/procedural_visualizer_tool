@@ -38,8 +38,10 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
     const double pixel_scale = static_cast<double>(std::min(width, height))
                                / source_short_edge;
     for (auto& layer : project.layers) {
-        layer.render.starting_colors.reference_width = source_width;
-        layer.render.starting_colors.reference_height = source_height;
+        layer.render.starting_colors.reference_width =
+            source_block_size > 0.0 ? source_width : 0;
+        layer.render.starting_colors.reference_height =
+            source_block_size > 0.0 ? source_height : 0;
         layer.render.starting_colors.reference_block_size = source_block_size;
         layer.render.displacement *= pixel_scale;
         for (auto& effect : layer.render.effects) {
@@ -57,6 +59,8 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
     project.canvas.height = height;
     project.canvas.block_size = source_block_size == 0.0
         ? 0.0 : std::max(0.000001, source_block_size * scale);
+    project.canvas.block_size_modulation.minimum *= scale;
+    project.canvas.block_size_modulation.maximum *= scale;
 }
 
 } // namespace
@@ -75,6 +79,8 @@ LiveFrameController::LiveFrameController(QObject* parent) : QObject(parent) {
                              active_document_revision_);
     });
     connect(&watcher_, &QFutureWatcher<Result>::finished, this, [this] {
+        if (!task_active_) return;
+        const auto completed_sequence = active_sequence_;
         watchdog_timer_.stop();
         Result result;
         try {
@@ -86,6 +92,9 @@ LiveFrameController::LiveFrameController(QObject* parent) : QObject(parent) {
             result.error = tr("Live renderer failed unexpectedly.");
         }
         if (!stopping_) emit frameFinished(result);
+        // A receiver may stop/restart the controller while handling delivery.
+        if (active_sequence_ != completed_sequence) return;
+        task_active_ = false;
         if (!stopping_ && pending_) {
             Request next = std::move(*pending_);
             pending_.reset();
@@ -123,7 +132,9 @@ void LiveFrameController::request(pvt::ProjectConfig project,
     request.session_generation = session_generation;
     request.document_revision = document_revision;
     request.dropped_requests = dropped_requests_;
-    if (watcher_.isRunning()) {
+    // A finished worker still owns its watcher until the queued completion
+    // event delivers its result. Do not replace that undelivered future.
+    if (task_active_) {
         if (pending_) ++dropped_requests_;
         request.dropped_requests = dropped_requests_;
         pending_ = std::move(request);
@@ -142,6 +153,7 @@ void LiveFrameController::launch(Request request) {
     const auto cancel = cancel_;
     const auto watchdog_expired = watchdog_expired_;
     watchdog_timer_.start(request.watchdog_milliseconds);
+    task_active_ = true;
     watcher_.setFuture(QtConcurrent::run(
         [request = std::move(request), cancel, watchdog_expired]() mutable {
             return render(std::move(request), cancel, watchdog_expired);
@@ -159,13 +171,15 @@ void LiveFrameController::stop() {
     watchdog_timer_.stop();
     if (cancel_ != nullptr) cancel_->store(true, std::memory_order_relaxed);
     if (watcher_.isRunning()) watcher_.waitForFinished();
+    watcher_.setFuture(QFuture<Result>{});
+    task_active_ = false;
     cancel_.reset();
     watchdog_expired_.reset();
     dropped_requests_ = 0U;
     stopping_ = false;
 }
 
-bool LiveFrameController::isRendering() const { return watcher_.isRunning(); }
+bool LiveFrameController::isRendering() const { return task_active_; }
 std::uint64_t LiveFrameController::droppedRequests() const noexcept {
     return dropped_requests_;
 }
