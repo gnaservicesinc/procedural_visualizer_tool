@@ -56,7 +56,7 @@ constexpr std::uint64_t kHashProgressEnd = 150U;
 constexpr std::uint64_t kDecodeProgressEnd = 750U;
 constexpr std::size_t kHopFrames = 441U; // 10 ms at the canonical rate.
 constexpr double kPi = 3.141592653589793238462643383279502884;
-constexpr char kAnalyzerVersion[] = "pvt-adaptive-spectral-audio-4";
+constexpr char kAnalyzerVersion[] = "pvt-adaptive-onset-audio-5";
 
 bool fail(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -566,9 +566,17 @@ struct TempoObservation {
 // oracle. Its causal beat callbacks and quarter-second tempo snapshots are
 // reconciled with the independent offline spectral-flux analysis below. This
 // lets sudden/ramped tempo changes survive even when either tracker lags.
+pvt_onset_method tracker_onset_method(MusicOnsetDetection method) {
+    switch (method) {
+    case MusicOnsetDetection::NeighborFlux: return PVT_ONSET_NEIGHBOR_FLUX;
+    case MusicOnsetDetection::HighFrequencyFlux: return PVT_ONSET_HIGH_FREQUENCY_FLUX;
+    default: return PVT_ONSET_SPECTRAL_FLUX;
+    }
+}
+
 class AdaptiveBeatObserver {
 public:
-    AdaptiveBeatObserver() {
+    explicit AdaptiveBeatObserver(MusicOnsetDetection method) {
         beat_times_.reserve(4096U);
         tempo_.reserve(4096U);
         tracker_ = btt_new_default();
@@ -576,6 +584,7 @@ public:
             failed_ = true;
             return;
         }
+        btt_set_onset_detection_method(tracker_, tracker_onset_method(method));
         btt_set_min_tempo(tracker_, 55.0);
         btt_set_max_tempo(tracker_, 210.0);
         btt_set_count_in_n(tracker_, 1);
@@ -685,12 +694,12 @@ public:
         return kHopFrames;
     }
 
-    explicit HopAccumulator(AdaptiveBeatObserver& beat_observer)
+    explicit HopAccumulator(AdaptiveBeatObserver& beat_observer, MusicOnsetDetection method)
         : low_pole_(std::exp(-2.0 * kPi * 250.0
                              / static_cast<double>(kAnalysisSampleRate))),
           mid_pole_(std::exp(-2.0 * kPi * 4000.0
                              / static_cast<double>(kAnalysisSampleRate))),
-          beat_observer_(beat_observer) {}
+          beat_observer_(beat_observer), onset_method_(method) {}
 
     void push(float input) {
         beat_observer_.push(input);
@@ -785,6 +794,7 @@ private:
         double log_power_sum = 0.0;
         double power_sum = 0.0;
         double flux = 0.0;
+        std::array<float, bin_count> onset_spectrum {};
         std::array<double, 12U> chroma {};
         std::size_t flatness_bins = 0U;
         for (std::size_t bin = 1U; bin < bin_count; ++bin) {
@@ -805,6 +815,7 @@ private:
             const double compressed = std::log1p(10.0 * magnitude);
             flux += (std::max)(0.0, compressed - previous_spectrum_[bin]);
             previous_spectrum_[bin] = compressed;
+            onset_spectrum[bin] = static_cast<float>(compressed);
 
             if (frequency >= 55.0 && frequency <= 5000.0) {
                 const double midi = 69.0 + 12.0 * std::log2(frequency / 440.0);
@@ -833,6 +844,11 @@ private:
                                       / static_cast<double>(flatness_bins);
             record.spectral_flatness = static_cast<float>(
                 (std::min)(1.0, geometric / arithmetic));
+        }
+        if (onset_method_ != MusicOnsetDetection::Hybrid) {
+            flux = pvt_onset_strength(onset_spectrum.data(), previous_onset_spectrum_.data(),
+                                      bin_count, tracker_onset_method(onset_method_));
+            previous_onset_spectrum_ = onset_spectrum;
         }
         record.spectral_onset = static_cast<float>(flux);
 
@@ -876,7 +892,7 @@ private:
         record.energy_onset = static_cast<float>(energy_onset);
         record.onset = static_cast<float>(
             std::log1p(static_cast<double>(record.spectral_onset))
-            + 2.0 * energy_onset);
+            + (onset_method_ == MusicOnsetDetection::Hybrid ? 2.0 * energy_onset : 0.0));
         record.peak_offset = static_cast<std::uint16_t>(peak_offset_);
         records_.push_back(record);
         previous_log_ = current_log;
@@ -892,6 +908,8 @@ private:
     const double low_pole_;
     const double mid_pole_;
     AdaptiveBeatObserver& beat_observer_;
+    MusicOnsetDetection onset_method_;
+    std::array<float, kSpectrumFrames / 2U + 1U> previous_onset_spectrum_ {};
     double low_state_ = 0.0;
     double mid_state_ = 0.0;
     double energy_sum_ = 0.0;
@@ -965,8 +983,8 @@ class FrequencyAnalysisPipeline final {
 public:
     FrequencyAnalysisPipeline(const AudioFrequencyStreamConfig& authored,
                               std::uint32_t source_rate,
-                              std::string* error)
-        : authored_(authored), accumulator_(observer_),
+                              MusicOnsetDetection method, std::string* error)
+        : authored_(authored), observer_(method), accumulator_(observer_, method),
           resampler_(source_rate, accumulator_) {
         valid_ = observer_.valid()
             && filter_.configure(authored.low_hz, authored.high_hz,
@@ -1894,11 +1912,11 @@ bool analyze_impl(const std::string& path,
     if (!input_processor.configure(processing, source_rate, error)) {
         return false;
     }
-    AdaptiveBeatObserver beat_observer;
+    AdaptiveBeatObserver beat_observer(processing.music_onset_detection);
     if (!beat_observer.valid()) {
         return fail(error, "Could not initialize the adaptive beat tracker.");
     }
-    HopAccumulator accumulator(beat_observer);
+    HopAccumulator accumulator(beat_observer, processing.music_onset_detection);
     LinearResampler resampler(source_rate, accumulator);
     if (processing.frequency_streams.size()
         > kMaximumAudioFrequencyStreams) {
@@ -1908,7 +1926,7 @@ bool analyze_impl(const std::string& path,
     stream_pipelines.reserve(processing.frequency_streams.size());
     for (const auto& stream : processing.frequency_streams) {
         auto pipeline = std::make_unique<FrequencyAnalysisPipeline>(
-            stream, source_rate, error);
+            stream, source_rate, processing.music_onset_detection, error);
         if (!pipeline->valid()) {
             if (error != nullptr && error->empty()) {
                 *error = "Could not initialize a named frequency-stream analyzer.";

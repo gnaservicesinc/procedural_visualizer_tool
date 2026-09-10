@@ -1,11 +1,14 @@
 #include "live_frame_controller.h"
+#include "display_color.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QThread>
 #include <QThreadPool>
 
+#include <cstring>
 #include <iostream>
+#include <utility>
 #include <vector>
 
 int main(int argc, char** argv) {
@@ -57,6 +60,75 @@ int main(int argc, char** argv) {
     if (!results.empty() || controller.isRendering()) {
         std::cerr << "Stopped Live controller delivered a stale completion\n";
         return 1;
+    }
+
+    // A reduced one-pixel project must render on the preview pixel grid.
+    // Turning 1 into 0.25 invokes full-canvas supersampling for every effect;
+    // checking only the returned image dimensions misses that regression.
+    // Explicitly authored subpixel blocks must retain their existing resolve.
+    for (const auto sizes : {std::pair{1.0, 1.0}, std::pair{3.0, 1.0},
+                             std::pair{6.0, 1.5}, std::pair{0.5, 0.125},
+                             std::pair{0.0, 0.0}}) {
+        project = pvt::default_project();
+        project.canvas.width = 128;
+        project.canvas.height = 128;
+        project.canvas.block_size = sizes.first;
+        auto& layer = project.layers.front().render;
+        layer.effects.clear();
+        layer.waves.clear();
+        layer.swings.clear();
+        layer.displacement_enabled = false;
+        layer.lighting_enabled = false;
+        layer.post_process.antialias_enabled = true;
+        layer.post_process.antialias_passes = 2;
+        for (const bool synchronized : {false, true}) {
+            auto expected_project = project;
+            expected_project.canvas.width = 32;
+            expected_project.canvas.height = 32;
+            expected_project.canvas.block_size = sizes.second;
+            auto& expected_layer = expected_project.layers.front().render;
+            expected_layer.starting_colors.reference_width = sizes.first > 0 ? 128 : 0;
+            expected_layer.starting_colors.reference_height = sizes.first > 0 ? 128 : 0;
+            expected_layer.starting_colors.reference_block_size = sizes.first;
+            expected_layer.displacement *= 0.25;
+            pvt::Image expected;
+            std::string error;
+            const bool rendered = synchronized
+                ? pvt::render_project_frame(expected_project, 19, options,
+                                             expected, nullptr, &error)
+                : pvt::render_project_frame_at_phase(expected_project, 0.25,
+                        options, expected, nullptr, &error);
+            if (!rendered) {
+                std::cerr << error << '\n';
+                return 1;
+            }
+            results.clear();
+            controller.request(project, 0.25,
+                synchronized ? std::optional<int>{19} : std::nullopt,
+                QSize(32, 32), 1.0, 1000.0, 5000, options, 2U, 2U);
+            timer.restart();
+            while (results.empty() && timer.elapsed() < 5000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(1);
+            }
+            if (results.size() != 1U || !results.front().error.isEmpty()
+                || results.front().image.size() != QSize(32, 32)) {
+                std::cerr << "Reduced Live frame failed\n";
+                return 1;
+            }
+            unsigned char expected_row[32 * 4];
+            for (int y = 0; y < 32; ++y) {
+                pvt::display::convert_rgba_row(expected.pixel(0, y),
+                                               expected_row, 32U);
+                if (std::memcmp(expected_row,
+                        results.front().image.constScanLine(y), sizeof(expected_row)) != 0) {
+                    std::cerr << "Preview block scaling changed the pixel grid for "
+                              << sizes.first << '\n';
+                    return 1;
+                }
+            }
+            controller.stop();
+        }
     }
     return 0;
 }

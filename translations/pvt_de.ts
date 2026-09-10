@@ -585,6 +585,61 @@
     </message>
     <message>
         <location line="+5"/>
+        <source>Music beat and onset detection</source>
+        <translation>Beat- und Einsatz-Erkennung für Musik</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Hybrid — spectral + energy (default)</source>
+        <translation>Hybrid — Spektrum + Energie (Standard)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Spectral flux — note attacks</source>
+        <translation>Spektralfluss — Noteneinsätze</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Neighbor flux — reduce vibrato triggers</source>
+        <translation>Nachbarfluss — weniger Vibrato-Auslösungen</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>High-frequency flux — bright percussion</source>
+        <translation>Hochfrequenzfluss — höhenreiche Percussion</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Detection type</source>
+        <translation>Erkennungsmethode</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Combines spectral changes and energy rises. Preserves the existing detection style.</source>
+        <translation>Kombiniert spektrale Änderungen mit Energieanstiegen. Behält die bisherige Erkennungsweise bei.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Tracks positive spectral changes without blending in energy rises. Useful for note attacks in sustained audio.</source>
+        <translation>Erkennt positive spektrale Änderungen, ohne Energieanstiege beizumischen. Geeignet für Noteneinsätze in länger anhaltenden Klängen.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Compares neighboring frequency bins to reduce triggers from small pitch movements. May also suppress closely spaced notes.</source>
+        <translation>Vergleicht benachbarte Frequenzbereiche, um Auslösungen durch kleine Tonhöhenänderungen zu reduzieren. Kann auch eng beieinanderliegende Noten unterdrücken.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Weights spectral changes toward higher frequencies. Useful for bright percussion; may underweight bass drums.</source>
+        <translation>Gewichtet spektrale Änderungen in hohen Frequenzen stärker. Geeignet für höhenreiche Percussion; Bassdrums können dadurch weniger stark berücksichtigt werden.</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Applies to this Music source and all its named ranges. Changing it reanalyzes the source before committing.</source>
+        <translation>Gilt für diese Musikquelle und alle ihre benannten Frequenzbereiche. Bei einer Änderung wird die Quelle vor dem Übernehmen erneut analysiert.</translation>
+    </message>
+    <message>
+        <location line="+8"/>
         <source>Input filters</source>
         <translation>Eingangsfilter</translation>
     </message>
@@ -700,7 +755,7 @@
         <translation>Bereich %1</translation>
     </message>
     <message>
-        <location line="+42"/>
+        <location line="+44"/>
         <source>Audio input processing</source>
         <translation>Audioeingangsverarbeitung</translation>
     </message>
@@ -708,7 +763,7 @@
 <context>
     <name>LiveFrameController</name>
     <message>
-        <location filename="../gui/live_frame_controller.cpp" line="+83"/>
+        <location filename="../gui/live_frame_controller.cpp" line="+89"/>
         <source>Live renderer failed: %1</source>
         <translation>Live-Renderer fehlgeschlagen: %1</translation>
     </message>
@@ -2313,7 +2368,7 @@ Last-good watchdog</source>
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../gui/main_window.cpp" line="+2483"/>
+        <location filename="../gui/main_window.cpp" line="+2488"/>
         <source>Project Sync &amp; Audio is edited in the persistent Drivers panel above. Expand it to configure the project clock and inherited audio profile alongside the active layer override.</source>
         <translation>Projektsynchronisation und Audio werden im dauerhaft verfügbaren Steuerungspanel oben bearbeitet. Klappen Sie es auf, um Projekttakt und geerbtes Audioprofil neben den individuellen Einstellungen der aktiven Ebene zu konfigurieren.</translation>
     </message>
@@ -2324,87 +2379,87 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+565"/>
+        <location line="+566"/>
         <location line="+143"/>
-        <location line="+19345"/>
+        <location line="+19383"/>
         <source>Starting Colors</source>
         <translation>Ausgangsfarben</translation>
     </message>
     <message>
-        <location line="-20052"/>
-        <location line="+565"/>
-        <location line="+19490"/>
+        <location line="-20091"/>
+        <location line="+566"/>
+        <location line="+19528"/>
         <source>Layer Effects</source>
         <translation>Ebeneneffekte</translation>
     </message>
     <message>
-        <location line="-20054"/>
-        <location line="+563"/>
-        <location line="+19489"/>
+        <location line="-20093"/>
+        <location line="+564"/>
+        <location line="+19527"/>
         <source>Modifiers</source>
         <translation>Modifikatoren</translation>
     </message>
     <message>
-        <location line="-20051"/>
-        <location line="+563"/>
-        <location line="+19489"/>
+        <location line="-20090"/>
+        <location line="+564"/>
+        <location line="+19527"/>
         <source>Movement</source>
         <translation>Bewegung</translation>
     </message>
     <message>
-        <location line="-20051"/>
-        <location line="+562"/>
+        <location line="-20090"/>
+        <location line="+563"/>
         <location line="+1636"/>
-        <location line="+17855"/>
+        <location line="+17893"/>
         <source>Post Effects</source>
         <translation>Nachbearbeitungseffekte</translation>
     </message>
     <message>
-        <location line="-20052"/>
-        <location line="+603"/>
+        <location line="-20091"/>
+        <location line="+604"/>
         <location line="+3320"/>
-        <location line="+946"/>
+        <location line="+948"/>
         <source>Canvas &amp; Loop</source>
         <translation>Leinwand und Schleife</translation>
     </message>
     <message>
-        <location line="-4868"/>
-        <location line="+4871"/>
+        <location line="-4871"/>
+        <location line="+4874"/>
         <source>Project Sync &amp; Audio</source>
         <translation>Projektsynchronisation und Audio</translation>
     </message>
     <message>
-        <location line="-4870"/>
-        <location line="+560"/>
+        <location line="-4873"/>
+        <location line="+561"/>
         <location line="+42"/>
         <location line="+3022"/>
         <location line="+176"/>
-        <location line="+1074"/>
-        <location line="+15177"/>
+        <location line="+1076"/>
+        <location line="+15213"/>
         <source>Export</source>
         <translation>Exportieren</translation>
     </message>
     <message>
-        <location line="-20050"/>
-        <location line="+3624"/>
-        <location line="+1253"/>
+        <location line="-20089"/>
+        <location line="+3625"/>
+        <location line="+1255"/>
         <source>History</source>
         <translation>Verlauf</translation>
     </message>
     <message>
-        <location line="-4866"/>
+        <location line="-4869"/>
         <source>Current workflow context</source>
         <translation>Aktueller Arbeitskontext</translation>
     </message>
     <message>
         <location line="+7"/>
-        <location line="+1903"/>
-        <location line="+18164"/>
+        <location line="+1904"/>
+        <location line="+18202"/>
         <source>Synchronization</source>
         <translation>Synchronisation</translation>
     </message>
     <message>
-        <location line="-20065"/>
+        <location line="-20104"/>
         <source>Project and active-layer synchronization</source>
         <translation>Synchronisation von Projekt und aktiver Ebene</translation>
     </message>
@@ -2435,23 +2490,23 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3760"/>
+        <location line="+3761"/>
         <source>Start Live Preview Output</source>
         <translation>Live-Vorschauausgabe starten</translation>
     </message>
     <message>
-        <location line="-3755"/>
+        <location line="-3756"/>
         <source>Streaming the editor preview; performance inputs remain off.</source>
         <translation>Die Editorvorschau wird ausgegeben; Performance-Eingänge bleiben deaktiviert.</translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3748"/>
+        <location line="+3749"/>
         <source>Stopped — start this to present the editor preview without entering LIVE.</source>
         <translation>Gestoppt — starten, um die Editorvorschau ohne LIVE-Modus zu präsentieren.</translation>
     </message>
     <message>
-        <location line="-3733"/>
+        <location line="-3734"/>
         <source>Ready</source>
         <translation>Bereit</translation>
     </message>
@@ -2467,12 +2522,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+16648"/>
+        <location line="+16657"/>
         <source>Preview failed because of an unexpected error.</source>
         <translation>Die Vorschau ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
     </message>
     <message>
-        <location line="-16618"/>
+        <location line="-16626"/>
         <source>Preview %1 × %2 · frame %3/%4</source>
         <translation>Vorschau %1 × %2 · Bild %3/%4</translation>
     </message>
@@ -2541,15 +2596,15 @@ Last-good watchdog</source>
     <message>
         <location line="+7"/>
         <location line="+6"/>
-        <location line="+17063"/>
+        <location line="+17071"/>
         <location line="+6"/>
         <source>Load failed</source>
         <translation>Laden fehlgeschlagen</translation>
     </message>
     <message>
-        <location line="-17072"/>
+        <location line="-17080"/>
         <location line="+5"/>
-        <location line="+23468"/>
+        <location line="+23530"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+28"/>
@@ -2559,7 +2614,7 @@ Last-good watchdog</source>
         <translation>Speichern fehlgeschlagen</translation>
     </message>
     <message>
-        <location line="-23565"/>
+        <location line="-23627"/>
         <source>The active project was not changed.
 
 %1</source>
@@ -2569,31 +2624,31 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+25"/>
-        <location line="+4017"/>
+        <location line="+4019"/>
         <source>Unexpected version-comparison error: %1</source>
         <translation>Unerwarteter Fehler beim Versionsvergleich: %1</translation>
     </message>
     <message>
-        <location line="-4010"/>
-        <location line="+4013"/>
+        <location line="-4012"/>
+        <location line="+4015"/>
         <source>Version comparison failed because of an unexpected error.</source>
         <translation>Der Versionsvergleich ist aufgrund eines unerwarteten Fehlers fehlgeschlagen.</translation>
     </message>
     <message>
-        <location line="-3988"/>
-        <location line="+3930"/>
+        <location line="-3990"/>
+        <location line="+3932"/>
         <source>Could not compare versions: %1</source>
         <translation>Versionen konnten nicht verglichen werden: %1</translation>
     </message>
     <message>
-        <location line="-3926"/>
-        <location line="+3931"/>
+        <location line="-3928"/>
+        <location line="+3933"/>
         <source>No semantic project differences.</source>
         <translation>Keine semantischen Projektunterschiede.</translation>
     </message>
     <message>
-        <location line="-3925"/>
-        <location line="+3931"/>
+        <location line="-3927"/>
+        <location line="+3933"/>
         <source>%1
   %2
 → %3</source>
@@ -2602,20 +2657,20 @@ Last-good watchdog</source>
 → %3</translation>
     </message>
     <message>
-        <location line="-3859"/>
+        <location line="-3861"/>
         <source>Project and layer workspace categories</source>
         <translation>Arbeitsbereichskategorien für Projekt und Ebenen</translation>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+4961"/>
+        <location line="+4963"/>
         <location line="+3009"/>
-        <location line="+11517"/>
+        <location line="+11553"/>
         <source>Project</source>
         <translation>Projekt</translation>
     </message>
     <message>
-        <location line="-19483"/>
+        <location line="-19521"/>
         <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
         <translation>Leinwand, Schleife, Synchronisation, Audio und Verlauf für das gesamte Projekt bearbeiten.</translation>
     </message>
@@ -2716,20 +2771,20 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+2"/>
-        <location line="+10298"/>
+        <location line="+10300"/>
         <location line="+3"/>
         <source>enabled</source>
         <translation>aktiviert</translation>
     </message>
     <message>
-        <location line="-10301"/>
-        <location line="+6997"/>
+        <location line="-10303"/>
+        <location line="+6999"/>
         <location line="+23"/>
         <source>off</source>
         <translation>aus</translation>
     </message>
     <message>
-        <location line="-7018"/>
+        <location line="-7020"/>
         <source>%1 categorized layer effects</source>
         <translation>Ebeneneffekte nach Kategorien: %1</translation>
     </message>
@@ -2967,29 +3022,29 @@ Last-good watchdog</source>
         <location line="+11"/>
         <location line="+689"/>
         <location line="+147"/>
-        <location line="+2859"/>
+        <location line="+2861"/>
         <source>Add</source>
         <translation>Hinzufügen</translation>
     </message>
     <message>
-        <location line="-3694"/>
+        <location line="-3696"/>
         <location line="+689"/>
         <location line="+147"/>
-        <location line="+2859"/>
+        <location line="+2861"/>
         <source>Duplicate</source>
         <translation>Duplizieren</translation>
     </message>
     <message>
-        <location line="-3694"/>
+        <location line="-3696"/>
         <location line="+689"/>
         <location line="+147"/>
-        <location line="+2859"/>
+        <location line="+2861"/>
         <location line="+1167"/>
         <source>Remove</source>
         <translation>Entfernen</translation>
     </message>
     <message>
-        <location line="-4861"/>
+        <location line="-4863"/>
         <location line="+689"/>
         <location line="+147"/>
         <source>Up</source>
@@ -3012,31 +3067,31 @@ Last-good watchdog</source>
         <location line="+689"/>
         <location line="+150"/>
         <location line="+1832"/>
-        <location line="+2190"/>
+        <location line="+2192"/>
         <location line="+119"/>
         <source>Enabled</source>
         <translation>Aktiviert</translation>
     </message>
     <message>
-        <location line="-4979"/>
-        <location line="+19000"/>
+        <location line="-4981"/>
+        <location line="+19038"/>
         <source>Use synchronized clock</source>
         <translation>Synchronisierten Takt verwenden</translation>
     </message>
     <message>
-        <location line="-18985"/>
+        <location line="-19023"/>
         <location line="+701"/>
         <location line="+216"/>
         <location line="+1601"/>
         <location line="+162"/>
-        <location line="+1034"/>
+        <location line="+1036"/>
         <location line="+17"/>
         <location line="+1739"/>
         <source>Name</source>
         <translation>Name</translation>
     </message>
     <message>
-        <location line="-5467"/>
+        <location line="-5469"/>
         <location line="+917"/>
         <source>Audio response</source>
         <translation>Audioreaktion</translation>
@@ -3059,26 +3114,26 @@ Last-good watchdog</source>
     <message>
         <location line="+1"/>
         <location line="+2173"/>
-        <location line="+8559"/>
+        <location line="+8561"/>
         <location line="+21"/>
         <source>Spatial frequency</source>
         <translation>Räumliche Frequenz</translation>
     </message>
     <message>
-        <location line="-10752"/>
+        <location line="-10754"/>
         <location line="+916"/>
         <location line="+391"/>
         <location line="+552"/>
         <location line="+314"/>
         <location line="+503"/>
-        <location line="+2228"/>
+        <location line="+2230"/>
         <location line="+65"/>
         <location line="+563"/>
         <source>Cycles per loop</source>
         <translation>Zyklen pro Schleife</translation>
     </message>
     <message>
-        <location line="-5531"/>
+        <location line="-5533"/>
         <location line="+697"/>
         <location line="+219"/>
         <location line="+1760"/>
@@ -3333,13 +3388,7 @@ Last-good watchdog</source>
         <translation>Keine analysierte Musikquelle</translation>
     </message>
     <message>
-        <location line="+3"/>
-        <location line="+198"/>
-        <source>Filters, EQ + Frequency Streams…</source>
-        <translation>Filter, EQ und Frequenzströme…</translation>
-    </message>
-    <message>
-        <location line="-194"/>
+        <location line="+7"/>
         <location line="+200"/>
         <source>Input processing</source>
         <translation>Eingangsverarbeitung</translation>
@@ -3710,7 +3759,7 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+10022"/>
+        <location line="+10024"/>
         <location line="+11"/>
         <location line="+21"/>
         <location line="+14"/>
@@ -3723,8 +3772,8 @@ Last-good watchdog</source>
         <translation>Zentrum X (0–1)</translation>
     </message>
     <message>
-        <location line="-10155"/>
-        <location line="+10022"/>
+        <location line="-10157"/>
+        <location line="+10024"/>
         <location line="+11"/>
         <location line="+21"/>
         <location line="+14"/>
@@ -3737,7 +3786,7 @@ Last-good watchdog</source>
         <translation>Zentrum Y (0–1)</translation>
     </message>
     <message>
-        <location line="-10155"/>
+        <location line="-10157"/>
         <source>Local radius (0 = whole layer)</source>
         <translation>Lokaler Radius (0 = gesamte Ebene)</translation>
     </message>
@@ -3854,12 +3903,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+6521"/>
+        <location line="+6523"/>
         <source>Placement</source>
         <translation>Platzierung</translation>
     </message>
     <message>
-        <location line="-6517"/>
+        <location line="-6519"/>
         <source>Blank-space handling</source>
         <translation>Umgang mit Leerflächen</translation>
     </message>
@@ -4253,56 +4302,56 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+6"/>
-        <location line="+11221"/>
+        <location line="+11223"/>
         <source>Channel</source>
         <translation>Kanal</translation>
     </message>
     <message>
-        <location line="-11220"/>
+        <location line="-11222"/>
         <location line="+973"/>
         <location line="+504"/>
-        <location line="+2228"/>
+        <location line="+2230"/>
         <location line="+61"/>
         <location line="+7455"/>
         <source>Minimum</source>
         <translation>Minimum</translation>
     </message>
     <message>
-        <location line="-11220"/>
+        <location line="-11222"/>
         <location line="+973"/>
         <location line="+504"/>
-        <location line="+2228"/>
+        <location line="+2230"/>
         <location line="+63"/>
         <location line="+7453"/>
         <source>Maximum</source>
         <translation>Maximum</translation>
     </message>
     <message>
-        <location line="-11211"/>
-        <location line="+11215"/>
+        <location line="-11213"/>
+        <location line="+11217"/>
         <source>Red</source>
         <translation>Rot</translation>
     </message>
     <message>
-        <location line="-11214"/>
-        <location line="+11214"/>
+        <location line="-11216"/>
+        <location line="+11216"/>
         <source>Green</source>
         <translation>Grün</translation>
     </message>
     <message>
-        <location line="-11213"/>
-        <location line="+11213"/>
+        <location line="-11215"/>
+        <location line="+11215"/>
         <source>Blue</source>
         <translation>Blau</translation>
     </message>
     <message>
-        <location line="-11212"/>
-        <location line="+11212"/>
+        <location line="-11214"/>
+        <location line="+11214"/>
         <source>Alpha</source>
         <translation>Alpha</translation>
     </message>
     <message>
-        <location line="-11210"/>
+        <location line="-11212"/>
         <source>Used when the authored starting palette is off. Every choice in this box obeys its RGB/alpha Min/Max range. Channel resolution scales automatically with the full-resolution output and block size; ordered patterns walk an automatically sized RGB or RGBA lattice without omitting tuples. Corrected RGBA ordering changes alpha fastest so the RGB gamut remains one broad horizontal, vertical, diagonal, or spiral field. Random is the only shuffled color-static pattern. Generated values remain float32 through effects and compositing; only the chosen output format quantizes them. Preview and export use the same full-resolution coordinates.</source>
         <translation>Wird bei deaktivierter Ausgangspalette verwendet. Jede Auswahl beachtet ihren RGB-/Alpha-Min/Max-Bereich. Die Kanalauflösung skaliert automatisch mit der Ausgabe bei voller Auflösung und der Blockgröße; geordnete Muster durchlaufen ein automatisch dimensioniertes RGB- oder RGBA-Gitter ohne ausgelassene Tupel. Die korrigierte RGBA-Reihenfolge ändert Alpha am schnellsten, sodass der RGB-Farbraum ein einziges breites horizontales, vertikales, diagonales oder spiralförmiges Feld bildet. Zufällig ist das einzige gemischte statische Farbmuster. Generierte Werte bleiben bei Effekten und Komposition float32; erst das gewählte Ausgabeformat quantisiert sie. Vorschau und Export verwenden dieselben Koordinaten bei voller Auflösung.</translation>
     </message>
@@ -4529,12 +4578,12 @@ Last-good watchdog</source>
     <message>
         <location line="+1"/>
         <location line="+485"/>
-        <location line="+3673"/>
+        <location line="+3675"/>
         <source>Starting phase</source>
         <translation>Anfangsphase</translation>
     </message>
     <message>
-        <location line="-4157"/>
+        <location line="-4159"/>
         <location line="+235"/>
         <source>Rotations per loop</source>
         <translation>Umdrehungen pro Schleife</translation>
@@ -4556,12 +4605,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+4"/>
-        <location line="+4054"/>
+        <location line="+4056"/>
         <source>Reusable motion paths</source>
         <translation>Wiederverwendbare Bewegungspfade</translation>
     </message>
     <message>
-        <location line="-4052"/>
+        <location line="-4054"/>
         <source>Create shared closed cubic paths here, then choose one directly from Closed path above. The editor also provides advanced per-wave and per-effect bindings.</source>
         <translation>Erstellen Sie hier gemeinsam nutzbare geschlossene kubische Pfade und wählen Sie oben unter Geschlossener Pfad einen aus. Der Editor bietet auch erweiterte Bindungen je Welle und Effekt.</translation>
     </message>
@@ -4775,13 +4824,13 @@ Last-good watchdog</source>
         <location line="+16"/>
         <location line="+8"/>
         <location line="+1"/>
-        <location line="+2148"/>
+        <location line="+2150"/>
         <location line="+1183"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location line="-3311"/>
+        <location line="-3313"/>
         <source>Composite transparent rear surfaces</source>
         <translation>Transparente Rückflächen mit einblenden</translation>
     </message>
@@ -4827,18 +4876,18 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3869"/>
+        <location line="+3871"/>
         <source>X</source>
         <translation>X</translation>
     </message>
     <message>
-        <location line="-3868"/>
-        <location line="+3868"/>
+        <location line="-3870"/>
+        <location line="+3870"/>
         <source>Y</source>
         <translation>Y</translation>
     </message>
     <message>
-        <location line="-3867"/>
+        <location line="-3869"/>
         <source>Z</source>
         <translation>Z</translation>
     </message>
@@ -5094,12 +5143,14 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15674"/>
+        <location line="+15682"/>
+        <location line="+88"/>
+        <location line="+11"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location line="-15672"/>
+        <location line="-15779"/>
         <source>Connected components</source>
         <translation>Zusammenhängende Komponenten</translation>
     </message>
@@ -5171,18 +5222,18 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+10"/>
-        <location line="+1763"/>
+        <location line="+1765"/>
         <source>Move up</source>
         <translation>Nach oben</translation>
     </message>
     <message>
-        <location line="-1761"/>
-        <location line="+1762"/>
+        <location line="-1763"/>
+        <location line="+1764"/>
         <source>Move down</source>
         <translation>Nach unten</translation>
     </message>
     <message>
-        <location line="-1749"/>
+        <location line="-1751"/>
         <source>Each row is an independent instance with its own settings. Add or duplicate a type as often as needed; removing deletes only the selected instance. Order is layer-local and runs natively on the GPU.</source>
         <translation>Jede Zeile ist eine unabhängige Instanz mit eigenen Einstellungen. Fügen Sie einen Typ beliebig oft hinzu oder duplizieren Sie ihn; Entfernen löscht nur die ausgewählte Instanz. Die Reihenfolge gilt je Ebene und wird nativ auf der GPU ausgeführt.</translation>
     </message>
@@ -5388,12 +5439,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+7"/>
-        <location line="+8702"/>
+        <location line="+8704"/>
         <source>Edge threshold</source>
         <translation>Kantenschwelle</translation>
     </message>
     <message>
-        <location line="-8700"/>
+        <location line="-8702"/>
         <source>Passes</source>
         <translation>Durchläufe</translation>
     </message>
@@ -5485,12 +5536,12 @@ Last-good watchdog</source>
     <message>
         <location line="+19"/>
         <location line="+137"/>
-        <location line="+9636"/>
+        <location line="+9638"/>
         <source>Project layer: %1 — %2</source>
         <translation>Projektebene: %1 — %2</translation>
     </message>
     <message>
-        <location line="-9768"/>
+        <location line="-9770"/>
         <source>Load a different OBJ from disk…</source>
         <translation>Andere OBJ-Datei vom Datenträger laden…</translation>
     </message>
@@ -5502,13 +5553,13 @@ Last-good watchdog</source>
     <message>
         <location line="+0"/>
         <location line="+139"/>
-        <location line="+12514"/>
+        <location line="+12516"/>
         <location line="+113"/>
         <source>Matching project assets</source>
         <translation>Passende Projektressourcen</translation>
     </message>
     <message>
-        <location line="-12751"/>
+        <location line="-12753"/>
         <source>Could not reuse OBJ</source>
         <translation>OBJ konnte nicht wiederverwendet werden</translation>
     </message>
@@ -5965,12 +6016,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+4"/>
-        <location line="+1743"/>
+        <location line="+1745"/>
         <source>Live Preview Output</source>
         <translation>Live-Vorschauausgabe</translation>
     </message>
     <message>
-        <location line="-1740"/>
+        <location line="-1742"/>
         <source>Present the editor preview on another window or display without starting microphone, MIDI, OSC, scenes, routed clocks, or the LIVE performance workspace.</source>
         <translation>Die Editorvorschau in einem anderen Fenster oder auf einem anderen Bildschirm zeigen, ohne Mikrofon, MIDI, OSC, Szenen, zugeordnete Takte oder den LIVE-Performance-Arbeitsbereich zu starten.</translation>
     </message>
@@ -6036,12 +6087,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+1693"/>
+        <location line="+1695"/>
         <source>Export Video…</source>
         <translation>Video exportieren…</translation>
     </message>
     <message>
-        <location line="-1683"/>
+        <location line="-1685"/>
         <source>Choose export directory</source>
         <translation>Exportverzeichnis wählen</translation>
     </message>
@@ -6126,12 +6177,12 @@ Die Änderung erfordert sofortiges Speichern.</translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+1437"/>
+        <location line="+1439"/>
         <source>Create Revision</source>
         <translation>Revision erstellen</translation>
     </message>
     <message>
-        <location line="-1436"/>
+        <location line="-1438"/>
         <source>Delete Revision</source>
         <translation>Revision löschen</translation>
     </message>
@@ -6182,12 +6233,12 @@ Die Änderung erfordert sofortiges Speichern.</translation>
     </message>
     <message>
         <location line="+9"/>
-        <location line="+240"/>
+        <location line="+242"/>
         <source>Choose two versions and select Compare. Comparison runs in the background.</source>
         <translation>Wählen Sie zwei Versionen und dann Vergleichen. Der Vergleich läuft im Hintergrund.</translation>
     </message>
     <message>
-        <location line="-145"/>
+        <location line="-147"/>
         <source>Revision history is disabled for this project.</source>
         <translation>Der Revisionsverlauf ist für dieses Projekt deaktiviert.</translation>
     </message>
@@ -6197,7 +6248,7 @@ Die Änderung erfordert sofortiges Speichern.</translation>
         <translation>Gespeicherte Revisionen, Rücksetzvorgänge und semantischen Vergleich öffnen.</translation>
     </message>
     <message>
-        <location line="+9"/>
+        <location line="+11"/>
         <source>Current saves use raw numeric PVDAT plus newline-ordered string bytes; no binary file-change scan is performed.</source>
         <translation>Aktuelle Speicherungen verwenden rohe numerische PVDAT-Daten und nach Zeilen geordnete Zeichenketten-Bytes; binäre Dateiänderungen werden nicht geprüft.</translation>
     </message>
@@ -6263,12 +6314,12 @@ Die Änderung erfordert sofortiges Speichern.</translation>
     </message>
     <message>
         <location line="+52"/>
-        <location line="+19046"/>
+        <location line="+19106"/>
         <source>Not saved as a bundle yet</source>
         <translation>Noch nicht als Projektpaket gespeichert</translation>
     </message>
     <message>
-        <location line="-19042"/>
+        <location line="-19102"/>
         <source>%1
 Revision history is disabled; only the current saved state is retained.</source>
         <translation>%1
@@ -6330,9 +6381,9 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
         <translation>Eine ausdrückliche Revision wird in %1 erstellt …</translation>
     </message>
     <message>
-        <location line="-4185"/>
+        <location line="-4187"/>
         <location line="+5"/>
-        <location line="+4198"/>
+        <location line="+4200"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+30"/>
@@ -6427,12 +6478,12 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15303"/>
+        <location line="+15339"/>
         <source>Layers &amp;&amp; Groups</source>
         <translation>Ebenen &amp;&amp; Gruppen</translation>
     </message>
     <message>
-        <location line="-15298"/>
+        <location line="-15334"/>
         <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
         <translation>Ziehen Sie die Titelleiste, um dieses Panel zu verschieben oder anzudocken. Ein Doppelklick wechselt zwischen schwebend und angedockt.</translation>
     </message>
@@ -6601,12 +6652,12 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     <message>
         <location line="+3"/>
         <location line="+98"/>
-        <location line="+18044"/>
+        <location line="+18104"/>
         <source>Play</source>
         <translation>Wiedergabe</translation>
     </message>
     <message>
-        <location line="-18141"/>
+        <location line="-18201"/>
         <source>Previous beat</source>
         <translation>Vorheriger Beat</translation>
     </message>
@@ -6815,12 +6866,12 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+5"/>
-        <location line="+13054"/>
+        <location line="+13060"/>
         <source>LFOs…</source>
         <translation>LFOs…</translation>
     </message>
     <message>
-        <location line="-13051"/>
+        <location line="-13057"/>
         <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
         <translation>Numerische Werte mit einem nahtlosen Niederfrequenzoszillator zwischen festgelegtem Minimum und Maximum animieren.</translation>
     </message>
@@ -6871,12 +6922,12 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+1"/>
-        <location line="+11955"/>
+        <location line="+11961"/>
         <source>Live Controls</source>
         <translation>Live-Steuerung</translation>
     </message>
     <message>
-        <location line="-11941"/>
+        <location line="-11947"/>
         <source>Open the stage-focused Live controls in a separate window immediately. The editor remains available, and freeze, blackout, current scene, and captured input remain ephemeral.</source>
         <translation>Die bühnenorientierte Live-Steuerung sofort in einem separaten Fenster öffnen. Der Editor bleibt verfügbar; Einfrieren, Blackout, aktuelle Szene und erfasste Eingaben bleiben vorübergehend.</translation>
     </message>
@@ -6902,12 +6953,12 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+3"/>
-        <location line="+14362"/>
+        <location line="+14398"/>
         <source>Restore Layers &amp;&amp; Groups Panel</source>
         <translation>Panel Ebenen &amp;&amp; Gruppen wiederherstellen</translation>
     </message>
     <message>
-        <location line="-14358"/>
+        <location line="-14394"/>
         <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
         <translation>Das Panel Ebenen und Gruppen anzeigen und links andocken.</translation>
     </message>
@@ -6918,12 +6969,12 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+16"/>
-        <location line="+18329"/>
+        <location line="+18389"/>
         <source>Open unpacked project bundle</source>
         <translation>Entpacktes Projektpaket öffnen</translation>
     </message>
     <message>
-        <location line="-18314"/>
+        <location line="-18374"/>
         <source>Randomize layer values?</source>
         <translation>Ebenenwerte zufällig wählen?</translation>
     </message>
@@ -6945,19 +6996,19 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     <message>
         <location line="+15"/>
         <location line="+20"/>
-        <location line="+18009"/>
+        <location line="+18069"/>
         <source>Invalid output text</source>
         <translation>Ungültiger Ausgabetext</translation>
     </message>
     <message>
-        <location line="-18024"/>
+        <location line="-18084"/>
         <location line="+20"/>
-        <location line="+11287"/>
+        <location line="+11293"/>
         <source>Invalid setup</source>
         <translation>Ungültige Konfiguration</translation>
     </message>
     <message>
-        <location line="-11278"/>
+        <location line="-11284"/>
         <source> - frame %1</source>
         <translation> - Bild %1</translation>
     </message>
@@ -8120,13 +8171,13 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+2"/>
-        <location line="+13300"/>
+        <location line="+13360"/>
         <location line="+14"/>
         <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
         <translation>Die ursprünglichen Werte von %1 Einstellung(en) bleiben auch beim Speichern erhalten.</translation>
     </message>
     <message>
-        <location line="-13309"/>
+        <location line="-13369"/>
         <source>%1 invalid setting(s) could not be applied.</source>
         <translation>%1 ungültige Einstellung(en) konnten nicht angewendet werden.</translation>
     </message>
@@ -8211,22 +8262,28 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
         <translation>Palette remixen</translation>
     </message>
     <message>
-        <location line="+9884"/>
+        <location line="+9944"/>
         <source>The recovery notice did not explain the repaired setting.</source>
         <translation>Der Wiederherstellungshinweis erläuterte die reparierte Einstellung nicht.</translation>
     </message>
     <message>
-        <location line="-13276"/>
+        <location line="-13336"/>
         <source>Unsaved project changes</source>
         <translation>Ungespeicherte Projektänderungen</translation>
     </message>
     <message>
-        <location line="-9701"/>
+        <location line="-9703"/>
         <source>Created revision %1 in %2</source>
         <translation>Revision %1 wurde in %2 erstellt</translation>
     </message>
     <message>
-        <location line="+3970"/>
+        <location line="+908"/>
+        <location line="+198"/>
+        <source>Detection, Filters, EQ + Frequency Streams…</source>
+        <translation>Erkennung, Filter, EQ + Frequenz-Streams…</translation>
+    </message>
+    <message>
+        <location line="+2866"/>
         <source>%1
 Project UUID: %2
 %3 saved revision(s). Ordinary Save updates the current working revision; explicit and pinned revisions are immutable.</source>
@@ -10341,7 +10398,7 @@ Aktuelle Palette ersetzen oder diese Werte anhängen?</translation>
         <translation>Projektmusik</translation>
     </message>
     <message>
-        <location line="+33"/>
+        <location line="+34"/>
         <source>Audio input processing</source>
         <translation>Audioeingangsverarbeitung</translation>
     </message>
@@ -10502,17 +10559,17 @@ Aktuelle Palette ersetzen oder diese Werte anhängen?</translation>
         <translation>Musikquelle der aktiven Ebene entfernt; Ebenentakteinstellungen bleiben erhalten.</translation>
     </message>
     <message>
-        <location line="+103"/>
+        <location line="+105"/>
         <source>Rendering preview…</source>
         <translation>Vorschau wird gerendert …</translation>
     </message>
     <message>
-        <location line="+21"/>
+        <location line="+23"/>
         <source>Preview could not start: %1</source>
         <translation>Vorschau konnte nicht gestartet werden: %1</translation>
     </message>
     <message>
-        <location line="+2"/>
+        <location line="+3"/>
         <source>The background preview task could not be created.</source>
         <translation>Die Hintergrundaufgabe für die Vorschau konnte nicht erstellt werden.</translation>
     </message>
@@ -10521,12 +10578,12 @@ Aktuelle Palette ersetzen oder diese Werte anhängen?</translation>
         <location line="+8"/>
         <location line="+17"/>
         <location line="+12"/>
-        <location line="+5033"/>
+        <location line="+5087"/>
         <source>Preview cancelled.</source>
         <translation>Vorschau abgebrochen.</translation>
     </message>
     <message>
-        <location line="-5040"/>
+        <location line="-5094"/>
         <source>The preview image buffer could not be allocated.</source>
         <translation>Der Vorschaubildpuffer konnte nicht zugewiesen werden.</translation>
     </message>
@@ -10921,7 +10978,7 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <translation>Der erweiterbare Dialog Anwendungseinstellungen ist unvollständig oder fehlerhaft aufgebaut.</translation>
     </message>
     <message>
-        <location line="+29"/>
+        <location line="+59"/>
         <source>A numeric editor still replaces zero with words.</source>
         <translation>Ein Zahleneditor ersetzt null weiterhin durch Wörter.</translation>
     </message>
@@ -11206,7 +11263,7 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <translation>Instanzbasierte Alpha-Nachbearbeitungseffekte werden im Alpha-Ausgabeschutz nicht berücksichtigt.</translation>
     </message>
     <message>
-        <location line="+30"/>
+        <location line="+35"/>
         <location line="+7"/>
         <source>Output-pixel controls were not scaled consistently for preview rendering.</source>
         <translation>Regler in Ausgabepixeln wurden für das Vorschaurendering nicht einheitlich skaliert.</translation>
@@ -11589,7 +11646,7 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <translation>Die Leertaste hat die Wiedergabe nicht angehalten, ohne die fokussierte Gruppe umzuschalten.</translation>
     </message>
     <message>
-        <location line="+26"/>
+        <location line="+45"/>
         <source>Playback did not install advancing preview frames.</source>
         <translation>Die Wiedergabe hat keine fortschreitenden Vorschaubilder eingesetzt.</translation>
     </message>
@@ -12522,7 +12579,7 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <translation>PVT-Projekte (*.zip *.pvt);;Projektpakete (*.zip);;Alte Konfigurationen (*.pvt);;Alle Dateien (*)</translation>
     </message>
     <message>
-        <location line="-18094"/>
+        <location line="-18154"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation>Filtert die verfügbaren Ziele. Das aktuelle Ziel bleibt ausgewählt, bis Sie ein anderes wählen.</translation>
     </message>
@@ -12708,7 +12765,7 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <translation>%1 MiB</translation>
     </message>
     <message>
-        <location filename="../gui/live_frame_controller.cpp" line="+124"/>
+        <location filename="../gui/live_frame_controller.cpp" line="+132"/>
         <source>The live frame display buffer could not be allocated.</source>
         <translation>Der Anzeigepuffer für Live-Bilder konnte nicht zugewiesen werden.</translation>
     </message>
@@ -13119,7 +13176,7 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window.cpp" line="-8226"/>
+        <location filename="../gui/main_window.cpp" line="-8233"/>
         <source>Quantization</source>
         <translation>Quantisierung</translation>
     </message>
@@ -14456,12 +14513,12 @@ Hinweise:</translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+21897"/>
+        <location line="+21945"/>
         <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
         <translation>Partikel werden nach der Oberflächenabbildung und der Bewegung der gesamten Ebene erzeugt. Sie überlagern die Ebenenleinwand, statt auf das Objekt beschnitten oder um dieses gelegt zu werden.</translation>
     </message>
     <message>
-        <location line="-21883"/>
+        <location line="-21931"/>
         <source>Movement placement</source>
         <translation>Bewegungsplatzierung</translation>
     </message>
@@ -14690,7 +14747,7 @@ Hinweise:</translation>
         <translation>, global</translation>
     </message>
     <message>
-        <location line="+562"/>
+        <location line="+566"/>
         <source>The reusable asset is unavailable.</source>
         <translation>Die wiederverwendbare Ressource ist nicht verfügbar.</translation>
     </message>
@@ -14700,7 +14757,7 @@ Hinweise:</translation>
         <translation>Das Limit für Projektanlagenreferenzen wurde erreicht.</translation>
     </message>
     <message>
-        <location line="+6385"/>
+        <location line="+6388"/>
         <source>Could not open link</source>
         <translation>Link konnte nicht geöffnet werden</translation>
     </message>

@@ -101,7 +101,7 @@ bool deserialize_split_render_output_config(
 // layout from the complete byte streams themselves and accepts it only when
 // every byte is consumed and the resulting values are sane. No independent
 // version field can become detached from the raw data.
-inline constexpr std::uint32_t kRawConfigCurrentLayout = 1U;
+inline constexpr std::uint32_t kRawConfigCurrentLayout = 2U;
 PVT_API bool serialize_raw_config(const RenderConfig& config,
                           std::string& numeric,
                           std::string& strings,

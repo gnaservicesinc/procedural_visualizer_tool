@@ -688,3 +688,52 @@ approximating curves, and flattening layers can alter results. Existing exact
 disabled/zero-work effect bypasses remain. Skipping layers beneath opaque
 content requires a proof covering blend mode, AlphaUnder, erasers, HDR RGB,
 ordered finishing stages, and animated alpha; opacity alone is insufficient.
+
+## 18.0.0 Wood preview regression (2026-09-10)
+
+The supplied Wood revision 28 has a 1024×1024 canvas, block size 1, no block-size
+LFO, and five enabled layers with 512 antialias passes each. The attached image
+and displacement assets are inactive in this revision. The 18.0.0 preview
+scalers changed the block size to a fraction of one pixel when fitting the
+canvas to the preview. The renderer then supersampled every layer back to
+1024×1024, ran its effects and all antialias passes there, and performed a CPU
+area resolve. Reducing preview resolution consequently failed to reduce the
+dominant rendering work.
+
+Editor and Live scaling now retain a one-preview-pixel minimum for authored
+block sizes at least one. Explicitly authored subpixel sizes, fractional sizes
+above one preview pixel, blackout, and block-size LFO ranges retain their
+existing behavior. This changes only temporary preview copies. Full-resolution
+rendering, exports, saved projects, backend selection, and antialias settings
+are unchanged.
+
+Native Release measurements on Apple M2 Max, GPU+CPU/Metal, using the actual
+LiveFrameController and Wood from `/Users/andrewsmith/Downloads/Wood`:
+
+| Actual preview pixels | Before delivered FPS | After delivered FPS |
+| --- | ---: | ---: |
+| 320×320 | 4.40 | 51.12 |
+| 360×360 | 4.35 | 43.78 |
+| 480×480 | 4.34 | 27.68 |
+
+Each run includes 48 animated frames after two warmups, with phase
+`fmod(frame * 19.0 / 300, 1.0)`. Delivery timing includes project request copies,
+worker scheduling, rendering, and sRGB display conversion; image hashing runs
+after the timed deliveries. These are measured throughput values, not a promise
+of 60 FPS at every preview size.
+
+- The 48-frame 360×360 display hash is `9babf56523774755`, exactly matching the
+  existing renderer on the intended reduced pixel grid. It intentionally
+  differs from the accidentally supersampled 18.0.0 preview.
+- Four full-resolution animated float frames retain hash `3aacf319d80ff5ec`
+  before and after the fix.
+- The new Live regression fails against the original controller with
+  `Preview block scaling changed the pixel grid for 1`, then passes with the
+  fix. It compares complete display pixels for phase and frame requests and
+  covers integer, fractional, subpixel, and blackout settings. Editor smoke
+  checks independently cover its scaler.
+- Native core, project-composite, Metal-backend, Live-controller, and Cocoa GUI
+  smoke tests all pass (5/5). Cross-platform CI and publication were not run.
+- The reproduction harness, separate before/after executables, logs, and local
+  rebuilt app are under `/tmp/pvt-wood-work`; the app is
+  `native/pvt/Procedural Visualizer Tool.app`.

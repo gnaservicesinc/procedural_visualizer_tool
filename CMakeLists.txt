@@ -322,11 +322,13 @@ if(PVT_NEEDS_AUDIO_SUPPORT)
         target_compile_options(pvt_miniaudio PRIVATE -w)
     endif()
 
-    # Beat-and-Tempo-Tracking is a causal, time-varying tracker. It supplies
+    # Our maintained PVT tracker has a reusable onset front end and the legacy
+    # causal, time-varying beat observer. It supplies
     # independent local beat/tempo observations to the offline analyzer; no
     # whole-song fixed-BPM estimate is used to build the music clock.
     add_library(pvt_btt STATIC
         third_party/btt/src/BTT.c
+        third_party/btt/src/PVTOnset.c
         third_party/btt/src/DFT.c
         third_party/btt/src/Filter.c
         third_party/btt/src/STFT.c
@@ -721,6 +723,14 @@ if(PVT_BUILD_QT_GUI)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(pvt_beat_tracker_tests third_party/btt/tests/tracker_test.c)
+    target_compile_features(pvt_beat_tracker_tests PRIVATE c_std_11)
+    target_link_libraries(pvt_beat_tracker_tests PRIVATE pvt_btt)
+    if(NOT MSVC)
+        target_link_libraries(pvt_beat_tracker_tests PRIVATE m)
+    endif()
+    add_test(NAME pvt_beat_tracker COMMAND pvt_beat_tracker_tests)
+
     add_executable(pvt_audio_analysis_tests tests/audio_analysis_test.cpp)
     target_compile_features(pvt_audio_analysis_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_audio_analysis_tests PROPERTIES CXX_EXTENSIONS NO)
@@ -1016,6 +1026,19 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_audio_processing_dialog_tests
+            tests/audio_processing_dialog_test.cpp gui/audio_processing_dialog.cpp
+            gui/audio_processing_dialog.h gui/flexible_spin_box.cpp)
+        set_target_properties(pvt_audio_processing_dialog_tests PROPERTIES AUTOMOC ON)
+        target_compile_features(pvt_audio_processing_dialog_tests PRIVATE cxx_std_17)
+        target_include_directories(pvt_audio_processing_dialog_tests PRIVATE gui)
+        target_link_libraries(pvt_audio_processing_dialog_tests PRIVATE
+            Qt6::Widgets ProceduralVisualizerTool::ProceduralVisualizerTool)
+        pvt_enable_warnings(pvt_audio_processing_dialog_tests)
+        add_test(NAME pvt_audio_processing_dialog COMMAND pvt_audio_processing_dialog_tests)
+        set_tests_properties(pvt_audio_processing_dialog PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         add_executable(pvt_flexible_spin_box_tests
             tests/flexible_spin_box_test.cpp gui/flexible_spin_box.cpp)
         target_compile_features(pvt_flexible_spin_box_tests PRIVATE cxx_std_17)

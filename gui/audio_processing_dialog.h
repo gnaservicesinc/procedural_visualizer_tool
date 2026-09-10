@@ -6,6 +6,7 @@
 #include <QDialog>
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QTableWidget;
 
@@ -14,7 +15,8 @@ class AudioProcessingDialog final : public QDialog {
 public:
     explicit AudioProcessingDialog(
         const pvt::AudioInputProcessingConfig& initial,
-        const QString& source_name, QWidget* parent = nullptr);
+        const QString& source_name, QWidget* parent = nullptr,
+        bool music_detection = false);
 
     pvt::AudioInputProcessingConfig processing() const;
 
@@ -25,6 +27,7 @@ private:
     void addFrequencyStream(const pvt::AudioFrequencyStreamConfig* stream = nullptr);
     void applyEqualizerPreset(int preset);
 
+    QComboBox* onset_detection_ = nullptr;
     QCheckBox* high_pass_enabled_ = nullptr;
     QDoubleSpinBox* high_pass_hz_ = nullptr;
     QCheckBox* low_pass_enabled_ = nullptr;

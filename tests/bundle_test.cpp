@@ -1659,6 +1659,7 @@ void test_render_output_codec_backward_compatibility() {
         {0.2F, 0.3F, 0.4F, 0.5F, 0.6F, 0.7F},
         {0.7F, 0.6F, 0.5F, 0.4F, 0.3F, 0.2F},
     };
+    canvas.clock.audio_processing.music_onset_detection = pvt::MusicOnsetDetection::NeighborFlux;
     canvas.clock.audio_processing.high_pass_enabled = true;
     canvas.clock.audio_processing.high_pass_hz = 35.0;
     canvas.clock.audio_processing.equalizer_enabled = true;
@@ -1819,6 +1820,8 @@ void test_render_output_codec_backward_compatibility() {
           == pvt::MusicSwingPolicy::SuppressGlobal);
     CHECK(round_trip.clock.music.source_sha256 == std::string(64U, 'b'));
     CHECK(round_trip.clock.music.beat_times_seconds.size() == 4U);
+    CHECK(round_trip.clock.audio_processing.music_onset_detection == pvt::MusicOnsetDetection::NeighborFlux);
+    CHECK(round_trip.clock.music.input_processing.music_onset_detection == pvt::MusicOnsetDetection::NeighborFlux);
     CHECK(round_trip.clock.audio_processing.high_pass_enabled);
     CHECK(round_trip.clock.audio_processing.equalizer_bands[4U].gain_db == 2.25);
     CHECK(round_trip.clock.frequency_stream_uuid == "music-bass");

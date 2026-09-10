@@ -57,8 +57,12 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
     }
     project.canvas.width = width;
     project.canvas.height = height;
+    // Preview resizing must not turn pixel-sized artwork into a subpixel
+    // render: that supersamples every effect back to the output resolution.
+    // Retain the fractional resolve when the artist authored a subpixel size.
     project.canvas.block_size = source_block_size == 0.0
-        ? 0.0 : std::max(0.000001, source_block_size * scale);
+        ? 0.0 : std::max(source_block_size >= 1.0 ? 1.0 : 0.000001,
+                         source_block_size * scale);
     project.canvas.block_size_modulation.minimum *= scale;
     project.canvas.block_size_modulation.maximum *= scale;
 }

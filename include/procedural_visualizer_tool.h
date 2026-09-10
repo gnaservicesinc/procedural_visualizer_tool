@@ -677,6 +677,13 @@ struct AudioFrequencyStreamConfig {
 // chroma analysis. A disabled flat block is an exact semantic bypass. Named
 // frequency streams split the already-filtered signal and are analyzed
 // independently for use as project or layer clocks.
+enum class MusicOnsetDetection : std::uint32_t {
+    Hybrid = 0,              // Historical spectral + energy response.
+    SpectralFlux = 1,        // Positive spectral changes, without energy blending.
+    NeighborFlux = 2,        // Suppress one-bin pitch movement (e.g. vibrato).
+    HighFrequencyFlux = 3,   // Emphasize bright/percussive attacks.
+};
+
 struct AudioInputProcessingConfig {
     enum : std::uint32_t {
         HighPassEnabledFlag = 1U << 0U,
@@ -698,6 +705,9 @@ struct AudioInputProcessingConfig {
         {500.0, 0.0}, {1000.0, 0.0}, {2000.0, 0.0}, {4000.0, 0.0},
         {8000.0, 0.0}, {16000.0, 0.0}};
     std::vector<AudioFrequencyStreamConfig> frequency_streams;
+    // Music-file analysis only, including every named frequency range. Live
+    // capture uses its own causal analyzer. Persist with the cached analysis.
+    MusicOnsetDetection music_onset_detection = MusicOnsetDetection::Hybrid;
 };
 
 // Derived tables for one named range. Source identity and duration are shared

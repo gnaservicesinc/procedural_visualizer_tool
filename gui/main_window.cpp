@@ -1770,8 +1770,11 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
     }
     project.canvas.width = preview_width;
     project.canvas.height = preview_height;
+    // Match Live: reducing a pixel-sized project must not supersample all
+    // effects back to full resolution. Authored subpixel sizes still resolve.
     project.canvas.block_size = source_block_size == 0.0
-        ? 0.0 : std::max(0.000001, source_block_size * scale);
+        ? 0.0 : std::max(source_block_size >= 1.0 ? 1.0 : 0.000001,
+                         source_block_size * scale);
     project.canvas.block_size_modulation.minimum *= scale;
     project.canvas.block_size_modulation.maximum *= scale;
 }
@@ -3805,7 +3808,7 @@ QWidget* MainWindow::createSynchronizationPage() {
     music_source_->setPlaceholderText(tr("No analyzed music source"));
     music_layout->addWidget(music_source_);
     auto* music_processing_form = new QFormLayout;
-    music_processing_ = new QPushButton(tr("Filters, EQ + Frequency Streams…"));
+    music_processing_ = new QPushButton(tr("Detection, Filters, EQ + Frequency Streams…"));
     music_frequency_stream_ = new QComboBox;
     music_frequency_stream_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     music_frequency_stream_->setMinimumContentsLength(24);
@@ -4003,7 +4006,7 @@ QWidget* MainWindow::createSynchronizationPage() {
     layer_music_layout->addWidget(layer_music_source_);
     auto* layer_music_processing_form = new QFormLayout;
     layer_music_processing_ = new QPushButton(
-        tr("Filters, EQ + Frequency Streams…"));
+        tr("Detection, Filters, EQ + Frequency Streams…"));
     layer_music_frequency_stream_ = new QComboBox;
     layer_music_frequency_stream_->setSizeAdjustPolicy(
         QComboBox::AdjustToMinimumContentsLengthWithIcon);
@@ -18731,12 +18734,13 @@ void MainWindow::editMusicInputProcessing(bool layer_clock) {
         ? config_.layer_clock.clock : config_.clock;
     AudioProcessingDialog dialog(
         clock.audio_processing,
-        layer_clock ? tr("active-layer music") : tr("project music"), this);
+        layer_clock ? tr("active-layer music") : tr("project music"), this, true);
     if (dialog.exec() != QDialog::Accepted) return;
     const pvt::AudioInputProcessingConfig processing = dialog.processing();
     const auto same_processing = [](const pvt::AudioInputProcessingConfig& left,
                                     const pvt::AudioInputProcessingConfig& right) {
-        if (left.high_pass_enabled != right.high_pass_enabled
+        if (left.music_onset_detection != right.music_onset_detection
+            || left.high_pass_enabled != right.high_pass_enabled
             || left.high_pass_hz != right.high_pass_hz
             || left.low_pass_enabled != right.low_pass_enabled
             || left.low_pass_hz != right.low_pass_hz
@@ -22970,6 +22974,28 @@ bool MainWindow::runSmokeChecks(QString* error) {
             *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
         }
         return false;
+    }
+
+    // Wood's 1024-square, one-pixel canvas exposed accidental full-resolution
+    // supersampling in the reduced editor preview. Preserve authored subpixel
+    // sizes, blackout, and fractional blocks above one preview pixel as well.
+    for (const auto sizes : {std::pair{1.0, 1.0}, std::pair{2.0, 1.0},
+                             std::pair{3.0, 1.40625},
+                             std::pair{0.5, 0.234375}, std::pair{0.0, 0.0}}) {
+        auto reduced = pvt::default_project();
+        reduced.canvas.width = 1024;
+        reduced.canvas.height = 1024;
+        reduced.canvas.block_size = sizes.first;
+        scale_project_for_preview(reduced);
+        if (reduced.canvas.width != 480 || reduced.canvas.height != 480
+            || reduced.canvas.block_size != sizes.second
+            || reduced.layers.front().render.starting_colors.reference_block_size
+                   != sizes.first) {
+            if (error != nullptr) {
+                *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
+            }
+            return false;
+        }
     }
 
     const int previous_effect_category = effect_category_filter_;

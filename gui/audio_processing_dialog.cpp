@@ -80,7 +80,7 @@ double presetGain(const EqualizerPreset& preset, double frequency_hz) {
 
 AudioProcessingDialog::AudioProcessingDialog(
     const pvt::AudioInputProcessingConfig& initial,
-    const QString& source_name, QWidget* parent)
+    const QString& source_name, QWidget* parent, bool music_detection)
     : QDialog(parent) {
     setWindowTitle(tr("Audio Input Processing — %1").arg(source_name));
     resize(820, 720);
@@ -102,6 +102,36 @@ AudioProcessingDialog::AudioProcessingDialog(
         "The explicit order avoids ambiguous channel-strip routing. Disabled "
         "stages are exact bypasses."));
     root->addWidget(order);
+
+    auto* detection = new QGroupBox(tr("Music beat and onset detection"));
+    detection->setObjectName(QStringLiteral("musicDetectionGroup"));
+    auto* detection_form = new QFormLayout(detection);
+    onset_detection_ = new QComboBox;
+    onset_detection_->setObjectName(QStringLiteral("musicOnsetDetection"));
+    onset_detection_->addItem(tr("Hybrid — spectral + energy (default)"), 0);
+    onset_detection_->addItem(tr("Spectral flux — note attacks"), 1);
+    onset_detection_->addItem(tr("Neighbor flux — reduce vibrato triggers"), 2);
+    onset_detection_->addItem(tr("High-frequency flux — bright percussion"), 3);
+    onset_detection_->setCurrentIndex(onset_detection_->findData(
+        static_cast<int>(initial.music_onset_detection)));
+    detection_form->addRow(tr("Detection type"), onset_detection_);
+    auto* detection_help = new QLabel;
+    detection_help->setWordWrap(true);
+    const auto update_help = [this, detection_help] {
+        const QStringList descriptions {
+            tr("Combines spectral changes and energy rises. Preserves the existing detection style."),
+            tr("Tracks positive spectral changes without blending in energy rises. Useful for note attacks in sustained audio."),
+            tr("Compares neighboring frequency bins to reduce triggers from small pitch movements. May also suppress closely spaced notes."),
+            tr("Weights spectral changes toward higher frequencies. Useful for bright percussion; may underweight bass drums.")};
+        const int index = onset_detection_->currentIndex();
+        detection_help->setText(descriptions.value(index) + QStringLiteral(" ")
+            + tr("Applies to this Music source and all its named ranges. Changing it reanalyzes the source before committing."));
+    };
+    connect(onset_detection_, &QComboBox::currentIndexChanged, this, update_help);
+    update_help();
+    detection_form->addRow(detection_help);
+    detection->setVisible(music_detection);
+    root->addWidget(detection);
 
     auto* filters = new QGroupBox(tr("Input filters"));
     auto* filter_form = new QFormLayout(filters);
@@ -291,6 +321,8 @@ void AudioProcessingDialog::addFrequencyStream(
 
 pvt::AudioInputProcessingConfig AudioProcessingDialog::processing() const {
     pvt::AudioInputProcessingConfig result;
+    result.music_onset_detection = static_cast<pvt::MusicOnsetDetection>(
+        onset_detection_->currentData().toUInt());
     result.high_pass_enabled = high_pass_enabled_->isChecked();
     result.high_pass_hz = high_pass_hz_->value();
     result.low_pass_enabled = low_pass_enabled_->isChecked();

@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **18.0.0**. The version is read from `VERSION` by every
+Current product version: **19.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,28 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 19.0.0 maintained Music detection and preview performance
+
+Music processing offers Hybrid (the existing default), Spectral flux, Neighbor
+flux, and High-frequency flux for project music, active-layer music, and named
+frequency ranges. The controls explain each method's tradeoffs and commit a
+changed choice only after reanalysis succeeds. Existing projects retain their
+saved beat tables. See [Music detection](MUSIC_DETECTION.md) for usage and scope.
+
+The maintained tracker has a PVT-owned onset module, standalone C11 build and
+regressions, corrected callback timestamps and stream reset, and an explicit
+source synchronization path. Its inherited tempo/beat observer remains MIT
+attributed; Live capture retains its separate causal analyzer.
+
+Reduced editor and Live previews once again render pixel-sized artwork at the
+preview resolution. The supplied Wood project improved from about 4.4 to 51.1
+FPS at 320×320 and 43.8 FPS at 360×360 on Apple M2 Max in GPU+CPU mode, preserving
+full-resolution output. See [performance evidence](PERFORMANCE_AUDIT.md).
+
+The new public audio setting changes C++ structure layouts. The library and
+Debian runtime package advance to **SONAME 19**; library consumers must rebuild.
+Existing raw/text projects remain readable, including layout-1 binary data.
 
 ## 18.0.0 live-performance authoring and project I/O
 

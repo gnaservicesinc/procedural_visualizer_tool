@@ -6,6 +6,40 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.0.0 maintained Music detection and preview performance
+
+The maintained tracker now supplies a PVT-owned C onset front end with spectral,
+neighbor, and high-frequency flux, while PVT keeps its historical Hybrid choice.
+Project and active-layer Music dialogs expose all four methods with explanations;
+selection also applies to named ranges and is committed after successful
+reanalysis. Raw layout 2 appends detector settings to the unchanged layout-1
+walk, and old raw/text projects restore Hybrid. Cached analyses retain their
+saved timing until reanalysis. See `MUSIC_DETECTION.md` and the tracker
+repository's `DESIGN.md` for the implementation and validation record.
+
+The new field changes public C++ structure sizes, so VERSION and Debian runtime
+metadata advance to 19.0.0 / SONAME 19. Library consumers must rebuild. Tracker
+synchronization also retains the Windows `rand()` compatibility branch, and the
+standalone build explicitly selects C11 with its Linux feature declarations.
+
+Editor and Live preview scaling retain a one-preview-pixel minimum for authored
+block sizes at least one, preventing automatic preview reduction from triggering
+full-resolution supersampling of every layer and effect. The supplied Wood
+project improves from 4.4 to 51.1 delivered FPS at 320×320 and to 43.8 FPS at
+360×360 on Apple M2 Max in GPU+CPU mode. Explicitly authored subpixel behavior,
+full-resolution output and saved project settings are preserved.
+
+The existing native core, project-composite, Metal-backend, Live-controller, and
+Cocoa GUI smoke results pass 5/5. The new Live regression fails on the original
+controller and passes with the fix; full-resolution float hashes are unchanged.
+These completed results are reused for release at the user's request, with no
+repeat local tests. The previously unrun detector-dialog test now also passes;
+new build checks cover C11, the Windows random branch, ABI sizes, and version
+metadata. Release preparation is underway; five-platform GitHub main CI must
+pass before tagging, followed by tagged CI, publication, and artifact checks.
+No local test suite is repeated.
+See `PERFORMANCE_AUDIT.md` for the measured workload and output evidence.
+
 ## Post-17.11.0 build and regression audit
 
 The macOS/Windows CI failures at `d330716` were playback checks after successful

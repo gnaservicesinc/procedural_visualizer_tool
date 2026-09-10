@@ -214,6 +214,50 @@ void check_beat_bounds(const pvt::MusicAnalysis& analysis) {
     }
 }
 
+
+void test_music_detection_choices(const fs::path& directory) {
+    const fs::path path = directory / "detector-choices.wav";
+    const auto clicks = constant_clicks(0.25, 8.0, 0.5);
+    CHECK(write_pcm16_wave(path, 44100U, 1U,
+                          click_track(44100U, 1U, 8.0, clicks)));
+    std::string error;
+    std::vector<float> hybrid_onsets;
+    for (const auto method : {pvt::MusicOnsetDetection::Hybrid,
+                             pvt::MusicOnsetDetection::SpectralFlux,
+                             pvt::MusicOnsetDetection::NeighborFlux,
+                             pvt::MusicOnsetDetection::HighFrequencyFlux}) {
+        pvt::AudioInputProcessingConfig processing;
+        processing.music_onset_detection = method;
+        processing.frequency_streams = {{"all", "Full range", 20.0, 20000.0}};
+        pvt::MusicAnalysis analysis;
+        CHECK(pvt::audio::analyze_music_file(path.string(), processing, analysis,
+                                            {}, nullptr, &error));
+        CHECK(error.empty());
+        CHECK(analysis.input_processing.music_onset_detection == method);
+        check_beat_bounds(analysis);
+        CHECK(std::abs(analysis.detected_bpm - 120.0) < 8.0);
+        CHECK(analysis.frequency_streams.size() == 1U);
+        CHECK(!analysis.frequency_streams.front().beat_times_seconds.empty());
+        CHECK(maximum_nearest_error(clicks, analysis.beat_times_seconds) < 0.12);
+        std::vector<float> onsets;
+        for (const auto& feature : analysis.feature_samples) {
+            CHECK(std::isfinite(feature.onset) && feature.onset >= 0.0F && feature.onset <= 1.0F);
+            onsets.push_back(feature.onset);
+        }
+        if (method == pvt::MusicOnsetDetection::Hybrid) hybrid_onsets = onsets;
+        else CHECK(onsets != hybrid_onsets); // The selector must reach the analyzer.
+        pvt::MusicAnalysis cancelled;
+        cancelled.source_basename = "unchanged";
+        std::atomic_bool cancel{true};
+        CHECK(!pvt::audio::analyze_music_file(path.string(), processing, cancelled,
+                                             {}, &cancel, &error));
+        CHECK(cancelled.source_basename == "unchanged");
+    }
+    pvt::AudioInputProcessingConfig invalid;
+    invalid.music_onset_detection = static_cast<pvt::MusicOnsetDetection>(99);
+    CHECK(!pvt::validate(invalid).ok);
+}
+
 void test_pcm_click_track_and_digest(const fs::path& directory) {
     const fs::path path = directory / "click-120.wav";
     const std::vector<double> clicks = constant_clicks(0.25, 5.0, 0.5);
@@ -238,7 +282,7 @@ void test_pcm_click_track_and_digest(const fs::path& directory) {
     check_beat_bounds(analysis);
     CHECK(previous == 1000U);
     CHECK(progress_calls > 4);
-    CHECK(analysis.analyzer_version == "pvt-adaptive-spectral-audio-4");
+    CHECK(analysis.analyzer_version == "pvt-adaptive-onset-audio-5");
     CHECK(analysis.source_format == "WAV");
     CHECK(analysis.source_basename == "click-120.wav");
     CHECK(analysis.source_sample_rate == 44100U);
@@ -766,6 +810,7 @@ void test_fractional_playback_rate_does_not_drift(const fs::path& directory) {
 int main() {
     try {
         const TemporaryDirectory directory;
+        test_music_detection_choices(directory.path());
         test_pcm_click_track_and_digest(directory.path());
         test_fractional_duration_beat_bounds(directory.path());
         test_float32_tempo_change(directory.path());

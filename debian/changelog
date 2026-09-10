@@ -1,3 +1,12 @@
+procedural-visualizer-tool (19.0.0) stonking; urgency=medium
+
+  * Add maintained onset detectors and Music detection controls.
+  * Correct tracker stream timestamps/reset and preserve Windows support.
+  * Restore reduced-preview performance and include verified regression repairs.
+  * Advance the public library ABI and runtime package to SONAME 19.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 10 Sep 2026 18:55:27 -0400
+
 procedural-visualizer-tool (18.0.0) stonking; urgency=medium
 
   * New upstream release.

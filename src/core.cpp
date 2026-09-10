@@ -3281,7 +3281,8 @@ std::uint64_t allocate_layer_file_id(const ProjectConfig& project) {
 
 bool audio_processing_equal(const AudioInputProcessingConfig& left,
                             const AudioInputProcessingConfig& right) {
-    if (left.high_pass_enabled != right.high_pass_enabled
+    if (left.music_onset_detection != right.music_onset_detection
+        || left.high_pass_enabled != right.high_pass_enabled
         || left.high_pass_hz != right.high_pass_hz
         || left.low_pass_enabled != right.low_pass_enabled
         || left.low_pass_hz != right.low_pass_hz
@@ -3310,7 +3311,9 @@ bool audio_processing_equal(const AudioInputProcessingConfig& left,
 }
 
 bool valid_audio_processing(const AudioInputProcessingConfig& processing) {
-    if (processing.equalizer_bands.size() > kMaximumAudioEqualizerBands
+    if (static_cast<std::uint32_t>(processing.music_onset_detection)
+            > static_cast<std::uint32_t>(MusicOnsetDetection::HighFrequencyFlux)
+        || processing.equalizer_bands.size() > kMaximumAudioEqualizerBands
         || processing.frequency_streams.size()
                > kMaximumAudioFrequencyStreams
         || !finite_in_range(processing.high_pass_hz, 0.001, 192000.0)

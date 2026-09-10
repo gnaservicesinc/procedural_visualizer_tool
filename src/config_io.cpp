@@ -1181,6 +1181,24 @@ constexpr std::array<std::pair<std::string_view, MirrorMode>, 6U> kMirrorModes{{
     {"four_way", MirrorMode::FourWay},
 }};
 
+constexpr std::array<std::pair<std::string_view, MusicOnsetDetection>, 4U>
+    kMusicOnsetDetections{{
+        {"hybrid", MusicOnsetDetection::Hybrid},
+        {"spectral-flux", MusicOnsetDetection::SpectralFlux},
+        {"neighbor-flux", MusicOnsetDetection::NeighborFlux},
+        {"high-frequency-flux", MusicOnsetDetection::HighFrequencyFlux},
+    }};
+
+// Ordered suffix for raw layout 2. Keep the layout-1 scalar walk frozen.
+template <typename Config, typename Visitor>
+bool visit_music_onset_settings(Config& config, Visitor&& visit) {
+    return visit(config.clock.audio_processing.music_onset_detection)
+        && visit(config.clock.music.input_processing.music_onset_detection)
+        && visit(config.layer_clock.clock.audio_processing.music_onset_detection)
+        && visit(config.layer_clock.clock.music.input_processing.music_onset_detection)
+        && visit(config.live.audio_processing.music_onset_detection);
+}
+
 constexpr std::array<std::pair<std::string_view, ClockMode>, 5U> kClockModes{{
     {"default", ClockMode::Default},
     {"frame", ClockMode::Frame},
@@ -1377,6 +1395,12 @@ bool enum_token(Enum value,
 class SetupBuilder {
 public:
     static constexpr bool kReading = false;
+    bool add_music_onset(std::string_view key, MusicOnsetDetection value) {
+        return add_enum(key, value, kMusicOnsetDetections);
+    }
+    template <typename Config>
+    bool add_music_onset_suffix(Config&) { return true; }
+
     explicit SetupBuilder(std::string* error)
         : error_(error),
           contents_("PVT_SETUP\t" + std::to_string(kSetupFormatVersion) + "\n") {}
@@ -1480,6 +1504,13 @@ private:
 class RawSetupBuilder {
 public:
     static constexpr bool kReading = false;
+    bool add_music_onset(std::string_view, MusicOnsetDetection) { return true; }
+    template <typename Config>
+    bool add_music_onset_suffix(Config& config) {
+        return visit_music_onset_settings(config, [this](MusicOnsetDetection value) {
+            return add_enum({}, value, kMusicOnsetDetections);
+        });
+    }
     explicit RawSetupBuilder(std::string* error) : error_(error) {}
 
     template <typename Integer>
@@ -1614,6 +1645,7 @@ void add_audio_input_records(Builder& builder, std::string_view prefix,
             | AudioInputProcessingConfig::LowPassEnabledFlag
             | AudioInputProcessingConfig::EqualizerEnabledFlag,
         3U);
+    builder.add_music_onset(key("music_onset_detection"), processing.music_onset_detection);
     builder.add_bool(key("high_pass_enabled"), processing.high_pass_enabled);
     builder.add_double(key("high_pass_hz"), processing.high_pass_hz);
     builder.add_bool(key("low_pass_enabled"), processing.low_pass_enabled);
@@ -2848,7 +2880,7 @@ bool serialize_setup_values(Config& config,
     builder.add_integer("output.filename_digits", config.output.filename_digits);
     builder.add_bool("output.overwrite_existing", config.output.overwrite_existing);
 
-    if (!builder.ok()) {
+    if (!builder.add_music_onset_suffix(config) || !builder.ok()) {
         return false;
     }
     return true;
@@ -2872,8 +2904,17 @@ public:
     static constexpr bool kReading = true;
 
     RawSetupReader(const std::string& contents, const std::string& strings,
-                   std::string* error)
-        : contents_(contents), strings_(strings), error_(error) {}
+                   std::string* error, bool onset_suffix)
+        : contents_(contents), strings_(strings), error_(error), onset_suffix_(onset_suffix) {}
+
+    bool add_music_onset(std::string_view, MusicOnsetDetection) { return true; }
+    template <typename Config>
+    bool add_music_onset_suffix(Config& config) {
+        if (!onset_suffix_) return true;
+        return visit_music_onset_settings(config, [this](MusicOnsetDetection& value) {
+            return add_enum({}, value, kMusicOnsetDetections);
+        });
+    }
 
     template <typename Integer>
     bool add_integer(std::string_view, Integer& value) {
@@ -2997,6 +3038,7 @@ private:
     std::string* error_ = nullptr;
     std::size_t offset_ = 0U;
     std::size_t string_offset_ = 0U;
+    bool onset_suffix_ = false;
     bool ok_ = true;
 };
 
@@ -3068,7 +3110,11 @@ bool consume_audio_input_records(Reader& records, std::string_view prefix,
     }
     std::size_t equalizer_count = 0U;
     std::size_t stream_count = 0U;
-    if (!consume_bool(records, key("high_pass_enabled"),
+    if (!consume_optional_enum(records, key("music_onset_detection"),
+                               processing.music_onset_detection,
+                               MusicOnsetDetection::Hybrid,
+                               kMusicOnsetDetections, error)
+        || !consume_bool(records, key("high_pass_enabled"),
                       processing.high_pass_enabled, error)
         || !consume_double(records, key("high_pass_hz"),
                            processing.high_pass_hz, error)
@@ -6213,9 +6259,9 @@ bool serialize_raw_config(const RenderConfig& config,
         // copied in their native representation straight into one contiguous
         // buffer; no text, field tag, or Boolean expansion is involved.
         RawSetupBuilder builder(error);
-        static_assert(kRawConfigCurrentLayout == 1U
+        static_assert(kRawConfigCurrentLayout == 2U
                           && kSetupFormatVersion == 27U,
-                      "append a new raw layout instead of changing layout 1");
+                      "preserve the layout-1 walk and append layout-2 onset settings");
         if (!serialize_setup_values(config, builder, error,
                                     enforce_particle_workload)) {
             return false;
@@ -6243,16 +6289,23 @@ bool deserialize_raw_config(const std::string& numeric,
             || strings.size() > kMaximumSetupBytes) {
             return fail(error, "Raw configuration is empty or overlong.");
         }
-        RawSetupReader reader(numeric, strings, error);
         RenderConfig candidate;
-        // Layout 1 is recognized by consuming both raw streams exactly. When
-        // fields are appended, add the frozen older walk here and try complete
-        // layouts without trusting a separate version number.
-        static_assert(kRawConfigCurrentLayout == 1U);
-        if (!serialize_setup_values(candidate, reader, error,
-                                    enforce_particle_workload)) {
-            return false;
+        bool decoded = false;
+        static_assert(kRawConfigCurrentLayout == 2U);
+        // Each attempt must consume both streams exactly. Layout 2 adds only
+        // a five-enum suffix; layout 1 restores the historical Hybrid default.
+        for (bool onset_suffix : {true, false}) {
+            RenderConfig attempt;
+            std::string attempt_error;
+            RawSetupReader reader(numeric, strings, &attempt_error, onset_suffix);
+            if (serialize_setup_values(attempt, reader, &attempt_error,
+                                       enforce_particle_workload)) {
+                candidate = std::move(attempt);
+                decoded = true;
+                break;
+            }
         }
+        if (!decoded) return fail(error, "Raw configuration does not match a complete supported layout.");
         const ValidationResult validation = enforce_particle_workload
             ? validate(candidate)
             : detail::validate_render_config_structure(candidate);

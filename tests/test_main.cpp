@@ -761,6 +761,7 @@ void test_validation_clock_isolation() {
         [](auto& c) { c.music.source_sha256.clear(); },
         [](auto& c) { c.music.beat_times_seconds.clear(); },
         [](auto& c) { c.audio_processing.equalizer_bands.front().gain_db = 1.0; },
+        [](auto& c) { c.audio_processing.music_onset_detection = pvt::MusicOnsetDetection::NeighborFlux; },
         [](auto& c) { c.frequency_stream_uuid = "missing-range"; },
         [](auto& c) { c.music.frequency_streams.front().beat_times_seconds.clear(); },
         [](auto& c) { c.mode = pvt::ClockMode::Default;
@@ -5682,6 +5683,11 @@ void test_raw_config_snapshot() {
     config.block_size_modulation.alpha_gaps = true;
     config.block_size_modulation.lfo_enabled = true;
     config.block_size_modulation.lfo_name = "Raw pulse name";
+    config.clock.audio_processing.music_onset_detection = pvt::MusicOnsetDetection::NeighborFlux;
+    config.clock.music.input_processing.music_onset_detection = pvt::MusicOnsetDetection::NeighborFlux;
+    config.layer_clock.clock.audio_processing.music_onset_detection = pvt::MusicOnsetDetection::HighFrequencyFlux;
+    config.layer_clock.clock.music.input_processing.music_onset_detection = pvt::MusicOnsetDetection::SpectralFlux;
+    config.live.audio_processing.music_onset_detection = pvt::MusicOnsetDetection::HighFrequencyFlux;
     config.output.filename_prefix = "literal-prefix";
     config.waves.front().name = "literal-wave";
 
@@ -5745,6 +5751,16 @@ void test_raw_config_snapshot() {
     CHECK(pvt::detail::serialize_setup_config(config, expected, &error));
     CHECK(pvt::detail::serialize_setup_config(loaded, actual, &error));
     CHECK(actual == expected);
+
+    // Layout 1 is the exact unchanged prefix, without the five-enum suffix.
+    pvt::RenderConfig legacy;
+    CHECK(pvt::detail::deserialize_raw_config(
+        numeric.substr(0, numeric.size() - 5 * sizeof(pvt::MusicOnsetDetection)),
+        strings, legacy, &error));
+    CHECK(legacy.width == config.width);
+    CHECK(legacy.clock.audio_processing.music_onset_detection == pvt::MusicOnsetDetection::Hybrid);
+    CHECK(legacy.layer_clock.clock.audio_processing.music_onset_detection == pvt::MusicOnsetDetection::Hybrid);
+    CHECK(legacy.live.audio_processing.music_onset_detection == pvt::MusicOnsetDetection::Hybrid);
 
     pvt::RenderConfig unchanged = pvt::default_config();
     unchanged.width = 777;
