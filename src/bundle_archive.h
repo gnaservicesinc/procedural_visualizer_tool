@@ -1,6 +1,7 @@
 #ifndef PVT_BUNDLE_ARCHIVE_H
 #define PVT_BUNDLE_ARCHIVE_H
 
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
