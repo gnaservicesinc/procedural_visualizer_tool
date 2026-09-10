@@ -24,7 +24,8 @@ binary work. Binary data has no version/header/field-name codec and no live file
 change scan. Exact byte consumption plus post-load sanity validation identifies
 the current frozen layout; future layouts must preserve existing fields and only
 append, with frozen older walks retained for migration. Human directories keep
-their relative `current` symlink and optional one-hop deltas for old revisions.
+their relative `current` symlink on POSIX (a checked text pointer on Windows)
+and optional one-hop deltas for old revisions.
 
 Revision history is explicit Full, Partial, or Disabled state. Partial mode has
 manual Create Revision, retention, pin, and delete controls; ordinary Save only
@@ -46,8 +47,12 @@ The 2,000-item Release persistence probe measured 835,154 binary bytes versus
 25.075/69.108 ms for text, and roughly 10.8 MB versus 82.3 MB peak RSS. The
 public by-value structures and packed storage change ABI, so the release advances
 to SONAME 18. The clean Apple-Clang Release build passes 40/40 CTests and both
-released translations are complete at 3,060/3,060 messages. Cross-platform and
-packaged-artifact evidence remains gated on the main and tagged workflows.
+released translations are complete at 3,060/3,060 messages. Final native
+verification passes 41/41 tests with the optional OpenGL test enabled, plus an
+actual OpenGL-only parity run and the 50-binary macOS distribution/signature
+check. Fractional wave sampling follows lattice boundaries; one-pixel seams
+blend original source colors without recursive blending. Cross-platform and
+published-artifact evidence remains gated on the main and tagged workflows.
 
 ## 17.11.0 persistence, sequence, and adaptive-resource performance
 

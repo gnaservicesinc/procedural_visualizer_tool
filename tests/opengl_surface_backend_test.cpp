@@ -740,6 +740,40 @@ int main(int argc, char** argv) {
             }
         }
     }
+    for (const double block_size : {1.5, 2.5, 7.25, 53.5}) {
+        for (const bool alpha_enabled : {false, true}) {
+            pvt::RenderConfig blocks = neutral;
+            blocks.width = 67;
+            blocks.height = 53;
+            blocks.block_size = block_size;
+            blocks.starting_colors.mode =
+                pvt::StartingColorMode::ContinuousHue;
+            blocks.alpha.enabled = alpha_enabled;
+            blocks.alpha.minimum = 0.08;
+            blocks.alpha.maximum = 0.92;
+            blocks.alpha.spatial_frequency = 1.73;
+            blocks.alpha.cycles_per_loop = -3;
+            blocks.output.write_alpha = true;
+            pvt::Image reference;
+            pvt::Image actual;
+            CHECK(pvt::render_frame_at_phase(
+                blocks, 0.37, cpu, reference, nullptr, &error));
+            CHECK(pvt::render_frame_at_phase(
+                blocks, 0.37, gpu, actual, nullptr, &error));
+            std::size_t maximum_index = 0U;
+            const double difference = maximum_difference(
+                reference, actual, &maximum_index);
+            if (difference > 0.0035) {
+                std::cerr << "Fractional generated block parity block="
+                          << block_size << " alpha=" << alpha_enabled
+                          << " difference=" << difference
+                          << " index=" << maximum_index
+                          << " CPU=" << reference.pixels[maximum_index]
+                          << " GPU=" << actual.pixels[maximum_index] << '\n';
+            }
+            CHECK(difference <= 0.0035);
+        }
+    }
 
     // ChannelLoops deliberately takes the reference source lane, so any
     // strict-GPU difference below comes from the ordered Water shader and the

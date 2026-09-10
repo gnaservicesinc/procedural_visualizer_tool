@@ -35,7 +35,8 @@ Strings are stored separately as exact newline-ordered bytes. There are no field
 names, scalar tags, codec headers, or separate version sidecar in `.pvtdat` data;
 layouts are append-only and accepted only after exact stream consumption and
 sanity validation. Human-editable directory projects remain available, use a
-relative `current` symlink, scan only the editable current revision, and can
+relative `current` symlink on POSIX or a checked text pointer on Windows,
+scan only the editable current revision, and can
 store older revisions as one-hop `.pvtdiff` files against the current full copy.
 
 CPU + GPU is a cooperative throughput mode, never a whole-frame CPU fallback.
@@ -1840,9 +1841,11 @@ creation/open/save timestamps, creating/changing program versions, and each
 version-metadata digest; its digest is necessarily kept in the separate
 `metadata.sha256` sidecar.
 
-`current` is a small checksummed text pointer, not a filesystem symlink. This is
-portable across ZIP extractors and avoids archive symlink hazards. A changed Save
-appends the next numeric directory, then replaces root metadata/current through
+`current` is a small checksummed text pointer in ZIPs, binary projects, and
+Windows directories. Human-editable POSIX directories expose it as a relative
+symlink to the numeric version directory. ZIPs always use the portable text
+record. A changed Save in Full history mode appends the next numeric directory,
+then replaces root metadata/current through
 checked atomic file operations (a ZIP replaces the whole outer archive);
 old snapshots are immutable and gaps are valid. A no-change Save verifies the
 recorded tree identities and current snapshot and creates no version; the CLI

@@ -28,9 +28,9 @@ struct BundleFileSet {
     // from the semantic file-set digest.
     int zip_compression_level = 6;
     bool force_zip_recompression = false;
-    // Human-editable directory bundles expose current as a relative symlink
-    // to the numeric version directory. The logical in-memory `current`
-    // record remains present for checksums and ZIP portability.
+    // POSIX human-editable directory bundles expose current as a relative
+    // symlink to the numeric version directory. Windows uses the checked text
+    // record, which remains present in memory for checksums and ZIP portability.
     bool current_as_relative_symlink = false;
     std::uint64_t current_symlink_version = 0U;
     bool from_zip = false;

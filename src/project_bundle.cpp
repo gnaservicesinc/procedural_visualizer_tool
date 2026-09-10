@@ -4521,6 +4521,22 @@ std::string basename_without_extension(const std::string& path) {
     return name;
 }
 
+bool use_relative_current_symlink(
+    const std::string& path,
+    ProjectStorageEncoding encoding) {
+#if defined(_WIN32)
+    // Creating or replacing directory symlinks normally requires elevated
+    // Windows privileges. The checked text current record carries the same
+    // version and metadata identity and remains atomically replaceable.
+    (void)path;
+    (void)encoding;
+    return false;
+#else
+    return !detail::path_is_zip_bundle(path)
+        && encoding == ProjectStorageEncoding::HumanEditable;
+#endif
+}
+
 } // namespace
 
 ProjectAttachmentCache::~ProjectAttachmentCache() {
@@ -6336,10 +6352,8 @@ bool save_with_reason(ProjectDocument& document,
         && root.file_io.zip_compression_level
                != document.file_io.zip_compression_level;
     files.current_symlink_version = current_version;
-    files.current_as_relative_symlink =
-        !detail::path_is_zip_bundle(path)
-        && document.file_io.encoding
-               == ProjectStorageEncoding::HumanEditable;
+    files.current_as_relative_symlink = use_relative_current_symlink(
+        path, document.file_io.encoding);
     if (!write_root_files(document, versions, current_version,
                           have_root ? &root : nullptr, files, error)) return false;
     if (!detail::write_bundle_file_set_if_unchanged(
@@ -6718,10 +6732,8 @@ bool delete_project_version(ProjectDocument& document,
         updated.last_changed_with_version = PVT_PROGRAM_VERSION;
         files.zip_compression_level = updated.file_io.zip_compression_level;
         files.current_symlink_version = updated.current_version;
-        files.current_as_relative_symlink =
-            !detail::path_is_zip_bundle(updated.source_path)
-            && updated.file_io.encoding
-                   == ProjectStorageEncoding::HumanEditable;
+        files.current_as_relative_symlink = use_relative_current_symlink(
+            updated.source_path, updated.file_io.encoding);
         if (!write_root_files(updated, versions, updated.current_version,
                               &root, files, error)
             || !detail::write_bundle_file_set_if_unchanged(
@@ -6816,10 +6828,8 @@ bool set_project_version_pinned(ProjectDocument& document,
         updated.last_changed_with_version = PVT_PROGRAM_VERSION;
         files.zip_compression_level = updated.file_io.zip_compression_level;
         files.current_symlink_version = updated.current_version;
-        files.current_as_relative_symlink =
-            !detail::path_is_zip_bundle(updated.source_path)
-            && updated.file_io.encoding
-                   == ProjectStorageEncoding::HumanEditable;
+        files.current_as_relative_symlink = use_relative_current_symlink(
+            updated.source_path, updated.file_io.encoding);
         if (!write_root_files(updated, versions, updated.current_version,
                               &root, files, error)
             || !detail::write_bundle_file_set_if_unchanged(

@@ -28,6 +28,8 @@ struct Difference {
     double mean_rgb = 0.0;
     double maximum_alpha = 0.0;
     double mean_alpha = 0.0;
+    std::size_t maximum_rgb_offset = 0U;
+    std::size_t maximum_alpha_offset = 0U;
 };
 
 Difference difference(const pvt::Image& first, const pvt::Image& second) {
@@ -46,14 +48,20 @@ Difference difference(const pvt::Image& first, const pvt::Image& second) {
             const double value = std::fabs(
                 static_cast<double>(first.pixels[offset + channel])
                 - static_cast<double>(second.pixels[offset + channel]));
-            result.maximum_rgb = std::max(result.maximum_rgb, value);
+            if (value > result.maximum_rgb) {
+                result.maximum_rgb = value;
+                result.maximum_rgb_offset = offset + channel;
+            }
             result.mean_rgb += value;
             ++rgb_count;
         }
         const double alpha = std::fabs(
             static_cast<double>(first.pixels[offset + 3U])
             - static_cast<double>(second.pixels[offset + 3U]));
-        result.maximum_alpha = std::max(result.maximum_alpha, alpha);
+        if (alpha > result.maximum_alpha) {
+            result.maximum_alpha = alpha;
+            result.maximum_alpha_offset = offset + 3U;
+        }
         result.mean_alpha += alpha;
         ++alpha_count;
     }
@@ -73,7 +81,16 @@ void check_close(const pvt::Image& cpu, const pvt::Image& gpu,
         std::cerr << label << " parity: max RGB " << value.maximum_rgb
                   << ", mean RGB " << value.mean_rgb
                   << ", max alpha " << value.maximum_alpha
-                  << ", mean alpha " << value.mean_alpha << '\n';
+                  << ", mean alpha " << value.mean_alpha
+                  << ", max RGB pixel " << value.maximum_rgb_offset / 4U
+                  << ", max alpha pixel " << value.maximum_alpha_offset / 4U
+                  << ", max RGB values "
+                  << cpu.pixels[value.maximum_rgb_offset] << '/'
+                  << gpu.pixels[value.maximum_rgb_offset]
+                  << ", max alpha values "
+                  << cpu.pixels[value.maximum_alpha_offset] << '/'
+                  << gpu.pixels[value.maximum_alpha_offset]
+                  << '\n';
         ++failures;
     }
 }
@@ -293,7 +310,9 @@ void test_backend_contract() {
     block_fill.alpha.cycles_per_loop = 2;
     block_fill.alpha.phase_degrees = 23.0;
     block_fill.alpha.use_source_alpha = true;
-    for (const int block_size : {1, 4, 7, 32, 64, 256}) {
+    for (const double block_size : {
+             1.0, 1.25, 1.5, 1.75, 2.5, 4.0, 7.25,
+             32.0, 64.0, 64.5, 256.0}) {
         block_fill.block_size = block_size;
         CHECK(pvt::render_frame_at_phase(block_fill, 0.31, cpu_options,
                                          cpu, nullptr, &error));

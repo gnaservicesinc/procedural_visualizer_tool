@@ -130,13 +130,24 @@ bool replace_bytes(const fs::path& path, const std::string& bytes) {
     return !error && write_bytes(path, bytes);
 }
 
-bool replace_current_link(const fs::path& bundle, std::uint64_t version) {
+bool replace_current_pointer(const fs::path& bundle, std::uint64_t version) {
     std::error_code error;
     const fs::path current = bundle / "current";
     fs::remove(current, error);
     if (error) return false;
+#if defined(_WIN32)
+    std::string digest;
+    const std::string number = std::to_string(version);
+    if (!pvt::detail::sha256_hex(
+            read_bytes(bundle / number / "metadata.txt"), digest, nullptr)) {
+        return false;
+    }
+    return write_bytes(current, "PVT_CURRENT\t1\nversion\t" + number
+        + "\nmetadata.sha256\t" + digest + "\n");
+#else
     fs::create_directory_symlink(std::to_string(version), current, error);
     return !error;
+#endif
 }
 
 void append_u16(std::string& bytes, std::uint16_t value) {
@@ -2248,8 +2259,12 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(document.project.canvas.output_compatibility.records.size() == 1U);
     CHECK(document.last_opened_utc == opened);
     CHECK(!document.last_saved_utc.empty());
+#if defined(_WIN32)
+    CHECK(fs::is_regular_file(fs::symlink_status(bundle / "current")));
+#else
     CHECK(fs::is_symlink(fs::symlink_status(bundle / "current")));
     CHECK(fs::read_symlink(bundle / "current") == "0");
+#endif
     CHECK(fs::exists(bundle / "0" / "metadata.txt"));
     CHECK(fs::exists(bundle / "0" / "render_output.txt"));
     CHECK(fs::exists(bundle / "0" / "0.pvt"));
@@ -3019,7 +3034,7 @@ void test_complete_history_accounting(const fs::path& directory) {
                                      &report, &error));
     CHECK(write_bytes(orphan_bundle / "metadata.txt", root_zero));
     CHECK(write_bytes(orphan_bundle / "metadata.sha256", checksum_zero));
-    CHECK(replace_current_link(orphan_bundle, 0U));
+    CHECK(replace_current_pointer(orphan_bundle, 0U));
     CHECK(!pvt::validate_project_bundle(as_utf8(orphan_bundle), nullptr, &error));
 
     pvt::ProjectDocument recovered_orphan;

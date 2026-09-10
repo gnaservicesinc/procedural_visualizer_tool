@@ -5189,6 +5189,16 @@ std::uint64_t block_grid_hash(std::uint64_t value) {
     return value ^ (value >> 31U);
 }
 
+std::int64_t fractional_block_lattice_position(
+    std::uint64_t index, double requested_size, std::uint64_t seed) {
+    if (index == 0U) return 0;
+    const double offset = std::floor(requested_size) == requested_size
+        ? 0.0
+        : static_cast<double>(block_grid_hash(seed) >> 11U) * 0x1.0p-53;
+    return static_cast<std::int64_t>(std::floor(
+        static_cast<double>(index) * requested_size + offset));
+}
+
 std::vector<int> fractional_block_boundaries(
     int extent, double requested_size, std::uint64_t seed) {
     std::vector<int> boundaries;
@@ -5208,12 +5218,9 @@ std::vector<int> fractional_block_boundaries(
     // reproducible on CPU/GPU. Adjacent spans are floor(size) or ceil(size),
     // the long-span density converges to the fractional part, and clipping the
     // final boundary makes the covered extent exact without holes/overdraw.
-    const std::uint64_t random = block_grid_hash(seed);
-    const double offset = static_cast<double>(random >> 11U)
-                          * 0x1.0p-53;
     for (std::uint64_t index = 1U;; ++index) {
-        const double position_wide = std::floor(
-            static_cast<double>(index) * requested_size + offset);
+        const double position_wide = static_cast<double>(
+            fractional_block_lattice_position(index, requested_size, seed));
         int position = static_cast<int>(std::min(
             static_cast<double>(extent), position_wide));
         position = std::max(position, boundaries.back() + 1);
@@ -5282,13 +5289,21 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         config.height, config.block_size,
         UINT64_C(0x13198a2e03707344) ^ synchronized_seed);
     const std::size_t block_columns = x_boundaries.size() - 1U;
+    // A one-pixel block can contain only a seam. Retain one source-color row
+    // in that case so the next seam never blends an already blended pixel.
+    const bool retain_seam_sources = fractional_blocks
+        && config.block_size < 2.0 && !config.block_size_modulation.alpha_gaps;
+    std::vector<Color> previous_block_row(
+        retain_seam_sources ? block_columns : 0U);
     const auto populate_wave_row = [&](std::vector<WaveNode>& row,
                                        std::int64_t y) {
         for (std::size_t column = 0U; column < row.size(); ++column) {
             if ((column & 63U) == 0U) throw_if_cancelled(cancel);
-            const std::int64_t x = column < x_boundaries.size()
+            const std::int64_t x = column < block_columns
                 ? static_cast<std::int64_t>(x_boundaries[column])
-                : static_cast<std::int64_t>(config.width);
+                : fractional_block_lattice_position(
+                      static_cast<std::uint64_t>(column), config.block_size,
+                      UINT64_C(0x243f6a8885a308d3) ^ synchronized_seed);
             const double motion_phase = motion_clock.spatial_swings.empty()
                 ? motion_clock.global_phase
                 : motion_phase_at(
@@ -5306,8 +5321,10 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         next_wave_nodes.resize(block_columns + 1U);
         populate_wave_row(current_wave_nodes, 0);
         populate_wave_row(next_wave_nodes,
-                          y_boundaries.size() > 1U ? y_boundaries[1U]
-                                                  : config.height);
+                          fractional_block_lattice_position(
+                              1U, config.block_size,
+                              UINT64_C(0x13198a2e03707344)
+                                  ^ synchronized_seed));
     }
 
     std::size_t block_counter = 0U;
@@ -5320,8 +5337,13 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         if (use_wave_node_cache && block_row_index != 0U) {
             current_wave_nodes.swap(next_wave_nodes);
             populate_wave_row(
-                next_wave_nodes, y_boundaries[block_row_index + 1U]);
+                next_wave_nodes, fractional_block_lattice_position(
+                    static_cast<std::uint64_t>(block_row_index + 1U),
+                    config.block_size,
+                    UINT64_C(0x13198a2e03707344) ^ synchronized_seed));
         }
+        Color previous_base;
+        Color previous_upper_base;
         for (std::size_t block_column_index = 0U;
              block_column_index + 1U < x_boundaries.size();
              ++block_column_index) {
@@ -5548,9 +5570,11 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             for (int y = block_y; y < end_y; ++y) {
                 throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
-                    const bool seam =
-                        (vertical_transition && x == block_x)
-                        || (horizontal_transition && y == block_y);
+                    const bool vertical_seam =
+                        vertical_transition && x == block_x;
+                    const bool horizontal_seam =
+                        horizontal_transition && y == block_y;
+                    const bool seam = vertical_seam || horizontal_seam;
                     if (seam && config.block_size_modulation.alpha_gaps) {
                         store_color(image, x, y, {});
                         continue;
@@ -5565,11 +5589,24 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                     output.a = source_alpha
                                * alpha_at(config, x, y, loop_phase);
                     if (seam) {
-                        const int prior_x = vertical_transition
+                        const int prior_x = vertical_seam
                             ? std::max(0, x - 1) : x;
-                        const int prior_y = horizontal_transition
+                        const int prior_y = horizontal_seam
                             ? std::max(0, y - 1) : y;
-                        const Color prior = load_color(image, prior_x, prior_y);
+                        Color prior;
+                        if (retain_seam_sources) {
+                            prior = horizontal_seam
+                                ? (vertical_seam ? previous_upper_base
+                                   : previous_block_row[block_column_index])
+                                : previous_base;
+                            prior.a = static_cast<float>(clamp_value(
+                                (use_base_alpha ? prior.a : 1.0)
+                                    * alpha_at(config, prior_x, prior_y,
+                                               loop_phase),
+                                0.0, 1.0));
+                        } else {
+                            prior = load_color(image, prior_x, prior_y);
+                        }
                         output.r = 0.5 * (output.r + prior.r);
                         output.g = 0.5 * (output.g + prior.g);
                         output.b = 0.5 * (output.b + prior.b);
@@ -5577,6 +5614,12 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                     }
                     store_color(image, x, y, output);
                 }
+            }
+            if (retain_seam_sources) {
+                previous_upper_base = previous_block_row[block_column_index];
+                previous_base = {stored_channel(base.r), stored_channel(base.g),
+                                 stored_channel(base.b), base.a};
+                previous_block_row[block_column_index] = previous_base;
             }
         }
     }

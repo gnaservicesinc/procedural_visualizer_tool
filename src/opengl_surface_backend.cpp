@@ -1063,12 +1063,16 @@ void main() {
     if (expandBlocks != 0) {
         // RGB is shared by the authored block; procedural alpha is evaluated
         // at every output pixel and must remain smooth across block interiors.
-        int blockXIndex = clamp(int(ceil(
-            (float(x) + 1.0 - blockOffset.x) / blockSize)) - 1,
-            0, blockCount.x - 1);
-        int blockYIndex = clamp(int(ceil(
-            (float(y) + 1.0 - blockOffset.y) / blockSize)) - 1,
-            0, blockCount.y - 1);
+        int blockXIndex = fractionalBlocks == 0
+            ? x / int(blockSize)
+            : clamp(int(ceil(
+                  (float(x) + 1.0 - blockOffset.x) / blockSize)) - 1,
+                  0, blockCount.x - 1);
+        int blockYIndex = fractionalBlocks == 0
+            ? y / int(blockSize)
+            : clamp(int(ceil(
+                  (float(y) + 1.0 - blockOffset.y) / blockSize)) - 1,
+                  0, blockCount.y - 1);
         ivec2 blockIndex = ivec2(blockXIndex, blockYIndex);
         int startX = blockXIndex == 0 ? 0 : int(floor(
             float(blockXIndex) * blockSize + blockOffset.x));
@@ -1095,33 +1099,43 @@ void main() {
             return;
         }
         vec3 rgb = texelFetch(blockImage, blockIndex, 0).rgb;
-        if (verticalTransition) {
+        float alpha = clampUnit(proceduralAlpha(x, y));
+        if (verticalTransition || horizontalTransition) {
+            ivec2 priorStep = ivec2(verticalTransition ? 1 : 0,
+                                    horizontalTransition ? 1 : 0);
             rgb = 0.5 * (rgb + texelFetch(
-                blockImage, blockIndex - ivec2(1, 0), 0).rgb);
-        } else if (horizontalTransition) {
-            rgb = 0.5 * (rgb + texelFetch(
-                blockImage, blockIndex - ivec2(0, 1), 0).rgb);
+                blockImage, blockIndex - priorStep, 0).rgb);
+            alpha = 0.5 * (alpha + clampUnit(proceduralAlpha(
+                x - priorStep.x, y - priorStep.y)));
         }
-        outputColor = vec4(rgb, clampUnit(proceduralAlpha(x, y)));
+        outputColor = vec4(rgb, alpha);
         return;
     }
     // This pass shades one fragment per block, including partial edge blocks.
-    int blockX = x == 0 ? 0 : int(floor(
-        float(x) * blockSize + blockOffset.x));
-    int blockY = y == 0 ? 0 : int(floor(
-        float(y) * blockSize + blockOffset.y));
+    int blockX = fractionalBlocks == 0
+        ? x * int(blockSize)
+        : (x == 0 ? 0 : int(floor(
+              float(x) * blockSize + blockOffset.x)));
+    int blockY = fractionalBlocks == 0
+        ? y * int(blockSize)
+        : (y == 0 ? 0 : int(floor(
+              float(y) * blockSize + blockOffset.y)));
     float sourceX = float(blockX);
     float sourceY = float(blockY);
+    float nextX = fractionalBlocks == 0 ? sourceX + blockSize
+        : floor(float(x + 1) * blockSize + blockOffset.x);
+    float nextY = fractionalBlocks == 0 ? sourceY + blockSize
+        : floor(float(y + 1) * blockSize + blockOffset.y);
     float motion = motionPhaseAt(sourceX, sourceY);
     float motionRight = swingCount == 0
-        ? motion : motionPhaseAt(sourceX + blockSize, sourceY);
+        ? motion : motionPhaseAt(nextX, sourceY);
     float motionDown = swingCount == 0
-        ? motion : motionPhaseAt(sourceX, sourceY + blockSize);
+        ? motion : motionPhaseAt(sourceX, nextY);
     float heightHere = waveHeight(sourceX, sourceY, motion);
     float heightRight = waveHeight(
-        sourceX + blockSize, sourceY, motionRight);
+        nextX, sourceY, motionRight);
     float heightDown = waveHeight(
-        sourceX, sourceY + blockSize, motionDown);
+        sourceX, nextY, motionDown);
     float slopeX = heightRight - heightHere;
     float slopeY = heightDown - heightHere;
     float displacement = displacementEnabled != 0

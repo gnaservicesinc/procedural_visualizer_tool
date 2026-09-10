@@ -422,12 +422,28 @@ ulong generated_starting_index(constant FrameConstants& frame,
         reference_height - 1ul,
         generated_reference_coordinate(block_y, frame.starting_reference.y,
                                        frame.dimensions_counts.y));
-    const ulong blocks_across = ulong(ceil(
-        float(reference_width) / reference_block));
-    const ulong blocks_down = ulong(ceil(
-        float(reference_height) / reference_block));
-    const ulong x = ulong(floor(float(reference_x) / reference_block));
-    const ulong y = ulong(floor(float(reference_y) / reference_block));
+    ulong blocks_across;
+    ulong blocks_down;
+    ulong x;
+    ulong y;
+    if (floor(reference_block) == reference_block) {
+        // Preserve the exact integer traversal for very large preview
+        // references; converting a 100M-wide lattice to float loses IDs.
+        const ulong integral_block = ulong(frame.starting_reference.z);
+        blocks_across =
+            (reference_width + integral_block - 1ul) / integral_block;
+        blocks_down =
+            (reference_height + integral_block - 1ul) / integral_block;
+        x = reference_x / integral_block;
+        y = reference_y / integral_block;
+    } else {
+        blocks_across = ulong(ceil(
+            float(reference_width) / reference_block));
+        blocks_down = ulong(ceil(
+            float(reference_height) / reference_block));
+        x = ulong(floor(float(reference_x) / reference_block));
+        y = ulong(floor(float(reference_y) / reference_block));
+    }
     const uint mode = frame.starting_flags.x;
     if (mode == 1u) return x * blocks_down + y;
     if (mode == 3u || mode == 6u) {
@@ -588,22 +604,22 @@ float4 generated_base_color(constant FrameConstants& frame,
                             const device GpuWave* waves,
                             const device GpuSwing* swings,
                             const device float4* palette,
-                            uint width, uint height, float block_size,
+                            uint width, uint height, float2 block_step,
                             uint block_x, uint block_y) {
     const float x = float(block_x);
     const float y = float(block_y);
     const float motion = motion_phase_at(frame, swings, x, y);
     const float motion_right = frame.counts_flags.x == 0u
         ? motion
-        : motion_phase_at(frame, swings, x + block_size, y);
+        : motion_phase_at(frame, swings, x + block_step.x, y);
     const float motion_down = frame.counts_flags.x == 0u
         ? motion
-        : motion_phase_at(frame, swings, x, y + block_size);
+        : motion_phase_at(frame, swings, x, y + block_step.y);
     const float height_here = wave_height(frame, waves, x, y, motion);
     const float height_right = wave_height(
-        frame, waves, x + block_size, y, motion_right);
+        frame, waves, x + block_step.x, y, motion_right);
     const float height_down = wave_height(
-        frame, waves, x, y + block_size, motion_down);
+        frame, waves, x, y + block_step.y, motion_down);
     const float slope_x = height_right - height_here;
     const float slope_y = height_down - height_here;
     const float displacement = frame.counts_flags.w != 0u
@@ -745,7 +761,7 @@ kernel void base_render(constant FrameConstants& frame [[buffer(0)]],
     if (block_x >= width || block_y >= height) return;
 
     const float4 base = generated_base_color(
-        frame, waves, swings, palette, width, height, block_size,
+        frame, waves, swings, palette, width, height, float2(block_size),
         block_x, block_y);
 
     const uint end_x = min(block_x + block_size, width);
@@ -780,14 +796,23 @@ kernel void base_prepare(constant FrameConstants& frame [[buffer(0)]],
     const uint width = frame.dimensions_counts.x;
     const uint height = frame.dimensions_counts.y;
     const float block_size = frame.block_grid.x;
-    const uint block_x = fractional_block_start(
-        gid.x, block_size, frame.block_grid.y);
-    const uint block_y = fractional_block_start(
-        gid.y, block_size, frame.block_grid.z);
+    const bool fractional = floor(block_size) != block_size;
+    const uint block_x = !fractional
+        ? gid.x * frame.dimensions_counts.z
+        : fractional_block_start(gid.x, block_size, frame.block_grid.y);
+    const uint block_y = !fractional
+        ? gid.y * frame.dimensions_counts.z
+        : fractional_block_start(gid.y, block_size, frame.block_grid.z);
     if (block_x >= width || block_y >= height) return;
 
+    const float2 block_step = !fractional
+        ? float2(block_size)
+        : float2(fractional_block_start(
+                     gid.x + 1u, block_size, frame.block_grid.y) - block_x,
+                 fractional_block_start(
+                     gid.y + 1u, block_size, frame.block_grid.z) - block_y);
     const float4 base = generated_base_color(
-        frame, waves, swings, palette, width, height, block_size,
+        frame, waves, swings, palette, width, height, block_step,
         block_x, block_y);
     const uint block_columns = frame.block_flags.z;
     block_colors[gid.y * block_columns + gid.x] = base;
@@ -803,12 +828,17 @@ kernel void base_fill(constant FrameConstants& frame [[buffer(0)]],
 
     const float block_size = frame.block_grid.x;
     const uint block_columns = frame.block_flags.z;
-    const uint block_x_index = min(
-        frame.block_flags.z - 1u,
-        fractional_block_index(gid.x, block_size, frame.block_grid.y));
-    const uint block_y_index = min(
-        frame.block_flags.w - 1u,
-        fractional_block_index(gid.y, block_size, frame.block_grid.z));
+    const bool fractional = floor(block_size) != block_size;
+    const uint block_x_index = !fractional
+        ? gid.x / frame.dimensions_counts.z
+        : min(frame.block_flags.z - 1u,
+              fractional_block_index(
+                  gid.x, block_size, frame.block_grid.y));
+    const uint block_y_index = !fractional
+        ? gid.y / frame.dimensions_counts.z
+        : min(frame.block_flags.w - 1u,
+              fractional_block_index(
+                  gid.y, block_size, frame.block_grid.z));
     const uint block_index = block_y_index * block_columns + block_x_index;
     float4 base = block_colors[block_index];
     const uint start_x = fractional_block_start(
@@ -817,7 +847,7 @@ kernel void base_fill(constant FrameConstants& frame [[buffer(0)]],
         block_y_index, block_size, frame.block_grid.z);
     bool vertical_transition = false;
     bool horizontal_transition = false;
-    if (frame.block_flags.y != 0u && block_x_index > 0u
+    if (fractional && block_x_index > 0u
         && gid.x == start_x) {
         const uint prior_start = fractional_block_start(
             block_x_index - 1u, block_size, frame.block_grid.y);
@@ -825,7 +855,7 @@ kernel void base_fill(constant FrameConstants& frame [[buffer(0)]],
             block_x_index + 1u, block_size, frame.block_grid.y));
         vertical_transition = start_x - prior_start != end - start_x;
     }
-    if (frame.block_flags.y != 0u && block_y_index > 0u
+    if (fractional && block_y_index > 0u
         && gid.y == start_y) {
         const uint prior_start = fractional_block_start(
             block_y_index - 1u, block_size, frame.block_grid.z);
@@ -845,9 +875,12 @@ kernel void base_fill(constant FrameConstants& frame [[buffer(0)]],
         clamp_unit(source_alpha * procedural_alpha(
             frame, gid.x, gid.y, width, height)));
     if (seam) {
-        const uint prior_index = vertical_transition
-            ? block_y_index * block_columns + block_x_index - 1u
-            : (block_y_index - 1u) * block_columns + block_x_index;
+        const uint prior_block_x = vertical_transition
+            ? block_x_index - 1u : block_x_index;
+        const uint prior_block_y = horizontal_transition
+            ? block_y_index - 1u : block_y_index;
+        const uint prior_index =
+            prior_block_y * block_columns + prior_block_x;
         const float4 prior = block_colors[prior_index];
         const uint prior_x = vertical_transition ? gid.x - 1u : gid.x;
         const uint prior_y = horizontal_transition ? gid.y - 1u : gid.y;
