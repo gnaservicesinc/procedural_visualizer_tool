@@ -102,12 +102,12 @@ bool deserialize_split_render_output_config(
 // every byte is consumed and the resulting values are sane. No independent
 // version field can become detached from the raw data.
 inline constexpr std::uint32_t kRawConfigCurrentLayout = 1U;
-bool serialize_raw_config(const RenderConfig& config,
+PVT_API bool serialize_raw_config(const RenderConfig& config,
                           std::string& numeric,
                           std::string& strings,
                           std::string* error = nullptr,
                           bool enforce_particle_workload = true);
-bool deserialize_raw_config(const std::string& numeric,
+PVT_API bool deserialize_raw_config(const std::string& numeric,
                             const std::string& strings,
                             RenderConfig& destination,
                             std::string* error = nullptr,

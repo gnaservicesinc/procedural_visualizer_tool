@@ -397,13 +397,21 @@ jobs:
             }
           }
           function Invoke-PackageCheck($filePath, $argument) {
+            $logPrefix = "$env:RUNNER_TEMP/package-check-$([guid]::NewGuid().ToString('N'))"
             $process = Start-Process `
-              -FilePath $filePath -ArgumentList $argument -PassThru
-            if (-not $process.WaitForExit(30000)) {
+              -FilePath $filePath -ArgumentList $argument -PassThru `
+              -NoNewWindow -RedirectStandardOutput "$logPrefix.stdout.log" `
+              -RedirectStandardError "$logPrefix.stderr.log"
+            $exited = $process.WaitForExit(30000)
+            if (-not $exited) {
               $process.Kill($true)
-              throw "Package check timed out: $filePath $argument"
             }
             $process.WaitForExit()
+            Get-Content -LiteralPath "$logPrefix.stdout.log"
+            Get-Content -LiteralPath "$logPrefix.stderr.log"
+            if (-not $exited) {
+              throw "Package check timed out: $filePath $argument"
+            }
             if ($process.ExitCode -ne 0) {
               throw "Package check failed with exit code $($process.ExitCode): $filePath $argument"
             }

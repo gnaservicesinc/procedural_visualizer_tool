@@ -24362,6 +24362,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
     // installed while the playback timer is still active. The smoke-only delay
     // makes every render span several 240 FPS ticks, reproducing the stale
     // generation race deterministically.
+    // Keep the timeline longer than the wait: a 12-frame/240 FPS loop repeats
+    // every 50 ms and can alias with completed renders on a loaded runner.
+    const int preview_timing_frames = config_.total_frames;
+    frames_->setValue(1200);
     fps_->setValue(240.0);
     preview_test_delay_ms_ = 25;
     playback_preview_advanced_ = false;
@@ -24376,7 +24380,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         play_button_->click();
     }
     preview_test_delay_ms_ = 0;
-    if (!playback_preview_advanced_) {
+    const bool preview_advanced = playback_preview_advanced_;
+    frames_->setValue(preview_timing_frames);
+    if (!preview_advanced) {
         if (error != nullptr) {
             *error = tr("Playback did not install advancing preview frames.");
         }
