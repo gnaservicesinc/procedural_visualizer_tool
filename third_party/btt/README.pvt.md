@@ -2,7 +2,7 @@
 
 Maintained source: https://github.com/gnaservicesinc/PVT-Beat-and-Tempo-Tracking
 
-Vendored source commit: `6ac0cb5501a0b98c27b943fc27b11a10991cce17`.
+Vendored source commit: `f0bed31dec980daca6fd5b82b900a03da4903aca`.
 
 PVT now consumes our maintained tracker, including `PVTOnset.h` and its original
 onset front end, callback timestamp/reset corrections, and the standalone tests.

@@ -20,6 +20,11 @@ static void run(int chunk, pvt_onset_method method, Events* onsets, Events* beat
     BTT* tracker = btt_new_default();
     int i;
     CHECK(samples && tracker);
+    /* Exercise scratch-buffer replacement before the same timestamp comparison. */
+    btt_set_num_tempo_candidates(tracker, 1);
+    CHECK(btt_get_num_tempo_candidates(tracker) == 1);
+    btt_set_num_tempo_candidates(tracker, BTT_DEFAULT_NUM_TEMPO_CANDIDATES);
+    CHECK(btt_get_num_tempo_candidates(tracker) == BTT_DEFAULT_NUM_TEMPO_CANDIDATES);
     CHECK(btt_set_onset_detection_method(tracker, method));
     CHECK(btt_get_onset_detection_method(tracker) == method);
     CHECK(!btt_set_onset_detection_method(tracker, (pvt_onset_method)99));

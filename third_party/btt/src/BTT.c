@@ -66,6 +66,9 @@ struct Opaque_BTT_Struct
   int                max_lag;
   int                min_lag;
   int                num_tempo_candidates;
+  int*               candidate_tempo_lags;
+  float*             candidate_score_max;
+  float*             candidate_score_variance;
   dft_sample_t*      autocorrelation_real;
   
   double             autocorrelation_exponent;
@@ -182,6 +185,7 @@ BTT* btt_new(int spectral_flux_stft_len, int spectral_flux_stft_overlap, int oss
       btt_set_analysis_latency_beat_adjustment (self, analysis_latency_beat_adjustment );
     
       btt_init(self);
+      if(self->num_tempo_candidates == 0) return btt_destroy(self);
       
       btt_set_metronome_bpm (self, BTT_DEFAULT_LOG_GAUSSIAN_TEMPO_WEIGHT_MEAN);
     }
@@ -217,6 +221,9 @@ BTT* btt_destroy(BTT* self)
       online_average_destroy(self->tempo_score_variance);
       online_average_destroy(self->count_in_average);
     
+      free(self->candidate_tempo_lags);
+      free(self->candidate_score_max);
+      free(self->candidate_score_variance);
       free(self);
     }
   return (BTT*) NULL;
@@ -501,7 +508,8 @@ void btt_tempo_tracking              (BTT* self)
   
   //pick peaks from autocorrelation
   float old_derivative = 1, new_derivative;
-  int candidate_tempo_lags[self->num_tempo_candidates];
+  int* candidate_tempo_lags = self->candidate_tempo_lags;
+  if(self->num_tempo_candidates == 0) return;
   for(i=0; i<self->num_tempo_candidates; candidate_tempo_lags[i++]=self->min_lag);
   int min_lag_index = 0;
   for(i=self->min_lag; i<self->max_lag-1; i++)
@@ -522,8 +530,8 @@ void btt_tempo_tracking              (BTT* self)
     }
 
   //cross correlate with pulses and get score components
-  float score_max     [self->num_tempo_candidates];
-  float score_variance[self->num_tempo_candidates];
+  float* score_max = self->candidate_score_max;
+  float* score_variance = self->candidate_score_variance;
   float sum_of_score_max      = 0;
   float sum_of_score_variance = 0;
   int   num_pulses            = BTT_DEFAULT_XCORR_NUM_PULSES;
@@ -883,6 +891,24 @@ void      btt_set_num_tempo_candidates         (BTT* self, int num_candidates)
 {
   if(num_candidates < 1)
     num_candidates = 1;
+  if(num_candidates == self->num_tempo_candidates) return;
+  /* Allocate outside processing; preserve the previous configuration on failure. */
+  int* lags = calloc((size_t)num_candidates, sizeof(*lags));
+  float* maxima = calloc((size_t)num_candidates, sizeof(*maxima));
+  float* variances = calloc((size_t)num_candidates, sizeof(*variances));
+  if(lags == NULL || maxima == NULL || variances == NULL)
+    {
+      free(lags);
+      free(maxima);
+      free(variances);
+      return;
+    }
+  free(self->candidate_tempo_lags);
+  free(self->candidate_score_max);
+  free(self->candidate_score_variance);
+  self->candidate_tempo_lags = lags;
+  self->candidate_score_max = maxima;
+  self->candidate_score_variance = variances;
   self->num_tempo_candidates = num_candidates;
 }
 
